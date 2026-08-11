@@ -36,7 +36,6 @@ jobs:
           toolchain: "1.94.0"
           components: clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       # Licences, advisories, bans, and sources. deny.toml is the authoritative policy.
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1

@@ -43,9 +43,11 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ matrix.toolchain }}
+
+      # No build cache action is used. The obvious candidate is LGPL-3.0 licensed, which
+      # is not on the deny.toml allow-list, and dependency review correctly rejected it.
+      # Widening the licence policy to obtain a build cache would weaken a control to buy
+      # convenience, so the cache was dropped instead.
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
