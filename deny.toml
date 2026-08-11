@@ -1,0 +1,64 @@
+# cargo-deny policy — the AUTHORITATIVE machine-readable licence policy (FR-020).
+#
+# `CONTRIBUTING.md` points here rather than restating the allow-list in prose, because
+# a prose copy drifts from the enforced one and reviewers then trust the wrong list.
+#
+# Verification step 6 runs `cargo deny check`, covering all four sections below.
+# Enforced by research Finding 4.
+
+[graph]
+# Check every target and every feature. A dependency that is licence-incompatible only
+# on Windows, or only behind an optional feature, is still licence-incompatible.
+all-features = true
+
+[advisories]
+version = 2
+# No ignored advisories. An advisory that must be tolerated requires a waiver in
+# governance/waivers.md with an absolute expiry date — not a silent entry here.
+ignore = []
+unmaintained = "workspace"
+yanked = "deny"
+
+# NOTE: the section key is the American spelling `licenses` — it is cargo-deny's
+# schema, not prose, and the tool rejects `licences` outright.
+[licenses]
+version = 2
+confidence-threshold = 0.93
+
+# Permissive licences compatible with distributing under `MIT OR Apache-2.0`.
+# Adding to this list is a policy change and goes through pull request review.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+]
+
+# Per-crate exceptions. Empty by design: an exception is a reviewed decision that
+# names the crate and the reason, never a blanket widening of `allow`.
+exceptions = []
+
+[bans]
+# Duplicate versions are a warning, not an error. They are usually imposed by
+# transitive dependencies and outside this project's control; failing on them would
+# make the gate unactionable and invite pressure to weaken it.
+multiple-versions = "warn"
+# A wildcard requirement means "whatever resolves today", which is the unreviewed
+# floating update FR-020 prohibits.
+wildcards = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+# crates.io only. An unknown registry or a git dependency bypasses the registry's
+# immutability guarantee and the audit trail that comes with it.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
