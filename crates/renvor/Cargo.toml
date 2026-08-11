@@ -1,0 +1,40 @@
+# Facade package. Publishable, so it carries the COMPLETE metadata set required by
+# specs/001-governance-foundation/contracts/package-metadata.md — a missing field
+# fails metadata validation (FR-040).
+#
+# `edition` and `rust-version` are INHERITED, never restated (FR-017). Restating
+# either would create a second declaration site that can drift from the workspace.
+
+[package]
+name = "renvor"
+description = "Facade crate for the Renvor framework; this release exposes version metadata only and provides no runtime capability."
+documentation = "https://docs.rs/renvor"
+readme = "README.md"
+keywords = ["renvor", "framework"]
+categories = ["development-tools"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (FR-039). Anything not listed here
+# does not reach the registry, which is what makes `cargo package --list` a
+# meaningful review artifact rather than a surprise.
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+# No dependencies. A publishable package may not carry a git or path dependency
+# (FR-040); declaring none is the strongest form of compliance.
+[dependencies]
+
+[lints]
+workspace = true

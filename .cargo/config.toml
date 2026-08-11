@@ -1,0 +1,8 @@
+# Makes `cargo xtask verify` work from anywhere in the workspace.
+#
+# The alias is what lets the verification-sequence contract name ONE command that is
+# identical locally and in CI. Without it, workflows would spell out
+# `cargo run -p xtask -- verify` and the two invocations could drift apart.
+
+[alias]
+xtask = "run --package xtask --quiet --"

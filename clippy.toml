@@ -1,0 +1,16 @@
+# Clippy configuration.
+#
+# Lint LEVELS live in [workspace.lints.clippy] in Cargo.toml so they are inherited
+# by every member. This file carries only the threshold settings clippy reads here.
+#
+# Verification step 3 runs clippy with `-D warnings`, so every lint enabled at
+# `warn` is effectively an error in CI. Raising a threshold here is a policy change
+# and belongs in a pull request like any other.
+
+# The declared MSRV. Clippy uses this to avoid suggesting APIs newer than the
+# support floor — without it, clippy can recommend a fix that fails to compile
+# on 1.94.0 while passing on stable.
+msrv = "1.94.0"
+
+cognitive-complexity-threshold = 20
+too-many-arguments-threshold = 7

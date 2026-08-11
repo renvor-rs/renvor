@@ -1,0 +1,11 @@
+# Formatting is enforced, not suggested: verification step 2 runs
+# `cargo fmt --all --check` and a difference is a failure.
+#
+# Only stable options are set. Nightly-only options would make formatting
+# depend on a toolchain the MSRV job does not have, so a contributor on 1.94.0
+# and CI would disagree about what "formatted" means.
+
+edition = "2024"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true

@@ -1,0 +1,32 @@
+# Renvor workspace root.
+#
+# This is a VIRTUAL workspace: it declares no [package] of its own.
+#
+# `resolver = "3"` is declared EXPLICITLY and must stay that way. Resolver 3 is the
+# default for edition 2024, but a virtual workspace has no package edition to inherit
+# that default from — omitting this line silently falls back to resolver 1, and
+# MSRV-aware dependency resolution never engages (spec FR-057, research Finding 1).
+
+[workspace]
+resolver = "3"
+members = ["crates/renvor", "xtask"]
+
+# The single authoritative declaration of edition and MSRV (spec FR-016, FR-017).
+# Members inherit with `edition.workspace = true` / `rust-version.workspace = true`
+# and MUST NOT restate either value. A second independent declaration is a defect —
+# asserted at T037.
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/renvor-rs/renvor"
+homepage = "https://renvor.dev"
+authors = ["Ahmed Anbar"]
+
+[workspace.lints.rust]
+missing_docs = "warn"
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

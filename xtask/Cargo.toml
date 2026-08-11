@@ -1,0 +1,23 @@
+# Verification runner. NOT publishable.
+#
+# `publish = false` is what exempts this package from the no-path-dependency rule in
+# contracts/package-metadata.md, and from the publishable-metadata requirements. It
+# must never be removed.
+
+[package]
+name = "xtask"
+description = "Internal verification runner for the Renvor workspace. Not published."
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# Deliberately dependency-free. The verification runner is the thing that checks the
+# dependency policy; giving it dependencies of its own would mean the checker's own
+# supply chain sits outside the check it performs.
+[dependencies]
+
+[lints]
+workspace = true

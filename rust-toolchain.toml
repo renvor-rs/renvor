@@ -1,0 +1,15 @@
+# Pins the toolchain for contributors and automation (spec FR-018).
+#
+# `components` is declared EXPLICITLY and must stay that way. A toolchain installed
+# with `--profile minimal` ships neither rustfmt nor clippy, so verification steps 2
+# and 3 would fail with "component not installed" rather than a real lint result.
+# This was observed on this machine at T005: both the pinned 1.94.0 and the
+# pre-existing 1.97.1 toolchains were missing components and had to be repaired.
+#
+# The channel is the declared MSRV, so a contributor's default run exercises the
+# support floor. CI additionally runs current stable — see .github/workflows/ci.yml.
+
+[toolchain]
+channel = "1.94.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
