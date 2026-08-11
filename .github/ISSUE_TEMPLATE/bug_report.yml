@@ -1,0 +1,48 @@
+name: Bug report
+description: Something behaves differently from what the documentation states.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report a security vulnerability here.** Public issues are visible to
+        everyone, including anyone who would exploit the report. Use the private path
+        in [SECURITY.md](https://github.com/renvor-rs/renvor/blob/main/SECURITY.md).
+
+        Renvor is pre-release and ships no runtime capability yet, so most reports at
+        this stage concern documentation, governance, or the verification sequence.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you observed, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands, in order. A partial reproduction is better than none.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "0.0.0, or a commit SHA"
+    validations:
+      required: true
+  - type: input
+    id: toolchain
+    attributes:
+      label: Rust toolchain
+      description: Output of `rustc --version`. The supported floor is 1.94.0.
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Only Linux is currently claimed as supported.
+    validations:
+      required: true
