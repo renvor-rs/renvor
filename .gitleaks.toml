@@ -1,0 +1,48 @@
+# Renvor — Gitleaks configuration
+#
+# Satisfies: spec FR-025 (secret scanning gates), tasks T013 and T053.
+#
+# POLICY: allowlist entries MUST be narrow and individually justified. Broad path
+# exclusions, whole-rule disables, and directory-wide suppressions defeat the control
+# and are not acceptable (tasks.md, "T013 permits documented false positives").
+#
+# Every entry below must state: the rule, the exact location, why the match is not a
+# secret, and what would make the entry removable.
+
+[extend]
+useDefault = true
+
+# ---------------------------------------------------------------------------
+# FP-001 — prose in a superseded planning document
+# ---------------------------------------------------------------------------
+# Rule        : generic-api-key
+# Location    : RENVOR_MASTER_IMPLEMENTATION_PLAN.md line 679
+# Fingerprint : RENVOR_MASTER_IMPLEMENTATION_PLAN.md:generic-api-key:679
+# Entropy     : 3.73
+#
+# The flagged text is an English sentence listing documentation deliverables:
+#   "... hardening checklist, secrets, CORS/proxies/rate limits and ecommerce ..."
+# The rule keys off the keyword "secrets" followed by the next token. No credential,
+# key, or token is present. Verified by reading the line in context (672-686).
+#
+# Additional context — this is not published material:
+#   * the file is ignored (.gitignore line 68) and untracked
+#   * it appears in 0 commits, so the git-history scan never sees it
+#   * T009 excludes it from the publish set as superseded by PLAN.md
+#
+# Scope: matched CONTENT only — the literal prose phrase. Deliberately no `paths`
+# entry: a `paths` allowlist makes gitleaks skip the whole file before scanning it,
+# which is a blanket file exclusion and would hide any real secret added to that file
+# later. That was verified empirically — a `paths` form of this entry caused
+# `scanned ~0 bytes` and let an injected canary secret through undetected.
+#
+# Verification: with this entry active, injecting a canary credential into the same
+# file three lines below is still detected, while this prose match stays suppressed.
+# Re-run that check after any edit to this file (see governance/phase-001-evidence.md).
+#
+# Removable when: RENVOR_MASTER_IMPLEMENTATION_PLAN.md is deleted from the working
+# tree, at which point this entry MUST be deleted with it.
+[[allowlists]]
+description = "FP-001: prose 'secrets, CORS/proxies/rate ...' in superseded, untracked RENVOR_MASTER_IMPLEMENTATION_PLAN.md line 679"
+regexes = ['''secrets, CORS/proxies/rate''']
+regexTarget = "match"

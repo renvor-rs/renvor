@@ -1,0 +1,68 @@
+# Renvor — repository ignore rules
+#
+# Scope: spec FR-024 requires that a full verification run on a clean checkout leaves
+# no untracked or modified files. Exclusions decided at T009 are enforced here.
+#
+# NOTE: these rules prevent FUTURE commits only. Material already committed is not
+# removed by ignoring it — see the pre-push blocker in governance/phase-001-evidence.md.
+
+# --- Rust build output ---
+target/
+debug/
+**/*.rs.bk
+*.rlib
+*.prof*
+
+# --- Node and documentation site output ---
+node_modules/
+.docusaurus/
+build/
+.cache/
+docs/build/
+
+# --- Editor and IDE state ---
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+
+# --- Operating-system artifacts ---
+.DS_Store
+Thumbs.db
+
+# --- Logs and temporary files ---
+*.log
+tmp/
+*.tmp
+
+# --- Environment, credentials, and secrets (never commit) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials
+credentials.*
+secrets/
+*.secret
+
+# --- Python (local tooling only) ---
+.venv/
+__pycache__/
+
+# --- Local agent and development-tool configuration (T009: excluded from the public repository) ---
+.claude/
+.claude-flow/
+.playwright-mcp/
+.remember/
+.specify/
+
+# --- Separately managed brand package, separate asset licensing (T009) ---
+Branding/
+
+# --- Superseded planning documents, retained locally as research references (T009) ---
+RENVOR_FRAMEWORK_DEVELOPMENT_PLAN.md
+RENVOR_MASTER_IMPLEMENTATION_PLAN.md
