@@ -129,7 +129,7 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 - [X] T049 [P] [US3] Write `SUPPORT.md` from contracts/support-policy.md — fixed MSRV floor, tested toolchains, supported platforms, change rules
 - [X] T050 [US3] Write `README.md` with the development-status notice required by FR-053, one-link navigation to all six governance documents, and a link to `CONSTITUTION.md` — the authoritative public copy at the repository root — stating its version and ratification date (FR-012, FR-053) (depends on T044–T049)
 - [X] T051 [US3] State the generated-output licensing position (FR-050) in `CONTRIBUTING.md` and `README.md` — generated project code carries no Renvor obligation
-- [ ] T052 [US3] Send a test report through the `SECURITY.md` private path, confirm it reaches the monitored contact, and record the test in `governance/phase-001-evidence.md`
+- [X] T052 [US3] Send a test report through the `SECURITY.md` private path, confirm it reaches the monitored contact, and record the test in `governance/phase-001-evidence.md`
 
 **Checkpoint**: Legal, contribution, governance, and security-reporting posture is complete and discoverable.
 
@@ -361,3 +361,28 @@ Applied after `/speckit-analyze`. Seven tasks added, IDs renumbered so they rema
 | Q1 plan.md Phase Status still showed tasks ungenerated | MEDIUM | Phase 2 checked with the current task count; an analysis row and an implementation row added |
 | Q2 plan.md artifact listing omitted `checklists/governance.md` | LOW | Added |
 | Q3 relationship diagram implied the scan and name records were sequential | LOW | Redrawn as two joint-precondition pairs; the ADR block was also realigned and corrected — it had shown ADR-0001 feeding the dependency policy, which ADR-0003 sets |
+
+---
+
+## Phase 10: Web properties and deployment topology (added 2026-08-11)
+
+**Purpose**: `PLAN.md` §26 and ADR-0005/ADR-0006 created new Phase 001 obligations. These are recorded as concrete tasks rather than left in prose. **Every external action below sits behind its own approval gate.**
+
+**Scope note**: Phase 001 *records* topology, ownership, security boundaries, and the deployment decision process. It does **not** create repositories, provision infrastructure, change DNS, or deploy.
+
+- [X] T089 Record the four-repository web-property topology in `PLAN.md` §26 without renumbering the thirty framework phases, and cross-reference it from §18, §19, and phases 001/012/013
+- [X] T090 Write `decisions/0005-web-properties-and-deployment-topology.md` covering repository layouts, privacy rationale, transparency cost, release coupling, documentation source-of-truth, rollback, ownership, rejected alternatives, and the `docs/` migration gate; state `proposed` under **T006**
+- [X] T091 Perform a read-only production-server audit over `ssh hostinger` and record it in `governance/phase-001-evidence.md` §3u with sensitive values redacted; change nothing on the server
+- [X] T092 Write `decisions/0006-production-hosting-and-edge-architecture.md` after the audit, comparing Kubernetes distributions, ingress versus Cloudflare Tunnel, TLS mode, GitOps versus scoped workflow, registry, secrets, backup, rollout/rollback, monitoring, and disaster recovery; state `proposed` under **T006**
+- [X] T093 Write `governance/web-properties-migration-plan.md` defining the V7 landing and documentation migrations, inclusion/exclusion lists, preserved properties, and required links
+- [X] T094 Audit the V7 landing page against actual release state and record the result; **the audit FAILED** — see T095–T097
+- [ ] T095 **RELEASE-HONESTY GATE**: add a prominent development-status notice to the V7 landing page and re-word every present-tense capability claim to state its actual status (blocks any public landing deployment; `PLAN.md` §26.6)
+- [ ] T096 Remove or clearly mark the `renover new` / `renover add` installation commands on the V7 landing page until the referenced crates are publicly installable (depends on T095)
+- [ ] T097 Repoint every V7 CTA at a resolving destination — `crates.io/crates/renvor` is HTTP 404, `docs.renvor.dev/getting-started` does not resolve, `renvor-rs/renvor` is empty — or remove the CTA (depends on T095)
+- [ ] T098 Decide and record the **website-code licence** and the **brand-asset usage terms** for V7; brand assets are NOT covered by the framework `MIT OR Apache-2.0` grant. **Blocks creation of `renvor-rs/renvor-landing`**
+- [ ] T099 Decide and record the **container registry** — GitHub Container Registry versus the GitLab registry already on the VPS — including the credential model. **Blocks creation of the private repositories** (ADR-0006 unresolved question 1)
+- [ ] T100 Add a `.nvmrc` pinning **Node 24** to the landing migration checklist; the framework repository pins Node 22 and the two must not be conflated (depends on T098)
+- [ ] T101 Verify CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) before Cloudflare security headers are enabled (ADR-0006 unresolved question 4)
+- [ ] T102 Re-verify the server audit immediately before any deployment; the host is shared with unrelated production workloads and the 2026-08-11 facts can go stale (ADR-0006 additional gate)
+
+**Checkpoint**: The topology, hosting architecture, and migration plan are recorded and reviewable. No repository has been created, no infrastructure provisioned, no DNS changed, and nothing deployed.

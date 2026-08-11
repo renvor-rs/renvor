@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **58 of 88 tasks complete**. Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
+**Status**: Open — implementation in progress, **65 of 102 tasks complete** (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -696,6 +696,132 @@ rather than merely present.
 Canary re-test: line 679 prose **suppressed**, line 682 injected credential **detected** —
 allowlist still narrow. Test file restored byte-identically; worktree still clean.
 
+## 3t. T052 — security-channel delivery test (2026-08-11)
+
+| Field | Value |
+|---|---|
+| Channel tested | The private reporting path published in `SECURITY.md` — email to **admin@ahmedanbar.dev** |
+| Test message | Subject `[Renvor security channel test] T052`; body stated it was an authorised delivery test containing no vulnerability information or sensitive data |
+| Sent from | A separate mailbox controlled by the maintainer |
+| Delivery confirmed | **2026-08-11, approximately 20:57 Asia/Riyadh** |
+| Evidence type | **Maintainer/operator attestation** that a test message sent through the documented private contact path arrived at the monitored inbox |
+| Attested by | Ahmed Anbar |
+
+Neither the message contents nor any screenshot is committed to this repository.
+
+### What this evidence does and does not establish
+
+**Establishes:** a message addressed to the published security contact reaches a mailbox
+the maintainer monitors. The reporting path in `SECURITY.md` is not a dead address.
+
+**Does NOT establish** — none of the following was tested, and none is claimed:
+
+- SPF, DKIM, or DMARC alignment for the sending or receiving domain;
+- sender-identity verification or anti-spoofing posture;
+- inbound spam-filter behaviour for mail from unknown third-party senders;
+- deliverability from senders outside the maintainer's own control;
+- whether a report from an arbitrary external reporter would avoid a junk folder;
+- acknowledgement-time performance against the 72-hour commitment in `SECURITY.md`.
+
+A single self-originated delivery is the weakest useful form of this test: it proves the
+address exists and is monitored. Testing whether an *unknown external reporter* reaches the
+inbox requires a separate test from an unrelated domain, and is not claimed here.
+
+## 3u. Production server audit — read-only (2026-08-11)
+
+Performed over `ssh hostinger`. **Read-only discovery only.** Nothing was installed,
+started, stopped, restarted, configured, uploaded, or deployed. No firewall, DNS, or
+Cloudflare change was made. Sensitive values are redacted below; no private key, token,
+environment variable, credential file, kubeconfig content, or application secret was
+displayed or retrieved.
+
+### Host
+
+| Item | Observed |
+|---|---|
+| Operating system | **Ubuntu 26.04 LTS** ("Resolute Raccoon"), kernel 7.0.0-22-generic |
+| Lifecycle | LTS release; standard support window applies. Not verified against a published EOL date — treat as an open item before production reliance |
+| Architecture | x86_64, KVM full virtualisation |
+| CPU | **8 vCPU**, AMD EPYC 9354P (1 thread/core) |
+| Memory | **31 GiB** total; ~13 GiB used, **~17 GiB available** |
+| Swap | **0 B** — no swap configured (`vm.swappiness=60`, immaterial without swap) |
+| Disk | 400 GB device; `/` = 387 GB, **328 GB free (16 % used)** |
+| Uptime | 64 days |
+| Automatic updates | `unattended-upgrades.service` running; no explicit periodic/auto-reboot config found |
+
+### Container and orchestration
+
+| Item | Observed |
+|---|---|
+| Kubernetes | **k3s v1.35.5+k3s1 already installed and running** (Go 1.25.9), single node, `control-plane` role, `Ready` |
+| Datastore | **SQLite** — `/var/lib/rancher/k3s/server/db/state.db`; not etcd |
+| Container runtime | containerd v2.2.4 (via k3s), runc 1.3.5, crictl v1.35.0-k3s2 |
+| Docker | **Also installed and running** — Docker 29.5.3, separate from k3s |
+| Tooling present | `kubectl`, `helm`, `k3s`, `crictl` |
+| Not present | kubeadm, kubelet (standalone), k0s, MicroK8s, RKE2, minikube, podman, nerdctl |
+
+### Existing workloads — the server is NOT empty
+
+| Namespace | Workloads |
+|---|---|
+| `attaa` | api, clamav, minio, postgres, redis, web, worker (7 deployments) |
+| `codexhub` | api-gateway, auth-service, billing-service, frontend, mailpit, postgres, redis, dev-tools, task-manager, team-service, user-service (11 deployments) |
+| `portfolio` | portfolio (2 replicas) |
+| `gitlab` | services bridging to a Docker-hosted GitLab CE |
+| `cert-manager` | cert-manager, cainjector, webhook |
+| `kube-system` | coredns, local-path-provisioner, metrics-server, **traefik**, svclb DaemonSet |
+
+Outside Kubernetes, Docker runs **GitLab CE** (`gitlab/gitlab-ce:latest`, healthy, 3 weeks)
+and a BuildKit builder. A `gitlab-runner.service` is also active.
+
+**28 pods running of 110 capacity. Node utilisation: 285 m CPU (3 %), 13,767 MiB (42 %).**
+
+### Ingress, TLS, and ports
+
+| Item | Observed |
+|---|---|
+| Ingress controller | **Traefik 3.6.13**, Helm chart `traefik-39.0.701+up39.0.7`, IngressClass `traefik` |
+| Port binding | `svclb-traefik` DaemonSet with **hostPorts 80 and 443** (klipper-lb). No userspace listener appears in `ss` because klipper-lb uses iptables DNAT |
+| Ports 80/443 | **Occupied** — bound by the svclb DaemonSet and serving existing sites |
+| Host listeners | 22 (via docker-proxy), 6443 (k3s API) |
+| TLS | **cert-manager v1.20.2** with ClusterIssuer `letsencrypt-prod` = `True`; **6 certificates, all `True`** across attaa, codexhub, gitlab, portfolio |
+| Live ingress hosts | `ahmedanbar.dev`, `codexhub.ahmedanbar.dev` |
+
+### Network and firewall
+
+| Item | Observed |
+|---|---|
+| IPv4 | `153.92.208.x` on `eth0` (public) |
+| IPv6 | `2a02:4780:f:88ec::/48` (public, available) |
+| Firewall | **`ufw` inactive.** ~520 iptables rules and 7 nft tables present, essentially all Kubernetes/Docker-managed |
+| Cloudflare software | **`cloudflared` not installed**; no tunnel or Cloudflare pods in the cluster |
+| DNS (external check) | `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers (`coco`/`earl.ns.cloudflare.com`). `renvor.dev` has **no A record**. `ahmedanbar.dev` resolves **directly to the origin IP**, i.e. currently DNS-only, not proxied |
+
+### Backup and recovery
+
+| Item | Observed |
+|---|---|
+| k3s snapshots | **None** — SQLite backend, so the `etcd-snapshot` mechanism does not apply |
+| Backup tooling | **restic, borg, duplicity all absent** |
+| Provider snapshots | Not verifiable from inside the VM; must be confirmed in the Hostinger control panel |
+
+**⚠️ Finding:** all cluster state for five production namespaces lives in a single SQLite
+file with no observed snapshot schedule and no backup tooling installed. This is a
+pre-existing risk affecting workloads unrelated to Renvor. It is recorded, not fixed, and is
+outside Renvor's remit — but it should not go unstated.
+
+### Constraints that shaped ADR-0006
+
+1. **Kubernetes is already installed and serving production traffic.** The task is adding
+   two namespaces, not installing a distribution.
+2. **Ingress and ACME are proven on this exact host** — six valid certificates.
+3. **Ports 80/443 are already owned** by the existing ingress path.
+4. **Zero swap** — memory limits are mandatory; overcommit produces OOM kills that could
+   evict a neighbouring production pod.
+5. **`ufw` is inactive** and the origin IP is already public in DNS for another domain, so
+   origin-bypass mitigation must work without a host firewall change.
+6. **Ample headroom** — 3 % CPU, 42 % memory, 28/110 pods — two static sites are negligible.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
@@ -796,12 +922,16 @@ The phase remains open while any row here is present.
 |---|---|---|---|---|
 | ~~Excluded material in committed `HEAD`~~ | ~~T054~~ | Maintainer | 2026-08-11 | **resolved** — history rewritten, §3o. One residual `refs/codex/*` tree ref proposed for deletion |
 | ~~T041 cannot reach exit 0~~ | ~~Phase closure~~ | Maintainer | 2026-08-11 | **resolved** — task order corrected, both toolchains exit 0, §3q/§3r |
-| **T052 delivery test not yet confirmed**: message drafted and authorised; awaiting the maintainer to send it from a separate mailbox and confirm arrival at `admin@ahmedanbar.dev`. Until then the published security contact has **untested deliverability** | T052 | Maintainer | 2026-08-11 | **open** |
+| ~~T052 delivery test not confirmed~~ | ~~T052~~ | Maintainer | 2026-08-11 | **resolved** — maintainer attestation of arrival, §3t. Note: only delivery was tested; SPF/DKIM/DMARC and external-sender deliverability are **not** claimed |
 | ~~T043 literal form unmet~~ | ~~T043~~ | Maintainer | 2026-08-11 | **resolved** — step 10 reports a clean tree, §3r |
 | **All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted | T026, T039, T040 acceptance | Maintainer | 2026-08-11 | **open** |
 | Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated | Release-control assurance | Maintainer | 2026-08-11 | open |
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
-| **`refs/codex/*` tree ref still exposes the 29 excluded paths** — not a commit, not transmitted by a normal `git push`, but **would be published by `git push --mirror`**. Deletion proposed, not executed | Mirror-push safety | Maintainer | 2026-08-11 | **open** |
+| ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
+| **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — blocks deployment** |
+| **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; creation of `renvor-rs/renvor-landing` | Maintainer | 2026-08-11 | **open** |
+| **Container registry undecided** — GHCR versus the VPS GitLab registry, including credential model | T099; creation of the private repositories | Maintainer | 2026-08-11 | **open** |
+| **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
 | ~~T008 candidate names~~ | ~~T019, T020, T021~~ | Maintainer | 2026-08-11 | resolved — `governance/name-availability.md` |
