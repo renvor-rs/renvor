@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **65 of 102 tasks complete** (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
+**Status**: Open — implementation in progress, **75 of 102 tasks complete**; the public repository is pushed, protected, and scanned (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -821,6 +821,147 @@ outside Renvor's remit — but it should not go unstated.
 5. **`ufw` is inactive** and the origin IP is already public in DNS for another domain, so
    origin-bypass mitigation must work without a host firewall change.
 6. **Ample headroom** — 3 % CPU, 42 % memory, 28/110 pods — two static sites are negligible.
+
+## 3v. T054 — first public push (2026-08-11T23:29Z)
+
+Gate 1 approved by the maintainer, scoped to the public framework repository only.
+
+| Check | Result |
+|---|---|
+| Worktree / index before push | clean; 0 staged paths |
+| Commit identities (all 12) | `Ahmed Anbar <admin@ahmedanbar.dev>` author **and** committer; **0 deviations** |
+| Publish set | 70 files; all 13 exclusion classes absent; 0 credential-shaped paths |
+| Excluded paths in any reachable commit | **0** |
+| Secret scan, history | 1.37 MB, **0 findings** |
+| Secret scan, working tree | **0 findings** |
+| T054 prerequisites | T022 names confirmed; T044 both licences; T045 `SECURITY.md` with T052-attested contact; T053 zero-finding re-scan |
+| Remote before push | **HTTP 409 "Git Repository is empty"**, `git ls-remote` returned 0 refs |
+
+**Remote configured**: `git@github.com:renvor-rs/renvor.git` — the only remote.
+
+**Push command** — one exact refspec, no `--mirror`, `--all`, `--tags`, `--force`, `--force-with-lease`, or wildcard:
+
+```
+git push origin refs/heads/main:refs/heads/main
+```
+
+### Post-push verification
+
+| Check | Result |
+|---|---|
+| Local `main` = remote `main` | `d077844d64cdd7854331afe31ff4c47961af579f` — **identical** |
+| Root tree | `457b09aaeb0088067c3edc5467222cb7a947644e` — **identical** |
+| Remote blobs | **70**, listing not truncated |
+| Excluded paths published | **0** |
+| Tags published | **0** |
+| `refs/codex/*` on remote | **0** |
+
+### The session ref was inventoried, not deleted
+
+A `refs/codex/*` ref had regenerated (`…/1786490358873/…`, tree `457b09aa`). Inventoried
+before the push: **70 entries, 0 excluded paths, 0 blobs unique to it of 66** — a snapshot
+of the same tree as `main`. It was **not** deleted, to avoid the delete/regenerate loop the
+maintainer warned against. The exact refspec structurally cannot carry it, and the remote
+was confirmed to hold zero `refs/codex/*` afterwards.
+
+## 3w. T055–T063 — repository protection and automation (2026-08-11)
+
+### Observed protection baseline — read back from the API, not asserted
+
+| Field | Observed |
+|---|---|
+| Pull request required | **true** |
+| Required approving reviews | **0** — under waiver **W-001** only |
+| Dismiss stale reviews | true |
+| **Enforce for administrators** | **true — no account can bypass, including admins** |
+| Push restrictions | none — protection applies to everyone equally |
+| Required status checks | **`verify (1.94.0)`, `verify (stable)`, `security`, `docs`** |
+| Strict (branch must be current) | true |
+| Linear history required | true |
+| Force pushes | **false** |
+| Deletions | **false** |
+| Conversation resolution required | true |
+
+**Protection was proven, not assumed.** A direct push of the bootstrap branch to `main` was
+attempted and **rejected**: `remote: - Changes must be made through a pull request.`
+`! [remote rejected] bootstrap-ci -> main (protected branch hook declined)` — while
+authenticated as an organization administrator.
+
+### Security controls
+
+| Control | State |
+|---|---|
+| Secret scanning | **enabled** |
+| Secret scanning push protection | **enabled** |
+| Dependabot security updates | **enabled** |
+| Dependency graph / vulnerability alerts | **enabled** (HTTP 204) |
+| Code scanning (CodeQL default setup) | **configured**, languages `["rust"]`, suite `default` |
+| Dependency review | **enabled** via workflow on pull requests |
+| Repository | `public`, default branch `main` |
+
+**Two optional settings could not be enabled** — reported rather than omitted:
+`secret_scanning_non_provider_patterns` and `secret_scanning_validity_checks`. The API
+accepts the PATCH and returns HTTP 200, but both remain `disabled`; they are Secret
+Protection features not available on this repository's tier. **Neither is in the T056
+required set**, so no control required by the specification is missing, and **no
+control-unavailability waiver is created**.
+
+### Workflows and permissions
+
+| Workflow | Top-level permissions | Job elevation | Produces |
+|---|---|---|---|
+| `ci.yml` | `contents: read` | none | `verify (1.94.0)`, `verify (stable)` |
+| `security.yml` | `contents: read` | `pull-requests: read` on the dependency-review job only | `security` |
+| `docs.yml` | `contents: read` | none | `docs` |
+
+`docs.yml` grants **no** `pages: write` or `id-token: write`. The production documentation
+site is a separate repository behind a separate gate, so no deployment permission exists to
+be abused.
+
+**CodeQL is not an advanced workflow.** GitHub rejects a repository configured with both
+default setup and an advanced CodeQL workflow. Default setup is enabled, so `security.yml`
+covers cargo-deny, clippy, and dependency review instead. This is a deliberate choice, not
+an omission.
+
+### Third-party action pinning (T062)
+
+All **6** distinct third-party actions are pinned to full 40-character commit SHAs;
+**0 unpinned**. gitleaks is installed from a pinned release with its archive SHA-256
+verified before extraction — an unverified download inside the job that performs secret
+scanning would undermine the check it exists to run.
+
+### ⚠️ A control was preserved rather than weakened
+
+The first bootstrap run **failed `dependency-review`**: the build-cache action
+`Swatinem/rust-cache` is **LGPL-3.0**, which is not on the `deny.toml` allow-list, and
+dependency review evaluates GitHub Actions as dependencies.
+
+**The allow-list was not widened.** The caching action was removed instead. A build cache
+is a convenience; the licence policy is a control, and adding LGPL-3.0 to the allow-list to
+make a bootstrap job green would have inverted that. Continuous integration runs roughly a
+minute slower and `deny.toml` and dependency review now agree.
+
+### Required checks — first observed results
+
+| Check | Result | Duration |
+|---|---|---|
+| `verify (1.94.0)` | **pass** | 59s |
+| `verify (stable)` | **pass** | 53s |
+| `security` | **pass** | 43s |
+| `docs` | **pass** | 40s |
+| `dependency-review` | pass | 11s |
+| `Analyze (rust)` (CodeQL) | pass | 1m55s |
+| `CodeQL` | pass | 1s |
+
+All well inside the 10-minute performance target in the verification contract.
+
+### Waiver count (SC-008)
+
+| Category | Expected | Actual |
+|---|---|---|
+| Repository **approval** waivers | exactly 1 | **1** — W-001 |
+| **Control-unavailability** waivers | 0 | **0** — every required control was available on the free public tier |
+| Explicit reviewed exceptions | outside the count | 1 — W-002 |
 
 ## 4. Acceptance criteria coverage
 
