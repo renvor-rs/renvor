@@ -1,0 +1,29 @@
+name: Feature request
+description: Propose a capability or a change to a published contract.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Renvor follows a phased plan (`PLAN.md`). A proposal that fits a later phase is
+        still welcome — say which phase you think it belongs to if you know.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is hard or impossible today. Describe the problem, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: A proposal with no rejected alternatives is hard to evaluate.
+    validations:
+      required: true

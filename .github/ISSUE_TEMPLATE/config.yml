@@ -1,0 +1,10 @@
+# Security reports must never arrive as public issues, so the blank-issue escape hatch
+# is closed and the private path is offered first.
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability (private)
+    url: https://github.com/renvor-rs/renvor/blob/main/SECURITY.md
+    about: Never open a public issue for a security problem. Use the private path in SECURITY.md.
+  - name: Support policy and supported versions
+    url: https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md
+    about: Which Rust versions and platforms are supported, and how that changes.

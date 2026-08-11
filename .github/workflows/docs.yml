@@ -1,0 +1,51 @@
+# Documentation site build and link check.
+#
+# This workflow BUILDS and VERIFIES. It does not deploy: the production documentation
+# site is a separate repository and a separate approval gate (PLAN.md Section 26).
+# `pages: write` and `id-token: write` are therefore not granted anywhere in this file.
+# They are added only when a deploy job actually exists, scoped to that job alone.
+
+name: docs
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    # Produces the required check `docs`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: lychee
+
+      # `npm ci`, never `npm install`: the committed lockfile is the input, and a
+      # resolution that differs from it is a failure rather than a convenience.
+      - name: Build documentation site
+        working-directory: docs
+        run: |
+          npm ci
+          npm run build
+
+      # --root-dir is required. The built site uses root-relative links, and without
+      # it every internal link resolves as broken against the local filesystem.
+      - name: Link check
+        run: lychee --no-progress --require-https --config lychee.toml --root-dir "$GITHUB_WORKSPACE/docs/build" docs/build

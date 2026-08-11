@@ -1,0 +1,62 @@
+# Supply-chain and static-analysis gates.
+#
+# CodeQL is NOT run here. It is configured through GitHub's default setup, which is
+# already enabled on this repository. GitHub rejects a repository that has both default
+# setup and an advanced CodeQL workflow, so adding one here would break code scanning
+# rather than strengthen it. Default setup covers Rust, which reached general
+# availability on 2025-10-14.
+
+name: security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Advisories appear after a change is merged, so the gate also runs on a schedule.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security:
+    # Produces the required check `security`.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.94.0"
+          components: clippy
+
+
+      # Licences, advisories, bans, and sources. deny.toml is the authoritative policy.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+
+      - name: clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  dependency-review:
+    # Only meaningful on a pull request: it diffs the dependency graph against the base.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low
+          # Mirrors deny.toml. Divergence between the two is a defect.
+          allow-licenses: MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-3.0, Zlib, CC0-1.0

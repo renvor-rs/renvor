@@ -1,0 +1,36 @@
+# Dependency updates arrive as reviewable pull requests. Unreviewed floating updates
+# are prohibited (FR-020), so every ecosystem the repository uses is covered here.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "build"
+    labels: ["dependencies", "rust"]
+
+  # Pinned action SHAs are immutable, which also means they never update themselves.
+  # Without this ecosystem the pins silently rot into unpatched versions.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies", "github-actions"]
+
+  - package-ecosystem: npm
+    directory: "/docs"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "docs"
+    labels: ["dependencies", "documentation"]
