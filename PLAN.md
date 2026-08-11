@@ -688,6 +688,8 @@ Before a phase is accepted:
 
 Documentation is versioned and searchable. The documentation stack is selected and recorded in Phase 001 rather than assumed accepted.
 
+The production documentation site, its repository, its domain, and the rule that the API reference is generated from an immutable framework artifact are defined in Section 26. Section 26 also governs the temporary Phase 001 `docs/` directory and the single gate at which it is replaced.
+
 Required sections by 1.0:
 
 - installation and toolchain support;
@@ -756,6 +758,8 @@ Every phase below inherits all common gates in Sections 16–19.
 **Deliverables:** ratified constitution; name availability report; naming ADR; Rust 2024 workspace; resolver 3; explicit MSRV policy; license; repository policies; secure `.gitignore`; toolchain and dependency update policy; package/license research; documentation stack ADR; continuous-integration skeleton; security and release documents.
 
 **Acceptance:** clean checkout passes formatting/lint/test/doc placeholders; secrets and build output are ignored; workflow permissions are minimal; all public names are confirmed; no ADR is falsely marked accepted; release dry-run workflow can package a placeholder internal crate without publishing.
+
+**Web properties (Section 26):** Phase 001 records the four-repository topology, ownership, security boundaries, and the deployment decision process only. It does **not** create the private repositories, provision infrastructure, change DNS, or deploy any site. Each of those is a separate approval gate.
 
 ### Phase 002 — Core kernel, errors, configuration, and lifecycle
 
@@ -845,6 +849,8 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Acceptance:** documentation builds without broken links; commands run from clean environments; examples are exercised in continuous integration; claims link to evidence; all current limitations are visible.
 
+**Web properties (Section 26):** the versioned documentation set is prepared in `renvor-rs/renvor-docs` and served at `docs.renvor.dev`, with the API reference generated from an immutable framework artifact. Prerelease status remains stated on every public property until Phase 013 passes.
+
 ### Phase 013 — REST 1.0 stabilization and crates.io release
 
 **Depends on:** 001–012.
@@ -852,6 +858,8 @@ Every phase below inherits all common gates in Sections 16–19.
 **Deliverables:** release candidates; compatibility report; security review; performance baselines; semver/API audit; crates.io package set; signed GitHub release; SBOM, provenance, release notes, migration/support policies.
 
 **Acceptance:** exhaustive backend matrix passes; independent security blockers are resolved; clean public-registry installation succeeds; published docs resolve; rollback/yank procedure is rehearsed; REST 1.0 support window is declared.
+
+**Web properties (Section 26):** this is the first phase in which the documentation and landing content may make general-availability claims, and only after these release gates pass and the crates are publicly installable. Until then Section 26.6 applies without exception.
 
 ### Phase 014 — GraphQL foundation
 
@@ -1495,3 +1503,166 @@ Do not pre-generate specifications or tasks for all 30 phases. The roadmap remai
 - Tailwind CSS documentation: <https://tailwindcss.com/docs/installation/framework-guides/nextjs>
 - GitHub artifact attestations: <https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations>
 - OpenTelemetry specifications: <https://opentelemetry.io/docs/specs/>
+
+## 26. Web properties and deployment topology
+
+Added 2026-08-11. This section is authoritative for the public websites and their delivery.
+It adds no framework phase and renumbers nothing in Section 20; the thirty framework phases
+are unchanged. Decisions here are recorded in ADR-0005 and ADR-0006.
+
+### 26.1 Repository topology
+
+Four repositories under the `renvor-rs` organization, each with one owner and one purpose:
+
+| Repository | Visibility | Source of truth for | Must never contain |
+|---|---|---|---|
+| `renvor-rs/renvor` | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
+| `renvor-rs/renvor-landing` | **Private** | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-docs` | **Private** | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
+| `renvor-rs/renvor-deploy` | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+
+**Private source, public site.** A private repository does not imply a private website. All
+four deployed properties are publicly reachable; only the *source* of the three website and
+deployment repositories is restricted.
+
+**The framework repository never depends on the other three.** Compiling, testing,
+packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
+alone. A build that requires a private repository is a defect.
+
+### 26.2 Canonical domains
+
+| Property | Domain | Serves |
+|---|---|---|
+| Landing | `https://renvor.dev` | `renvor-rs/renvor-landing` |
+| Documentation | `https://docs.renvor.dev` | `renvor-rs/renvor-docs` |
+| Redirect | `www.renvor.dev` | HTTP 301 to `https://renvor.dev` |
+
+`renvor.dev` is the canonical domain. No other spelling is a project domain, and any
+near-miss spelling encountered in drafts is an error to be corrected, never registered.
+
+### 26.3 Responsibility boundaries
+
+**Cloudflare** owns authoritative DNS, edge TLS, proxying, caching, security headers, and
+abuse controls. It does not own application content.
+
+**Hostinger VPS** owns the origin: the Kubernetes cluster, workload scheduling, origin TLS,
+and persistent state. It does not own DNS.
+
+**GitHub** owns source, review, and the automation that builds and signs container images.
+It holds no long-lived infrastructure credential where a short-lived identity is available.
+
+The boundary matters at incident time: a DNS or edge fault is a Cloudflare action, an origin
+fault is a cluster action, and a content fault is a repository action. Confusing them
+lengthens outages.
+
+### 26.4 Container image ownership
+
+Every deployed property ships as a container image built from a private repository:
+
+- images are built by repository automation, never by hand on the server;
+- images are referenced **by immutable digest** in deployment manifests, never by a mutable
+  tag such as `latest`;
+- images carry a signature, an SBOM, and build provenance;
+- images are scanned for vulnerabilities before promotion;
+- image storage is private, and the cluster authenticates with a narrowly scoped, rotatable
+  pull credential.
+
+### 26.5 Promotion and rollback
+
+Promotion is one direction: **build → scan → sign → publish by digest → deploy by digest**.
+
+Rollback is redeploying the **previous known-good digest**. It is not a rebuild, not a
+revert commit awaiting a build, and not a manual edit on the server. The previous digest is
+recorded in release evidence so rollback needs no investigation to execute.
+
+A deployment that cannot be rolled back by digest is not production-ready.
+
+### 26.6 Release-status truthfulness
+
+**This is a release gate, not a style preference.**
+
+Until REST 1.0 is actually published to crates.io, every public property MUST state clearly
+that Renvor is in development or prerelease. The sites may look production-quality; they
+MUST NOT claim that unavailable crates, commands, integrations, benchmarks, or support
+guarantees already exist.
+
+Concretely, before any public deployment:
+
+- an installation command may be shown only if the referenced crate is publicly installable
+  at that moment;
+- a capability that is planned or disabled must be labelled as planned or disabled where it
+  appears, not only in a footnote;
+- a link must resolve, or must not be presented as a working link;
+- no benchmark or performance claim may appear without published, reproducible measurement;
+- no support or availability guarantee may appear before the support policy covers it.
+
+Constitution principle X — no claim exceeding measurement — applies to marketing copy
+exactly as it applies to code.
+
+### 26.7 Documentation versioning and API-reference sourcing
+
+`docs.renvor.dev` carries versioned documentation, one version per published minor release,
+with a version selector and a visible support/compatibility status.
+
+**The API reference is generated from an immutable framework artifact** — a signed release
+tag or the published crate — never from a moving branch. The documentation repository
+records the exact tag or digest it built from, so any published page can be traced to the
+framework revision it describes.
+
+**Rust API documentation and crate metadata remain docs.rs- and crates.io-compatible.** The
+private documentation site is an addition, never a replacement, and never a prerequisite for
+publishing a crate.
+
+### 26.8 How private website repositories consume the public framework
+
+The website repositories consume the framework only through **published, versioned
+artifacts**: a release tag, a published crate, or a release asset addressed by digest.
+
+**Copying unversioned framework source into a website repository is prohibited.** It creates
+a second source of truth that silently drifts from the framework it claims to document. Any
+synchronisation is an explicit, recorded, versioned step in automation, never a manual copy.
+
+### 26.9 Secrets
+
+No repository — public or private — contains a plaintext secret.
+
+- Prefer short-lived, standards-based identity (OIDC) wherever the target service supports it.
+- Where only a long-lived credential exists, it is minimum-scope, stored in a protected
+  environment secret, rotated on a recorded schedule, and revocable within minutes.
+- Cluster secrets are managed in the cluster, not in Git. If encrypted configuration is
+  committed, only the ciphertext is committed and the decryption key never is.
+- No workflow prints a secret value into a log.
+- Every credential has a named owner and a written revocation procedure before it is created.
+
+### 26.10 Independent review and release
+
+Landing, documentation, and deployment change independently. Each of the three private
+repositories has a protected `main`, required pull requests, required checks, a separate
+preview gate, and a protected production environment. A landing-page change cannot ship a
+documentation change, and neither can ship a cluster change.
+
+### 26.11 Integration with the phased roadmap
+
+This section changes no phase boundary. It adds obligations to existing phases:
+
+| Phase | Obligation added |
+|---|---|
+| **Phase 001** | Record the topology, ownership, security boundaries, and the deployment decision process. Phase 001 does **not** create the private repositories, provision infrastructure, or deploy anything. |
+| **Phase 012** | Prepare the complete versioned production documentation set on `docs.renvor.dev`. |
+| **Phase 013** | REST 1.0 documentation and landing content may make general-availability claims **only after** the Phase 013 release gates pass and the crates are publicly installable. |
+| Later release phases | The same two sites are updated for the GraphQL, full-stack, desktop, and package releases, under the same truthfulness rule. |
+
+### 26.12 Phase 001 `docs/` directory — deliberate temporary duplication
+
+Phase 001 contains a working Docusaurus site at `docs/` that satisfies FR-054 and FR-056 and
+carries the T064–T069 evidence.
+
+It **stays where it is for the remainder of Phase 001.** Moving it now would invalidate
+completed, dated verification evidence and would replace a proven artifact with an unproven
+one mid-phase.
+
+It is **the documentation-platform proof, not the production documentation site.** To
+prevent two long-lived sources of truth, the migration to `renvor-rs/renvor-docs` has its own
+reviewed gate, and on the day that gate passes the Phase 001 `docs/` directory is removed
+from the framework repository in the same change that stands up the replacement. The two
+never coexist as published sites.
