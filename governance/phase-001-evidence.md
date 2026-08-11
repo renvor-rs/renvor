@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **50 of 88 tasks complete**. Stopped before T054 (first push) pending maintainer approval. Four tasks are open out of sequence: T041, T043, T052, and all ADR acceptances.
+**Status**: Open — implementation in progress, **58 of 88 tasks complete**. Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -502,6 +502,200 @@ proposed for publication rather than the T013 state.
 **PASS.** The allowlist still suppresses exactly one prose match and nothing else. Test
 file restored byte-identically (hash compared).
 
+## 3o. Unpublished-history remediation (2026-08-11, local only — **nothing pushed**)
+
+Clears the §3b blocker. Authorised as a local-only pass.
+
+### Backup taken first
+
+| Field | Value |
+|---|---|
+| Path | `/Users/ahmedanbar/Documents/renvor-pre-rewrite-backup-2026-08-11.tar.gz` |
+| Size / permissions | 709,415 bytes · `-rw-------` |
+| SHA-256 | `b13f370b5b3639b68b625e3036d4b05a7c456fc1ba3b840925361276f6a3067c` |
+| Contents | Complete `.git` (index included), all tracked and staged changes, all untracked Phase 001 files, `.claude/` (12 files), `.specify/` (20 files). Excludes `target/` (regenerable) and `Branding/` (1.4 GB, untouched by this pass) |
+| Restore test | Extracted to a fresh `mktemp -d`; `git fsck --full --strict` **clean**; 2 commits, 149 objects; staged `.gitignore` blob `6b30b390…` present in the restored index; **all 116 files byte-identical** |
+
+### The rewrite
+
+```
+git filter-repo --partial --invert-paths --path .claude --path .specify \
+  --name-callback  'return b"Ahmed Anbar"' \
+  --email-callback 'return b"admin@ahmedanbar.dev"' \
+  --force
+```
+
+`--partial` was chosen deliberately: filter-repo otherwise runs
+`git reflog expire --expire=now --all` and `git gc --prune=now` automatically, and both
+were prohibited for this pass. `--partial` disables both. **No `--force` flag was used on
+any rustup or git-gc operation**; the `--force` here is filter-repo's "not a fresh clone"
+acknowledgement.
+
+### Commit `1b182d0` was removed entirely, not rewritten
+
+`1b182d0 "Initialization"` contained **29 files, all of them `.claude/` or `.specify/`** —
+nothing else. Stripping the excluded paths emptied it completely, so it was pruned rather
+than preserved as an empty commit. History went from 2 commits to 1
+(`bfb6925` → `1b772d2`, retaining `PLAN.md`).
+
+### Collateral damage from filter-repo's hard reset — detected and repaired
+
+Removing the paths from history caused the post-filter reset to delete them from **disk**,
+and to discard uncommitted tracked changes:
+
+| Item | After rewrite | Restored from backup |
+|---|---|---|
+| `.claude/` | 12 files → **2** | ✅ 12 files |
+| `.specify/` | 20 files → **1** | ✅ 20 files |
+| `.gitignore` | **deleted** | ✅ restored |
+| `PLAN.md` | reverted to the committed version | ✅ worktree version restored |
+
+**Post-restore verification: all 98 project files byte-identical to the pre-rewrite
+state.** The only four differing files were live session-tooling scratch
+(`.remember/tmp/*`, `.remember/logs/*`, `.claude-flow/neural/stats.json`), which mutate
+continuously and are unrelated to the rewrite.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `git ls-files .claude .specify` | **empty** ✅ |
+| Excluded paths in any reachable commit | **0** ✅ |
+| `.claude/` and `.specify/` on disk and ignored | 12 and 20 files, both `ignored=yes` ✅ |
+| Every commit author **and** committer | `Ahmed Anbar <admin@ahmedanbar.dev>` — 0 deviations ✅ |
+| Remotes / anything pushed | 0 / nothing ✅ |
+| Both backups after the rewrite | checksums `OK` ✅ |
+| Reflogs expired, gc, prune | **none run** — 23 reflog entries retained ✅ |
+
+Identity normalisation was substantive, not cosmetic: `1b182d0` carried
+`Ahmed anbar <begnulinux@gmail.com>` (lower-case surname, personal address).
+
+### ⚠️ Residual — one ref still exposes the excluded content
+
+```
+refs/codex/turn-diffs/checkpoints/…/99099561-cbf1-4907-abbd-27ed9c29dcf3
+  -> tree b4c29fd5e63c5990459f1bdff1ca741f390ab470  (29 excluded paths)
+```
+
+A session-tooling checkpoint ref pointing at a **tree**, not a commit. It therefore does
+not violate "no reachable commit contains the excluded paths", and `git push` does not
+transmit `refs/codex/*`. **But `git push --mirror` would publish it.** Left in place
+pending a maintainer decision; deleting it may break that tool's checkpoint history.
+
+**Proposed remediation** (not executed): `git update-ref -d '<the ref>'`, which is a ref
+deletion, not a prune, gc, or reflog expiry.
+
+## 3p. Local Rust `stable` channel — diagnosed and repaired (2026-08-11)
+
+### Diagnosis
+
+The `stable` toolchain directory was **1.3 GB**, against 520 MB for `1.94.0` and 563 MB for
+`1.97.1`. Its component ledger had desynchronised from the filesystem:
+
+| `lib/rustlib/components` lists | Manifests and files also present for |
+|---|---|
+| `rust-src`, `cargo`, `clippy-preview`, `rustc`, `rustfmt-preview` | **`rust-std-aarch64-apple-darwin`**, **`rust-docs-aarch64-apple-darwin`** |
+
+rustup therefore believed `rust-std` and `rust-docs` were absent, tried to install them,
+and found their files already on disk — `detected conflict: 'share/doc/rust/html'`.
+Separately, stale non-empty directories under `rust-src` blocked rustup's rename-based
+file swaps — `Directory not empty (os error 66)`. An interrupted rustup run left it
+inconsistent; `rustup update stable` could never converge.
+
+### Repair — scoped to the named stale installation only
+
+```
+rustup toolchain uninstall stable
+rustup toolchain install stable --component rustfmt --component clippy --component rust-src
+```
+
+**No `--force` was used.** Only `~/.rustup/toolchains/stable-aarch64-apple-darwin` was
+removed. `1.94.0` and `1.97.1` live in separate directories and were untouched — `1.97.1`'s
+directory mtime remains 2026-08-03, predating this session.
+
+### Proof
+
+| Check | Result |
+|---|---|
+| `rustc +stable --version` | **`rustc 1.97.1 (8bab26f4f 2026-07-14)`** |
+| `cargo +stable --version` | `cargo 1.97.1 (c980f4866 2026-06-30)` |
+| Differs from the MSRV | **stable 1.97.1 ≠ MSRV 1.94.0** ✅ |
+| `rustc +1.94.0 --version` | `rustc 1.94.0 (4a4ef493e 2026-03-02)` — unchanged |
+| Upstream agreement | rustup: "latest update on 2026-07-16 for version 1.97.1" |
+
+**The two verification jobs now exercise genuinely different compilers.** Before the
+repair, `stable` resolved to 1.94.0 and the "stable" job would have duplicated the MSRV job
+while appearing to pass.
+
+## 3q. T064–T069 — documentation package, and the corrected task ordering
+
+### The ordering defect, corrected without weakening the check
+
+Verification step 8 builds `docs/`. As originally numbered, **T041** (run verification) sat
+in Phase 4 while **T064** (scaffold the documentation site) sat in Phase 7, behind the
+**T054** first-push gate — so T041 could never reach exit 0.
+
+**The fix was to move the work, not to weaken the gate.** The documentation check was not
+made optional, not made conditional, and not skipped; `tasks.md` now records that T064,
+T065, and T067 precede T041.
+
+### What was built
+
+| Task | Artifact |
+|---|---|
+| T064 | Docusaurus **3.10.2** in `docs/`, `@easyops-cn/docusaurus-search-local` (local index — `build/search-index.json` ships with the site, no hosted service, FR-054), `docs/package-lock.json` committed (1,320 packages) |
+| T065 | `.nvmrc` pinning the Node **22** LTS line |
+| T066 | `decisions/0004-documentation-platform-and-versioning.md` — mdBook, MkDocs+Material, Zola, and Algolia DocSearch recorded as rejected with reasons; Node cost and 1,320-package surface disclosed. State `proposed` |
+| T067 | Five pages: intro, support-policy, verification, governance, api-reference. Scaffold tutorial content, blog, and unused Docusaurus-branded assets removed |
+| T068 | lychee wired into `xtask` step 9 with `lychee.toml` |
+| T069 | Shared version-stamp partial `docs/docs/_stamp.mdx` imported by **every** prose page and the API reference — one value, so prose and API cannot drift (FR-056) |
+
+### Link checking required real configuration, twice
+
+A naive `lychee docs/build` reported **142 errors**, none of them broken links:
+
+1. **Root-relative links** (`/docs/intro`) cannot be resolved against the filesystem
+   without `--root-dir`. Without it every internal link reads as broken — 142 false
+   failures that would train a reader to ignore the step. `--root-dir` is now mandatory in
+   step 9.
+2. **Three residual errors** were lychee parsing inline `url("data:image/svg+xml;…")`
+   values inside Docusaurus's bundled CSS as file paths — a parser false positive on
+   generated output containing no authored hyperlinks.
+
+`lychee.toml` records three exclusions, each with an explicit removal condition: EX-001
+`renvor.dev` (site not deployed), EX-002 `docs.rs/renvor` (crate not published), EX-003 the
+generated CSS bundle. **Final result: 225 OK, 0 errors, 32 excluded.**
+
+## 3r. T041 / T043 — full verification, both toolchains, exit 0
+
+Run against the exact committed state (`ddfc39d`, 8 commits, clean worktree).
+Operator: Ahmed Anbar. Platform `darwin/aarch64`.
+
+| Run | Toolchain | Compiler | Started (UTC) | Steps | **Exit** |
+|---|---|---|---|---|---|
+| 1 | MSRV `1.94.0` | `rustc 1.94.0 (4a4ef493e 2026-03-02)` | 17:27:32 | **all 10 passed** | **0** ✅ |
+| 2 | `stable` (repaired) | `rustc 1.97.1 (8bab26f4f 2026-07-14)` | 17:28:06 | **all 10 passed** | **0** ✅ |
+
+```
+verification passed: all 10 steps ran and passed.
+```
+
+**T043 is satisfied in its literal form**: step 10 reports `no untracked or modified files`.
+`git status --porcelain` is empty after a full run, proving the ignore rules are correct
+rather than merely present.
+
+## 3s. T053 — final re-scan over the exact proposed commits
+
+`2026-08-11T17:28:52Z`, against `HEAD ddfc39d`, 8 commits, clean worktree.
+
+| Scan | Scope | Findings |
+|---|---|---|
+| `gitleaks git .` | **all 8 commits**, 1.29 MB | **0** |
+| `gitleaks dir .` | working tree, 6.57 MB of text | **0** |
+
+Canary re-test: line 679 prose **suppressed**, line 682 injected credential **detected** —
+allowlist still narrow. Test file restored byte-identically; worktree still clean.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
@@ -600,14 +794,15 @@ The phase remains open while any row here is present.
 
 | Blocker | Blocks | Owner | Raised | State |
 |---|---|---|---|---|
-| **Excluded material (`.claude/` 10 files, `.specify/` 19 files) present in committed `HEAD`** — see §3b. `.gitignore` cannot remove what is already committed; pushing as-is publishes all 29 permanently | **T054 first content push** | Maintainer | 2026-08-11 | **open — highest priority** |
-| **T041 cannot reach exit 0**: verification step 8 needs `docs/package.json`, created by **T064**, which is numbered *after* the T054 push gate. A task-ordering defect in `tasks.md`, not a code fault. Steps 1–7 pass on both toolchains | Phase closure; T041 must be re-run after T064 | Maintainer | 2026-08-11 | **open** |
-| **T052 not executed**: sending a test report through the `SECURITY.md` private path is an outward-facing action that was not authorised in this pass. **`admin@ahmedanbar.dev` is published in `SECURITY.md` with untested deliverability** | T052; confidence in the published security contact | Maintainer | 2026-08-11 | **open** |
-| **T043 literal form unmet**: `git status --porcelain` cannot be empty before the initial commit, which is deliberately deferred to the T054 approval. The substantive control — a verification run introduces no untracked or modified files, 862 build artefacts correctly ignored — is proven in §3k | T043 closure | Maintainer | 2026-08-11 | open (substantively satisfied) |
+| ~~Excluded material in committed `HEAD`~~ | ~~T054~~ | Maintainer | 2026-08-11 | **resolved** — history rewritten, §3o. One residual `refs/codex/*` tree ref proposed for deletion |
+| ~~T041 cannot reach exit 0~~ | ~~Phase closure~~ | Maintainer | 2026-08-11 | **resolved** — task order corrected, both toolchains exit 0, §3q/§3r |
+| **T052 delivery test not yet confirmed**: message drafted and authorised; awaiting the maintainer to send it from a separate mailbox and confirm arrival at `admin@ahmedanbar.dev`. Until then the published security contact has **untested deliverability** | T052 | Maintainer | 2026-08-11 | **open** |
+| ~~T043 literal form unmet~~ | ~~T043~~ | Maintainer | 2026-08-11 | **resolved** — step 10 reports a clean tree, §3r |
 | **All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted | T026, T039, T040 acceptance | Maintainer | 2026-08-11 | **open** |
 | Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated | Release-control assurance | Maintainer | 2026-08-11 | open |
-| ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — authorised and executed, §3e |
-| Local `stable` toolchain stale at 1.94.0; `rustup update stable` fails with a component conflict (os error 66), `--force` likewise | Meaningful local two-toolchain verification — `stable` and the MSRV job would otherwise exercise the same compiler. CI is unaffected. | Maintainer | 2026-08-11 | **open** |
+| ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
+| **`refs/codex/*` tree ref still exposes the 29 excluded paths** — not a commit, not transmitted by a normal `git push`, but **would be published by `git push --mirror`**. Deletion proposed, not executed | Mirror-push safety | Maintainer | 2026-08-11 | **open** |
+| ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
 | ~~T008 candidate names~~ | ~~T019, T020, T021~~ | Maintainer | 2026-08-11 | resolved — `governance/name-availability.md` |
 | ~~T009 publish-set decisions~~ | ~~T010 and the cleanup chain~~ | Maintainer | 2026-08-11 | resolved — §3a |

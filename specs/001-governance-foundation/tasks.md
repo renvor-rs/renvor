@@ -107,9 +107,9 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 - [X] T038 [US2] Assert minimum-version-aware dependency resolution is **in effect**, not merely configured, and record the observation in `governance/phase-001-evidence.md` (SC-016)
 - [X] T039 [P] [US2] Write `decisions/0002-workspace-boundaries-and-facade-stability.md`; accept only under the review process settled at **T006**
 - [X] T040 [P] [US2] Write `decisions/0003-msrv-toolchain-and-dependency-policy.md` recording the fixed-floor MSRV of 1.94.0, the six-month dwell time, the quarterly review that changes nothing by itself, and the Phase 006 revalidation obligation; accept only under **T006**
-- [ ] T041 [US2] **BLOCKED — re-run required after T064.** Run `cargo xtask verify` under `1.94.0` and under `stable`; record both runs with platform, operator, date, and result in `governance/phase-001-evidence.md`
+- [X] T041 [US2] **(depends on T064, T065, T067 — corrected ordering)** Run `cargo xtask verify` under `1.94.0` and under `stable`; record both runs with platform, operator, date, and result in `governance/phase-001-evidence.md`
 - [X] T042 [US2] Run `cargo xtask verify` with the optional tooling removed from `PATH` and confirm exit code 2 with the "no checks were run" line; record the result (FR-023)
-- [ ] T043 [US2] **BLOCKED — needs the initial commit (T054).** Substantive control already proven: a full run introduces no untracked or modified files, and 862 build files are correctly ignored. Confirm `git status --porcelain` is empty after a full verification run, proving the ignore rules from T010 are correct
+- [X] T043 [US2] Confirm `git status --porcelain` is empty after a full verification run, proving the ignore rules from T010 are correct
 
 **Checkpoint**: The repository verifies itself from a clean checkout on both toolchains, and fails closed when it cannot.
 
@@ -163,12 +163,12 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 
 **Independent Test**: Read the decision record for alternatives, criteria, decision, consequences, and owner; then build the documentation set from a clean checkout and run link checking.
 
-- [ ] T064 [US5] Scaffold Docusaurus 3.10.x in `docs/` with the local/offline search plugin rather than a hosted index, and commit `docs/package-lock.json` (FR-054)
-- [ ] T065 [P] [US5] Add `.nvmrc` pinning the Node LTS line, referenced by both contributors and CI
-- [ ] T066 [US5] Write `decisions/0004-documentation-platform-and-versioning.md` naming Docusaurus, recording mdBook, MkDocs+Material, and Zola as rejected with reasons, the accepted Node toolchain cost, the versioning cadence, and a named owner; accept only under the review process settled at **T006**
-- [ ] T067 [US5] Create the placeholder documentation set under `docs/docs/` sufficient to exercise build and link checking
-- [ ] T068 [US5] Wire lychee link checking into `xtask` verify step 9 and into `.github/workflows/docs.yml`
-- [ ] T069 [US5] Establish the prose↔API documentation cross-link and version stamp so both describe the same contract at the same version (FR-056)
+- [X] T064 [US5] Scaffold Docusaurus 3.10.x in `docs/` with the local/offline search plugin rather than a hosted index, and commit `docs/package-lock.json` (FR-054)
+- [X] T065 [P] [US5] Add `.nvmrc` pinning the Node LTS line, referenced by both contributors and CI
+- [X] T066 [US5] Write `decisions/0004-documentation-platform-and-versioning.md` naming Docusaurus, recording mdBook, MkDocs+Material, and Zola as rejected with reasons, the accepted Node toolchain cost, the versioning cadence, and a named owner; accept only under the review process settled at **T006**
+- [X] T067 [US5] Create the placeholder documentation set under `docs/docs/` sufficient to exercise build and link checking
+- [X] T068 [US5] Wire lychee link checking into `xtask` verify step 9 and into `.github/workflows/docs.yml`
+- [X] T069 [US5] Establish the prose↔API documentation cross-link and version stamp so both describe the same contract at the same version (FR-056)
 
 **Checkpoint**: Documentation platform is decided on evidence and builds clean.
 
@@ -253,6 +253,7 @@ The requested sequence placed workspace creation before repository cleanup. Clea
 
 - **Phase 1**: T001–T005 all parallel
 - **Phase 2**: T006–T009 parallel with each other; T010→T011→T012→T013 strictly sequential — order is load-bearing
+- **CORRECTED 2026-08-11 — T064, T065, T067 MUST precede T041.** Verification step 8 builds `docs/`, so `cargo xtask verify` cannot reach exit 0 until the documentation package exists. As originally numbered, T041 sat in Phase 4 while T064 sat in Phase 7 behind the T054 push gate, making T041 unreachable. The documentation check was **not** made optional and was **not** skipped; the task order was corrected instead.
 - **US1**: T016, T017 parallel; T019–T021 parallel once T008 lands
 - **US2**: T028, T029, T032 parallel; T039, T040 parallel
 - **US3**: T044–T049 all parallel (six separate documents)
