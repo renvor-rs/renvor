@@ -1,0 +1,49 @@
+---
+sidebar_position: 1
+title: Introduction
+description: What Renvor is, and what it is not, as of this release.
+---
+
+import Stamp from './_stamp.mdx';
+
+# Renvor
+
+<Stamp />
+
+## Renvor does not work yet
+
+**This project ships no runtime capability.** The published `renvor` crate exposes three
+constants and nothing else. There is no framework here to use, and no API to learn.
+
+What exists today is the *foundation*: governance, verified public names, a pinned
+toolchain, a licence policy, a fail-closed verification sequence, and repository security
+controls — built deliberately before any code, so the first line of functionality lands
+into a project that can already verify and govern itself.
+
+**Do not adopt Renvor for anything yet.** Nothing is stable, and no compatibility promise
+applies before a `0.1.0` release.
+
+## The command is `renover`
+
+The product is **Renvor**. The installed executable is **`renover`**.
+
+That difference is deliberate and permanent. It is **not** a typographical error.
+
+| Thing | Name |
+| --- | --- |
+| Product, framework, organization | `Renvor` |
+| Facade crate | `renvor` |
+| CLI crate | `renvor-cli` |
+| Executable you type | **`renover`** |
+| Project state directory | `.renvor/` |
+| Environment prefix | `RENVOR_` |
+
+The reasoning, with the alternatives that were rejected, is recorded in decision record
+ADR-0001 in the repository.
+
+## Where to go next
+
+- [Support policy](./support-policy.mdx) — which Rust versions and platforms are promised
+- [Verification](./verification.mdx) — the single command that checks everything
+- [Governance](./governance.mdx) — who decides what, and how exceptions are recorded
+- [API reference](./api-reference.mdx) — the generated documentation for the crate

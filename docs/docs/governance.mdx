@@ -1,0 +1,66 @@
+---
+sidebar_position: 4
+title: Governance
+description: Who decides what, and how exceptions are recorded rather than hidden.
+---
+
+import Stamp from './_stamp.mdx';
+
+# Governance
+
+<Stamp />
+
+The [Renvor Constitution](https://github.com/renvor-rs/renvor/blob/main/CONSTITUTION.md) —
+version 1.0.0, ratified 2026-08-11 — is the highest authority in this project. Where any
+other document conflicts with it, the constitution wins and the conflict is a defect in
+the other document.
+
+## Decision records
+
+Substantial architectural decisions are recorded in the repository's `decisions/`
+directory. Numbers are four digits, monotonic, and never reused: a rejected or superseded
+record keeps its number forever, so references to it never silently retarget.
+
+**A decision with no rejected alternatives was not a decision.** The template requires
+alternatives with reasons.
+
+## One maintainer, stated plainly
+
+Renvor currently has a single maintainer, who holds every role: decision authority,
+security contact, release approver, and registry owner.
+
+That concentration is the root cause of both active waivers, and it is disclosed rather
+than distributed across several titles to look larger than it is.
+
+## Waivers
+
+The constitution permits exceptions only through a **time-bounded written waiver**
+recording seven fields: the violated rule, the reason, compensating controls, the owner,
+the expiry, the removal plan, and the status.
+
+Rules that make a waiver a waiver rather than a loophole:
+
+- **An absolute expiry date is mandatory.** A condition may accompany it, and the waiver
+  ends at whichever arrives first. A condition alone is never enough — a condition that
+  never occurs would never expire.
+- **Compensating controls must be specific to the gap.** A control that another rule
+  already mandates unconditionally compensates for nothing.
+- **Security release blockers cannot be waived.**
+
+Two waivers are active, both expiring 2027-02-11 or when a second maintainer joins:
+
+| ID | Gap |
+| --- | --- |
+| **W-001** | No second person can approve a pull request |
+| **W-002** | No independent reviewer exists for decision records |
+
+Under W-002, decision-record review is a **structured self-review**, and it is never
+described as independent. Every Phase 001 decision record currently remains `proposed`
+rather than `accepted`, because one of W-002's compensating controls — all required CI
+checks passing — is not yet met.
+
+## Branch protection
+
+`main` is protected. A change reaches it only through a pull request with all required
+checks passing. **No account holds bypass permission, including administrators** — that is
+unconditional and is not what W-001 waives.

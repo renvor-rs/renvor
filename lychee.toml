@@ -1,0 +1,46 @@
+# Renvor link-check configuration (verification step 9).
+#
+# POLICY: exclusions must be narrow and individually justified, with a stated condition
+# for removal. A broad exclusion turns link checking into decoration.
+
+# Don't hammer the same host; be a polite citizen of other people's infrastructure.
+max_concurrency = 8
+timeout = 20
+retry_wait_time = 2
+max_retries = 2
+
+# Some hosts refuse requests without a browser-like agent and return 403, which would be
+# a false failure rather than a broken link.
+user_agent = "Mozilla/5.0 (compatible; lychee link checker; +https://renvor.dev)"
+
+# GitHub returns 429 under rate limiting; that is not a broken link.
+accept = ["200..=299", "429"]
+
+exclude = [
+  # ---------------------------------------------------------------------------
+  # EX-001 — the documentation site is not deployed yet
+  # ---------------------------------------------------------------------------
+  # `https://renvor.dev/...` appears in the generated sitemap and canonical tags
+  # because `url` is set to the production domain. The domain is owned by the
+  # project but nothing is served from it yet, so every such link fails.
+  # REMOVE WHEN: the documentation site is first deployed to renvor.dev.
+  '^https://renvor\.dev',
+
+  # ---------------------------------------------------------------------------
+  # EX-002 — the crate is not published yet
+  # ---------------------------------------------------------------------------
+  # The API reference links to docs.rs/renvor, which 404s until the first
+  # publication. Phase 001 deliberately publishes nothing (FR-049).
+  # REMOVE WHEN: `renvor` is first published to crates.io.
+  '^https://docs\.rs/renvor',
+]
+
+# ---------------------------------------------------------------------------
+# EX-003 — Docusaurus' bundled CSS, excluded from scanning
+# ---------------------------------------------------------------------------
+# The generated CSS bundle contains inline `url("data:image/svg+xml;...")` values.
+# lychee parses those data URIs as relative file paths and reports them as missing
+# files — a parser false positive, not a broken link. The bundle is generated
+# output containing no authored hyperlinks.
+# REMOVE WHEN: lychee no longer treats inline data URIs in CSS as file paths.
+exclude_path = ["docs/build/assets/css"]

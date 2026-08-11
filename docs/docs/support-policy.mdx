@@ -1,0 +1,61 @@
+---
+sidebar_position: 2
+title: Support policy
+description: Supported Rust versions and platforms, and the rules for changing them.
+---
+
+import Stamp from './_stamp.mdx';
+
+# Support policy
+
+<Stamp />
+
+## Supported Rust versions
+
+| Field | Value |
+| --- | --- |
+| Minimum supported Rust version (MSRV) | **1.94.0** |
+| Kind | **Fixed floor** — not an offset from current stable |
+| Also tested | **Current stable** (1.97.1 at time of writing) |
+| Edition | 2024 |
+| Cargo resolver | 3, declared explicitly |
+
+### What "fixed floor" means
+
+A new Rust stable release **does not** invalidate the MSRV, shorten it, or trigger a
+review. The minimum-version CI job stays pinned at 1.94.0; only the stable job moves.
+
+This was chosen over a release-count window deliberately. Rust 1.98.0 promotes to stable
+on 2026-08-20, which would have pushed 1.94.0 to four releases behind and broken an "N-3"
+policy through the calendar alone — no code change, no decision by anyone.
+
+## Supported platforms
+
+Only platforms with passing evidence are listed. Claiming one without a verification run
+behind it would be a claim exceeding measurement.
+
+| Platform | Status |
+| --- | --- |
+| Linux (`ubuntu-latest`) | **Supported** |
+| macOS | Not yet claimed |
+| Windows | Not yet claimed |
+
+"Not yet claimed" means nothing has been verified, so nothing is promised. It is not a
+statement that Renvor fails there.
+
+## Raising the MSRV
+
+A raise may occur only in a planned minor or major release, after an accepted decision
+record naming the concrete requirement that forces it, documented in the support policy,
+the changelog, and the release notes, and only after the outgoing MSRV has been supported
+for at least six months.
+
+The policy is reviewed quarterly. A review records its outcome and by itself changes
+nothing.
+
+## Licence
+
+`MIT OR Apache-2.0`, at your option, for Renvor's own source and documentation.
+
+**Project code generated for you by Renvor tooling carries no Renvor licensing
+obligation** and is owned outright by you.
