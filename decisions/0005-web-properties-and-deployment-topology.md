@@ -3,15 +3,11 @@
 | Field | Value |
 |---|---|
 | **ID** | 0005 |
-| **State** | `proposed` |
-| **Reviewer** | *(pending — see Acceptance gate)* |
-| **Review date** | *(pending)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-12 |
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
-
-> **Acceptance gate.** As with ADR-0001 through ADR-0004, W-002 compensating control 3
-> ("all required CI and security checks passing") is not yet met. See
-> [Acceptance gate](#acceptance-gate).
 
 ## Context
 
@@ -170,10 +166,14 @@ repository without it would repeat the licensing ambiguity this record exists to
 
 | # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review | ✅ Met — five alternatives, transparency cost stated |
-| 2 | Verification against `checklists/governance.md` | ⏳ T086 |
-| 3 | All required CI and security checks passing | ❌ Not met — workflows do not exist until T057–T059 |
-| 4 | Dated review record stored with the ADR | ⏳ Pending 2 and 3 |
+| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the topology decision. CHK023 passed because the specification explicitly places brand-asset licensing outside the code grant; that separate decision is tracked as T098 and blocks repository creation, not this record. |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
+| 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-Remains `proposed`. On acceptance the reviewer field reads exactly
-**`Ahmed Anbar — self-review under W-002`**, and must not be described as independent.
+**All four controls are met. This record is `accepted`.**
+
+Reviewed by **Ahmed Anbar — self-review under W-002** on **2026-08-12**. This review is
+**not independent** and must not be described as such, here or anywhere else. It is a
+structured self-review operating under a recorded, time-bounded exception that expires on
+2027-02-11 or when a qualified independent reviewer becomes available, whichever is first.

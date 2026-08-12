@@ -205,7 +205,7 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 - [ ] T083 Record known limitations in `governance/phase-001-evidence.md` with named owner and target phase — including the FR-049 residual risk that verified-but-unreserved package names remain claimable, and the FR-061 obligation to revalidate MSRV 1.94.0 against real persistence dependencies before Phase 006
 - [ ] T084 Create the recurring-obligations register in `governance/phase-001-evidence.md` with owner and first due date for each: the quarterly MSRV policy review (FR-060), the W-001 waiver expiry on 2027-02-11, and the pre-Phase-006 MSRV revalidation (analyze finding G6)
 - [ ] T085 [P] Run the full quickstart.md gate sequence 0 through 8 and record every outcome in `governance/phase-001-evidence.md`
-- [ ] T086 [P] Work through `specs/001-governance-foundation/checklists/governance.md` (79 items) and record findings inline
+- [X] T086 [P] Work through `specs/001-governance-foundation/checklists/governance.md` (79 items) and record findings inline
 - [ ] T087 Confirm no runtime framework capability was implemented and no unshipped capability is described as available anywhere in the repository, reviewing against the FR-047 exclusion list and FR-044; record the result (SC-013)
 - [ ] T088 Confirm zero open blockers and obtain the independent requirements and security review required by PLAN.md §6.1 step 10
 
@@ -386,3 +386,16 @@ Applied after `/speckit-analyze`. Seven tasks added, IDs renumbered so they rema
 - [ ] T102 Re-verify the server audit immediately before any deployment; the host is shared with unrelated production workloads and the 2026-08-11 facts can go stale (ADR-0006 additional gate)
 
 **Checkpoint**: The topology, hosting architecture, and migration plan are recorded and reviewable. No repository has been created, no infrastructure provisioned, no DNS changed, and nothing deployed.
+
+---
+
+## Phase 11: Governance review findings (added 2026-08-12)
+
+**Purpose**: T086 reviewed all 79 governance checklist items and found two genuine specification gaps. They are recorded as tasks rather than checked off prematurely or resolved by weakening the requirement.
+
+- [ ] T103 Define a concrete evidence retention period. FR-046 requires build evidence to be retained "for a stated period" but no duration exists in the specification, the contracts, or the release documentation. State the duration, its start event, and where retained evidence lives (governance checklist CHK048)
+- [ ] T104 Define a security-advisory response window. FR-010 requires the policy to state how advisories are handled but sets no triage or response deadline, so an advisory could remain unactioned indefinitely without violating any rule. This is distinct from the SECURITY.md windows, which govern inbound reports rather than advisories against dependencies. **Blocks acceptance of ADR-0003** (governance checklist CHK050)
+- [ ] T105 Decide whether the `www.renvor.dev` permanent redirect is served by Cloudflare or by Traefik, and record it. **Blocks acceptance of ADR-0006** (ADR-0006 unresolved question 2)
+- [ ] T106 Record the maintainer ruling on the shared server's absent backups — whether the gap blocks Renvor deployment, given that both Renvor properties are stateless while five unrelated production namespaces are not. **Blocks acceptance of ADR-0006** (ADR-0006 unresolved question 3)
+
+**Checkpoint**: Every governance checklist item has a defensible recorded outcome, and every discovered gap is either corrected or tracked as an explicit open task.
