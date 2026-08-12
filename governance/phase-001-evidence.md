@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **78 of 106 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
+**Status**: Open — implementation in progress, **87 of 106 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. Signing (T071) and the protected release environment (T072) remain open pending maintainer decisions.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -1106,6 +1106,364 @@ numbers exist in one file and every other mention resolves in its favour.
 **Decision records: 5 accepted, 1 proposed.** ADR-0006 remains `proposed` — T099, T101,
 T102, T105, and T106 all remain open and were not touched in this pass.
 
+## 3z. T070–T081 — release documentation and non-publishing rehearsal (2026-08-12)
+
+**Nothing was published, tagged, released, or uploaded.** Every registry-reaching command
+was run with `--dry-run`, and the one live registry query was a read.
+
+### 3z.1 T070 — `RELEASING.md`
+
+Written at repository root. Covers the ten release gates, the mandatory clean checkout,
+topological publication order, package inspection, version and changelog rules, signing
+expectations, the manual first-publication bootstrap with immediate token revocation,
+trusted publishing thereafter, the evidence set, and yank-and-replace.
+
+Policy numbers are **referenced, not copied**. `governance/evidence-retention-policy.md`
+is named authoritative for retention and
+`governance/dependency-advisory-policy.md` for advisory deadlines, discharging the T103
+obligation that `RELEASING.md` incorporate the retention policy exactly rather than
+restating it divergently.
+
+`RELEASING.md` §11 states that the required independent encrypted, versioned archive
+**does not exist**, and that the release gate therefore **fails closed**. §12 lists the
+three decisions blocking a first release. The document opens by stating that Phase 001
+publishes nothing.
+
+### 3z.2 T073 / T081 — `.github/workflows/release-dry-run.yml`
+
+| Property | Value |
+|---|---|
+| Triggers | `workflow_dispatch`, `pull_request` (packaging paths only) |
+| `pull_request_target` | **absent** |
+| Top-level permissions | `contents: read` |
+| Job `rehearse` | inherits `contents: read`, no elevation |
+| Job `attest` | `contents: read`, `id-token: write`, `attestations: write` — the documented `actions/attest-*` minimum |
+| `contents: write` | granted **nowhere** |
+| `packages: write` | granted **nowhere** |
+| Registry credential | none referenced; no `secrets.` expression appears at all |
+| `cargo publish` invocations | 1, carrying `--dry-run` |
+| Tag / release / image creation | none |
+| Third-party actions | 7, each pinned to a full 40-character commit SHA with a version comment |
+
+Actions pinned: `actions/checkout` v7.0.1, `dtolnay/rust-toolchain` v1,
+`taiki-e/install-action` v2.85.11, `actions/upload-artifact` v7.0.1,
+`actions/download-artifact` v8.0.1, `actions/attest-build-provenance` v4.2.2,
+`actions/attest-sbom` v4.1.0. All are MIT-licensed and therefore raise no
+`deny.toml` conflict; no licence policy was widened to accommodate any of them.
+
+Artifact retention is set to **90 days**, matching
+`governance/evidence-retention-policy.md` clause 1 and the platform maximum for public
+repositories.
+
+**Contract amendment.** `contracts/package-metadata.md` previously required both artifact
+attestation (FR-045) and a release workflow elevating **nothing**. Those cannot both hold.
+The contract row was corrected to the documented minimum, with the reason recorded in
+place. The invariant that mattered — the workflow cannot publish — is unchanged.
+
+### 3z.3 Two defects the rehearsal found in its own workflow
+
+Recorded because the first attempt did not succeed, and the record says so.
+
+| # | Defect | Correction |
+|---|---|---|
+| 1 | `cargo cyclonedx` writes a BOM adjacent to **every** manifest in the workspace, not only the one named by `--manifest-path`. It also emitted one beside `xtask`, which the original step left behind in the checkout | Strays are deleted; only the publishable crate's SBOM is kept |
+| 2 | The artifact directory sat **inside** the checkout, so the cleanliness assertion could never pass — it tripped over the untracked directory the previous step had just created | Artifacts moved outside the checkout; the checkout is asserted unmodified |
+| 3 | The fix for defect 2 used `${{ runner.temp }}` in a **workflow-level `env:` block**, where the `runner` context does not exist. GitHub rejected the file at validation time and produced **two failed runs** before any job started | Path set in a step from `$RUNNER_TEMP`, which the runner always exports |
+
+Defects 1 and 2 were fixed in commit `ca9ce23`, kept **separate** from the original so the
+sequence remains legible. Defect 2 is the reason defect 1 survived the first write: an
+assertion that cannot pass teaches its reader to ignore it.
+
+**Defect 3 reached the remote and failed there**, which is recorded rather than hidden. Its
+signature is worth knowing: an invalid workflow produces a run named after the **file path**
+instead of the workflow's `name:`, with **zero jobs**, attributed to the `push` event even
+when the file declares no `push` trigger — because the failure happens during workflow
+validation, before triggers are evaluated. Local YAML parsing passed, since the file was
+valid YAML and invalid *Actions schema*; the two are different checks.
+
+`actionlint` 1.7.12 reproduces it exactly:
+
+```text
+release-dry-run.yml:52:22: context "runner" is not allowed here.
+available contexts are "github", "inputs", "secrets", "vars".
+```
+
+`actionlint` now reports **no findings across all four workflow files**. It is not yet part
+of `cargo xtask verify`; adding it is a candidate improvement, not a claim made here.
+
+### 3z.4 T074–T079 — clean-checkout rehearsal
+
+Run 2026-08-12, `darwin/aarch64`, operator Ahmed Anbar, toolchain
+`rustc 1.94.0 (4a4ef493e 2026-03-02)`.
+
+Executed from a **freshly created clone** (`git clone --no-local`, no hardlinks) checked
+out at the exact candidate commit **`ca9ce236e93407402dc4ec9897393ac733b225de`**, verified
+clean with zero untracked files before any command ran.
+
+| Task | Command | Result |
+|---|---|---|
+| T074 | `cargo package -p renvor --list` | **8 files** (below) |
+| T075 | Exclusion inspection, 9 categories + `gitleaks dir` | **all CLEAN**, 0 leaks in ~19.83 KB |
+| T076 | `cargo package -p renvor` | Packaged 8 files, 19.4 KiB (7.2 KiB compressed) |
+| T076 | `cargo publish -p renvor --dry-run` | `warning: aborting upload due to dry run` — **no upload** |
+| T077 | Metadata validation | **12 of 12** required fields present |
+| T078 | One live registry query | **zero versions** for every intended name |
+| T079 | Credential inspection | **no long-lived registry credential** |
+| — | CycloneDX SBOM | CycloneDX **1.5** JSON, subject `renvor 0.0.0`, 0 components |
+| — | Checkout unmodified after all steps | ✅ clean |
+
+**Shipped file set (T074)** — exactly what `include` states, plus the three files Cargo
+adds itself:
+
+```text
+.cargo_vcs_info.json   Cargo.lock   Cargo.toml   Cargo.toml.orig
+LICENSE-APACHE         LICENSE-MIT  README.md    src/lib.rs
+```
+
+**T075 inspection outcome** — every category returned zero hits: editor/agent/local
+configuration; build output and caches; env, credential, and key files; internal
+specifications and planning documents; branding assets; absolute-path or home-directory
+leakage; hostname leakage; foreign email addresses; tool-attribution wording. An
+independent `gitleaks dir` pass over the extracted archive reported **no leaks found**.
+
+`.cargo_vcs_info.json` contains only `{"git":{"sha1":"ca9ce23…"},"path_in_vcs":"crates/renvor"}` —
+a commit reference and a repository-relative path, no build-machine detail.
+
+**Artifact (T076)**
+
+| Property | Value |
+|---|---|
+| Path as produced | `target/package/renvor-0.0.0.crate` |
+| Size | **7,418 bytes** (registry limit 10,485,760) |
+| SHA-256 | `0993c5e1082f7bac925df0b71c7027d6434b14da0f884f8b433c69dbdfce6f63` |
+
+**Checksums are commit-bound, and that is correct.** An earlier rehearsal at commit
+`93b4f3f` produced SHA-256 `fa6836ab86bebc20cba64b213c32c5eedf42ea1b60d0a4d6cb18e094242b94b7`.
+The archive embeds the commit hash in `.cargo_vcs_info.json`, so a different commit
+necessarily yields a different archive. Both values are recorded rather than the second
+quietly replacing the first.
+
+**The SBOM is not byte-reproducible.** `cargo-cyclonedx` emits a fresh random
+`serialNumber` UUID per run (`942a0e89-…` and `6147b919-…` across two runs of identical
+input), so its checksum differs run to run even at the same commit. Recorded as a known
+property of the tool; a release must checksum the SBOM it actually publishes rather than
+expecting a stable value.
+
+**T077 metadata** — `name`, `version`, `description`, `license`, `repository`, `homepage`,
+`documentation`, `readme`, `keywords`, `categories`, `rust-version`, `edition` all present.
+`license` is exactly `MIT OR Apache-2.0`; `rust-version` is exactly `1.94.0`, matching
+`SUPPORT.md`; `edition` is `2024`.
+
+**Publishable set and dependency shape** — `renvor` is publishable with **0 dependencies,
+0 path dependencies, 0 git dependencies**. `xtask` is `publish = false` and is therefore
+not packaged: `cargo package --workspace` *would* have included it, which is why the
+rehearsal uses the per-package form.
+
+**T078 — one authoritative registry query**, `GET https://crates.io/api/v1/crates?q=renvor&per_page=100`
+at **2026-08-12T06:35:01Z**. Total matches: **0**. Neither `renvor` nor `renvor-cli` exists
+on crates.io; both have **zero published versions**. A single namespace query was used
+rather than repeated per-name polling.
+
+**T079 — credential inspection.**
+
+| Location | Result |
+|---|---|
+| Repository Actions secrets | **0** |
+| Dependabot secrets | **0** |
+| Actions variables | **0** |
+| Environment secrets | **0** — no environment exists |
+| `CARGO_REGISTRY_TOKEN` / `cargo login` / `credentials.toml` in tracked files | **none** outside specification prose |
+| `.cargo/config.toml` | contains only the `xtask` alias |
+| `~/.cargo/credentials.toml` on the operator machine | **absent** |
+
+**Scope limit, stated rather than glossed:** organization-level secrets could **not** be
+enumerated — the API returned HTTP 403 for want of the `admin:org` scope. This evidence
+therefore establishes that no repository-level registry credential exists; it does **not**
+establish the same for organization-level secrets. Closing that gap needs a separate
+authenticated check by the organization owner.
+
+### 3z.5 Release artifact set a real release would retain
+
+| Artifact | Rehearsal value |
+|---|---|
+| `renvor-0.0.0.crate` | 7,418 bytes |
+| `renvor-package-list.txt` | 107 bytes |
+| `renvor-sbom.json` | 2,140 bytes, CycloneDX 1.5 |
+| `SHA256SUMS` | 264 bytes, covering all three |
+| Build provenance attestation | produced by the merged workflow, `workflow_dispatch` only |
+| SBOM attestation | produced by the merged workflow, `workflow_dispatch` only |
+| Toolchain, platform, operator, date | this record |
+
+Retention of each class is governed by `governance/evidence-retention-policy.md`.
+
+### 3z.6 T071 — signing discovery (read-only, **nothing changed**)
+
+No private key was read, printed, copied, created, or modified.
+
+| Setting | Local | Global |
+|---|---|---|
+| `commit.gpgsign` | unset | unset |
+| `tag.gpgsign` | unset | unset |
+| `gpg.format` | unset | unset |
+| `user.signingkey` | unset | unset |
+| `gpg.ssh.allowedsignersfile` | unset | unset |
+
+- **Signing is not configured anywhere.** Every commit authored locally in this repository
+  is unsigned; GitHub reports `verified: false, reason: "unsigned"` for all of them.
+- The four merge commits **are** `verified: true`, signed by GitHub's web-flow key as
+  server-side merge metadata. That is the platform's signature, **not** the maintainer's.
+- `gpg` and `ssh-keygen` are both available. **Zero GPG secret keys** exist on the machine.
+- Six SSH key pairs exist, all for authentication to other hosts, none dedicated to
+  signing; no key comment mentions signing and no `~/.ssh/allowed_signers` file exists.
+- **No dedicated signing identity exists.**
+- **Vigilant mode state is unknown.** GitHub exposes no API for it. It is not inferable
+  from commit verification status, and no claim is made either way. The account owner must
+  confirm it in account settings.
+- Account signing-key metadata could not be listed: `admin:ssh_signing_key` and
+  `admin:gpg_key` scopes are absent from the current token. Recorded as a scope limit.
+
+**T071 remains open.** The recommendation is in §3z.8; the choice is the maintainer's.
+
+### 3z.7 T072 — release environment discovery (read-only, **nothing changed**)
+
+`GET /repos/renvor-rs/renvor/environments` → `total_count: 0`. **No environment exists.**
+
+Available protection controls: required reviewers (up to 6 people or teams, **one**
+approval sufficient), wait timer, deployment branch **and tag** policies, prevent
+self-review, disable administrator bypass, and custom rules via GitHub Apps. Environment
+protection is available on **public** repositories on the free plan, which this repository
+is.
+
+**The deadlock is real and must be decided, not assumed.** With one maintainer, enabling
+*prevent self-review* while naming that maintainer as the only reviewer makes every release
+unapprovable: the person who triggers the run is the only person who could approve it. The
+proposed configuration in §3z.8 resolves this deliberately rather than by discovering it
+during a release.
+
+**T072 remains open** pending the maintainer's decision and explicit approval to mutate
+GitHub state.
+
+### 3z.8 Recommendations requiring a maintainer decision
+
+**Signing — recommended: a dedicated SSH signing key.**
+
+| | Dedicated SSH key | Dedicated GPG key |
+|---|---|---|
+| Setup | `ssh-keygen -t ed25519`, set `gpg.format ssh`, upload as a **signing** key | Generate keypair, configure agent and pinentry, export and upload |
+| Existing material | 6 SSH keys already present and working | **0 GPG secret keys** — starts from nothing |
+| Expiry / revocation | No native expiry; rotation is manual — remove the old key, add the new | Native expiry and revocation certificates |
+| Verification of history | Needs an `allowed_signers` file for local `git verify-tag`; GitHub verifies server-side | Verifies from the keyring |
+| Loss of key | Rotate and re-upload; past signatures stop verifying unless the old public key is retained | Revocation certificate, if one was generated **in advance** |
+| Failure mode | Few moving parts | Agent, pinentry, and expiry each fail independently, usually at release time |
+
+SSH is recommended because the operational surface is smaller and this project has one
+maintainer: GPG's advantages — native expiry and revocation — are governance features that
+matter most for multi-party keyrings, while its costs land on every single signing
+operation. GPG's genuine advantage is that a revocation certificate lets a lost key be
+positively invalidated; SSH has no equivalent, so **key loss is the risk that must be
+accepted**, mitigated by keeping the old public key registered so historical signatures
+continue to verify.
+
+**Exact user action required** (not performed — T071 is open):
+
+1. Generate a key used **only** for signing, not reused for authentication.
+2. Upload it to GitHub as a **Signing key** (a separate key type from an authentication key).
+3. Set `gpg.format ssh`, `user.signingkey`, `commit.gpgsign true`, `tag.gpgsign true`.
+4. Create `~/.ssh/allowed_signers` so `git verify-tag` works locally.
+5. Enable **vigilant mode** in account settings.
+6. Back up the private key offline; retain the old public key on rotation.
+
+**Proposed protected release environment** (not created — T072 is open):
+
+| Setting | Proposed value | Reason |
+|---|---|---|
+| Name | `release` | Referenced by name from the future publish workflow |
+| Required reviewers | **`AhmedAnbar`**, named individually | A role or team alias is not a named approver |
+| Prevent self-review | **Disabled**, with the reason recorded | Enabling it with a single maintainer deadlocks every release. Recorded as a known limitation to reverse when a second maintainer exists — **not** as a control that was quietly skipped |
+| Deployment **tag** rule | `v*` | Publication runs only from a release tag |
+| Deployment branch rule | none | Releases come from tags, not branches |
+| Administrator bypass | **Disabled** | A bypass available to the only approver is not a gate |
+| Wait timer | 0 | A timer is not a control; the reviewer gate is |
+| Environment secrets | **none** | Trusted publishing leaves nothing to store |
+
+The approval gate remains meaningful with self-review disabled: it forces a **deliberate,
+logged, out-of-band confirmation** between tagging and publishing, and it restricts
+publication to `v*` tags. It does not provide four-eyes review, and this record does not
+claim that it does. That gap is the same one W-001 already records for pull requests.
+
+### 3z.9 Validation for this pass (2026-08-12)
+
+| Check | Command | Result |
+|---|---|---|
+| Full sequence, MSRV | `rustup run 1.94.0 cargo xtask verify` | **exit 0** — all 10 steps ran and passed |
+| Full sequence, stable | `rustup run stable cargo xtask verify` | **exit 0** — all 10 steps ran and passed |
+| Toolchains genuinely differ | `rustc --version` per channel | 1.94.0 vs **1.97.1** — two different compilers, not one twice |
+| Secret scan, working tree | `gitleaks dir .` | 0 findings over 9.49 MB |
+| Secret scan, history | `gitleaks git .` | 0 findings, 25 commits |
+| Canary detection | injected credential, FP-001 file | **detected** — see below |
+| Release workflow syntax | YAML parse of all four workflows | all parse; permission matrix as designed |
+| Package contents, metadata, dry run, SBOM, checksums | §3z.4 | all pass |
+| No runtime capability added | `git diff --stat main...HEAD` | **0 Rust source files touched**; public API still exactly 3 constants |
+
+Steps 1–9 cover formatting, clippy, tests, API documentation, dependency and licence
+policy, secret scanning, documentation build, and link checking; step 10 is working-tree
+cleanliness.
+
+**Canary verification — and a mis-designed first attempt, recorded rather than discarded.**
+
+The first attempt injected an AWS *documentation example* key into `RELEASING.md` and was
+not detected. That was a **defective test, not a detection failure**: the value is a
+publicly known example that gitleaks deliberately does not flag, and `RELEASING.md` is not
+the file the FP-001 allowlist covers, so the test exercised nothing the canary exists to
+exercise. Reporting it as a regression would have been wrong; so would deleting it.
+
+Re-run correctly against the file FP-001 actually scopes:
+
+| Stage | Observed |
+|---|---|
+| Baseline | 0 findings — the allowlisted prose at line 679 stays suppressed |
+| Canary injected at line 682 of the **same file** | **1 finding**, rule `gitlab-pat`, exit 1 |
+| File restored | SHA-256 `19883f55…4711` before and after — **byte-identical** |
+| Working tree | clean |
+
+This is the property that matters: the allowlist suppresses **one prose match by content**
+and does not exclude the file, because a secret added to that same file three lines later
+is still caught. A `paths`-scoped allowlist would have failed this test, which is exactly
+how the original defective form was found.
+
+### 3z.10 Dependency advisories raised 2026-08-11 — dated triage record
+
+Surfaced by GitHub during the branch push of 2026-08-12. Recorded here because
+`governance/dependency-advisory-policy.md` §9 forbids an ignored advisory without a dated
+record. **Not remediated in this pass** — remediation was outside its authorised scope.
+
+| GHSA | Severity | Package | Ecosystem | Manifest | Upstream fix |
+|---|---|---|---|---|---|
+| `GHSA-5c6j-r48x-rmvq` | **High** | `serialize-javascript` ≤ 7.0.2 | npm | `docs/package-lock.json` | **7.0.3** |
+| `GHSA-w3rx-r6r6-pgpr` | **High** | `image-size` ≤ 2.0.2 | npm | `docs/package-lock.json` | **none** |
+| `GHSA-5p2g-fcmc-qvqq` | **High** | `image-size` ≤ 2.0.2 | npm | `docs/package-lock.json` | **none** |
+| `GHSA-qj8w-gfj5-8c6v` | Medium | `serialize-javascript` < 7.0.5 | npm | `docs/package-lock.json` | 7.0.5 |
+| `GHSA-w5hq-g745-h8pq` | Medium | `uuid` < 11.1.1 | npm | `docs/package-lock.json` | 11.1.1 |
+
+- **Detected** 2026-08-11T23:39:22Z. As of 2026-08-12T06:49Z, **7.2 hours** have elapsed:
+  within the 48-hour High triage window and the 5-day Medium window. **No deadline has
+  been breached.** Remediation deadlines are 14 days (High) and 30 days (Medium) from
+  detection.
+- **Reachability**: all five are transitive npm dependencies of the **documentation site**.
+  The published crate has **zero dependencies** of any kind, and the packaged archive
+  contains 8 files, none from `docs/` (§3z.4). **None of these advisories reaches the
+  crate that would be published.** `cargo deny check` passes because it governs the Cargo
+  graph, which is genuinely clean — not because it was configured to overlook these.
+- **Two High advisories have no upstream fix.** Policy §6 is explicit that this does not
+  extend the deadline: `image-size` must be updated, removed, replaced, or isolated, or
+  the affected release blocked. It is a Docusaurus transitive dependency, so "isolate" in
+  practice means the documentation build, not the crate.
+- **Owner**: Ahmed Anbar. **Named owner assignment and the full clause-5 advisory records
+  are still outstanding** — this entry starts the trail, it does not complete it.
+
+**No release is blocked today**, because nothing is published and no release is in
+progress. The High advisories become release blockers under policy §7 the moment one is.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
@@ -1215,6 +1573,7 @@ The phase remains open while any row here is present.
 | **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — blocks deployment** |
 | **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; creation of `renvor-rs/renvor-landing` | Maintainer | 2026-08-11 | **open** |
 | **Container registry undecided** — GHCR versus the VPS GitLab registry, including credential model | T099; creation of the private repositories | Maintainer | 2026-08-11 | **open** |
+| **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |

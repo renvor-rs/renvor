@@ -77,6 +77,10 @@ durations.
 | `ci.yml` | `contents: read` | none |
 | `security.yml` | `contents: read` | `security-events: write` on the SARIF upload job only |
 | `docs.yml` | `contents: read` | `pages: write` + `id-token: write` on the deploy job only |
-| `release-dry-run.yml` | `contents: read` | none — it must not be able to publish even if invoked |
+| `release-dry-run.yml` | `contents: read` | `id-token: write` + `attestations: write` on the attestation job only |
+
+**Amended 2026-08-12 (T081).** This row previously read "none". Artifact attestation cannot be produced without `id-token: write` and `attestations: write` — the minimum documented by `actions/attest-*` — so requiring both attestation (FR-045) and a zero-elevation workflow was an internal contradiction. The elevation is granted at the attestation job and nowhere else, and the packaging job keeps `contents: read`.
+
+**The invariant that mattered is unchanged**: the workflow still cannot publish. `contents: write` and `packages: write` are granted nowhere, no registry credential is referenced, no tag or release is created, and the sole `cargo publish` invocation carries `--dry-run`. The elevation buys the ability to sign a statement about an artifact, not the ability to ship one.
 
 Every third-party action is pinned to a full 40-character commit SHA with a trailing `# vX.Y.Z` comment, maintained by Dependabot (research Finding 7).
