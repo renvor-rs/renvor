@@ -33,7 +33,7 @@ already serving production traffic, and already hosting unrelated third-party wo
 | Firewall | **`ufw` inactive** |
 | Addresses | IPv4 `153.92.208.x`, IPv6 `2a02:4780:f:88ec::/48` |
 | Backups | **No etcd snapshots (SQLite backend); no restic/borg/duplicity installed** |
-| Cloudflare | `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` has **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied) |
+| Cloudflare | *(observed 2026-08-11)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` had **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied). **Superseded 2026-08-12**: the maintainer manually created three DNS-only A records for `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` — see `governance/phase-001-evidence.md` §3af |
 
 Two consequences dominate every choice below:
 
@@ -59,6 +59,13 @@ unmaintained.
 ### D1 — Reuse the existing k3s cluster. Install no Kubernetes distribution.
 
 Two new namespaces, `renvor-landing` and `renvor-docs`, are added to the running cluster.
+
+> **These are Kubernetes namespace names, not repository names.** The private repositories
+> are `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, and `renvor-rs/renvor-infra`. The
+> namespace `renvor-landing` predates the `renvor-site` repository name and has deliberately
+> **not** been renamed here: no namespace exists yet, and renaming cluster objects is a
+> deployment decision rather than a documentation one. Whether the namespace should be
+> renamed to `renvor-site` for consistency is left open for the deployment phase.
 
 No distribution comparison is needed, because installing k0s, MicroK8s, RKE2, or upstream
 kubeadm alongside a running k3s cluster on a single node would contend for ports 80/443,
@@ -175,7 +182,7 @@ familiar `k3s etcd-snapshot` path does not apply.
 
 For the Renvor properties specifically this is low-severity, because both sites are
 **stateless**: recovery is redeploying a known digest from a private registry, and the
-manifests live in `renvor-deploy`. Recovery therefore depends on GitHub and the registry,
+manifests live in `renvor-infra`. Recovery therefore depends on GitHub and the registry,
 not on server state.
 
 **The absence of a general server backup is nonetheless recorded as a pre-existing risk
@@ -219,31 +226,57 @@ production host.
   prerelease project's marketing and documentation sites; not acceptable later for anything
   transactional.
 - **Manual Cloudflare configuration** is not in version control initially, so it can drift
-  from what `renvor-deploy` documents.
+  from what `renvor-infra` documents.
 - **Component versions are one minor behind upstream** and must not be upgraded casually on
   a shared host.
 
 **To reverse this:** both sites are stateless. Reversal is deleting two namespaces and two
 DNS records; nothing neighbouring depends on them.
 
+### D6 — Cloudflare serves the permanent `www` redirect (T105, decided 2026-08-12)
+
+**`www.renvor.dev` → `https://renvor.dev`, HTTP 301, preserving path and query string,
+implemented as a Cloudflare rule at the edge.**
+
+The redirect must answer visitors who never reach the origin, and it should not consume an
+origin certificate, an Ingress, or a Traefik router to serve a response whose only purpose is
+to redirect. Cloudflare answers it before the origin is involved at all.
+
+**Rejected: Traefik.** Keeping the rule in version control is a genuine advantage, and it is
+the reason this was a real choice rather than a formality. It loses on two counts: it
+requires issuing and renewing a certificate for a hostname that serves no content, and it
+cannot answer while the origin is down — which is exactly when a redirect being cheap
+matters.
+
+Consequences, recorded so none is discovered later:
+
+| Consequence | Detail |
+|---|---|
+| Requires proxying | The rule applies only to a **proxied** record. `www.renvor.dev` is DNS-only today, so **the redirect cannot function yet** |
+| Current visitor experience | `www.renvor.dev` resolves to the origin and receives the Traefik default certificate, so a browser shows a certificate warning. Expected in the temporary state |
+| Traefik | Needs **no** `www` router, and no origin certificate is issued for `www` |
+| Failure mode | If Cloudflare proxying is ever disabled, **the redirect stops working**. A Traefik fallback would then be needed — a deliberate trade, recorded here rather than discovered during an outage |
+| Status | **The rule has not been created.** Creating it is a separate authorised action |
+
 ## Unresolved questions
 
-**Each unresolved question below now carries an explicit owner and a blocking task, so
-none can be forgotten. All four block acceptance of this record.**
+**Each unresolved question below carries an explicit owner and a blocking task, so none can
+be forgotten.** Question 2 was resolved on 2026-08-12. **The remaining three — T099, T101,
+and T106 — still block acceptance of this record, which therefore stays `proposed`.**
 
 | # | Unresolved question | Owner | Blocking task |
 |---|---|---|---|
 | 1 | GitHub Container Registry versus the VPS GitLab registry, including the credential model | Ahmed Anbar | **T099** |
-| 2 | Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik | Ahmed Anbar | **T105** |
+| ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12, see D6** |
 | 3 | Maintainer ruling on the shared server's absent backups | Ahmed Anbar | **T106** |
 | 4 | CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) | Ahmed Anbar | **T101** |
 
 1. **Registry choice is not decided.** GitHub Container Registry versus the GitLab registry
    already running on this host. GHCR pairs with the GitHub-based workflow and OIDC; the
    local GitLab registry avoids an external dependency but couples Renvor to another
-   project's service. **Requires a decision before the private repositories are created.**
-2. **Whether `www.renvor.dev` redirects at Cloudflare or at Traefik.** Cloudflare is simpler
-   and cheaper; Traefik keeps the rule in version control. Currently unresolved.
+   project's service. **The private repositories already exist and are empty**, so this no longer blocks their creation; it blocks registry configuration, image publication, deployment workflows, and production deployment.
+2. ~~**Whether `www.renvor.dev` redirects at Cloudflare or at Traefik.**~~ **Resolved
+   2026-08-12 — Cloudflare.** See D6 below. The rule itself has not been created.
 3. **Whether the neighbouring workloads' missing backups should block Renvor deployment.**
    This record says no — Renvor is stateless — but flags it for the maintainer's judgement.
 4. **CSP compatibility with the V7 landing page has not been tested** and may require
@@ -257,7 +290,7 @@ none can be forgotten. All four block acceptance of this record.**
 | PLAN.md §16 security baseline | Non-root, dropped capabilities, seccomp, resource limits, NetworkPolicy, signed images, SBOM, provenance |
 | PLAN.md §26.4, §26.5 | Digest-pinned images; rollback by previous digest |
 | PLAN.md §26.9 | No plaintext secret in any repository; short-lived identity preferred |
-| ADR-0005 | `renvor-deploy` owns these manifests; the framework repository does not |
+| ADR-0005 | `renvor-infra` owns these manifests; the framework repository does not |
 
 ## Acceptance gate
 

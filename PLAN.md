@@ -1517,9 +1517,9 @@ Four repositories under the `renvor-rs` organization, each with one owner and on
 | Repository | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|
 | `renvor-rs/renvor` | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-landing` | **Private** | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-site` | **Private** | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
 | `renvor-rs/renvor-docs` | **Private** | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
-| `renvor-rs/renvor-deploy` | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+| `renvor-rs/renvor-infra` | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
 
 **Private source, public site.** A private repository does not imply a private website. All
 four deployed properties are publicly reachable; only the *source* of the three website and
@@ -1533,7 +1533,7 @@ alone. A build that requires a private repository is a defect.
 
 | Property | Domain | Serves |
 |---|---|---|
-| Landing | `https://renvor.dev` | `renvor-rs/renvor-landing` |
+| Landing | `https://renvor.dev` | `renvor-rs/renvor-site` |
 | Documentation | `https://docs.renvor.dev` | `renvor-rs/renvor-docs` |
 | Redirect | `www.renvor.dev` | HTTP 301 to `https://renvor.dev` |
 

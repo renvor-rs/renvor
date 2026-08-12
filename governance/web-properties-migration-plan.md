@@ -10,7 +10,7 @@ site is deployed. Every item is a precondition, not a description of existing st
 
 ---
 
-## 1. `renvor-rs/renvor-landing` — the V7 landing page
+## 1. `renvor-rs/renvor-site` — the V7 landing page
 
 ### 1.1 Source of truth
 
@@ -118,7 +118,7 @@ Renvor is in development until REST 1.0 ships.
 | Target | Reality 2026-08-11 |
 |---|---|
 | `https://crates.io/crates/renvor` | **HTTP 404** — crate not published |
-| `https://docs.renvor.dev/getting-started` | **Host does not resolve** — no A record |
+| `https://docs.renvor.dev/getting-started` | **Host did not resolve** — no A record. **Updated 2026-08-12**: the host now resolves (DNS-only A record to the origin), but nothing is served — the origin presents only the Traefik default certificate and the path still does not exist |
 | `https://github.com/renvor-rs/renvor` | Exists but **empty** — nothing pushed yet |
 
 **Required before deployment** (tracked as T089–T091):
@@ -150,7 +150,7 @@ something it cannot do.
 them unlicensed or implies the framework's permissive grant — which would allow anyone to
 use the Renvor mark for anything, including implying endorsement.
 
-Two separate decisions are needed, recorded before `renvor-rs/renvor-landing` exists:
+Two separate decisions are needed, recorded before `renvor-rs/renvor-site` receives its first content:
 
 1. **Website code licence** — the Docusaurus configuration, components, and CSS.
 2. **Brand asset usage terms** — trademark-style terms permitting nominative reference while
@@ -196,7 +196,7 @@ prerequisite.
 
 ---
 
-## 3. `renvor-rs/renvor-deploy` — Kubernetes deployment configuration
+## 3. `renvor-rs/renvor-infra` — Kubernetes deployment configuration
 
 Contents, per ADR-0006: namespace, Deployment, Service, Ingress, NetworkPolicy, and
 ServiceAccount manifests for both sites; Cloudflare configuration documentation; runbooks

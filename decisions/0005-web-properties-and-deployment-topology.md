@@ -38,9 +38,9 @@ Four repositories under `renvor-rs`:
 | Repository | Visibility | Source of truth for |
 |---|---|---|
 | `renvor` | **Public** | Framework source, crate metadata, rustdoc inputs, governance, releases |
-| `renvor-landing` | **Private** | V7 landing page and approved V7 brand assets → `renvor.dev` |
+| `renvor-site` | **Private** | V7 landing page and approved V7 brand assets → `renvor.dev` |
 | `renvor-docs` | **Private** | Production documentation site → `docs.renvor.dev` |
-| `renvor-deploy` | **Private** | Kubernetes manifests, ingress, TLS, operational runbooks |
+| `renvor-infra` | **Private** | Kubernetes manifests, ingress, TLS, operational runbooks |
 
 **Private source, public sites.** All deployed properties are publicly reachable. Only the
 source of the three website and deployment repositories is restricted.
@@ -61,7 +61,7 @@ artifact, recorded in automation.
 | Alternative | Rejected because |
 |---|---|
 | **Everything in the public framework repository** (monorepo) | Puts brand assets under a repository that declares `MIT OR Apache-2.0`, making an unintended licensing claim. Publishes deployment configuration describing the live origin. Couples every website copy fix to the framework's full verification sequence, which is slow by design. Enlarges what a reviewer must read to trust the framework. |
-| **Everything public, in four public repositories** | Solves coupling but not the two disclosure problems: brand licensing still needs its own decision, and `renvor-deploy` would publish an ingress and namespace map of a server that also hosts unrelated production workloads. |
+| **Everything public, in four public repositories** | Solves coupling but not the two disclosure problems: brand licensing still needs its own decision, and `renvor-infra` would publish an ingress and namespace map of a server that also hosts unrelated production workloads. |
 | **Two repositories — public framework, one private "web" repository** | Fewer moving parts, but re-creates the coupling inside the private repository: a landing copy change would run documentation and cluster checks, and a cluster change could ship a landing change. Failure isolation is the point of the split. |
 | **Websites in the framework repository, deployment private** | Splits the smallest concern and leaves the two largest coupled. Brand licensing problem remains unsolved. |
 | **Documentation in the framework repository, landing and deploy private** | Superficially attractive — documentation is closest to the code. Rejected because the production documentation site carries versioning, search indexing, a Node toolchain, and a release cadence that has no reason to gate a crate release. The *rustdoc* API reference stays in the framework, which is the part that genuinely belongs there. |
@@ -77,8 +77,8 @@ transparency loss and the strongest argument against this decision.
 It is accepted for now because the project has one maintainer and no outside contributors,
 so the cost is currently zero and the disclosure benefit is immediate. **It stops being
 free the moment the project has contributors**, and the decision must be revisited then —
-most likely by making `renvor-landing` and `renvor-docs` public once brand licensing is
-settled and deployment configuration has been separated from them. `renvor-deploy` has the
+most likely by making `renvor-site` and `renvor-docs` public once brand licensing is
+settled and deployment configuration has been separated from them. `renvor-infra` has the
 strongest case for remaining private permanently.
 
 This record should be reviewed for that reason at the first outside contribution, not on a
@@ -106,7 +106,7 @@ calendar.
 
 ### Infrastructure security
 
-Keeping `renvor-deploy` private does not make the cluster secure; it removes a free map.
+Keeping `renvor-infra` private does not make the cluster secure; it removes a free map.
 The origin server also hosts unrelated production workloads, which raises the cost of
 publishing its topology from "low" to "affects third parties". Security still rests on the
 controls in ADR-0006, not on the repository being private.
@@ -149,7 +149,7 @@ published anywhere.
 **Website code and brand-asset licensing has NOT been decided and is not decided here.**
 Brand assets in `Branding/brand-v7` are not covered by the framework's `MIT OR Apache-2.0`
 grant. A separate decision record must state the licence for website code and the usage
-terms for brand assets **before** `renvor-rs/renvor-landing` is created. Creating that
+terms for brand assets **before** `renvor-rs/renvor-site` receives its first content. Creating that
 repository without it would repeat the licensing ambiguity this record exists to avoid.
 
 ## Compliance
