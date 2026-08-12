@@ -1901,10 +1901,19 @@ copied and deleted.
 | Path | Repository | Remote |
 |---|---|---|
 | `framework/` | yes | `git@github.com:renvor-rs/renvor.git` |
-| `branding/` | **no — deliberately not a repository** | — |
-| `branding/landing-v7/` | yes | `git@github.com:renvor-rs/renvor-site.git` |
+| `site/` | yes | `git@github.com:renvor-rs/renvor-site.git` |
+| `branding/` | **no — deliberately not a repository, and contains none** | — |
 | `docs/` | yes, **empty** | `git@github.com:renvor-rs/renvor-docs.git` |
 | `infra/` | yes, **empty** | `git@github.com:renvor-rs/renvor-infra.git` |
+
+> **Layout corrected 2026-08-12 (later the same day).** The V7 landing checkout was
+> initially placed at `branding/landing-v7`; it was subsequently moved to top-level `site/`
+> by atomic rename, so that every repository is a direct child of the workspace root and
+> `branding/` contains no repository at all. The remote, the absence of commits, and the
+> empty remote were all re-verified after the move, and `pnpm` typecheck and production
+> build both pass from the new path. The pre-migration backup deliberately stayed at
+> `branding/.migration-backup/landing-v7-original`, because it archives what V7 looked like
+> before migration rather than forming part of the live site.
 
 **Framework integrity across the move**, verified against a pre-migration manifest:
 
