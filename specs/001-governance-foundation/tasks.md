@@ -399,3 +399,15 @@ Applied after `/speckit-analyze`. Seven tasks added, IDs renumbered so they rema
 - [ ] T106 Record the maintainer ruling on the shared server's absent backups — whether the gap blocks Renvor deployment, given that both Renvor properties are stateless while five unrelated production namespaces are not. **Blocks acceptance of ADR-0006** (ADR-0006 unresolved question 3)
 
 **Checkpoint**: Every governance checklist item has a defensible recorded outcome, and every discovered gap is either corrected or tracked as an explicit open task.
+
+---
+
+## Phase 12: Documentation dependency advisories (added 2026-08-12)
+
+**Purpose**: five advisories were raised against `docs/package-lock.json` on 2026-08-11. Two were closed by a tested override at T107; three have no compatible fix and are tracked here rather than silently accepted. Existing task numbers are unchanged — these are appended.
+
+- [X] T107 Close `GHSA-5c6j-r48x-rmvq` (high, RCE, CVSS 8.1) and `GHSA-qj8w-gfj5-8c6v` (moderate) by overriding `serialize-javascript` to `^7.1.0` in `docs/package.json`. Docusaurus 3.10.2 pins `copy-webpack-plugin ^11` and `css-minimizer-webpack-plugin ^5`, both requiring `serialize-javascript ^6`, so no ordinary compatible update exists. Prove the override with a frozen install, a production build, a link check, and a CommonJS load test
+- [ ] T108 **DOCUMENTATION DEPLOYMENT GATE — resolve `image-size`**: `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` (both high, CVSS 7.5, infinite-loop DoS in the ICNS, JXL, and HEIF parsers). **No fixed version exists** — 2.0.2 is simultaneously the affected and the latest published version. Reached only through `@docusaurus/mdx-loader`. Resolve by upstream fix, by a Docusaurus release that drops or replaces the dependency, or by a reviewed removal or isolation. **Blocks public documentation deployment** while open (dependency advisory policy §6, §7). Owner Ahmed Anbar; reassess **2026-08-26**
+- [ ] T109 Reassess `GHSA-w5hq-g745-h8pq` (moderate, `uuid` < 11.1.1). Not reachable today: `sockjs` calls only `uuid.v4()` with no `buf` argument while the advisory affects v3/v5/v6 **with** `buf`, and `sockjs` arrives via `webpack-dev-server`, which runs only for `docusaurus start` and never in the production build. `sockjs` 0.3.24 is the latest release and pins `uuid ^8.3.2`, so no compatible update exists. Do **not** force a three-major override into a path CI never exercises. Owner Ahmed Anbar; reassess **2026-09-11**, or immediately if `sockjs` ships a fix or the dev server enters a deployed path
+
+**Checkpoint**: every advisory has a dated record, a named owner, and either a proven fix or an explicit gate. None is silently ignored.
