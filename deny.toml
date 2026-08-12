@@ -13,8 +13,16 @@ all-features = true
 
 [advisories]
 version = 2
-# No ignored advisories. An advisory that must be tolerated requires a waiver in
-# governance/waivers.md with an absolute expiry date — not a silent entry here.
+# No ignored advisories.
+#
+# Response windows cannot be expressed in this file, so they are authoritative in
+# governance/dependency-advisory-policy.md: triage within 24h (active exploitation or
+# Critical), 48h (High), 5d (Medium), 10d (Low); remediate within 7d (Critical), 14d (High),
+# 30d (Medium), 90d or next prerelease (Low). Absence of an upstream fix does not extend a
+# deadline, and Critical/High cannot be waived for a public release.
+#
+# An identifier added below without a dated advisory record satisfying that policy is a
+# policy violation, not a configuration choice.
 ignore = []
 unmaintained = "workspace"
 yanked = "deny"

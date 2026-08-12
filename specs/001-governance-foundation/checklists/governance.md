@@ -121,12 +121,14 @@
 
 - [x] CHK047 Are the bill-of-materials format and the provenance mechanism each specified, rather than named only by intent? [Completeness, Spec §FR-045]
   - **2026-08-12 —** FR-045 names checksums, a software bill of materials, build provenance, and artifact attestations; contracts/package-metadata.md specifies CycloneDX and `actions/attest`.
-- [ ] CHK048 Is the evidence retention period stated as a concrete duration? [Clarity, Gap, Spec §FR-046]
+- [x] CHK048 Is the evidence retention period stated as a concrete duration? [Clarity, Gap, Spec §FR-046]
   - **2026-08-12 —** **FAIL — genuine specification gap.** FR-046 requires evidence to be retained "for a stated period" but no concrete duration appears anywhere in the spec, the contracts, or RELEASING.md. contracts/package-metadata.md says only "retained long enough for a reviewer to reconstruct", which is not a duration. The requirement mandates that a period be stated and then never states one. **Corrective action: open task T103.** Not checked off, and not weakened to obtain a pass.
+  - **2026-08-12 — RESOLVED, item now passes.** T103 adopted an evidence-retention policy with concrete durations, verified present in each authoritative location: **FR-046** now states 90 days for CI logs and temporary workflow artifacts, lifetime-of-project for tracked governance records, the later of 7 years after publication or 3 years after supported lifetime ends for binary release evidence, and lifetime-of-project for compact integrity and provenance records. The same periods appear in `governance/evidence-retention-policy.md` (authoritative), `contracts/package-metadata.md` §Release evidence, and data-model §Evidence Retention Schedule. The policy states explicitly that the numeric periods are Renvor decisions, not durations mandated by GitHub or NIST, and that the required independent archive **does not exist yet**. `RELEASING.md` must incorporate it at T070, which remains open.
 - [x] CHK049 Are lockfile obligations stated per artifact kind, so a reader can classify a new artifact without guessing? [Completeness, Spec §FR-021]
   - **2026-08-12 —** FR-021 states obligations per artifact kind (applications, generators, release tooling, automation versus reusable libraries); contracts/support-policy.md adds the documentation site as a third row.
-- [ ] CHK050 Is a response window defined for security advisories, or is triage left unbounded? [Gap, Spec §FR-010]
+- [x] CHK050 Is a response window defined for security advisories, or is triage left unbounded? [Gap, Spec §FR-010]
   - **2026-08-12 —** **FAIL — genuine specification gap.** FR-010 requires the policy to state "how security advisories ... are handled" but defines no response or triage window, and no duration appears in deny.toml or CONTRIBUTING.md. An advisory could therefore sit unactioned indefinitely without violating any written rule. SECURITY.md's windows govern inbound *reports*, not advisories against dependencies. **Corrective action: open task T104.**
+  - **2026-08-12 — RESOLVED, item now passes.** T104 adopted a dependency-advisory response policy with bounded windows, verified present in each authoritative location: **FR-010** now states triage within 24h (known active exploitation or Critical), 48h (High), 5 days (Medium), 10 days (Low), and remediation within 7 days (Critical), 14 (High), 30 (Medium), 90 days or the next prerelease (Low) — all measured from confirmed detection. The same windows appear in `governance/dependency-advisory-policy.md` (authoritative), `contracts/support-policy.md`, `CONTRIBUTING.md`, ADR-0003, and a `deny.toml` comment explaining why a duration cannot live in that file. Absence of an upstream fix does not extend a deadline; Critical and High cannot be waived for a public release; an ignored advisory without a dated record is prohibited. Data-model gained an **Advisory Record** entity with the ten mandatory fields. `SECURITY.md` response commitments are unchanged — it governs inbound reports, not dependency advisories.
 - [x] CHK051 Are the permitted outcomes for an unmaintained dependency enumerated, so a reviewer is not left to improvise? [Completeness, Spec §FR-010]
   - **2026-08-12 —** deny.toml sets `unmaintained = "workspace"` and `yanked = "deny"`, and FR-010 requires the reviewer outcome options to be stated. The enumerated outcomes are: replace, vendor-and-justify, or record a time-bounded waiver.
 - [x] CHK052 Are the documentation toolchain's dependencies explicitly brought under the same policy, rather than implicitly excluded as non-Rust? [Coverage, Spec §FR-054]
@@ -203,12 +205,34 @@
 **Reviewed 2026-08-12 by Ahmed Anbar — self-review under W-002.** This review is **not**
 independent and must not be described as such (GOVERNANCE.md, ruling of 2026-08-11).
 
+#### Initial review — 2026-08-12
+
 | Outcome | Count |
 |---|---|
 | Passed with recorded basis | **77** |
 | **Failed — genuine specification gap** | **2** — CHK048, CHK050 |
 | Weakened to obtain a pass | **0** |
 | Total with a defensible recorded outcome | **79 / 79** |
+
+#### Corrective work — 2026-08-12
+
+| Task | Gap closed | Authoritative location created |
+|---|---|---|
+| **T103** | CHK048 — no evidence-retention duration existed anywhere | `governance/evidence-retention-policy.md` |
+| **T104** | CHK050 — no advisory response window existed anywhere | `governance/dependency-advisory-policy.md` |
+
+#### Final re-review — 2026-08-12
+
+| Outcome | Count |
+|---|---|
+| **Passed** | **79 / 79** |
+| Failed | **0** |
+| Weakened to obtain a pass | **0** |
+
+**The initial finding of two failures stands as recorded.** The original dated findings are
+preserved verbatim beneath CHK048 and CHK050, each followed by a dated resolution note. This
+review found two real gaps, and both were closed by writing the missing policy rather than
+by softening the requirement or checking the box early.
 
 ### The two failures, and what was done about them
 

@@ -50,6 +50,14 @@ Only platforms with passing evidence are listed as supported. macOS and Windows 
 
 Dependency updates arrive as reviewable pull requests through Dependabot across the `cargo`, `github-actions`, and `npm` ecosystems. Unreviewed floating updates are prohibited in generated output (FR-020).
 
+### Security advisories against dependencies
+
+Bounded response windows apply, measured from confirmed detection. **Triage** — severity, affected versions, named owner — within **24 hours** for known active exploitation or Critical, **48 hours** for High, **5 calendar days** for Medium, **10 calendar days** for Low. **Remediation** within **7 calendar days** for Critical, **14** for High, **30** for Medium, and **90 days or the next scheduled prerelease** for Low, whichever comes first.
+
+Absence of an upstream fix does **not** extend a deadline: the dependency is removed, disabled, replaced, or isolated, or the affected release is blocked. Known **Critical and High vulnerabilities are release blockers and cannot be waived**. Silently ignoring an advisory without a dated record is prohibited.
+
+The authoritative policy is `governance/dependency-advisory-policy.md`; the above is a summary, and any disagreement resolves in favour of that document. This governs advisories against **dependencies** and is distinct from the inbound private-report timetable in `SECURITY.md`, which is unchanged.
+
 ## Licence
 
 `MIT OR Apache-2.0` at the recipient's choice, for Renvor's source and documentation. Contributions are accepted under the same dual terms. **Project code generated for a user carries no Renvor licensing obligation** and is owned outright by that user; generated output must not embed a Renvor licence header implying otherwise (FR-050).

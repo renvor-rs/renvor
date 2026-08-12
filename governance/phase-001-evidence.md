@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **76 of 106 tasks complete**; the public repository is pushed, protected, and scanned; 4 of 6 decision records accepted (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
+**Status**: Open — implementation in progress, **78 of 106 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -1015,6 +1015,96 @@ that the review is not independent.
 
 **T102 remains deliberately open** — the shared-server audit must be re-verified
 immediately before any deployment and must not be marked complete in advance.
+
+## 3y. T103 and T104 — policy corrections closing the T086 findings (2026-08-12)
+
+The T086 review found two genuine specification gaps. Both are now closed by writing the
+missing policy, not by softening the requirement. **The original finding of two failures
+stands recorded**; the checklist preserves both dated failure notes with resolution notes
+appended beneath them.
+
+### T103 — evidence retention
+
+**Authoritative**: `governance/evidence-retention-policy.md`.
+**Also stated in**: spec FR-046 · `contracts/package-metadata.md` §Release evidence ·
+data-model §Evidence Retention Schedule.
+
+| Class | Retention |
+|---|---|
+| Ordinary CI logs and temporary workflow artifacts | **90 days** — the platform maximum for public repositories |
+| Tracked governance evidence records | **Lifetime of the project** |
+| Binary release evidence | **The later of** 7 years after publication **or** 3 years after that release's supported lifetime ends |
+| Manifest, checksums, SBOM, attestation bundle, signing metadata | **Lifetime of the project** |
+
+Workflow artifacts are evidence **transport**, never the durable archive. The canonical
+public copy is the corresponding immutable release. A **second, independently controlled,
+encrypted, versioned archive with access logging and an annual restore test** is required
+before the first real registry publication — **it does not exist today, and no document
+claims it does.** The Phase 013 release gate **fails closed** without it. Provider undecided.
+
+**Phase 001 has no clause 4–8 obligation to discharge**, because it publishes no crate and
+no release. Its durable evidence is this tracked record, retained for the lifetime of the
+project; its CI artifacts follow the 90-day rule.
+
+**The numeric periods are Renvor policy decisions**, not durations mandated by GitHub or
+NIST. `RELEASING.md` must incorporate the policy exactly at **T070, which remains open**.
+
+### T104 — dependency-advisory response
+
+**Authoritative**: `governance/dependency-advisory-policy.md`.
+**Also stated in**: spec FR-010 · `contracts/support-policy.md` · `CONTRIBUTING.md` ·
+ADR-0003 · data-model §Advisory Record · a `deny.toml` comment explaining why a duration
+cannot live in that file.
+
+Measured from confirmed detection:
+
+| Condition | Triage | Remediate |
+|---|---|---|
+| Known active exploitation | 24 hours | Begin immediately; decision within 24 hours |
+| Critical | 24 hours | 7 calendar days |
+| High | 48 hours | 14 calendar days |
+| Medium | 5 calendar days | 30 calendar days |
+| Low | 10 calendar days | 90 days or the next prerelease, whichever is first |
+
+Severity is not the CVSS base score alone. **Absence of an upstream fix does not extend a
+deadline.** Critical and High are public-release blockers that **cannot be waived**. Medium
+and Low acceptance requires a time-bounded written exception. An ignored advisory without a
+dated record is prohibited. Open Critical and High records get progress updates at least
+every 5 calendar days.
+
+**The numeric deadlines are Renvor policy decisions**, informed by CVSS, FIRST, RustSec, and
+NIST SP 800-218 but mandated by none of them.
+
+**`SECURITY.md` is unchanged.** It governs inbound private reports about Renvor; this policy
+governs advisories against dependencies. The two clocks are deliberately different, and each
+document now says so.
+
+### T086 final result
+
+| Stage | Result |
+|---|---|
+| Initial review, 2026-08-12 | **77 passed, 2 failed** (CHK048, CHK050), 0 weakened |
+| Corrective work | **T103** and **T104** |
+| Final re-review, 2026-08-12 | **79 of 79 passed**, 0 failed, 0 weakened |
+
+### ADR-0003 — accepted on re-review
+
+| # | W-002 control | Status |
+|---|---|---|
+| 1 | Written alternatives-and-consequences review | ✅ five alternatives, costs stated |
+| 2 | Governance checklist | ✅ **79/79** — CHK050, which blocked this record, resolved by T104 |
+| 3 | Required CI and security checks | ✅ all four passing |
+| 4 | Dated review record with the ADR | ✅ 2026-08-12 |
+
+**State `accepted`.** Reviewer `Ahmed Anbar — self-review under W-002`, review date
+2026-08-12, explicitly **not independent**. The record keeps its review history showing the
+first review did not accept it.
+
+The advisory policy is incorporated **by authoritative reference**, not copied, so the
+numbers exist in one file and every other mention resolves in its favour.
+
+**Decision records: 5 accepted, 1 proposed.** ADR-0006 remains `proposed` — T099, T101,
+T102, T105, and T106 all remain open and were not touched in this pass.
 
 ## 4. Acceptance criteria coverage
 

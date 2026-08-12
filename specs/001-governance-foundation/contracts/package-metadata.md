@@ -54,7 +54,21 @@ Every release, and the Phase 001 rehearsal, produces (FR-045, FR-046):
 - the resolved dependency set (the committed lockfile);
 - the toolchain version, platform, operator, and date.
 
-Retained long enough for a reviewer to reconstruct what was verified, on which platform, by whom, and when. The retention period is stated in `RELEASING.md`.
+Retained per `governance/evidence-retention-policy.md`, which states concrete periods rather than "long enough":
+
+| Class | Retention |
+|---|---|
+| Ordinary CI logs and temporary workflow artifacts | **90 days** (platform maximum for public repositories) |
+| Tracked governance evidence records | **Lifetime of the project** |
+| Binary release evidence | **The later of** 7 years after publication **or** 3 years after that release's supported lifetime ends |
+| Manifest, checksums, SBOM, attestation bundle, signing metadata | **Lifetime of the project** |
+
+Workflow artifacts are evidence **transport**, not the durable archive. The canonical public
+copy is the corresponding immutable release; a second independently controlled, encrypted,
+versioned archive with access logging and an annual restore test is required **before the
+first real registry publication**, and **does not exist yet**. The Phase 013 release gate
+fails closed without it. These periods are Renvor policy decisions, not externally mandated
+durations.
 
 ## Workflow permission contract
 

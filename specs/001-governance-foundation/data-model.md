@@ -161,15 +161,68 @@ An additional field applies as a result:
 | `review_required_licenses` | list | Permitted only with a recorded written review |
 | `denied_licenses` | list | Never permitted |
 | `allowed_sources` | list | Registries a dependency may come from |
-| `advisory_policy` | prose | How RustSec advisories are triaged and within what window |
+| `advisory_policy` | reference | `governance/dependency-advisory-policy.md` — the authoritative triage and remediation windows |
 | `unmaintained_policy` | prose | Outcome options: replace, waive with expiry, or block |
 | `lockfile_rule` | prose | Which artifact kinds commit lockfiles |
 
 **Validation rules**
 
-- The machine-readable form is authoritative; prose that disagrees with `deny.toml` is a defect.
+- The machine-readable form is authoritative for licences and sources; prose that disagrees with `deny.toml` is a defect.
+- **Advisory response windows are authoritative in `governance/dependency-advisory-policy.md`**, because a duration cannot be expressed in `deny.toml`. Any restatement elsewhere that disagrees with it is a defect.
 - A crate with no licence expression is denied — absence is not permission.
 - No publishable crate may carry a git or path dependency (FR-040).
+
+---
+
+## Entity: Advisory Record
+
+**File**: one record per advisory, stored under `governance/` | **Satisfies**: FR-010 | **Policy**: `governance/dependency-advisory-policy.md`
+
+Created for **every** advisory affecting a dependency, from RustSec, `cargo-deny`, Dependabot, the GitHub Advisory Database, or an equivalent verified source. An advisory with no record is a policy violation, not an oversight.
+
+| Field | Type | Rules |
+|---|---|---|
+| `source_and_identifier` | string | e.g. `RUSTSEC-YYYY-NNNN`, `GHSA-xxxx-xxxx-xxxx`. Mandatory |
+| `affected_dependency` | string | Name and the exact affected version range |
+| `detection_time` | datetime | Confirmed detection. **Starts both the triage and the remediation clock** |
+| `severity_and_contextual_risk` | prose | The assessment and its reasoning. **CVSS score alone is insufficient** |
+| `reachability` | prose | Whether Renvor reaches the vulnerable code, and how that was determined |
+| `owner` | string | A named individual, never a role or team |
+| `chosen_action` | enum | `fix` · `remove` · `disable` · `replace` · `isolate` · `time-bounded exception` |
+| `deadline` | date | Absolute date derived from the policy table, not a relative duration |
+| `mitigation` | prose | What protects the project until resolution |
+| `resolution_and_verification` | prose | What was done and how it was confirmed |
+
+**Validation rules**
+
+- **Triage** (severity, affected versions, named owner) completes within 24 hours for known active exploitation or Critical, 48 hours for High, 5 calendar days for Medium, 10 calendar days for Low.
+- **Remediation** completes within 7 calendar days for Critical, 14 for High, 30 for Medium, and 90 or the next scheduled prerelease for Low, whichever comes first. Known active exploitation begins immediately with a decision within 24 hours.
+- **Absence of an upstream fix does not extend the deadline.** The dependency is removed, disabled, replaced, or isolated, or the affected release is blocked.
+- A record with `chosen_action = time-bounded exception` is permitted only for Medium or Low, and requires a corresponding waiver with mitigation, owner, absolute expiry, reassessment date, and removal plan.
+- **Critical and High cannot be waived** for a public release.
+- Open Critical and High records carry a progress update at least every 5 calendar days.
+- A missed deadline is itself recorded with its reason; it is never allowed to pass unremarked.
+
+---
+
+## Entity: Evidence Retention Schedule
+
+**File**: `governance/evidence-retention-policy.md` (authoritative) | **Satisfies**: FR-045, FR-046
+
+| Class of evidence | Retention |
+|---|---|
+| Ordinary CI logs and temporary workflow artifacts | **90 days** — the platform maximum for public repositories |
+| Phase-completion and release-rehearsal evidence held as tracked governance records | **Lifetime of the project** |
+| Binary release evidence | **The later of** 7 years after publication **or** 3 years after that release's supported lifetime ends |
+| Compact integrity and provenance records — manifest, checksums, SBOM, attestation bundle, signing metadata | **Lifetime of the project** |
+
+**Validation rules**
+
+- Workflow artifacts are evidence **transport**, never the durable archive. Treating one as the archive of record is a defect.
+- The canonical public copy is the corresponding immutable release; a **second, independently controlled, encrypted, versioned archive with access logging and an annual restore test** is required before the first real registry publication.
+- **No such independent archive exists yet.** No document may imply otherwise.
+- The Phase 013 release gate **fails closed** if the independent archive and its restore test are not ready.
+- The numeric periods are **Renvor policy decisions**, not externally mandated durations.
 
 ---
 
