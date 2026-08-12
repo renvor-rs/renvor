@@ -795,7 +795,7 @@ and a BuildKit builder. A `gitlab-runner.service` is also active.
 | IPv6 | `2a02:4780:f:88ec::/48` (public, available) |
 | Firewall | **`ufw` inactive.** ~520 iptables rules and 7 nft tables present, essentially all Kubernetes/Docker-managed |
 | Cloudflare software | **`cloudflared` not installed**; no tunnel or Cloudflare pods in the cluster |
-| DNS (external check) | `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers (`coco`/`earl.ns.cloudflare.com`). `renvor.dev` has **no A record**. `ahmedanbar.dev` resolves **directly to the origin IP**, i.e. currently DNS-only, not proxied |
+| DNS (external check) | *(as observed 2026-08-11 — **superseded**, see §3af)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers (`coco`/`earl.ns.cloudflare.com`). `renvor.dev` had **no A record** at that time. `ahmedanbar.dev` resolves **directly to the origin IP**, i.e. DNS-only, not proxied |
 
 ### Backup and recovery
 
@@ -1866,6 +1866,228 @@ row 21 in particular keeps the first-publication gate closed.
 **The set is complete for Phase 001, which publishes nothing.** It is *not* sufficient for a
 first release: row 21 must be closed first.
 
+## 3af. Workspace reorganisation, repository reconciliation, DNS and TLS (2026-08-12)
+
+**Nothing was deployed, published, released, or provisioned.** No GitHub repository was
+created, renamed, or made public. No Cloudflare record was created or changed. No
+certificate was issued. No Kubernetes object was touched.
+
+### 3af.1 The three private repositories already exist
+
+**Created manually by Ahmed Anbar, outside any implementation run. This session did not
+create them, and does not claim to have.**
+
+| Repository | Visibility | Size | Branches | Commits |
+|---|---|---|---|---|
+| `renvor-rs/renvor` | **public** | 769 KB | 2 | 1+ |
+| `renvor-rs/renvor-site` | **private** | 0 KB | 0 | **0 — empty** |
+| `renvor-rs/renvor-docs` | **private** | 0 KB | 0 | **0 — empty** |
+| `renvor-rs/renvor-infra` | **private** | 0 KB | 0 | **0 — empty** |
+
+`renvor-site` and `renvor-infra` **supersede the earlier proposed names** `renvor-landing`
+and `renvor-deploy`. Forward-looking references were updated; dated historical observations
+were preserved and labelled rather than rewritten.
+
+Local checkouts were created by cloning. **GitHub state was not modified**: no push, no
+commit, no branch, no README, no licence, no workflow, no settings change. All three
+remained empty after the clones, verified by API.
+
+### 3af.2 Local workspace reorganisation
+
+`/Users/ahmedanbar/Documents/renvor` is **no longer a Git repository**; it is a plain
+container directory. Same-filesystem atomic renames were used throughout — no large tree was
+copied and deleted.
+
+| Path | Repository | Remote |
+|---|---|---|
+| `framework/` | yes | `git@github.com:renvor-rs/renvor.git` |
+| `branding/` | **no — deliberately not a repository** | — |
+| `branding/landing-v7/` | yes | `git@github.com:renvor-rs/renvor-site.git` |
+| `docs/` | yes, **empty** | `git@github.com:renvor-rs/renvor-docs.git` |
+| `infra/` | yes, **empty** | `git@github.com:renvor-rs/renvor-infra.git` |
+
+**Framework integrity across the move**, verified against a pre-migration manifest:
+
+| Check | Result |
+|---|---|
+| `git rev-parse --show-toplevel` | `/Users/ahmedanbar/Documents/renvor/framework` |
+| HEAD before and after | `2183b246ef3bbfca69b8ec92e2683a8125a5b7d2` — **unchanged** |
+| Branch | `main` |
+| Origin URL | preserved |
+| Tracked files | **85 of 85 byte-identical** (index blob hashes and modes compared) |
+| Worktree status | clean, 0 entries |
+
+**Branding preserved exactly**: **223,389 files, 2,150,116,984 bytes** before and after,
+across all 14 versions. `Branding` → `branding` used a unique intermediate name, because the
+filesystem is **case-insensitive** — confirmed by `Branding` and `branding` resolving to the
+same inode — so a direct case-only rename was avoided.
+
+**Recovery artefacts** at `/Users/ahmedanbar/Documents/renvor-migration-backup-20260812T095519Z/`:
+
+| Artefact | SHA-256 |
+|---|---|
+| `framework-git.tar.gz` | `293e8988de4fd993274e3a92fa465cd2a9d0ce850c344c1b488e302163fdafca` |
+| `framework-tracked-objects.txt` | `4d32d96c7a98f469973cf88a205b8e1fb6ecd83bc407d950329da541fe7ca992` |
+| `landing-v7-source.sha256` | `d5cadc57b63b0f954dcb3eedcb428bdd1fd1799f6a7a85dd94659263502631b9` |
+| `branding-full-manifest.txt` | `27b6a2f4ec4e70d804cc1c184e2bd121d6fa0a2d01a98c432b4b245d1352f44d` |
+
+The backup was **restore-tested before the first move**: extracted to a fresh directory,
+`git fsck --full --strict` clean, HEAD, `main`, `origin/main`, and the origin URL all
+verified. No prune, garbage collection, reflog expiry, or history rewrite was performed.
+
+### 3af.3 Landing V7
+
+The complete original is preserved untouched at
+`branding/.migration-backup/landing-v7-original` — **33,362 files**. **It must not be
+deleted** until the site migration is independently validated and its deletion explicitly
+approved.
+
+**Exactly 14 production-source files** were copied into the checkout, each verified
+**byte-identical** against the pre-migration SHA-256 manifest. Deliberately excluded:
+`node_modules/` (33,307 files), `build/` (20), `.docusaurus/` (15), and `inspection/`
+(6 screenshots). No credentials, environment files, editor state, local tooling state, PDFs,
+or brand collateral entered the checkout.
+
+**Validation on its own Node 24 toolchain** (`node v24.19.0`, `pnpm 11.21.0`; the framework
+pins Node 22 — the two must not be conflated):
+
+| Check | Result |
+|---|---|
+| Frozen install (`pnpm install --frozen-lockfile`) | **pass**, 5.4 s |
+| Strict typecheck (`tsc --noEmit`) | **pass**, exit 0 |
+| Production build | **pass**, 20 files generated |
+| Desktop 1440×900 horizontal overflow | **0 px** |
+| Mobile 390×844 horizontal overflow | **0 px** |
+| Light / dark themes | both honoured — `rgb(246,248,252)` / `rgb(12,25,48)` |
+| Images with `alt` | 3 of 3 |
+| Buttons without accessible name | 0 |
+| `lang` attribute | `en` |
+
+**Reduced motion, measured rather than assumed:**
+
+| `prefers-reduced-motion` | media query matches | ScrollTrigger pin-spacers | elements with inline animation |
+|---|---|---|---|
+| `no-preference` | false | 1 | 43 |
+| **`reduce`** | **true** | **0** | **0** |
+
+GSAP's `matchMedia` gating and its cleanup both work: under reduced motion no animation is
+applied and no ScrollTrigger is created.
+
+**Landing V7 remains uncommitted**: 0 local commits, 0 staged files, remote 0 refs / 0 KB.
+It stays that way until T095–T098 pass.
+
+**Two files do not exist and were not invented**: `.nvmrc` (already tracked by **T100**) and
+`.gitignore`. `package.json` declares `engines.node >= 24.0` and
+`packageManager: pnpm@11.21.0`. A `.gitignore` must be written before the first commit.
+
+### 3af.3a A relocation hazard the move exposed
+
+**`cargo xtask verify` failed at step 2 immediately after the move**, reporting
+`could not find Cargo.toml in /Users/ahmedanbar/Documents/renvor` — the new *container*
+directory, not the framework root.
+
+Cause: `xtask` derives the workspace root from `env!("CARGO_MANIFEST_DIR")`, which is baked
+in **at compile time**. The cached binary in `target/` still carried
+`/Users/ahmedanbar/Documents/renvor/xtask` from before the move, whose parent is now the
+container directory. Cargo did not consider the binary stale, because no source file had
+changed.
+
+```text
+strings target/debug/xtask | grep /Users/...
+  before rebuild: /Users/ahmedanbar/Documents/renvor/xtask
+  after  rebuild: /Users/ahmedanbar/Documents/renvor/framework/xtask
+```
+
+Resolved with `cargo clean -p xtask` followed by a rebuild. **The source is not defective**
+— `env!("CARGO_MANIFEST_DIR")` is the documented way to do this and is correct whenever the
+binary matches the tree it was built in. CI is unaffected, because every run builds from a
+fresh checkout.
+
+Recorded because the failure mode is misleading rather than obvious: it names a path the
+operator never chose, and it survives a `cargo build` that reports success. **Anyone
+relocating this repository must rebuild `xtask` before trusting a verification result.**
+
+### 3af.4 DNS — verified against both authoritative nameservers
+
+**Records created manually by Ahmed Anbar. This session did not create or modify them.**
+
+Verified **2026-08-12T10:04:01Z** directly against `coco.ns.cloudflare.com` and
+`earl.ns.cloudflare.com`, not via a recursive resolver:
+
+| Record | Value | coco | earl |
+|---|---|---|---|
+| `renvor.dev` A | `153.92.208.119` | ✅ | ✅ |
+| `docs.renvor.dev` A | `153.92.208.119` | ✅ | ✅ |
+| `www.renvor.dev` A | `153.92.208.119` | ✅ | ✅ |
+| AAAA / CNAME on all three | none | ✅ | ✅ |
+| `*.renvor.dev` A / AAAA / CNAME | **absent** | ✅ | ✅ |
+
+**Wildcard absence proven by random-hostname probe**, not by absence of a record lookup:
+`zz-39ee9a547b17.renvor.dev` and `qq-98484e48d3ee.renvor.dev` — two freshly generated names,
+never previously queried — returned **no answer on both authoritative nameservers**.
+
+> **An earlier check on 2026-08-12T09:21:57Z found a wildcard `*.renvor.dev A 153.92.208.119`
+> present**, and that run stopped without editing any file. The maintainer subsequently
+> removed it. The earlier finding is recorded rather than discarded, because it is the
+> reason the precondition existed.
+
+**Proxy state: DNS-only (grey cloud)**, confirmed structurally — the authoritative answer is
+the origin IP itself, not a Cloudflare edge address.
+
+**This state is temporary.** It exists so cert-manager can complete HTTP-01 validation and
+issue publicly trusted Let's Encrypt origin certificates. A Cloudflare Origin CA certificate
+is **not** usable while records are DNS-only, because browsers reach the origin directly and
+would receive a certificate no public root trusts.
+
+### 3af.5 TLS — origin is not ready
+
+Inspected read-only via SNI against `153.92.208.119:443`. **Identical certificate for all
+three hostnames:**
+
+| Field | Value |
+|---|---|
+| Subject | `CN=TRAEFIK DEFAULT CERT` |
+| Issuer | `CN=TRAEFIK DEFAULT CERT` (**self-signed**) |
+| Valid from | 2026-08-10 05:09:18 GMT |
+| Valid to | 2027-08-10 05:09:18 GMT |
+| SAN | `DNS:d1207dec8680e832079d94399df82634.db6371138054b2788704127dcfbf3720.traefik.default` |
+| Verify | **18 (self-signed certificate)** |
+
+**No hostname certificate exists.** This is truthful evidence that origin TLS is not ready,
+and **no deployment, certificate, Cloudflare proxy, Full (strict), or origin-authentication
+gate is marked complete.**
+
+The final intended architecture is unchanged:
+
+```text
+Visitor → Cloudflare proxied edge → Full (strict) → Authenticated Origin Pulls → Traefik → Renvor service
+```
+
+A Let's Encrypt certificate on the VPS does **not** replace Cloudflare proxying; it supplies
+the valid origin certificate that Full (strict) requires.
+
+### 3af.6 T105 — the `www` redirect decision
+
+**Decision: Cloudflare serves the permanent `www.renvor.dev` → `https://renvor.dev`
+redirect, HTTP 301, preserving path and query string.**
+
+Rationale: the redirect must work for visitors who never reach the origin, and it should not
+consume an origin certificate, an Ingress, or a Traefik router to answer a request whose only
+purpose is to be redirected. Cloudflare answers it at the edge before the origin is involved.
+
+Consequences:
+
+- `www.renvor.dev` needs a **proxied** record for the rule to apply. It is DNS-only today, so
+  **the redirect cannot function yet** and the rule is deliberately **not created**.
+- Until then `www.renvor.dev` resolves to the origin and receives the Traefik default
+  certificate — a browser will show a certificate warning. Expected in the temporary state.
+- Traefik needs **no** `www` router, and no certificate is issued for `www` at the origin.
+- If Cloudflare proxying is ever disabled, **the redirect stops working**; a Traefik fallback
+  would then be required, and that is a deliberate trade recorded here rather than discovered
+  during an outage.
+
+**The rule was not created in this pass.**
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
@@ -1973,7 +2195,7 @@ The phase remains open while any row here is present.
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
 | ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
 | **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — blocks deployment** |
-| **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; creation of `renvor-rs/renvor-landing` | Maintainer | 2026-08-11 | **open** |
+| **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; the **first content commit or push** to `renvor-rs/renvor-site`, which already exists | Maintainer | 2026-08-11 | **open** |
 | **Container registry undecided** — GHCR versus the VPS GitLab registry, including credential model | T099; creation of the private repositories | Maintainer | 2026-08-11 | **open** |
 | **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |

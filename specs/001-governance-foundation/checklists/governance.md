@@ -63,7 +63,7 @@
 - [x] CHK022 Are contribution licensing terms specified, so a contributor knows what they grant before opening a pull request? [Completeness, Spec §FR-008]
   - **2026-08-12 —** FR-008 requires the contribution guide to state the dual terms; CONTRIBUTING.md carries the inbound=outbound clause.
 - [x] CHK023 Is brand-asset licensing either specified or explicitly declared out of scope, given that the code grant does not cover it? [Gap, Plan §Pre-Push Stage 0]
-  - **2026-08-12 —** The Assumptions section states explicitly that brand assets and the product name are **not** covered by the code grant and are handled separately. That is the "explicitly declared out of scope" branch of this item, so it passes. The consequent decision is tracked as open task **T098**, which blocks creation of renvor-rs/renvor-landing.
+  - **2026-08-12 —** The Assumptions section states explicitly that brand assets and the product name are **not** covered by the code grant and are handled separately. That is the "explicitly declared out of scope" branch of this item, so it passes. The consequent decision is tracked as open task **T098**, which blocks the first content commit to renvor-rs/renvor-site (the repository itself already exists).
 - [x] CHK024 Are the allowed, review-required, and denied licence sets each enumerated, rather than described by principle? [Completeness, Spec §FR-010]
   - **2026-08-12 —** FR-010 requires permitted, review-required, and prohibited sets; deny.toml enumerates the allow-list literally and denies wildcards and unknown sources.
 - [x] CHK025 Is "requires written review" defined with a reviewer, an outcome set, and a record location? [Ambiguity, Spec §FR-010]
