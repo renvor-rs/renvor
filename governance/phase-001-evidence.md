@@ -2097,6 +2097,75 @@ Consequences:
 
 **The rule was not created in this pass.**
 
+## 3ag. Brand mark published, and the T098 gate deliberately overridden (2026-08-12)
+
+**This records a maintainer decision to act ahead of an open gate. It is an override, not a
+gate closure, and T098 remains open.**
+
+### 3ag.1 What was done
+
+`assets/renvor-mark-v7.svg` was added to the **public** framework repository and is
+displayed at the top of `README.md`. The same mark now appears in the READMEs of
+`renvor-site`, `renvor-docs`, and `renvor-infra`.
+
+### 3ag.2 What it conflicts with
+
+| Authority | Statement |
+|---|---|
+| **ADR-0005** (accepted) rejected alternative | Placing brand assets in the public framework repository *"puts brand assets under a repository that declares `MIT OR Apache-2.0`, **making an unintended licensing claim**"* |
+| **ADR-0005** consequences | *"Brand assets in `Branding/brand-v7` are **not** covered by the framework's `MIT OR Apache-2.0` grant"* |
+| **T098** | Blocks *"any public use of the site or its brand assets"* |
+
+Before this change the framework repository shipped **no** brand mark — only
+`docs/static/img/favicon.ico`. This is therefore new public exposure of an asset whose
+licence terms are undecided.
+
+### 3ag.3 The decision, and the compensating control
+
+**Maintainer decision, Ahmed Anbar, 2026-08-12: proceed, with an explicit exclusion notice.**
+The conflict was raised in full before the change was made, with the alternative of deciding
+T098 first offered and declined in favour of proceeding.
+
+The compensating control is a **brand-mark notice in `README.md`** stating that the mark is
+not covered by `MIT OR Apache-2.0`, that no trademark or brand licence is implied, that
+usage terms are undecided and tracked at T098, and that the mark should be treated as all
+rights reserved meanwhile.
+
+**This addresses ADR-0005's stated reasoning without closing its conclusion.** The risk that
+record names is an *unintended* licensing claim; an explicit exclusion makes the claim
+intended and bounded. It does not decide the usage terms, and it does not satisfy T098.
+
+### 3ag.4 What is still open
+
+- **T098 remains open.** The website-code licence and the brand-asset usage terms are still
+  undecided. This entry does not close it and must not be cited as closing it.
+- **ADR-0005 is not amended.** Its rejected-alternative analysis stands; this is a scoped
+  exception to it, recorded here rather than by quietly editing the record.
+- The correct resolution remains a decision record fixing the licence and usage terms, after
+  which this override should be replaced by an ordinary, licensed use of the mark.
+
+## 3ah. `renvor-site` first content commit (2026-08-12)
+
+**The first content commit and push to `renvor-site` occurred with T095, T096, T097, and
+T098 all open.** Authorised explicitly by the maintainer after those four gates were
+identified and quoted.
+
+| | |
+|---|---|
+| Repository | `renvor-rs/renvor-site` (**private**) |
+| Contents | 14 production-source files plus `.gitignore` |
+| Excluded | `node_modules/`, `build/`, `.docusaurus/`, inspection screenshots, env files, credentials, editor and tool state |
+| Deployment | **none** — nothing is built, served, or publicly reachable from this push |
+
+**What this does not mean.** The site is **not** deployed and **not** public. The
+release-honesty defects T095–T097 identified are **still present in the source**: the
+development-status notice is absent, the `renover new` / `renover add` commands still
+reference crates nobody can install, and three CTA destinations still do not resolve. Those
+gates now block **deployment** rather than the first commit, and they remain open.
+
+The repository README states the four open gates and that the licence is undecided, so a
+reader encountering the source is not misled about its status.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
