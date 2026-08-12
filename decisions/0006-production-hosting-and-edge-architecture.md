@@ -1,4 +1,4 @@
-# ADR-0006: Host the public sites on the existing k3s cluster behind a proxied Cloudflare edge
+# ADR-0006: Host the public sites on the existing k3s cluster, served directly from the origin with Cloudflare as DNS only
 
 | Field | Value |
 |---|---|
@@ -8,6 +8,20 @@
 | **Review date** | *(pending)* |
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
+
+> ## Revision 2026-08-12 — the edge model changed, by maintainer decision
+>
+> **This record originally specified a proxied Cloudflare edge with Full (strict) TLS,
+> Authenticated Origin Pulls, and a Cloudflare redirect rule.** The maintainer has since
+> ruled that Cloudflare is **authoritative DNS only** and that the proxy will not be enabled.
+>
+> D3, D4, D5, D10 and the `www` redirect decision are rewritten below to match. **The
+> superseded text is not deleted** — each rewritten decision states what it previously said
+> and why it changed, because the earlier reasoning is the evidence for the trade now being
+> accepted knowingly rather than by omission.
+>
+> The corrective decision is tracked as **T110**. **T105 is not reopened and not rewritten**:
+> it recorded a real decision, correctly, on the architecture in force at the time.
 
 ## Context
 
@@ -33,7 +47,7 @@ already serving production traffic, and already hosting unrelated third-party wo
 | Firewall | **`ufw` inactive** |
 | Addresses | IPv4 `153.92.208.x`, IPv6 `2a02:4780:f:88ec::/48` |
 | Backups | **No etcd snapshots (SQLite backend); no restic/borg/duplicity installed** |
-| Cloudflare | *(observed 2026-08-11)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` had **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied). **Superseded 2026-08-12**: the maintainer manually created three DNS-only A records for `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` — see `governance/phase-001-evidence.md` §3af |
+| Cloudflare | *(observed 2026-08-11)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` had **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied). **Superseded 2026-08-12**: the maintainer manually created three DNS-only A records for `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` — see `governance/phase-001-evidence.md` §3af. **Re-verified read-only 2026-08-12 (§3ai)**: all three resolve to `153.92.208.119` on both authoritative nameservers, no wildcard, no `AAAA`, **no `CAA` record yet** |
 
 Two consequences dominate every choice below:
 
@@ -78,63 +92,114 @@ The two sites are `Ingress` resources on the existing `traefik` IngressClass, wi
 certificates issued by the existing `letsencrypt-prod` ClusterIssuer. Both are proven on
 this exact server by six currently-valid certificates.
 
-### D3 — Cloudflare proxied, Full (strict), with origin authentication
+### D3 — Cloudflare is authoritative DNS only. The proxy stays off. *(revised 2026-08-12)*
 
-- `renvor.dev` apex and `docs.renvor.dev`: **proxied** (orange cloud).
-- `www.renvor.dev`: proxied, with a permanent 301 redirect rule to `https://renvor.dev`.
-- TLS mode: **Full (strict)**, which is honest only because cert-manager issues a real
-  publicly-trusted origin certificate. Flexible and Full (non-strict) are rejected: the
-  first sends plaintext to the origin, and the second accepts any certificate, making the
-  padlock meaningless between edge and origin.
-- **Authenticated Origin Pulls (mTLS)** enforced at Traefik for the two Renvor hostnames, so
-  the origin serves those hostnames only to Cloudflare.
+> **Previously**: "Cloudflare proxied, Full (strict), with origin authentication" — apex and
+> `docs` proxied (orange cloud), TLS mode Full (strict), Authenticated Origin Pulls enforced
+> at Traefik. **Superseded by maintainer decision, T110.**
 
-### D4 — Direct origin, not Cloudflare Tunnel — with the bypass closed at the origin
+- `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` are **DNS-only** (grey cloud).
+- **The Cloudflare proxy is not enabled**, now or as a planned later step.
+- **No Cloudflare Tunnel.** No `cloudflared` daemon anywhere.
+- **No Cloudflare Origin CA certificate** and **no Authenticated Origin Pulls.**
+- **No wildcard record.** Every hostname is declared explicitly.
+- Public TLS is issued **at the origin**, by the existing cert-manager against Let's Encrypt,
+  for every deployed hostname.
 
-**This is the least obvious decision here, and Tunnel was not rejected lightly.**
+The request path is therefore:
 
-| | Cloudflare Tunnel | Proxied direct origin (**chosen**) |
+```text
+Browser
+  → public DNS from Cloudflare
+  → Hostinger origin IP
+  → Traefik on the existing k3s cluster
+  ├── renvor.dev       → landing service
+  ├── docs.renvor.dev  → documentation service
+  └── www.renvor.dev   → permanent redirect to renvor.dev
+
+cert-manager
+  → Let's Encrypt
+  → publicly trusted certificates for all deployed hostnames
+```
+
+**Cloudflare is not in the HTTP request path at all.** It answers DNS queries and nothing
+else. No statement anywhere in this repository may describe Cloudflare as protecting,
+caching, filtering, or terminating Renvor HTTP traffic while these records are DNS-only.
+
+Full (strict) and Flexible are no longer alternatives to weigh: with the proxy off there is
+no edge TLS leg to configure. The browser negotiates TLS directly with Traefik.
+
+### D4 — The origin is directly exposed, and that is accepted, not mitigated *(revised 2026-08-12)*
+
+> **Previously**: "Direct origin, not Cloudflare Tunnel — with the bypass closed at the
+> origin", where D3's Authenticated Origin Pulls closed the origin-bypass hole. **With the
+> proxy off there is no bypass to close, because there is no edge to bypass.** The control
+> and the risk it answered both disappear together.
+
+Cloudflare Tunnel remains rejected, and the reasoning below is unchanged and still sound:
+
+| | Cloudflare Tunnel | Direct origin (**chosen**) |
 |---|---|---|
 | Origin IP exposure | Hidden | **Already public** — the IP serves `ahmedanbar.dev` directly today |
 | Inbound ports | None needed | 80/443 already bound and in use by existing sites |
-| Origin bypass | Structurally impossible | **Possible unless mitigated** — closed by D3 mTLS |
 | New moving parts | `cloudflared` daemon, a new failure domain | None |
 | New long-lived credential | **Yes** — a tunnel token stored in the cluster | No |
-| Failure mode | Tunnel down ⇒ site down, even though origin is healthy | Edge or origin fault, diagnosable independently |
+| Failure mode | Tunnel down ⇒ site down, even though origin is healthy | Origin fault only, diagnosable directly |
 | Operational ownership | New daemon to monitor, update, and rotate | Reuses what is already monitored |
 | Blast radius on this server | New DaemonSet/Deployment alongside 28 production pods | Two Ingress objects |
 
 Tunnel's headline benefit — hiding the origin IP — **buys nothing here**, because the origin
-IP is already published in DNS for `ahmedanbar.dev` and is trivially discoverable. Adopting
-Tunnel would add a daemon, a long-lived credential, and a new single point of failure to
-obtain a property this server has already given up.
+IP is already published in DNS for `ahmedanbar.dev` and is trivially discoverable.
 
-The genuine risk Tunnel would have solved is **origin bypass**: an attacker who knows the IP
-can send `Host: renvor.dev` straight to Traefik and skip Cloudflare's WAF, rate limiting,
-and caching. That is closed at the origin by D3's Authenticated Origin Pulls, which requires
-no firewall change and therefore **cannot affect the neighbouring production services**.
+**What has genuinely changed is the honest description of the exposure.** Under the previous
+decision the origin was reachable directly but that path was *intended to be* closed by mTLS.
+Now there is no edge, so:
 
-**Rejected mitigation: allow-listing Cloudflare IP ranges in `ufw`.** `ufw` is currently
-*inactive*; enabling it on a server running five unrelated production namespaces plus Docker
-GitLab is a high-blast-radius change whose failure mode is "everything else goes down". mTLS
-achieves the same goal at the application layer with no host-level firewall change.
+- **the origin IP is public and is the only server answering**, for every Renvor hostname;
+- **no WAF, no edge rate limiting, no bot management, and no DDoS absorption** stands in
+  front of Traefik;
+- **abuse traffic reaches the origin**, and the origin is shared with five unrelated
+  production namespaces plus Docker GitLab;
+- resource limits and NetworkPolicy (D8) stop being defence-in-depth and become the
+  **primary** containment for a Renvor workload under load.
 
-**Recovery procedure if Cloudflare is unavailable:** set the two records to DNS-only
-(grey cloud) and temporarily disable the origin-pull requirement in Traefik. This is a
-two-step, documented, reversible action — deliberately manual, because automatic failover
-that disables origin authentication would be a security regression triggered by an outage.
+**Rejected mitigation, still rejected: allow-listing Cloudflare IP ranges in `ufw`.** It was
+rejected before because `ufw` is inactive on a shared production host. It is now also
+*meaningless*: with the proxy off, traffic does not arrive from Cloudflare ranges.
 
-### D5 — Additional Cloudflare configuration
+**There is no recovery procedure to document for a Cloudflare outage of the request path**,
+because Cloudflare is not in it. A Cloudflare failure degrades DNS resolution only, and
+that is the same exposure every domain on any authoritative provider carries.
 
-| Item | Decision |
+### D5 — Where each edge concern now lives *(revised 2026-08-12)*
+
+> **Previously**: "Additional Cloudflare configuration" — HSTS, caching, security headers,
+> rate limiting, and an origin-bypass test were all placed at the Cloudflare edge. **With the
+> proxy off, every one of those except the DNS-layer items must move to the origin or be
+> struck.** They do not survive by being written down in the wrong place.
+
+**Still at Cloudflare — these are DNS-layer and do not require the proxy:**
+
+| Item | Decision | Status |
+|---|---|---|
+| DNSSEC | Enable at the registrar/Cloudflare | **Not verified** — separate authorised action |
+| CAA | Records permitting only the ACME CA that cert-manager uses; `iodef` to the security contact | **Absent** — confirmed read-only 2026-08-12, no `CAA` record exists on `renvor.dev`. Required before certificate issuance is constrained in any meaningful way |
+
+**Moved to the origin — Traefik and the workload now own these:**
+
+| Item | Decision | Owner |
+|---|---|---|
+| HSTS | **Only after** every deployed hostname serves valid TLS and has survived at least one renewal cycle. Enabling it early makes a TLS mistake unrecoverable for the `max-age`. No preload until then | Traefik response headers |
+| Cache | Hashed static assets: long `max-age`, `immutable`. HTML: short TTL with revalidation, so a rollback is visible immediately. **There is no edge cache — every request is an origin request**, so cache headers now govern browser behaviour only | Workload response headers |
+| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors`. **CSP must still be validated against the V7 landing implementation** (GSAP, self-hosted variable fonts) — unchanged, and still **T101** | Traefik middleware |
+| Rate limiting | Both sites are static, so sustained POST volume is abuse by definition. **This is no longer defence-in-depth behind an edge; it is the only rate limit that exists** | Traefik middleware |
+
+**Struck entirely:**
+
+| Item | Why |
 |---|---|
-| DNSSEC | Enable at the registrar/Cloudflare |
-| CAA | Records permitting only the ACME CA that cert-manager uses; `iodef` to the security contact |
-| HSTS | **Only after** both hostnames serve valid TLS and have been verified for at least one renewal cycle. Enabling it early makes a TLS mistake unrecoverable for the max-age duration. No preload until then. |
-| Cache | Hashed static assets: long `max-age`, `immutable`. HTML: short TTL with revalidation, so a rollback is visible immediately rather than after a cache lifetime |
-| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors` — **CSP must be validated against the V7 landing implementation**, which uses GSAP and variable web fonts and may require explicit `script-src`/`font-src` entries |
-| Rate limiting | On the origin-facing paths; both sites are static, so any sustained POST volume is abuse by definition |
-| Origin-bypass assessment | Documented above; mitigated by D3, re-tested after deployment by attempting a direct `Host:`-header request to the origin IP and confirming it is refused |
+| Origin-bypass assessment and post-deployment bypass test | There is no edge to bypass. The test verified that the origin refused non-Cloudflare traffic; the origin must now **accept** it, so the test would assert the opposite of the intended behaviour |
+| Cloudflare WAF, bot management, DDoS absorption | Not in the request path. **No document may claim these protect Renvor traffic** |
 
 ### D6 — Delivery: narrowly scoped deployment workflow, not GitOps
 
@@ -147,13 +212,57 @@ narrowly scoped credential and updates a single Deployment's image **by digest**
 revisited if the number of deployed properties grows beyond about five, or when a second
 maintainer joins.
 
-### D7 — Images and supply chain
+### D7 — Images and supply chain: GitHub Container Registry *(decided 2026-08-12, T099)*
 
-- Private registry; images referenced **by digest**, never by tag.
+> **Previously**: "Private registry … image-pull authentication by a narrowly scoped,
+> rotatable credential held as a cluster secret". **The registry is now chosen, and the
+> pull-credential requirement is deliberately removed** — see the publication model below.
+
+**Registry: GitHub Container Registry (`ghcr.io`).** The alternative was the GitLab registry
+already running on this host, and it is rejected on two grounds recorded in full under
+*Alternatives considered*.
+
+**Publishing authentication — the workflow's own token, not a stored credential:**
+
+- GitHub Actions publishes using the **short-lived `GITHUB_TOKEN` minted per workflow run**.
+- The image-publishing job declares **least privilege: `contents: read` and
+  `packages: write`**, and nothing else. Permissions are set on the job, not the workflow, so
+  no other job inherits write access to packages.
+- **No personal access token, deploy token, repository secret, or long-lived registry
+  credential is created.** A credential that does not exist cannot leak, cannot be rotated
+  late, and cannot outlive the person who made it.
+
+> **This is not OIDC, and describing it as OIDC would be wrong.** `GITHUB_TOKEN` is an
+> installation token that Actions injects into the run and revokes when the run ends. OIDC is
+> a separate mechanism in which a workflow exchanges a signed identity token with an external
+> provider for temporary credentials — it is how the crates.io trusted-publishing path works,
+> and it is *not* what authenticates to GHCR. The two are easy to conflate because both avoid
+> a stored secret; the distinction matters when someone later tries to configure a trust
+> relationship that GHCR neither needs nor offers here.
+
+**Pull authentication — none, by design:**
+
+- The **production deployment image is publicly pullable.** GHCR package visibility is
+  independent of repository visibility, so the source repositories stay private while the
+  built artefact is public.
+- Consequently **the k3s host needs no `imagePullSecret`**, and no registry credential is
+  stored in the cluster at all.
+- The image contains only the built static site — HTML, CSS, JS already served publicly at
+  `renvor.dev`. **Making it public discloses nothing that visiting the site would not.**
+- The trade is accepted knowingly: image *contents* and pull *counts* become public, and the
+  image cannot be used as a private distribution channel. Both are acceptable for a static
+  marketing and documentation site, and neither would be acceptable for an image carrying
+  configuration, credentials, or unreleased material.
+
+**Addressing:**
+
+- Images are referenced **by immutable digest (`@sha256:…`), never by a mutable tag alone.** A
+  tag may accompany a digest for human readability, but the digest is what deploys.
 - Signed images with SBOM and provenance attestation; vulnerability scan before promotion.
 - Minimal static-content base image; the sites are static HTML, CSS, JS.
-- Image-pull authentication by a narrowly scoped, rotatable credential held as a cluster
-  secret, never in Git.
+
+**Nothing was configured in this pass.** No package, no workflow, no image, no infrastructure
+change. Only the decision is recorded.
 
 ### D8 — Workload security baseline (all Renvor workloads)
 
@@ -190,14 +299,62 @@ affecting the neighbouring workloads.** It is outside Renvor's remit, and this r
 not claim to fix it, but it must not go unstated: `/var/lib/rancher/k3s/server/db/state.db`
 holds all cluster state for five production namespaces with no observed snapshot schedule.
 
-### D10 — Monitoring, logs, updates
+### D10 — Monitoring, logs, updates *(revised 2026-08-12)*
+
+> **Previously**: "probes plus Cloudflare edge analytics are the initial signal". **Edge
+> analytics do not exist without the proxy.** Removing the proxy removed the only traffic
+> visibility this record had planned for the first deployment.
 
 `metrics-server` is already present. Renvor adds no monitoring stack in the first
-deployment; probes plus Cloudflare edge analytics are the initial signal, and a metrics
-stack is only justified once there is something to observe. Log retention uses existing
-node journald policy. Component updates follow upstream releases through the private
-repositories' dependency policy, applied deliberately — never automatically on a shared
-production host.
+deployment. **The initial signal is now Kubernetes probes and Traefik access logs only** —
+there is no external vantage point reporting on requests that never reach the cluster.
+
+This is a real reduction in observability, recorded rather than glossed: an outage in which
+the origin is unreachable produces **no signal at all**, because nothing outside the origin
+is watching. A metrics stack or an external uptime check is correspondingly more valuable
+than it was under the previous decision, and is the first thing to add once there is
+something deployed to observe.
+
+Log retention uses existing node journald policy. Component updates follow upstream releases
+through the private repositories' dependency policy, applied deliberately — never
+automatically on a shared production host.
+
+### D11 — Traefik serves the permanent `www` redirect *(revised 2026-08-12; supersedes the T105 decision)*
+
+**`www.renvor.dev` → `https://renvor.dev`, HTTP 301, preserving path and query string,
+implemented as a Traefik router and redirect middleware on the origin.**
+
+> **Previously recorded as a second section numbered `D6`** — a numbering collision with the
+> delivery decision above, corrected here to `D11`. Its content said **Cloudflare** served
+> the redirect as an edge rule. That is no longer possible: **a Cloudflare redirect rule
+> applies only to a proxied record**, and D3 keeps every record DNS-only.
+
+The rejected alternative and the chosen one have swapped places, and the original reasoning
+is worth preserving because it names exactly what this now costs:
+
+| | Cloudflare edge rule *(previously chosen, now impossible)* | Traefik on the origin *(chosen)* |
+|---|---|---|
+| Works while the origin is down | **Yes** | **No** — a redirect is only as available as the origin |
+| Certificate needed for `www` | None | **Yes** — cert-manager must issue for `www.renvor.dev`, a hostname serving no content |
+| In version control | No — manual edge configuration, prone to drift | **Yes** — a manifest in `renvor-infra`, reviewed like any other change |
+| Requires the proxy | **Yes** — disqualifying under D3 | No |
+
+**What this costs, stated plainly:** the redirect now consumes a certificate and an Ingress
+for a hostname whose only job is to redirect, and it cannot answer while the origin is down.
+Both were the stated reasons for choosing Cloudflare originally. They are accepted now
+because the alternative does not exist under a DNS-only edge.
+
+**What it gains:** the redirect becomes reviewable, version-controlled infrastructure rather
+than a manual edge rule that no repository describes.
+
+Consequences:
+
+| Consequence | Detail |
+|---|---|
+| Certificate | cert-manager **must** issue a Let's Encrypt certificate for `www.renvor.dev`, or the redirect serves a TLS error instead of a redirect |
+| Current visitor experience | Unchanged and still broken: `www.renvor.dev` resolves to the origin and receives the Traefik **default self-signed certificate**, so a browser shows a warning. Expected until deployment |
+| Availability | The redirect shares the origin's fate. There is no independent path |
+| Status | **Not implemented.** No Traefik router, middleware, Ingress, or certificate exists for `www`. Creating them is a separate authorised action, and belongs to `renvor-infra` |
 
 ## Alternatives considered
 
@@ -207,9 +364,11 @@ production host.
 | Skip Kubernetes; serve static files from nginx or Caddy on the host | Genuinely simpler for two static sites, and a reasonable choice on an empty server. Rejected here because it would need ports 80/443 that Traefik already owns, so it would mean dismantling or fronting the existing ingress — more disruptive than adding two Ingress objects to it. |
 | Cloudflare Pages / Workers, no VPS at all | Removes the origin entirely and would be a strong choice for two static sites. Rejected because the maintainer's stated requirement is Kubernetes on the owned VPS, and because the framework will later need a real origin for dynamic examples. Recorded as the most credible alternative if operational load becomes a problem. |
 | Cloudflare Tunnel | See D4 — solves a problem this origin does not have, at the cost of a daemon, a long-lived credential, and a new failure domain. |
-| `ufw` allow-list of Cloudflare ranges | High blast radius on a shared server whose firewall is currently inactive; mTLS achieves the same at the application layer. |
+| `ufw` allow-list of Cloudflare ranges | High blast radius on a shared server whose firewall is currently inactive. **Now also meaningless**: with the proxy off, traffic does not arrive from Cloudflare ranges. |
 | GitOps controller (Flux, Argo CD) | Continuously running broad-permission component for two static sites. Not yet earned; revisit at scale. |
-| Flexible or Full (non-strict) Cloudflare TLS | Flexible sends plaintext to the origin. Full (non-strict) accepts any certificate, making origin TLS decorative. cert-manager already provides a real certificate, so strict costs nothing. |
+| **The GitLab registry already running on this host** *(rejected 2026-08-12, T099)* | Genuinely attractive — it exists, it is private, it costs no external dependency, and 328 GB is free. Rejected on two grounds. **First, the publishing credential**: GHCR is reachable from GitHub Actions with the run's own `GITHUB_TOKEN`, so no stored secret exists; publishing to the host's GitLab registry from GitHub Actions requires a **long-lived cross-system credential** held as a repository secret — the exact class of artefact the release process already worked to eliminate. **Second, the recovery loop**: D9 rests on recovery being "redeploy a known digest from a registry", which fails if the registry lives on the machine being restored. A registry on the origin is unavailable in precisely the scenario it is needed. |
+| **Proxied Cloudflare edge with Full (strict) and Authenticated Origin Pulls** | **This record's original decision, rejected 2026-08-12 by maintainer ruling (T110).** It is the stronger security posture on the merits — it supplies a WAF, edge rate limiting, DDoS absorption, and a closed origin-bypass path, none of which the chosen architecture has. It is rejected on ownership grounds rather than technical ones: it puts the request path, the redirect, the caching policy, and the security headers inside a vendor console that no repository describes and no review covers. The chosen architecture keeps every one of those in version control, and pays for it in exposure. |
+| Flexible or Full (non-strict) Cloudflare TLS | Moot under D3 — with the proxy off there is no edge TLS leg. Recorded because it was a live comparison under the original decision: Flexible sends plaintext to the origin, and Full (non-strict) accepts any certificate, making origin TLS decorative. |
 
 ## Consequences
 
@@ -219,44 +378,42 @@ production host.
   misconfiguration can affect `ahmedanbar.dev`, `codexhub`, `attaa`, and GitLab. This is the
   single largest risk of this decision and the reason for per-namespace isolation, strict
   resource limits, and NetworkPolicy.
-- **Origin bypass is mitigated, not eliminated.** mTLS at Traefik is an application-layer
-  control. A misconfiguration there re-opens direct origin access silently, so the
-  post-deployment bypass test is mandatory, not optional.
+- **The origin IP is public, and it is the only server answering.** *(revised 2026-08-12 —
+  this previously read "origin bypass is mitigated, not eliminated".)* There is no bypass to
+  mitigate, because there is no edge. Every request from every client reaches Traefik
+  directly.
+- **No WAF, no edge rate limiting, no bot management, no DDoS absorption.** These are not
+  deferred or partially present — they are **absent from the request path**, and the
+  neighbouring production namespaces share the host that absorbs whatever arrives.
+- **TLS, redirect behaviour, availability, resource limits, and origin security are entirely
+  the operator's responsibility.** No vendor supplies a fallback for any of them.
+- **A certificate is consumed for `www.renvor.dev`**, a hostname that serves no content, and
+  its renewal can fail like any other (D11).
+- **Observability drops to origin-side only** (D10). An outage that prevents traffic reaching
+  the origin generates no signal.
 - **Single node, no high availability.** Node loss takes both sites down. Acceptable for a
   prerelease project's marketing and documentation sites; not acceptable later for anything
   transactional.
-- **Manual Cloudflare configuration** is not in version control initially, so it can drift
-  from what `renvor-infra` documents.
 - **Component versions are one minor behind upstream** and must not be upgraded casually on
   a shared host.
 
-**To reverse this:** both sites are stateless. Reversal is deleting two namespaces and two
-DNS records; nothing neighbouring depends on them.
+**What this buys, since the costs above are substantial:** the entire request path — routing,
+redirect, TLS issuance, caching policy, security headers, rate limiting — is described by
+manifests in `renvor-infra` and reviewed like any other change. Under the previous decision
+a material part of it lived in a vendor console that no repository described, that no review
+covered, and that D6's own consequences already flagged as prone to drift.
 
-### D6 — Cloudflare serves the permanent `www` redirect (T105, decided 2026-08-12)
+**To reverse this:** both sites are stateless. Reversal is deleting two namespaces and the
+DNS records; nothing neighbouring depends on them. **Re-enabling the proxy later is also
+reversible**, but is a decision of its own — it would move TLS termination, caching, and
+header policy back out of version control, and must be recorded rather than switched on.
 
-**`www.renvor.dev` → `https://renvor.dev`, HTTP 301, preserving path and query string,
-implemented as a Cloudflare rule at the edge.**
-
-The redirect must answer visitors who never reach the origin, and it should not consume an
-origin certificate, an Ingress, or a Traefik router to serve a response whose only purpose is
-to redirect. Cloudflare answers it before the origin is involved at all.
-
-**Rejected: Traefik.** Keeping the rule in version control is a genuine advantage, and it is
-the reason this was a real choice rather than a formality. It loses on two counts: it
-requires issuing and renewing a certificate for a hostname that serves no content, and it
-cannot answer while the origin is down — which is exactly when a redirect being cheap
-matters.
-
-Consequences, recorded so none is discovered later:
-
-| Consequence | Detail |
-|---|---|
-| Requires proxying | The rule applies only to a **proxied** record. `www.renvor.dev` is DNS-only today, so **the redirect cannot function yet** |
-| Current visitor experience | `www.renvor.dev` resolves to the origin and receives the Traefik default certificate, so a browser shows a certificate warning. Expected in the temporary state |
-| Traefik | Needs **no** `www` router, and no origin certificate is issued for `www` |
-| Failure mode | If Cloudflare proxying is ever disabled, **the redirect stops working**. A Traefik fallback would then be needed — a deliberate trade, recorded here rather than discovered during an outage |
-| Status | **The rule has not been created.** Creating it is a separate authorised action |
+> **The section that stood here has moved.** It was a second decision mislabelled `D6`
+> (colliding with the delivery decision) recording **T105 — Cloudflare serves the `www`
+> redirect**. It is superseded by **D11** above, which records the same redirect served by
+> Traefik, preserves the original Cloudflare-versus-Traefik comparison, and states what the
+> change costs. **T105 itself remains complete and is not rewritten** — it decided correctly
+> under the architecture then in force.
 
 ## Unresolved questions
 
@@ -266,17 +423,23 @@ and T106 — still block acceptance of this record, which therefore stays `propo
 
 | # | Unresolved question | Owner | Blocking task |
 |---|---|---|---|
-| 1 | GitHub Container Registry versus the VPS GitLab registry, including the credential model | Ahmed Anbar | **T099** |
-| ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12, see D6** |
+| ~~1~~ | ~~GitHub Container Registry versus the VPS GitLab registry, including the credential model~~ | Ahmed Anbar | **T099 — RESOLVED 2026-08-12: GHCR, `GITHUB_TOKEN` publishing, public image, no pull secret. See D7** |
+| ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12 (Cloudflare). Superseded 2026-08-12 by T110 → Traefik, see D11.** T105 is not reopened |
 | 3 | Maintainer ruling on the shared server's absent backups | Ahmed Anbar | **T106** |
 | 4 | CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) | Ahmed Anbar | **T101** |
+| ~~5~~ | ~~Whether the Cloudflare proxy is enabled and the origin authenticated to the edge~~ | Ahmed Anbar | **T110 — RESOLVED 2026-08-12: DNS-only, no proxy. See D3, D4, D5, D10, D11** |
 
-1. **Registry choice is not decided.** GitHub Container Registry versus the GitLab registry
-   already running on this host. GHCR pairs with the GitHub-based workflow and OIDC; the
-   local GitLab registry avoids an external dependency but couples Renvor to another
-   project's service. **The private repositories already exist and are empty**, so this no longer blocks their creation; it blocks registry configuration, image publication, deployment workflows, and production deployment.
+1. ~~**Registry choice is not decided.**~~ **Resolved 2026-08-12 — GHCR (T099).** Publishing
+   uses the workflow's short-lived `GITHUB_TOKEN` with `contents: read` and `packages: write`
+   on the publishing job only; **this is not OIDC**, and an earlier draft of this record
+   described it as such in error. The deployment image is **publicly pullable**, so the
+   cluster needs no `imagePullSecret` and no registry credential is stored anywhere. See D7.
+   **Registry configuration, image publication, deployment workflows, and production
+   deployment all remain blocked** — by the gates below, not by this question.
 2. ~~**Whether `www.renvor.dev` redirects at Cloudflare or at Traefik.**~~ **Resolved
-   2026-08-12 — Cloudflare.** See D6 below. The rule itself has not been created.
+   2026-08-12 — Cloudflare (T105). Superseded the same day by T110 — Traefik**, because a
+   Cloudflare redirect rule requires a proxied record and D3 keeps every record DNS-only. See
+   **D11**. Neither the rule nor the Traefik router has been created.
 3. **Whether the neighbouring workloads' missing backups should block Renvor deployment.**
    This record says no — Renvor is stateless — but flags it for the maintainer's judgement.
 4. **CSP compatibility with the V7 landing page has not been tested** and may require
@@ -305,13 +468,27 @@ and T106 — still block acceptance of this record, which therefore stays `propo
 
 W-002 is not the only gate. **A record must not be accepted while it states that material
 architecture choices inside its own scope are unresolved.** Accepting it would publish a
-decision record whose own text says four of its decisions have not been made — the document
+decision record whose own text says some of its decisions have not been made — the document
 would assert authority it does not have.
 
-Four questions remain open, each now carrying an owner and a blocking task: **T099**
-(registry), **T105** (`www` redirect location), **T106** (backup ruling), **T101** (CSP
-compatibility). Acceptance requires all four resolved, either in this record or split into
-scoped follow-up records.
+**Two questions remain open**, each carrying an owner and a blocking task: **T106** (backup
+ruling) and **T101** (CSP compatibility). Three are now closed — **T105** (`www` redirect
+location), **T110** (proxy versus DNS-only), and **T099** (registry) — and their closure does
+not accelerate the rest.
+
+Acceptance requires both remaining questions resolved, either in this record or split into
+scoped follow-up records. **This record therefore stays `proposed`.**
+
+**T106 cannot close on the current evidence.** A read-only reinspection of the server was
+attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
+`deploy` while the host mapping uses a different user and identity. The 2026-08-11 audit is
+retained as **historical evidence, not current proof**. Resolving the credential mismatch
+touches a live shared production host and requires separate authorisation.
+
+**T101 changed character under D3 and became more load-bearing, not less.** CSP was
+previously a Cloudflare Transform Rule; it is now a Traefik middleware the project must write
+and maintain itself, against a landing page using GSAP and self-hosted variable fonts. The
+question is the same and the party who has to answer it has changed.
 
 ### A second, independent gate specific to this record
 
