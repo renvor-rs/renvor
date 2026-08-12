@@ -101,6 +101,32 @@ Rules:
 6. **Lockfiles**: committed for applications, release tooling, automation, and the
    documentation site; not committed for reusable library crates.
 
+### Security advisories
+
+An advisory against a dependency is on a clock from the moment it is confirmed. The
+authoritative policy is
+[`governance/dependency-advisory-policy.md`](governance/dependency-advisory-policy.md);
+this is a summary.
+
+| Condition | Triage within | Remediate within |
+| --- | --- | --- |
+| Known active exploitation | 24 hours | Begin immediately; decision within 24 hours |
+| Critical | 24 hours | 7 calendar days |
+| High | 48 hours | 14 calendar days |
+| Medium | 5 calendar days | 30 calendar days |
+| Low | 10 calendar days | 90 days, or the next prerelease, whichever is first |
+
+- **Severity is not the CVSS score alone.** Reachability, exploit maturity, known
+  exploitation, and actual exposure all count, and the reasoning is recorded.
+- **No upstream fix does not buy more time.** Remove, disable, replace, or isolate the
+  dependency, or block the release.
+- **Critical and High cannot be waived** for a public release.
+- **Every advisory gets a dated record.** Adding an identifier to `deny.toml`'s ignore list
+  without one is a policy violation, not a configuration choice.
+
+This concerns advisories against **dependencies**. Reporting a vulnerability *in Renvor*
+follows [`SECURITY.md`](SECURITY.md), which has its own and different timetable.
+
 If a new dependency is genuinely needed, say in the pull request what it does, why a
 smaller option or the standard library will not serve, and what its licence is.
 

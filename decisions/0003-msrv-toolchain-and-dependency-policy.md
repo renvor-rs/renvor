@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | **ID** | 0003 |
-| **State** | `proposed` |
-| **Reviewer** | *(pending — see Acceptance gate)* |
-| **Review date** | *(pending)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-12 |
 | **Superseded by** | — |
 
 ## Context
@@ -83,6 +83,41 @@ list. Wildcard version requirements are denied — a wildcard is the unreviewed 
 update FR-020 prohibits. Updates arrive as reviewable Dependabot pull requests across the
 `cargo`, `github-actions`, and `npm` ecosystems.
 
+### Security-advisory response (added 2026-08-12, task T104)
+
+`deny.toml` cannot express a duration, so the **authoritative advisory policy is
+`governance/dependency-advisory-policy.md`**. This record incorporates it **by reference**
+rather than by copy, precisely so the two cannot drift: there is one set of numbers, in one
+file, and every other mention is a summary that resolves in its favour.
+
+Measured from confirmed detection:
+
+| Condition | Triage | Remediate |
+|---|---|---|
+| Known active exploitation | 24 hours | Begin immediately; decision within 24 hours |
+| Critical | 24 hours | 7 calendar days |
+| High | 48 hours | 14 calendar days |
+| Medium | 5 calendar days | 30 calendar days |
+| Low | 10 calendar days | 90 days or the next prerelease, whichever is first |
+
+Binding rules that make the windows meaningful:
+
+- **Severity is not the CVSS base score alone** — reachability, exploit maturity, known
+  exploitation, and actual exposure are weighed, and the reasoning is recorded.
+- **Absence of an upstream fix does not extend a deadline.** Remove, disable, replace, or
+  isolate the dependency, or block the affected release.
+- **Known Critical and High vulnerabilities are public-release blockers and cannot be
+  waived.**
+- **An ignored advisory without a narrowly scoped, dated record is prohibited**, which in
+  practice keeps `deny.toml`'s ignore list empty unless each entry points at such a record.
+- Every advisory carries a dated **Advisory Record** with the ten mandatory fields defined
+  in the data model.
+
+These deadlines are **Renvor policy decisions**, informed by CVSS, FIRST, RustSec, and NIST
+SP 800-218 but mandated by none of them. This policy governs advisories against
+**dependencies**; the inbound private-report timetable in `SECURITY.md` is separate and
+unchanged.
+
 ## Alternatives considered
 
 | Alternative | Rejected because |
@@ -118,7 +153,8 @@ migration announcement, because downstream CI configurations depend on the curre
 |---|---|
 | FR-017 | Single authoritative MSRV declaration, inherited, asserted at T037 |
 | FR-018, FR-019 | Toolchain pinned with explicit components; both toolchains tested |
-| FR-020 | Written dependency update policy; wildcards denied; `deny.toml` authoritative |
+| FR-020 | Written dependency update policy; wildcards denied; `deny.toml` authoritative for licences and sources |
+| FR-010 | Advisory response windows bounded and incorporated by authoritative reference (T104) |
 | FR-021 | Change rules, documentation obligations, and six-month dwell time stated |
 | FR-061 | Phase 006 revalidation recorded with a named owner |
 | SC-016 | MSRV-aware resolution empirically asserted at T038, not merely configured |
@@ -126,32 +162,27 @@ migration announcement, because downstream CI configurations depend on the curre
 
 ## Acceptance gate
 
+Re-reviewed 2026-08-12 after T104 closed the gap that previously blocked control 2.
+
 | # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ❌ **NOT met** — see below |
-| 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
+| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives with rejection reasons; accepted costs stated, including that the current MSRV rests on an anticipated rather than measured requirement |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 final re-review: **79 of 79 passed**. CHK050, which previously blocked this record, is resolved by T104 and verified present in every authoritative location. CHK048 is resolved by T103 and never concerned this record's scope |
+| 3 | All required CI and security checks passing | ✅ **Met** — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` all passing on `renvor-rs/renvor`, including on the pull request carrying this change |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-### Why control 2 is not met — this record remains `proposed`
+**All four controls are met. This record is `accepted`.**
 
-T086 completed on 2026-08-12 with 77 of 79 items passing. One of the two failures falls
-**inside the scope this record decides**:
+### Review history
 
-> **CHK050** — FR-010 requires the dependency policy to state how security advisories are
-> handled, but no response or triage window is defined anywhere. An advisory could remain
-> unactioned indefinitely without violating any written rule.
+- **2026-08-12, first review — not accepted.** Control 2 failed: governance checklist
+  CHK050 found that the dependency policy this record sets defined no advisory response
+  window. Accepting it then would have put an accepted record's name behind a policy with a
+  hole in it. Recorded rather than waived.
+- **2026-08-12, re-review after T104 — accepted.** The advisory policy now exists with
+  bounded windows, incorporated above by authoritative reference so it cannot drift.
 
-This record sets the dependency and advisory policy. Accepting it while the advisory
-response window is undefined would put an accepted decision record's name behind a policy
-with a hole in it.
-
-**Blocking task: T104.** When T104 defines the window and this record incorporates it,
-control 2 is satisfiable and acceptance can proceed.
-
-CHK048 (evidence retention period, task T103) also failed, but it concerns release-evidence
-retention, which this record does not decide, so it does not block acceptance here.
-
-**This record therefore remains `proposed`.** On acceptance the reviewer field will read
-exactly **`Ahmed Anbar — self-review under W-002`**, and the review must not be described
-as independent.
+Reviewed by **Ahmed Anbar — self-review under W-002** on **2026-08-12**. **This review is
+not independent** and must not be described as such, here or anywhere else. It is a
+structured self-review under a recorded, time-bounded exception expiring 2027-02-11 or when
+a qualified independent reviewer becomes available, whichever comes first.
