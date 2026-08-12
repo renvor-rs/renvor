@@ -46,10 +46,6 @@ env:
   # not packaged here: `cargo package --workspace` would include it, which would make the
   # rehearsal describe a file set that will never be published.
   CRATE: renvor
-  # Every generated artifact lands OUTSIDE the checkout. Build products in the source
-  # tree are how a later run packages something the previous run left behind, and how a
-  # cleanliness assertion turns into noise that gets suppressed.
-  REHEARSAL_DIR: ${{ runner.temp }}/rehearsal
 
 jobs:
   rehearse:
@@ -69,6 +65,16 @@ jobs:
       - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
         with:
           tool: cargo-cyclonedx
+
+      # Every generated artifact lands OUTSIDE the checkout. Build products in the source
+      # tree are how a later run packages something the previous run left behind, and how
+      # a cleanliness assertion turns into noise that gets suppressed.
+      #
+      # Set here rather than in a workflow-level `env:` block: the `runner` context is not
+      # available at workflow or job level, only at step level. $RUNNER_TEMP is the plain
+      # environment variable the runner always exports, so it works in any `run` shell.
+      - name: Locate the artifact directory outside the checkout
+        run: echo "REHEARSAL_DIR=${RUNNER_TEMP}/rehearsal" >> "$GITHUB_ENV"
 
       # `--locked` fails if Cargo.lock is stale. A release built from an unlocked
       # resolution is a release nobody can reproduce.

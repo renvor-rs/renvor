@@ -1167,11 +1167,29 @@ Recorded because the first attempt did not succeed, and the record says so.
 | # | Defect | Correction |
 |---|---|---|
 | 1 | `cargo cyclonedx` writes a BOM adjacent to **every** manifest in the workspace, not only the one named by `--manifest-path`. It also emitted one beside `xtask`, which the original step left behind in the checkout | Strays are deleted; only the publishable crate's SBOM is kept |
-| 2 | The artifact directory sat **inside** the checkout, so the cleanliness assertion could never pass — it tripped over the untracked directory the previous step had just created | Artifacts moved to `${{ runner.temp }}`; the checkout is asserted unmodified |
+| 2 | The artifact directory sat **inside** the checkout, so the cleanliness assertion could never pass — it tripped over the untracked directory the previous step had just created | Artifacts moved outside the checkout; the checkout is asserted unmodified |
+| 3 | The fix for defect 2 used `${{ runner.temp }}` in a **workflow-level `env:` block**, where the `runner` context does not exist. GitHub rejected the file at validation time and produced **two failed runs** before any job started | Path set in a step from `$RUNNER_TEMP`, which the runner always exports |
 
-Fixed in commit `ca9ce23`, which is a **separate commit** from the original so the sequence
-remains legible. Defect 2 is the reason defect 1 survived the first write: an assertion
-that cannot pass teaches its reader to ignore it.
+Defects 1 and 2 were fixed in commit `ca9ce23`, kept **separate** from the original so the
+sequence remains legible. Defect 2 is the reason defect 1 survived the first write: an
+assertion that cannot pass teaches its reader to ignore it.
+
+**Defect 3 reached the remote and failed there**, which is recorded rather than hidden. Its
+signature is worth knowing: an invalid workflow produces a run named after the **file path**
+instead of the workflow's `name:`, with **zero jobs**, attributed to the `push` event even
+when the file declares no `push` trigger — because the failure happens during workflow
+validation, before triggers are evaluated. Local YAML parsing passed, since the file was
+valid YAML and invalid *Actions schema*; the two are different checks.
+
+`actionlint` 1.7.12 reproduces it exactly:
+
+```text
+release-dry-run.yml:52:22: context "runner" is not allowed here.
+available contexts are "github", "inputs", "secrets", "vars".
+```
+
+`actionlint` now reports **no findings across all four workflow files**. It is not yet part
+of `cargo xtask verify`; adding it is a candidate improvement, not a claim made here.
 
 ### 3z.4 T074–T079 — clean-checkout rehearsal
 
