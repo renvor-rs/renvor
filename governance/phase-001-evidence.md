@@ -1413,6 +1413,39 @@ and does not exclude the file, because a secret added to that same file three li
 is still caught. A `paths`-scoped allowlist would have failed this test, which is exactly
 how the original defective form was found.
 
+### 3z.10 Dependency advisories raised 2026-08-11 — dated triage record
+
+Surfaced by GitHub during the branch push of 2026-08-12. Recorded here because
+`governance/dependency-advisory-policy.md` §9 forbids an ignored advisory without a dated
+record. **Not remediated in this pass** — remediation was outside its authorised scope.
+
+| GHSA | Severity | Package | Ecosystem | Manifest | Upstream fix |
+|---|---|---|---|---|---|
+| `GHSA-5c6j-r48x-rmvq` | **High** | `serialize-javascript` ≤ 7.0.2 | npm | `docs/package-lock.json` | **7.0.3** |
+| `GHSA-w3rx-r6r6-pgpr` | **High** | `image-size` ≤ 2.0.2 | npm | `docs/package-lock.json` | **none** |
+| `GHSA-5p2g-fcmc-qvqq` | **High** | `image-size` ≤ 2.0.2 | npm | `docs/package-lock.json` | **none** |
+| `GHSA-qj8w-gfj5-8c6v` | Medium | `serialize-javascript` < 7.0.5 | npm | `docs/package-lock.json` | 7.0.5 |
+| `GHSA-w5hq-g745-h8pq` | Medium | `uuid` < 11.1.1 | npm | `docs/package-lock.json` | 11.1.1 |
+
+- **Detected** 2026-08-11T23:39:22Z. As of 2026-08-12T06:49Z, **7.2 hours** have elapsed:
+  within the 48-hour High triage window and the 5-day Medium window. **No deadline has
+  been breached.** Remediation deadlines are 14 days (High) and 30 days (Medium) from
+  detection.
+- **Reachability**: all five are transitive npm dependencies of the **documentation site**.
+  The published crate has **zero dependencies** of any kind, and the packaged archive
+  contains 8 files, none from `docs/` (§3z.4). **None of these advisories reaches the
+  crate that would be published.** `cargo deny check` passes because it governs the Cargo
+  graph, which is genuinely clean — not because it was configured to overlook these.
+- **Two High advisories have no upstream fix.** Policy §6 is explicit that this does not
+  extend the deadline: `image-size` must be updated, removed, replaced, or isolated, or
+  the affected release blocked. It is a Docusaurus transitive dependency, so "isolate" in
+  practice means the documentation build, not the crate.
+- **Owner**: Ahmed Anbar. **Named owner assignment and the full clause-5 advisory records
+  are still outstanding** — this entry starts the trail, it does not complete it.
+
+**No release is blocked today**, because nothing is published and no release is in
+progress. The High advisories become release blockers under policy §7 the moment one is.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
@@ -1522,6 +1555,7 @@ The phase remains open while any row here is present.
 | **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — blocks deployment** |
 | **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; creation of `renvor-rs/renvor-landing` | Maintainer | 2026-08-11 | **open** |
 | **Container registry undecided** — GHCR versus the VPS GitLab registry, including credential model | T099; creation of the private repositories | Maintainer | 2026-08-11 | **open** |
+| **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
