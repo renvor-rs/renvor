@@ -1,0 +1,21 @@
+# Renvor approved signing principals (OpenSSH allowed_signers format).
+#
+# PUBLIC DATA ONLY. This file contains public keys and nothing else. A private key,
+# passphrase, agent socket, or token in this file would be a security incident, not a
+# configuration choice.
+#
+# Consumed by `git verify-commit` and `git verify-tag` through the repository-local
+# setting `gpg.ssh.allowedSignersFile`, and by the release tag-verification gate in
+# .github/workflows/release-tag-verify.yml. Verification that trusts whatever key signed
+# the object proves only that *a* key signed it; this file is what makes it prove *who*.
+#
+# `namespaces="git"` restricts each key to Git object signatures. Without it, a signature
+# this key produced for some other purpose could be replayed as a Git signature.
+#
+# Adding a principal is a governance change and goes through pull request review.
+#
+# | Principal            | Role                  | Key fingerprint |
+# |----------------------|-----------------------|-----------------|
+# | admin@ahmedanbar.dev | Maintainer, release approver | SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM |
+
+admin@ahmedanbar.dev namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJbsUJCsGHK/srOiXAIuBza6t7Sbtm5zoKAzkH8NmRRq

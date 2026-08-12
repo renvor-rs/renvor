@@ -1,0 +1,139 @@
+# Fail-closed release tag verification.
+#
+# WHY THIS EXISTS. GitHub tag rulesets can restrict who creates, updates, or deletes a tag,
+# and the "require signed commits" rule checks COMMIT signatures. No ruleset rule verifies
+# the signature on the annotated TAG OBJECT itself — verified against GitHub's own rules
+# reference, not assumed. A ruleset alone would therefore let an unsigned or
+# wrongly-signed annotated tag start a release, so the cryptographic check lives here.
+#
+# WHAT IT PROVES. That the release tag is annotated, correctly named, signed, and signed by
+# a principal listed in the tracked allowed-signers file. Verification that accepts whatever
+# key signed the object proves only that *a* key signed it; `governance/allowed-signers` is
+# what makes it prove *who*.
+#
+# HOW IT IS USED. `workflow_call` makes this a hard prerequisite: a future publish workflow
+# declares `needs: verify-tag` so packaging, attestation, environment approval, publication,
+# and deployment all sit behind it. It fails closed — any missing or unexpected condition
+# is an error, never a skip.
+#
+# PHASE 001. Nothing is published in this phase and no tag exists. This workflow has no
+# publishing capability of any kind: `contents: read`, no registry credential, no release
+# or tag creation, no deployment.
+
+name: release-tag-verify
+
+on:
+  # A tag push is the moment a release begins, so the gate runs there first.
+  push:
+    tags:
+      - "v*"
+  # Lets a future publish workflow require this job before anything else runs.
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag to verify
+        required: true
+        type: string
+  # Manual rehearsal against an existing tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tag-verify-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-tag:
+    name: verify the release tag is annotated and signed by an approved principal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Full history and tags: a shallow clone has no tag objects to verify, which would
+      # turn this gate into a no-op that reports success.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      # The tag name is untrusted input, so it is passed through the environment and never
+      # interpolated into the shell.
+      - name: Resolve and validate the tag name
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$REF_TAG}"
+          if [ -z "$tag" ]; then
+            echo "no tag supplied and this run is not a tag push" >&2
+            exit 1
+          fi
+          # Only the release format is accepted. A tag that merely starts with "v" is not
+          # a release tag, and the packaging path must never see one.
+          if ! printf '%s' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "tag '$tag' is not a valid release tag (expected vMAJOR.MINOR.PATCH[-prerelease])" >&2
+            exit 1
+          fi
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          echo "tag accepted: $tag"
+
+      # A lightweight tag is just a ref pointing at a commit: it carries no signature at
+      # all, so there would be nothing to verify.
+      - name: Require an annotated tag object
+        run: |
+          set -euo pipefail
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" > /dev/null; then
+            echo "tag '${TAG}' does not exist in this checkout" >&2
+            exit 1
+          fi
+          kind="$(git cat-file -t "refs/tags/${TAG}")"
+          if [ "$kind" != "tag" ]; then
+            echo "'${TAG}' is a ${kind}, not an annotated tag object — it cannot carry a signature" >&2
+            exit 1
+          fi
+          echo "annotated tag object confirmed"
+          echo "target commit: $(git rev-list -n 1 "refs/tags/${TAG}")"
+
+      - name: Require the tracked allowed-signers file
+        run: |
+          set -euo pipefail
+          test -f governance/allowed-signers \
+            || { echo "governance/allowed-signers is missing; cannot establish who may sign" >&2; exit 1; }
+          git config --local gpg.ssh.allowedSignersFile governance/allowed-signers
+          echo "approved principals:"
+          grep -v '^\s*#' governance/allowed-signers | grep -v '^\s*$' | awk '{print "  " $1}'
+
+      # The actual cryptographic check. Everything above only established that there is
+      # something worth verifying.
+      - name: Verify the tag signature
+        env:
+          EXPECTED_PRINCIPAL: admin@ahmedanbar.dev
+          EXPECTED_FINGERPRINT: SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM
+        run: |
+          set -euo pipefail
+          if ! git verify-tag --raw "${TAG}" 2> verify.txt; then
+            echo "signature verification FAILED for ${TAG}" >&2
+            cat verify.txt >&2
+            exit 1
+          fi
+          cat verify.txt
+
+          # `git verify-tag` exits 0 for a good signature by any key in the allowed-signers
+          # file. Pinning principal and fingerprint means adding a second approved signer
+          # cannot silently become permission to sign a release.
+          grep -q "Good \"git\" signature" verify.txt \
+            || { echo "no good git-namespace signature found" >&2; exit 1; }
+          grep -q "$EXPECTED_PRINCIPAL" verify.txt \
+            || { echo "signature is not from the expected principal $EXPECTED_PRINCIPAL" >&2; exit 1; }
+          grep -q "$EXPECTED_FINGERPRINT" verify.txt \
+            || { echo "signature key is not the expected fingerprint $EXPECTED_FINGERPRINT" >&2; exit 1; }
+
+          echo
+          echo "RELEASE TAG GATE PASSED: ${TAG} is annotated, signed by ${EXPECTED_PRINCIPAL}, key ${EXPECTED_FINGERPRINT}"

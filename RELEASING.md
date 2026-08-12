@@ -232,14 +232,33 @@ commits attributed to that account are displayed as unverified rather than displ
 neutrally. Without it, an unsigned commit and a signed one look alike to a casual reader,
 which removes most of the value of signing at all.
 
-> **Status**: signing is **not configured** — no signing method is chosen, no signing key
-> is registered, and every commit authored locally in this repository is currently
-> unsigned (T071). **Vigilant mode state is unknown**: GitHub exposes no API for it, so it
-> can only be confirmed by the account owner in account settings, and this document does
-> not assume an answer.
->
-> This section states the requirement, not the current state. No release may occur before
-> it is satisfied.
+### The signing identity
+
+| Property | Value |
+|---|---|
+| Algorithm | Ed25519 (`ssh-ed25519`) |
+| Fingerprint | `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` |
+| Purpose | **Signing only** — never an authentication, deploy, or login key |
+| Approved principals | [`governance/allowed-signers`](governance/allowed-signers) |
+
+Verification is bound to that tracked file through the repository-local
+`gpg.ssh.allowedSignersFile` setting. This matters: `git verify-tag` without it confirms
+only that *a* key signed the object. The allowed-signers file is what makes it confirm
+*who*.
+
+### The tag gate is a workflow, not a ruleset
+
+[`.github/workflows/release-tag-verify.yml`](.github/workflows/release-tag-verify.yml)
+validates the tag name, requires an **annotated** tag object, runs `git verify-tag` against
+the tracked allowed-signers file, and pins both the principal and the fingerprint. A future
+publish workflow depends on it through `workflow_call`, so packaging, attestation,
+environment approval, publication, and deployment all sit behind it.
+
+> **A GitHub tag ruleset does not do this.** Rulesets can restrict who creates, updates, or
+> deletes a tag, and the "require signed commits" rule can target tags — but that rule
+> checks **commit** signatures, not the signature on the annotated **tag object**. No
+> ruleset rule verifies a tag object's signature. Relying on one would leave the release
+> gate open while appearing closed.
 
 ---
 
@@ -258,8 +277,16 @@ approver approved this release" a platform-enforced fact rather than a conventio
 The environment is the only place the publish job may run. A publish job that can run
 outside it has no approval gate.
 
-> **Status**: **no environment exists yet** (T072). Its configuration requires a maintainer
-> decision on reviewer behaviour for a single-maintainer project — see §12.
+> **Status**: the **`release` environment exists** (created 2026-08-12, T072). Read back
+> from the API: required reviewer `AhmedAnbar`, one deployment policy of type `tag`
+> matching `v*`, administrator bypass **disabled**, wait timer 0, **zero** secrets and
+> **zero** variables.
+>
+> **Prevent self-review is deliberately disabled.** With a single maintainer, enabling it
+> would make every release impossible — the person who triggers the run would be the only
+> person able to approve it. The gate still forces a deliberate, logged confirmation and
+> restricts publication to `v*` tags. **It is not four-eyes review**, and this document does
+> not pretend otherwise. Revisit when a second qualified maintainer joins.
 
 ---
 

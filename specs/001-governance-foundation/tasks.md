@@ -181,8 +181,8 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 **Independent Test**: Run the rehearsal, confirm an artifact exists, confirm the registry reports zero versions, confirm tag signing and the protected environment are configured, and confirm every acceptance criterion maps to dated evidence.
 
 - [X] T070 [US6] Write `RELEASING.md` covering topological publish order with the index-availability wait, version immutability and yank-and-replace as the sole remedy, the least-scope bootstrap credential procedure with immediate revocation, and the evidence retention period **MUST incorporate `governance/evidence-retention-policy.md` exactly** — reproducing its periods or referencing it as authoritative; a divergent restatement is a defect (T103).
-- [ ] T071 [US6] Configure commit and tag signing (SSH or GPG), enable vigilant mode, and require signed tags for releases; record the signing identity and verification method in `governance/phase-001-evidence.md` (FR-032, constitution §XI, analyze finding G1)
-- [ ] T072 [US6] Create a protected release environment on the hosting platform with **named** approvers and a deployment-branch restriction limiting it to release tags; record the environment name and approver list in `governance/phase-001-evidence.md` (FR-032, PLAN.md §19.1)
+- [X] T071 [US6] Configure commit and tag signing (SSH or GPG), enable vigilant mode, and require signed tags for releases; record the signing identity and verification method in `governance/phase-001-evidence.md` (FR-032, constitution §XI, analyze finding G1)
+- [X] T072 [US6] Create a protected release environment on the hosting platform with **named** approvers and a deployment-branch restriction limiting it to release tags; record the environment name and approver list in `governance/phase-001-evidence.md` (FR-032, PLAN.md §19.1)
 - [X] T073 [US6] Create `.github/workflows/release-dry-run.yml` with `permissions: contents: read` and **no publish capability**, so it cannot publish even if invoked
 - [X] T074 [US6] Run `cargo package -p renvor --list` from a clean checkout and record the exact file list in `governance/phase-001-evidence.md`
 - [X] T075 [US6] Inspect that file list for secrets, local configuration, build output, and unintended assets; record the review outcome (FR-039)
@@ -190,7 +190,7 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 - [X] T077 [US6] Validate package metadata against contracts/package-metadata.md and confirm no publishable package carries a path-only dependency
 - [X] T078 [US6] Query the live registry and record **zero versions** for every intended name — positive evidence of non-publication, not an assertion that nothing was run (SC-010)
 - [X] T079 [US6] Confirm no long-lived registry credential exists in the repository, its workflows, or its secrets; record the check (FR-033)
-- [ ] T080 [US6] Record the complete release-identity control set in `governance/phase-001-evidence.md` — signed tags, protected environment with named approvers, provenance and bill-of-materials plan — each marked configured or covered by a dated waiver (SC-014, analyze finding G2)
+- [X] T080 [US6] Record the complete release-identity control set in `governance/phase-001-evidence.md` — signed tags, protected environment with named approvers, provenance and bill-of-materials plan — each marked configured or covered by a dated waiver (SC-014, analyze finding G2)
 - [X] T081 [US6] Wire CycloneDX SBOM generation, checksums, and `actions/attest` provenance into the release path and record what a real release would emit. Trusted publishing itself **cannot** be configured this phase — it requires a package that already exists on the registry, and nothing is published (research Finding 2)
 
 **Checkpoint**: The release path works, its identity controls are configured, and it has published nothing — provably.
@@ -399,3 +399,15 @@ Applied after `/speckit-analyze`. Seven tasks added, IDs renumbered so they rema
 - [ ] T106 Record the maintainer ruling on the shared server's absent backups — whether the gap blocks Renvor deployment, given that both Renvor properties are stateless while five unrelated production namespaces are not. **Blocks acceptance of ADR-0006** (ADR-0006 unresolved question 3)
 
 **Checkpoint**: Every governance checklist item has a defensible recorded outcome, and every discovered gap is either corrected or tracked as an explicit open task.
+
+---
+
+## Phase 12: Documentation dependency advisories (added 2026-08-12)
+
+**Purpose**: five advisories were raised against `docs/package-lock.json` on 2026-08-11. Two were closed by a tested override at T107; three have no compatible fix and are tracked here rather than silently accepted. Existing task numbers are unchanged — these are appended.
+
+- [X] T107 Close `GHSA-5c6j-r48x-rmvq` (high, RCE, CVSS 8.1) and `GHSA-qj8w-gfj5-8c6v` (moderate) by overriding `serialize-javascript` to `^7.1.0` in `docs/package.json`. Docusaurus 3.10.2 pins `copy-webpack-plugin ^11` and `css-minimizer-webpack-plugin ^5`, both requiring `serialize-javascript ^6`, so no ordinary compatible update exists. Prove the override with a frozen install, a production build, a link check, and a CommonJS load test
+- [ ] T108 **DOCUMENTATION DEPLOYMENT GATE — resolve `image-size`**: `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` (both high, CVSS 7.5, infinite-loop DoS in the ICNS, JXL, and HEIF parsers). **No fixed version exists** — 2.0.2 is simultaneously the affected and the latest published version. Reached only through `@docusaurus/mdx-loader`. Resolve by upstream fix, by a Docusaurus release that drops or replaces the dependency, or by a reviewed removal or isolation. **Blocks public documentation deployment** while open (dependency advisory policy §6, §7). Owner Ahmed Anbar; reassess **2026-08-26**
+- [ ] T109 Reassess `GHSA-w5hq-g745-h8pq` (moderate, `uuid` < 11.1.1). Not reachable today: `sockjs` calls only `uuid.v4()` with no `buf` argument while the advisory affects v3/v5/v6 **with** `buf`, and `sockjs` arrives via `webpack-dev-server`, which runs only for `docusaurus start` and never in the production build. `sockjs` 0.3.24 is the latest release and pins `uuid ^8.3.2`, so no compatible update exists. Do **not** force a three-major override into a path CI never exercises. Owner Ahmed Anbar; reassess **2026-09-11**, or immediately if `sockjs` ships a fix or the dev server enters a deployed path
+
+**Checkpoint**: every advisory has a dated record, a named owner, and either a proven fix or an explicit gate. None is silently ignored.

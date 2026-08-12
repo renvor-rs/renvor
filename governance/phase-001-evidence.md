@@ -1464,6 +1464,408 @@ record. **Not remediated in this pass** — remediation was outside its authoris
 **No release is blocked today**, because nothing is published and no release is in
 progress. The High advisories become release blockers under policy §7 the moment one is.
 
+## 3aa. T107–T109 — documentation dependency advisory triage (2026-08-12)
+
+Five advisories raised 2026-08-11T23:39:22Z against `docs/package-lock.json`. **Two closed,
+three open with a gate.** All five are **transitive**; none is a declared dependency.
+
+### 3aa.1 Triage table
+
+| GHSA | CVE | Package | Path | D/T | Sev | CVSS | Installed | First patched | Reachable | PR-input exposure | Upstream | Action | Triage due | Remediate due | Disposition |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `GHSA-5c6j-r48x-rmvq` | — | `serialize-javascript` | core → bundler → copy-webpack-plugin@11 / css-minimizer-webpack-plugin@5 | T | **High** | 8.1 | 6.0.2 | **7.0.3** | **Yes** — runs in every production build | None | Fixed upstream | Override → `^7.1.0` | 2026-08-13 | 2026-08-25 | **RESOLVED** |
+| `GHSA-qj8w-gfj5-8c6v` | CVE-2026-34043 | `serialize-javascript` | same | T | Medium | 5.9 | 6.0.2 | **7.0.5** | **Yes** | None | Fixed upstream | Override → `^7.1.0` | 2026-08-16 | 2026-09-10 | **RESOLVED** |
+| `GHSA-w3rx-r6r6-pgpr` | CVE-2025-71330 | `image-size` | core → @docusaurus/mdx-loader → image-size | T | **High** | 7.5 | 2.0.2 | **none** | **No** — 0 MDX image embeds | None | **No fix exists** | Gate + mitigate (T108) | 2026-08-13 | 2026-08-25 | **OPEN — deployment gate** |
+| `GHSA-5p2g-fcmc-qvqq` | CVE-2025-71329 | `image-size` | same | T | **High** | 7.5 | 2.0.2 | **none** | **No** | None | **No fix exists** | Gate + mitigate (T108) | 2026-08-13 | 2026-08-25 | **OPEN — deployment gate** |
+| `GHSA-w5hq-g745-h8pq` | CVE-2026-41907 | `uuid` | core → webpack-dev-server → sockjs → uuid | T | Medium | 7.5 | 8.3.2 | 11.1.1 | **No** — v4 only, no `buf` | None | `sockjs` 0.3.24 is latest, pins `^8.3.2` | Record, reassess (T109) | 2026-08-16 | 2026-09-10 | **OPEN — not reachable** |
+
+Owner for all five: **Ahmed Anbar**. Detected 2026-08-11T23:39:22Z; triage completed
+2026-08-12, **within** the 48-hour High and 5-day Medium windows.
+
+### 3aa.2 Two counting traps in npm's output, both rejected
+
+**npm reported 25 "vulnerabilities" (19 high) before the fix and 21 after.** Those are
+*packages along dependency paths*, not advisories. They trace to **3 vulnerable packages**
+and **5 distinct advisories**. The honest post-fix figure is **3 advisories remaining**, not
+21. Aggregated path counts were not used anywhere in this record.
+
+**npm offered `@easyops-cn/docusaurus-search-local@0.29.0` as a fix.** The project runs
+`^0.52.1`, so that is a **downgrade across 23 minor versions** — the historical downgrade
+the triage rules forbid without compatibility proof. **Rejected.** `npm audit fix --force`
+was never run, Docusaurus was neither downgraded nor replaced, and no scanning, workflow
+permission, or licence control was weakened.
+
+### 3aa.3 T107 — the one compatible fix, and why an override was the only route
+
+Docusaurus 3.10.2's bundler pins `copy-webpack-plugin ^11.0.0` and
+`css-minimizer-webpack-plugin ^5.0.1`; both majors require `serialize-javascript ^6`. Only
+`copy-webpack-plugin@14.0.0` and `css-minimizer-webpack-plugin@8.0.0` moved to `^7.0.3`,
+and both sit outside the ranges Docusaurus declares. **No ordinary compatible update
+exists**, which is what makes a reviewed override the correct instrument rather than a
+shortcut.
+
+The override is safe on evidence, not assertion:
+
+| Version | `type` | `main` | `exports` map | `engines.node` |
+|---|---|---|---|---|
+| 6.0.2 (was) | commonjs | `index.js` | none | — |
+| 7.1.0 (now) | commonjs | `index.js` | none | `>=20.0.0` |
+
+Identical CommonJS shape; the only change is an engines floor that `.nvmrc` already
+satisfies at Node 22.
+
+**Proof performed** — a CommonJS load exercising the exact RegExp and Date paths the RCE
+advisory concerned:
+
+```text
+require('serialize-javascript') OK
+{"a":new RegExp("ab+c", "gi"),"d":new Date("2026-01-01T00:00:00.000Z"),"n":[1,2,3]}
+```
+
+Dependency path after the override, both consumers resolved:
+
+```text
+copy-webpack-plugin@11.0.0        -> serialize-javascript@7.1.0 overridden
+css-minimizer-webpack-plugin@5.0.1 -> serialize-javascript@7.1.0 deduped
+vulnerable 6.x entries remaining  : NONE
+```
+
+Frozen install (`npm ci`, exit 0), production build, and link check all passed;
+`cargo xtask verify` steps 1–9 green with the override in place.
+
+### 3aa.4 T108 — `image-size`, no fix at any version
+
+**2.0.2 is simultaneously the affected version and the latest published version.** No
+override, pin, or update can resolve this, because no fixed release exists to point at.
+
+Reachability: `@docusaurus/mdx-loader` invokes `image-size` to measure images referenced
+from MDX. The documentation source contains **zero MDX image embeds** and exactly **one**
+image file, `static/img/favicon.ico`, which is copied verbatim and never parsed. All
+content is project-authored; there is **no untrusted image input path**, and the site takes
+no user uploads.
+
+Temporary mitigations, recorded as mitigations and **not** as remediation:
+
+- no image is embedded in MDX, so the vulnerable parsers are not invoked during the build;
+- the ICNS, JXL, and HEIF formats the advisories name appear nowhere in the source tree;
+- the build runs in an ephemeral CI container with no network-reachable service;
+- the impact is denial of service against a build, not the published site.
+
+Per dependency advisory policy §6 the absence of an upstream fix **does not extend the
+deadline**. **The public documentation deployment gate stays closed** while these remain
+open. **Not remediated**, and this record does not claim otherwise. Owner Ahmed Anbar,
+reassessment **2026-08-26**, tracked at **T108**.
+
+### 3aa.5 T109 — `uuid`, present but not reachable
+
+`sockjs/lib/transport.js` line 9 binds `uuidv4 = require('uuid').v4` and line 37 calls
+`uuidv4()` — **v4 only, with no `buf` argument**. The advisory affects **v3, v5, and v6
+when `buf` is provided**. The vulnerable code path is therefore never entered.
+
+`sockjs` also arrives through `webpack-dev-server`, which serves `docusaurus start` and is
+**not** part of `docusaurus build` or the deployed output.
+
+`sockjs` 0.3.24 is the latest release and pins `uuid ^8.3.2`, so no compatible update
+exists. Forcing `uuid` across three majors would pin a transitive dependency inside a code
+path CI never executes — an override that cannot be exercised is untested by definition,
+and would trade real breakage risk for no risk reduction. **Recorded, not forced.**
+Reassessment **2026-09-11**, tracked at **T109**.
+
+## 3ad. T071 — commit and tag signing (2026-08-12)
+
+### 3ad.1 The signing key
+
+| Field | Value |
+|---|---|
+| Algorithm | Ed25519 (`ssh-ed25519`) |
+| Public fingerprint | `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` |
+| Comment | `Ahmed Anbar <admin@ahmedanbar.dev> Renvor signing` |
+| Private-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor` |
+| Public-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor.pub` |
+| Private permissions | `-rw-------` (0600) |
+| Public permissions | `-rw-r--r--` (0644) |
+| Encryption | `aes256-ctr`, `bcrypt` KDF, **100 rounds** |
+| Created | 2026-08-12T11:32:20Z |
+| Purpose | **Signing only** — not registered as an authentication, deploy, or login key |
+
+**No private-key contents and no passphrase appear in this record, in the repository, or in
+any output.**
+
+### 3ad.2 A generation defect, caught and corrected
+
+**The key was first generated without a passphrase.** The `-a 100` argument was present but
+had no effect: bcrypt KDF rounds only apply when there is a passphrase to derive from, so a
+command that reads as hardened produced a plaintext private key.
+
+Detected two ways before anything depended on it:
+
+```text
+OpenSSH key header decode:  ciphername = none   kdfname = none   kdfoptions = 0 bytes
+empty-passphrase probe:     accepted -> key was unencrypted
+```
+
+This mattered specifically because of clause 3ad.5: an unencrypted private key in a
+Dropbox-synchronised directory is the exact scenario the residual-risk mitigations exist to
+cover.
+
+Corrected with `ssh-keygen -p -a 100`, which **re-wraps the existing private key under a new
+KDF rather than generating a new one**. Nothing was overwritten, deleted, or regenerated,
+and no second key was created. Confirmed afterwards:
+
+```text
+ciphername = aes256-ctr   kdfname = bcrypt   rounds = 100
+empty passphrase rejected
+fingerprint unchanged: SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM
+```
+
+The unchanged fingerprint is the proof that the key material survived: a fingerprint is a
+hash of the public key, so a regenerated key would have produced a different one.
+
+### 3ad.3 Agent, registration, and configuration
+
+**Private/public correspondence proven without exposing private material.** The macOS SSH
+agent loaded the key from the **decrypted private key** and reported
+`SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` — identical to the fingerprint of the
+`.pub` file. Deriving the fingerprint from the `.pub` alone would have been circular; this
+is not.
+
+| GitHub registration | Value |
+|---|---|
+| Account | `AhmedAnbar` (id 4220036) |
+| Key id | **1108446** |
+| Title | `Renvor release signing — Ahmed Anbar` |
+| Type | **signing** (`/user/ssh_signing_keys`), not an authentication key |
+| Key type | `ssh-ed25519` |
+| Registered | 2026-08-12T11:45:52+03:00 |
+| Fingerprint match, GitHub vs local | **YES** |
+
+Only the public key was uploaded.
+
+**Scope limit, stated rather than glossed:** the account's **authentication** keys could not
+be enumerated — that needs `admin:public_key`, which was deliberately **not** requested,
+because §6 authorises signing-key registration only. This record therefore establishes that
+the key was *registered* as signing-only; it does not independently prove the absence of a
+same-key authentication registration made previously.
+
+Repository-local Git configuration (global identity untouched — it remains
+`Ahmed anbar <begnulinux@gmail.com>`):
+
+```text
+user.name  = Ahmed Anbar          gpg.format      = ssh
+user.email = admin@ahmedanbar.dev commit.gpgsign  = true
+user.signingkey = /Users/ahmedanbar/Dropbox/ssh/renvor.pub
+tag.gpgsign = true
+gpg.ssh.allowedSignersFile = governance/allowed-signers
+```
+
+`governance/allowed-signers` is tracked and contains **public key data only**, with
+`namespaces="git"` so a signature produced for another purpose cannot be replayed as a Git
+signature.
+
+### 3ad.4 Verification results
+
+**Temporary tag** — deliberately named so it cannot be mistaken for a release and cannot
+match the `v*` deployment policy.
+
+| Field | Value |
+|---|---|
+| Tag name | `signing-selftest-do-not-release-20260812` |
+| Matches `v*` | **No** — by design |
+| Object type | `tag` (annotated) |
+| Target commit | `ea51766e397620e7fab194201e203875a24104f6` |
+| Signing fingerprint | `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` |
+| `git verify-tag` | `Good "git" signature for admin@ahmedanbar.dev` — **exit 0** |
+| Verified | 2026-08-12T08:46:36Z |
+| Deleted | Yes, immediately after verification |
+| Ever pushed | **No** — 0 remote tags, 0 GitHub Releases, 0 matches on the remote |
+
+**Gate logic tested in both directions.** A gate proven only on its happy path is a gate
+nobody has tested.
+
+| Check | Positive | Negative |
+|---|---|---|
+| Tag-name format | `v1.0.0`, `v0.1.0-rc.1`, `v10.20.30` accepted | `v1.0`, `version1.0.0`, `v1.0.0-`, and the selftest name rejected |
+| Annotated-tag requirement | annotated tag → `type=tag`, accepted | genuine lightweight tag → `type=commit`; `verify-tag` fails with *cannot verify a non-tag object of type commit* |
+| Signature, principal, fingerprint | all three matched | an unknown fingerprint did **not** match |
+| Allowed-signers dependence | verified with the tracked file | **failed** against an empty allowed-signers file |
+
+The last row is the one that matters most: it proves verification depends on *who* signed,
+not merely on a signature existing.
+
+**A test that was initially invalid, recorded rather than quietly fixed.** The first attempt
+to create a lightweight tag failed, because `tag.gpgsign = true` makes plain `git tag`
+refuse rather than produce an unannotated tag. The check therefore ran against a
+*non-existent* tag and "passed" for the wrong reason. Re-run with
+`git -c tag.gpgsign=false`, a real lightweight tag was created and genuinely rejected.
+
+### 3ad.5 Vigilant mode — maintainer attestation
+
+**Maintainer attestation, 2026-08-12**: Ahmed Anbar confirms that vigilant mode is enabled
+on the `AhmedAnbar` GitHub account, flagging unsigned commits as unverified.
+
+Recorded as an **attestation, not a measurement**. GitHub exposes no API for this setting,
+and it is **not** inferable from commit verification status: the REST API reports
+`verified: false, reason: "unsigned"` for an unsigned commit whether or not vigilant mode is
+on. The maintainer's explicit confirmation is therefore the only evidence that exists, and
+this record does not dress it up as anything stronger.
+
+Why it matters: without vigilant mode, an unsigned commit and a signed one are visually
+similar to a casual reader, which removes most of the value of signing at all.
+
+### 3ad.6 Dropbox storage — explicit residual risk
+
+**Storing the encrypted private signing key in a Dropbox-synchronised directory is an
+explicit maintainer decision**, recorded here as accepted risk rather than presented as
+best practice.
+
+| Residual risk | Detail |
+|---|---|
+| Account or device compromise | Compromise of the Dropbox account, or of any synchronised device, exposes the encrypted private-key **file** |
+| Passphrase dependence | Security then rests almost entirely on the strength and secrecy of the passphrase. The 3ad.2 defect is exactly why this was verified rather than assumed |
+| Not a revocation mechanism | Dropbox versioning and sync are **not** a substitute for revocation or recovery planning. Sync propagates a compromise as readily as a backup |
+| Team growth | A hardware-backed or local-only key should be reconsidered as the maintainer team grows |
+
+Mitigations in force:
+
+- strong, unique passphrase, entered directly by the maintainer, never printed, logged,
+  committed, or stored beside the key;
+- private key `0600`, public key `0644`, containing directory `drwx------`;
+- key held in the macOS SSH agent and Keychain, so the passphrase is not re-entered per use;
+- public fingerprint recorded here and in `governance/allowed-signers`;
+- **no additional copies created** — exactly one private-key file exists;
+- Dropbox account should carry strong multifactor authentication (**maintainer
+  responsibility; not verified by this record**).
+
+**Rotation and compromise response**
+
+1. Generate a replacement key at a new path; **never** reuse the compromised path.
+2. Register the new public key on GitHub as a **signing** key.
+3. Add the new principal to `governance/allowed-signers` **by pull request**, keeping the
+   old key entry so historical signatures continue to verify.
+4. Update `user.signingkey` and the pinned fingerprint in
+   `.github/workflows/release-tag-verify.yml`.
+5. **Delete the compromised signing key from GitHub**, which stops it verifying new objects.
+6. Remove the old private key from Dropbox and every synchronised device, and purge
+   Dropbox version history for that path.
+7. Record the incident, the compromise window, and every release tag signed inside it.
+8. **Re-verify every release tag signed in that window.** SSH signing has no revocation
+   certificate — this manual step is the price of the SSH choice over GPG, and it was
+   accepted knowingly.
+
+## 3ab. T072 — protected release environment (created 2026-08-12)
+
+Created via API after resolving the reviewer identity first: `AhmedAnbar`, numeric id
+**4220036**, repository permission **admin**.
+
+Complete API read-back, every authorized property confirmed:
+
+| Property | Required | Read back | |
+|---|---|---|---|
+| Environment name | `release` | `release` | PASS |
+| Required reviewer | `AhmedAnbar` | `AhmedAnbar` | PASS |
+| Reviewer numeric id | 4220036 | 4220036 | PASS |
+| Prevent self-review | **disabled** | `false` | PASS |
+| Wait timer | 0 | rule absent | PASS |
+| Administrator bypass | **disabled** | `can_admins_bypass: false` | PASS |
+| Custom ref policies | enabled | `true` | PASS |
+| Protected-branches policy | not used | `false` | PASS |
+| Deployment refs | **tags `v*` only** | 1 policy, `name: v*`, `type: tag` | PASS |
+| Environment secrets | none | **0** | PASS |
+| Environment variables | none | **0** | PASS |
+
+Created 2026-08-12T08:39:42Z. No branch policy, no pull-request ref, and no unrestricted
+ref is permitted: the single policy is of type `tag`.
+
+**Why prevent-self-review is disabled, recorded rather than glossed.** The project has one
+maintainer. Enabling it would make every release impossible, because the person who
+triggers a release run would be the only person able to approve it. The environment still
+delivers a deliberate, logged approval checkpoint and restricts publication to `v*` tags.
+**It does not provide independent four-eyes review, and nothing here claims it does.** This
+must be revisited when a second qualified maintainer joins — the same gap W-001 already
+records for pull requests.
+
+## 3ac. T081 — final attestation ledger entries (merged run)
+
+Recorded from the successful merged run. **The rehearsal was not re-run**, and no
+replacement attestation was created to simplify documentation.
+
+| Field | Value |
+|---|---|
+| Workflow | `release-dry-run` |
+| Run ID | **31572250881** |
+| Run URL | <https://github.com/renvor-rs/renvor/actions/runs/31572250881> |
+| Event | `workflow_dispatch` |
+| Commit SHA | `0375016cfa7577f4d1c5d2da7d7fa8c138a4f440` |
+| Conclusion | success |
+| Package archive | `renvor-0.0.0.crate` |
+| Archive SHA-256 | `ee64b04dcc9c18bb971b91f5384cdb2686c326f886e53979158949ed36dd8677` |
+| `SHA256SUMS` SHA-256 | `9b8ebcb22010680643adf1c30d3278aeae269174f7fbdd9b1524f80665d69c42` |
+| `renvor-package-list.txt` SHA-256 | `f4e61d2d1ec91ed5a2ce80c30dd8877c114ff6efc199cd0c4a95970abbef8992` |
+| Artifact name | `release-rehearsal` |
+| Artifact size | **8,903 bytes** |
+| Artifact digest | `sha256:ebb113d5095c8affccbc5596cc4e547774618a4607743b4b9853a8a524086894` |
+| Uploaded | 2026-08-12T07:01:28Z |
+| Retention expires | **2026-11-10T07:01:13Z** (exactly **90 days**) |
+| Operator | Ahmed Anbar |
+| Date recorded | 2026-08-12 |
+
+**Attestations — two, both verified by API read-back:**
+
+| Predicate type | Bundle media type | Subjects |
+|---|---|---|
+| `https://slsa.dev/provenance/v1` | `application/vnd.dev.sigstore.bundle.v0.3+json` | `renvor-0.0.0.crate`, `SHA256SUMS`, `renvor-package-list.txt` |
+| `https://cyclonedx.org/bom` | `application/vnd.dev.sigstore.bundle.v0.3+json` | `renvor-0.0.0.crate` |
+
+SBOM format: **CycloneDX 1.5 JSON**, subject `renvor 0.0.0`, 0 components.
+
+Verification command and result:
+
+```text
+GET /repos/renvor-rs/renvor/attestations/sha256:ee64b04d...
+  -> 2 attestations; provenance buildDefinition names
+     .github/workflows/release-dry-run.yml
+```
+
+Result: **PASS.** Both attestations resolve against the archive digest and the provenance
+names the workflow that produced it.
+
+## 3ae. T080 — the complete release-identity control set (2026-08-12)
+
+Every control is marked **configured**, **covered by a dated waiver**, or **open**. Nothing
+is marked configured on the strength of a plan.
+
+| # | Control | State | Evidence |
+|---|---|---|---|
+| 1 | Dedicated signing key, signing-only | **Configured** | Ed25519 `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM`, §3ad.1 |
+| 2 | Private key encrypted at rest | **Configured** | `aes256-ctr` / `bcrypt` 100 rounds, §3ad.2 |
+| 3 | Commit signing | **Configured** | `commit.gpgsign=true`; two commits `verified=true, reason=valid` on GitHub, §3ad.4 |
+| 4 | Tag signing | **Configured** | `tag.gpgsign=true`; annotated tag verified, §3ad.4 |
+| 5 | Approved-signer register, tracked and public | **Configured** | `governance/allowed-signers`, `namespaces="git"` |
+| 6 | Signing key registered with the platform | **Configured** | GitHub signing key id **1108446**, §3ad.3 |
+| 7 | Vigilant mode | **Configured — maintainer attestation** | §3ad.5. No API exists; attested, not measured |
+| 8 | Fail-closed signed-tag release gate | **Configured** | `.github/workflows/release-tag-verify.yml`, tested in both directions, §3ad.4 |
+| 9 | Protected release environment | **Configured** | `release`, 11 properties read back, §3ab |
+| 10 | Named release approver | **Configured** | `AhmedAnbar` (id 4220036), §3ab |
+| 11 | Deployment restricted to release tags | **Configured** | one policy, `v*`, `type: tag`, §3ab |
+| 12 | Administrator bypass disabled | **Configured** | `can_admins_bypass: false`, §3ab |
+| 13 | No environment secrets or variables | **Configured** | 0 and 0, §3ab |
+| 14 | Build provenance attestation | **Configured** | SLSA provenance v1 over 3 subjects, run 31572250881, §3ac |
+| 15 | Software bill of materials | **Configured** | CycloneDX 1.5, attested, §3ac |
+| 16 | Artifact checksums | **Configured** | `SHA256SUMS`, attested, §3ac |
+| 17 | Evidence retention | **Configured** | 90-day artifact expiry verified; `governance/evidence-retention-policy.md` |
+| 18 | No long-lived registry credential | **Configured** | 0 repository secrets, 0 environment secrets, §3z.4 |
+| 19 | **Independent four-eyes release approval** | **Waived — W-001** | Single maintainer. Self-review permitted; expiry 2027-02-11 |
+| 20 | **Independent review of decision records** | **Waived — W-002** | Single maintainer; expiry 2027-02-11 |
+| 21 | Independent encrypted evidence archive | **OPEN — gate fails closed** | Does not exist. Blocks the first crates.io publication, `RELEASING.md` §11 |
+| 22 | Authentication-key separation, independently verified | **OPEN — scope limit** | Registered signing-only; `admin:public_key` deliberately not requested, §3ad.3 |
+
+**Nothing in rows 1–18 is claimed on the basis of intent.** Rows 19 and 20 are covered by
+dated waivers with absolute expiry dates. Rows 21 and 22 are open and are **not** waived —
+row 21 in particular keeps the first-publication gate closed.
+
+**The set is complete for Phase 001, which publishes nothing.** It is *not* sufficient for a
+first release: row 21 must be closed first.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
