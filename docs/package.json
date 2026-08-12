@@ -29,6 +29,25 @@
     "@docusaurus/module-type-aliases": "3.10.2",
     "@docusaurus/types": "3.10.2"
   },
+  "comments": {
+    "overrides": [
+      "serialize-javascript: forced to ^7.1.0 to close GHSA-5c6j-r48x-rmvq (high, RCE via",
+      "RegExp.flags, CVSS 8.1) and GHSA-qj8w-gfj5-8c6v (moderate, CPU-exhaustion DoS).",
+      "Reached through copy-webpack-plugin 11 and css-minimizer-webpack-plugin 5, both of",
+      "which Docusaurus 3.10.2 pins to majors that require serialize-javascript ^6. Only",
+      "copy-webpack-plugin 14 and css-minimizer-webpack-plugin 8 moved to ^7.0.3, and both",
+      "are outside the ranges Docusaurus declares, so no compatible ordinary update exists.",
+      "The override is safe to force: 7.x keeps the same CommonJS shape as 6.0.2 (type",
+      "commonjs, main index.js, no exports map) and only raises engines to node >=20, which",
+      ".nvmrc already satisfies at 22. Verified by a frozen install, a production build, and",
+      "a link check.",
+      "Remove when: Docusaurus ships a release whose bundler depends on plugin majors that",
+      "already carry serialize-javascript ^7."
+    ]
+  },
+  "overrides": {
+    "serialize-javascript": "^7.1.0"
+  },
   "browserslist": {
     "production": [
       ">0.5%",
