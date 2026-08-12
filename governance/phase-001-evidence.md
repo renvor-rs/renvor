@@ -1373,6 +1373,46 @@ logged, out-of-band confirmation** between tagging and publishing, and it restri
 publication to `v*` tags. It does not provide four-eyes review, and this record does not
 claim that it does. That gap is the same one W-001 already records for pull requests.
 
+### 3z.9 Validation for this pass (2026-08-12)
+
+| Check | Command | Result |
+|---|---|---|
+| Full sequence, MSRV | `rustup run 1.94.0 cargo xtask verify` | **exit 0** — all 10 steps ran and passed |
+| Full sequence, stable | `rustup run stable cargo xtask verify` | **exit 0** — all 10 steps ran and passed |
+| Toolchains genuinely differ | `rustc --version` per channel | 1.94.0 vs **1.97.1** — two different compilers, not one twice |
+| Secret scan, working tree | `gitleaks dir .` | 0 findings over 9.49 MB |
+| Secret scan, history | `gitleaks git .` | 0 findings, 25 commits |
+| Canary detection | injected credential, FP-001 file | **detected** — see below |
+| Release workflow syntax | YAML parse of all four workflows | all parse; permission matrix as designed |
+| Package contents, metadata, dry run, SBOM, checksums | §3z.4 | all pass |
+| No runtime capability added | `git diff --stat main...HEAD` | **0 Rust source files touched**; public API still exactly 3 constants |
+
+Steps 1–9 cover formatting, clippy, tests, API documentation, dependency and licence
+policy, secret scanning, documentation build, and link checking; step 10 is working-tree
+cleanliness.
+
+**Canary verification — and a mis-designed first attempt, recorded rather than discarded.**
+
+The first attempt injected an AWS *documentation example* key into `RELEASING.md` and was
+not detected. That was a **defective test, not a detection failure**: the value is a
+publicly known example that gitleaks deliberately does not flag, and `RELEASING.md` is not
+the file the FP-001 allowlist covers, so the test exercised nothing the canary exists to
+exercise. Reporting it as a regression would have been wrong; so would deleting it.
+
+Re-run correctly against the file FP-001 actually scopes:
+
+| Stage | Observed |
+|---|---|
+| Baseline | 0 findings — the allowlisted prose at line 679 stays suppressed |
+| Canary injected at line 682 of the **same file** | **1 finding**, rule `gitlab-pat`, exit 1 |
+| File restored | SHA-256 `19883f55…4711` before and after — **byte-identical** |
+| Working tree | clean |
+
+This is the property that matters: the allowlist suppresses **one prose match by content**
+and does not exclude the file, because a secret added to that same file three lines later
+is still caught. A `paths`-scoped allowlist would have failed this test, which is exactly
+how the original defective form was found.
+
 ## 4. Acceptance criteria coverage
 
 Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
