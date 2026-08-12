@@ -1,4 +1,8 @@
-# Renvor
+<p align="center">
+  <img src="assets/renvor-mark-v7.svg" alt="Renvor" width="120">
+</p>
+
+<h1 align="center">Renvor</h1>
 
 > ## ⚠️ Pre-release — Renvor does not work yet
 >
@@ -86,6 +90,26 @@ Licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT))
 
 at your option.
+
+### The Renvor mark is not covered by that grant
+
+**`assets/renvor-mark-v7.svg` — the Renvor mark shown at the top of this file — is a brand
+asset and is NOT licensed under `MIT OR Apache-2.0`.** It is present so this repository can
+identify itself, and for no other purpose.
+
+The dual licence above covers Renvor's **source and documentation**. It does not grant any
+right to use, reproduce, or modify the mark. **No implied trademark or brand licence is
+granted**, and the presence of the file in a permissively licensed repository must not be
+read as one.
+
+**Usage terms for the mark have not been decided yet** and are tracked as open task
+**T098**. Until they are recorded, treat the mark as all rights reserved: do not use it to
+identify your own project, product, or fork, and do not use it in a way that implies
+endorsement or affiliation.
+
+This notice exists because ADR-0005 identified the real risk here as an *unintended*
+licensing claim. Stating the exclusion explicitly is what makes the claim intended and
+bounded rather than accidental.
 
 ### Code Renvor generates for you is yours
 
