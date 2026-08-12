@@ -181,8 +181,8 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 **Independent Test**: Run the rehearsal, confirm an artifact exists, confirm the registry reports zero versions, confirm tag signing and the protected environment are configured, and confirm every acceptance criterion maps to dated evidence.
 
 - [X] T070 [US6] Write `RELEASING.md` covering topological publish order with the index-availability wait, version immutability and yank-and-replace as the sole remedy, the least-scope bootstrap credential procedure with immediate revocation, and the evidence retention period **MUST incorporate `governance/evidence-retention-policy.md` exactly** — reproducing its periods or referencing it as authoritative; a divergent restatement is a defect (T103).
-- [ ] T071 [US6] Configure commit and tag signing (SSH or GPG), enable vigilant mode, and require signed tags for releases; record the signing identity and verification method in `governance/phase-001-evidence.md` (FR-032, constitution §XI, analyze finding G1)
-- [ ] T072 [US6] Create a protected release environment on the hosting platform with **named** approvers and a deployment-branch restriction limiting it to release tags; record the environment name and approver list in `governance/phase-001-evidence.md` (FR-032, PLAN.md §19.1)
+- [X] T071 [US6] Configure commit and tag signing (SSH or GPG), enable vigilant mode, and require signed tags for releases; record the signing identity and verification method in `governance/phase-001-evidence.md` (FR-032, constitution §XI, analyze finding G1)
+- [X] T072 [US6] Create a protected release environment on the hosting platform with **named** approvers and a deployment-branch restriction limiting it to release tags; record the environment name and approver list in `governance/phase-001-evidence.md` (FR-032, PLAN.md §19.1)
 - [X] T073 [US6] Create `.github/workflows/release-dry-run.yml` with `permissions: contents: read` and **no publish capability**, so it cannot publish even if invoked
 - [X] T074 [US6] Run `cargo package -p renvor --list` from a clean checkout and record the exact file list in `governance/phase-001-evidence.md`
 - [X] T075 [US6] Inspect that file list for secrets, local configuration, build output, and unintended assets; record the review outcome (FR-039)
@@ -190,7 +190,7 @@ Repository root is the Renvor workspace root. Governance records live in `govern
 - [X] T077 [US6] Validate package metadata against contracts/package-metadata.md and confirm no publishable package carries a path-only dependency
 - [X] T078 [US6] Query the live registry and record **zero versions** for every intended name — positive evidence of non-publication, not an assertion that nothing was run (SC-010)
 - [X] T079 [US6] Confirm no long-lived registry credential exists in the repository, its workflows, or its secrets; record the check (FR-033)
-- [ ] T080 [US6] Record the complete release-identity control set in `governance/phase-001-evidence.md` — signed tags, protected environment with named approvers, provenance and bill-of-materials plan — each marked configured or covered by a dated waiver (SC-014, analyze finding G2)
+- [X] T080 [US6] Record the complete release-identity control set in `governance/phase-001-evidence.md` — signed tags, protected environment with named approvers, provenance and bill-of-materials plan — each marked configured or covered by a dated waiver (SC-014, analyze finding G2)
 - [X] T081 [US6] Wire CycloneDX SBOM generation, checksums, and `actions/attest` provenance into the release path and record what a real release would emit. Trusted publishing itself **cannot** be configured this phase — it requires a package that already exists on the registry, and nothing is published (research Finding 2)
 
 **Checkpoint**: The release path works, its identity controls are configured, and it has published nothing — provably.

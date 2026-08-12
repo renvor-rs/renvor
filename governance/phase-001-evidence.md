@@ -1698,7 +1698,21 @@ refuse rather than produce an unannotated tag. The check therefore ran against a
 *non-existent* tag and "passed" for the wrong reason. Re-run with
 `git -c tag.gpgsign=false`, a real lightweight tag was created and genuinely rejected.
 
-### 3ad.5 Dropbox storage — explicit residual risk
+### 3ad.5 Vigilant mode — maintainer attestation
+
+**Maintainer attestation, 2026-08-12**: Ahmed Anbar confirms that vigilant mode is enabled
+on the `AhmedAnbar` GitHub account, flagging unsigned commits as unverified.
+
+Recorded as an **attestation, not a measurement**. GitHub exposes no API for this setting,
+and it is **not** inferable from commit verification status: the REST API reports
+`verified: false, reason: "unsigned"` for an unsigned commit whether or not vigilant mode is
+on. The maintainer's explicit confirmation is therefore the only evidence that exists, and
+this record does not dress it up as anything stronger.
+
+Why it matters: without vigilant mode, an unsigned commit and a signed one are visually
+similar to a casual reader, which removes most of the value of signing at all.
+
+### 3ad.6 Dropbox storage — explicit residual risk
 
 **Storing the encrypted private signing key in a Dropbox-synchronised directory is an
 explicit maintainer decision**, recorded here as accepted risk rather than presented as
@@ -1814,6 +1828,43 @@ GET /repos/renvor-rs/renvor/attestations/sha256:ee64b04d...
 
 Result: **PASS.** Both attestations resolve against the archive digest and the provenance
 names the workflow that produced it.
+
+## 3ae. T080 — the complete release-identity control set (2026-08-12)
+
+Every control is marked **configured**, **covered by a dated waiver**, or **open**. Nothing
+is marked configured on the strength of a plan.
+
+| # | Control | State | Evidence |
+|---|---|---|---|
+| 1 | Dedicated signing key, signing-only | **Configured** | Ed25519 `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM`, §3ad.1 |
+| 2 | Private key encrypted at rest | **Configured** | `aes256-ctr` / `bcrypt` 100 rounds, §3ad.2 |
+| 3 | Commit signing | **Configured** | `commit.gpgsign=true`; two commits `verified=true, reason=valid` on GitHub, §3ad.4 |
+| 4 | Tag signing | **Configured** | `tag.gpgsign=true`; annotated tag verified, §3ad.4 |
+| 5 | Approved-signer register, tracked and public | **Configured** | `governance/allowed-signers`, `namespaces="git"` |
+| 6 | Signing key registered with the platform | **Configured** | GitHub signing key id **1108446**, §3ad.3 |
+| 7 | Vigilant mode | **Configured — maintainer attestation** | §3ad.5. No API exists; attested, not measured |
+| 8 | Fail-closed signed-tag release gate | **Configured** | `.github/workflows/release-tag-verify.yml`, tested in both directions, §3ad.4 |
+| 9 | Protected release environment | **Configured** | `release`, 11 properties read back, §3ab |
+| 10 | Named release approver | **Configured** | `AhmedAnbar` (id 4220036), §3ab |
+| 11 | Deployment restricted to release tags | **Configured** | one policy, `v*`, `type: tag`, §3ab |
+| 12 | Administrator bypass disabled | **Configured** | `can_admins_bypass: false`, §3ab |
+| 13 | No environment secrets or variables | **Configured** | 0 and 0, §3ab |
+| 14 | Build provenance attestation | **Configured** | SLSA provenance v1 over 3 subjects, run 31572250881, §3ac |
+| 15 | Software bill of materials | **Configured** | CycloneDX 1.5, attested, §3ac |
+| 16 | Artifact checksums | **Configured** | `SHA256SUMS`, attested, §3ac |
+| 17 | Evidence retention | **Configured** | 90-day artifact expiry verified; `governance/evidence-retention-policy.md` |
+| 18 | No long-lived registry credential | **Configured** | 0 repository secrets, 0 environment secrets, §3z.4 |
+| 19 | **Independent four-eyes release approval** | **Waived — W-001** | Single maintainer. Self-review permitted; expiry 2027-02-11 |
+| 20 | **Independent review of decision records** | **Waived — W-002** | Single maintainer; expiry 2027-02-11 |
+| 21 | Independent encrypted evidence archive | **OPEN — gate fails closed** | Does not exist. Blocks the first crates.io publication, `RELEASING.md` §11 |
+| 22 | Authentication-key separation, independently verified | **OPEN — scope limit** | Registered signing-only; `admin:public_key` deliberately not requested, §3ad.3 |
+
+**Nothing in rows 1–18 is claimed on the basis of intent.** Rows 19 and 20 are covered by
+dated waivers with absolute expiry dates. Rows 21 and 22 are open and are **not** waived —
+row 21 in particular keeps the first-publication gate closed.
+
+**The set is complete for Phase 001, which publishes nothing.** It is *not* sufficient for a
+first release: row 21 must be closed first.
 
 ## 4. Acceptance criteria coverage
 
