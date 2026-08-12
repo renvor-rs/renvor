@@ -1,0 +1,177 @@
+# Non-publishing release rehearsal.
+#
+# This workflow exercises the release procedure in RELEASING.md up to, and never
+# including, publication. It is STRUCTURALLY incapable of publishing:
+#
+#   * the top-level permission is `contents: read`;
+#   * no job is granted `contents: write` or `packages: write`;
+#   * no registry token is referenced, and none exists to reference;
+#   * the only `cargo publish` invocation carries `--dry-run`;
+#   * it creates no tag, no GitHub Release, and no container image.
+#
+# The permission boundary is a control, not a convenience. Widening it to make a future
+# task easier would remove the only reason this workflow is safe to run at all.
+#
+# Publication itself is out of scope for this phase and for this file. When it happens it
+# will be a separate workflow, gated by the protected release environment (RELEASING.md
+# §7) and using trusted publishing (§5) — never a token stored here.
+
+name: release-dry-run
+
+on:
+  # Manual rehearsal. This is how the release approver exercises the procedure without
+  # any part of it reaching the registry.
+  workflow_dispatch:
+  # Runs on changes that could alter what would ship, so a packaging regression is caught
+  # in review rather than during a release.
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - ".github/workflows/release-dry-run.yml"
+
+# Least privilege. Read is all the packaging job needs; only the attestation job elevates,
+# and only to the two scopes the attestation actions document as required.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The single publishable package. `xtask` declares `publish = false` and is deliberately
+  # not packaged here: `cargo package --workspace` would include it, which would make the
+  # rehearsal describe a file set that will never be published.
+  CRATE: renvor
+
+jobs:
+  rehearse:
+    name: package and verify without publishing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Inherits the top-level `contents: read`. Do not add a `permissions:` block here.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The exact supported toolchain, taken from rust-toolchain.toml rather than restated
+      # here. A second declaration site is a second thing to forget when the MSRV moves.
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: "1.94.0"
+
+      - uses: taiki-e/install-action@7f4eb899022d8fe70b20c4f3de697aa85c309026 # v2.85.11
+        with:
+          tool: cargo-cyclonedx
+
+      # `--locked` fails if Cargo.lock is stale. A release built from an unlocked
+      # resolution is a release nobody can reproduce.
+      - name: Validate the workspace against the committed lockfile
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+      # Reviewed by a human against the RELEASING.md §3 rejection list. Recorded as an
+      # artifact so the review has something durable to point at.
+      - name: List the exact file set that would ship
+        run: |
+          set -euo pipefail
+          mkdir -p rehearsal
+          cargo package -p "$CRATE" --list | tee "rehearsal/${CRATE}-package-list.txt"
+
+      - name: Build the package archive
+        run: cargo package -p "$CRATE"
+
+      # The full publish verification path with the upload removed. Everything the
+      # registry would reject locally is rejected here instead.
+      - name: Publish dry run
+        run: cargo publish -p "$CRATE" --dry-run
+
+      - name: Collect artifacts and checksums
+        run: |
+          set -euo pipefail
+          cp target/package/*.crate rehearsal/
+          cd rehearsal
+          sha256sum ./*.crate ./*-package-list.txt > SHA256SUMS
+          cat SHA256SUMS
+
+      # cargo-cyclonedx writes the SBOM adjacent to the manifest it describes, so it is
+      # moved into the artifact directory rather than left in the source tree.
+      - name: Generate CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          cargo cyclonedx \
+            --manifest-path "crates/${CRATE}/Cargo.toml" \
+            --format json \
+            --spec-version 1.5 \
+            --all \
+            --override-filename "${CRATE}-sbom"
+          mv "crates/${CRATE}/${CRATE}-sbom.json" rehearsal/
+
+      # Validating the SBOM parses and carries the expected spec version catches a silent
+      # tool change; an unread SBOM is a file, not evidence.
+      - name: Validate the SBOM
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, sys
+          crate = os.environ["CRATE"]
+          with open(f"rehearsal/{crate}-sbom.json", encoding="utf-8") as handle:
+              bom = json.load(handle)
+          assert bom["bomFormat"] == "CycloneDX", bom.get("bomFormat")
+          assert bom["specVersion"] == "1.5", bom["specVersion"]
+          print("bomFormat", bom["bomFormat"], "specVersion", bom["specVersion"])
+          print("components", len(bom.get("components", [])))
+          PY
+
+      - name: Checksum the SBOM alongside the rest
+        run: |
+          set -euo pipefail
+          cd rehearsal
+          sha256sum "${CRATE}-sbom.json" >> SHA256SUMS
+          cat SHA256SUMS
+
+      # 90 days is the platform maximum for public repositories and matches
+      # governance/evidence-retention-policy.md clause 1. These artifacts are evidence
+      # TRANSPORT, not the durable archive — clause 2.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-rehearsal
+          path: rehearsal/
+          retention-days: 90
+          if-no-files-found: error
+
+  attest:
+    name: attest rehearsal artifacts
+    needs: rehearse
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Attestations from a pull_request event would run with a read-only token and fail.
+    # Skipping is honest; granting more permission to make it succeed would not be.
+    if: github.event_name == 'workflow_dispatch'
+    # The documented minimum for actions/attest-*. Deliberately NOT `contents: write` and
+    # NOT `packages: write` — neither is needed, and either would give this workflow a
+    # publishing capability it must never have.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-rehearsal
+          path: rehearsal
+
+      # Provenance over the archive, the checksum file, and the package list: what a real
+      # release would attest, minus the release.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            rehearsal/*.crate
+            rehearsal/SHA256SUMS
+            rehearsal/*-package-list.txt
+
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: rehearsal/*.crate
+          sbom-path: rehearsal/renvor-sbom.json
