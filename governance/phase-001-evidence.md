@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **75 of 102 tasks complete**; the public repository is pushed, protected, and scanned (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
+**Status**: Open — implementation in progress, **76 of 106 tasks complete**; the public repository is pushed, protected, and scanned; 4 of 6 decision records accepted (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. Stopped before T054 (first push) pending maintainer approval.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -962,6 +962,59 @@ All well inside the 10-minute performance target in the verification contract.
 | Repository **approval** waivers | exactly 1 | **1** — W-001 |
 | **Control-unavailability** waivers | 0 | **0** — every required control was available on the free public tier |
 | Explicit reviewed exceptions | outside the count | 1 — W-002 |
+
+## 3x. T086 governance review and decision-record acceptance (2026-08-12)
+
+### T086 — all 79 checklist items reviewed
+
+Reviewed by **Ahmed Anbar — self-review under W-002**. **Not independent**, and not
+described as such anywhere.
+
+| Outcome | Count |
+|---|---|
+| Passed with recorded basis | **77** |
+| **Failed — genuine specification gap** | **2** (CHK048, CHK050) |
+| Requirements weakened to obtain a pass | **0** |
+| Items with a defensible recorded outcome | **79 / 79** |
+
+**CHK048** — FR-046 requires evidence retention "for a stated period" and no duration
+exists anywhere. **Task T103.**
+**CHK050** — FR-010 requires advisory handling to be stated but defines no response or
+triage window, so an advisory could sit unactioned indefinitely without breaking any rule.
+**Task T104.**
+
+Both live tensions flagged at checklist creation were resolved by recorded ruling rather
+than rewording: **CHK074** by W-002 (structured self-review, reviewer string fixed,
+prohibition on calling it independent) and **CHK075** by the three-category waiver ledger
+(approval = exactly 1, control-unavailability = 0 observed, reviewed exceptions outside
+both counts).
+
+### W-002 control evidence, applied per record
+
+| Control | Evidence |
+|---|---|
+| 1 — written alternatives-and-consequences review | Each record carries 5–7 rejected alternatives with reasons and a stated cost section |
+| 2 — verification against `checklists/governance.md` | T086 complete 2026-08-12, 77/79 |
+| 3 — all required CI and security checks passing | 2026-08-11 on `renvor-rs/renvor`: `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL |
+| 4 — dated review record stored with the ADR | Acceptance-gate section in each record, dated 2026-08-12 |
+
+### Verdicts
+
+| ADR | Controls met | State | Reason |
+|---|---|---|---|
+| **0001** public naming | 1 ✅ 2 ✅ 3 ✅ 4 ✅ | **accepted** | CHK011–CHK019 all passed; no unresolved requirement affects it |
+| **0002** workspace boundaries | 1 ✅ 2 ✅ 3 ✅ 4 ✅ | **accepted** | CHK028–CHK036 all passed |
+| **0003** MSRV and dependency policy | 1 ✅ **2 ❌** 3 ✅ 4 ✅ | **proposed** | **CHK050 falls inside the dependency-policy scope this record decides.** Accepting it would put an accepted record's name behind a policy with an undefined advisory window. Blocked on **T104** |
+| **0004** documentation platform | 1 ✅ 2 ✅ 3 ✅ 4 ✅ | **accepted** | CHK053–CHK058 all passed; this record supplies the CHK055 cadence |
+| **0005** web-property topology | 1 ✅ 2 ✅ 3 ✅ 4 ✅ | **accepted** | CHK023 passed — brand-asset licensing is explicitly outside the code grant and tracked as T098, which blocks repository creation rather than this decision |
+| **0006** hosting and edge | 1 ✅ 2 ✅ 3 ✅ 4 ✅ | **proposed** | **All four W-002 controls met, and still not accepted.** Four material architecture questions inside its own scope remain open (T099 registry, T105 `www` redirect, T106 backup ruling, T101 CSP). A record must not be accepted while its own text says its decisions have not been made |
+
+**Accepted: 4. Remaining proposed: 2.** Every accepted record carries reviewer
+`Ahmed Anbar — self-review under W-002`, review date 2026-08-12, and an explicit statement
+that the review is not independent.
+
+**T102 remains deliberately open** — the shared-server audit must be re-verified
+immediately before any deployment and must not be marked complete in advance.
 
 ## 4. Acceptance criteria coverage
 

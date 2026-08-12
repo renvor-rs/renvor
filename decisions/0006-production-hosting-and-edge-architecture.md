@@ -9,11 +9,6 @@
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
 
-> **Acceptance gate.** As with ADR-0001 through ADR-0005, W-002 compensating control 3 is
-> not met. Additionally, **this record must not be accepted before the components it names
-> are re-verified against the server**, because the server is shared with unrelated
-> production workloads whose state can change. See [Acceptance gate](#acceptance-gate).
-
 ## Context
 
 A read-only audit of the Hostinger VPS on 2026-08-11 (recorded in
@@ -233,6 +228,16 @@ DNS records; nothing neighbouring depends on them.
 
 ## Unresolved questions
 
+**Each unresolved question below now carries an explicit owner and a blocking task, so
+none can be forgotten. All four block acceptance of this record.**
+
+| # | Unresolved question | Owner | Blocking task |
+|---|---|---|---|
+| 1 | GitHub Container Registry versus the VPS GitLab registry, including the credential model | Ahmed Anbar | **T099** |
+| 2 | Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik | Ahmed Anbar | **T105** |
+| 3 | Maintainer ruling on the shared server's absent backups | Ahmed Anbar | **T106** |
+| 4 | CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) | Ahmed Anbar | **T101** |
+
 1. **Registry choice is not decided.** GitHub Container Registry versus the GitLab registry
    already running on this host. GHCR pairs with the GitHub-based workflow and OIDC; the
    local GitLab registry avoids an external dependency but couples Renvor to another
@@ -258,15 +263,31 @@ DNS records; nothing neighbouring depends on them.
 
 | # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review | ✅ Met — seven alternatives; Tunnel analysed rather than assumed |
-| 2 | Verification against `checklists/governance.md` | ⏳ T086 |
-| 3 | All required CI and security checks passing | ❌ Not met |
-| 4 | Dated review record stored with the ADR | ⏳ Pending 2 and 3 |
+| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — seven alternatives, with Cloudflare Tunnel analysed rather than assumed |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete; neither failure (CHK048, CHK050) falls inside this record's scope |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — all four required checks passing on `renvor-rs/renvor` |
+| 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-**Additional gate specific to this record:** the server facts above were observed on
-2026-08-11 on a host shared with unrelated production workloads. They **must be re-verified
-immediately before any deployment**, because a neighbouring change could invalidate them.
-Deploying against a stale audit is the failure mode this gate exists to prevent.
+### All four W-002 controls are met, and this record still remains `proposed`
 
-Remains `proposed`. On acceptance the reviewer field reads exactly
-**`Ahmed Anbar — self-review under W-002`**, and must not be described as independent.
+W-002 is not the only gate. **A record must not be accepted while it states that material
+architecture choices inside its own scope are unresolved.** Accepting it would publish a
+decision record whose own text says four of its decisions have not been made — the document
+would assert authority it does not have.
+
+Four questions remain open, each now carrying an owner and a blocking task: **T099**
+(registry), **T105** (`www` redirect location), **T106** (backup ruling), **T101** (CSP
+compatibility). Acceptance requires all four resolved, either in this record or split into
+scoped follow-up records.
+
+### A second, independent gate specific to this record
+
+The server facts this record rests on were observed on **2026-08-11** on a host shared with
+five unrelated production namespaces. They **must be re-verified immediately before any
+deployment** — tracked as **T102**, which remains deliberately open and must not be marked
+complete in advance. Deploying against a stale audit is the failure mode that gate exists
+to prevent.
+
+On acceptance the reviewer field will read exactly
+**`Ahmed Anbar — self-review under W-002`**, and the review must not be described as
+independent.

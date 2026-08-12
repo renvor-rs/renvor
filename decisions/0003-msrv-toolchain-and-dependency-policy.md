@@ -8,8 +8,6 @@
 | **Review date** | *(pending)* |
 | **Superseded by** | — |
 
-> **Acceptance gate.** Same as ADR-0001 and ADR-0002. See [Acceptance gate](#acceptance-gate).
-
 ## Context
 
 An MSRV policy is a public promise. Once published, downstream users plan CI matrices and
@@ -130,10 +128,30 @@ migration announcement, because downstream CI configurations depend on the curre
 
 | # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review | ✅ Met — five alternatives, costs stated |
-| 2 | Verification against `checklists/governance.md` | ⏳ T086 |
-| 3 | All required CI and security checks passing | ❌ Not met — workflows do not exist until T057–T059 |
-| 4 | Dated review record stored with the ADR | ⏳ Pending 2 and 3 |
+| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ❌ **NOT met** — see below |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
+| 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-Remains `proposed`. On acceptance the reviewer field reads exactly
-**`Ahmed Anbar — self-review under W-002`**, and must not be described as independent.
+### Why control 2 is not met — this record remains `proposed`
+
+T086 completed on 2026-08-12 with 77 of 79 items passing. One of the two failures falls
+**inside the scope this record decides**:
+
+> **CHK050** — FR-010 requires the dependency policy to state how security advisories are
+> handled, but no response or triage window is defined anywhere. An advisory could remain
+> unactioned indefinitely without violating any written rule.
+
+This record sets the dependency and advisory policy. Accepting it while the advisory
+response window is undefined would put an accepted decision record's name behind a policy
+with a hole in it.
+
+**Blocking task: T104.** When T104 defines the window and this record incorporates it,
+control 2 is satisfiable and acceptance can proceed.
+
+CHK048 (evidence retention period, task T103) also failed, but it concerns release-evidence
+retention, which this record does not decide, so it does not block acceptance here.
+
+**This record therefore remains `proposed`.** On acceptance the reviewer field will read
+exactly **`Ahmed Anbar — self-review under W-002`**, and the review must not be described
+as independent.

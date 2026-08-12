@@ -3,14 +3,10 @@
 | Field | Value |
 |---|---|
 | **ID** | 0001 |
-| **State** | `proposed` |
-| **Reviewer** | *(pending — see Acceptance gate)* |
-| **Review date** | *(pending)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-12 |
 | **Superseded by** | — |
-
-> **Acceptance gate.** This record MUST NOT be marked `accepted` until all four
-> compensating controls of waiver **W-002** are satisfied. Three are met; one is not.
-> See [Acceptance gate](#acceptance-gate) at the end of this record.
 
 ## Context
 
@@ -111,18 +107,16 @@ a migration path for anyone who already installed `renover`.
 
 ## Acceptance gate
 
-Waiver **W-002** permits structured self-review in place of independent review, and
-requires **all four** compensating controls before any record reaches `accepted`:
-
-| # | Control | Status |
+| # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ Met — five alternatives, costs stated |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ⏳ Scheduled at **T086** |
-| 3 | **All required CI and security checks passing** | ❌ **Not met** — the workflows producing `verify (1.94.0)`, `verify (stable)`, `security`, and `docs` do not exist until T057–T059, and nothing has been pushed |
-| 4 | A dated review record stored with the ADR | ⏳ Recorded when 2 and 3 clear |
+| 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the naming decision — CHK011 through CHK019 all passed. |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
+| 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-**This record therefore remains `proposed`.** Marking it `accepted` now would assert a
-review that has not happened, which is precisely the failure W-002 was written to prevent.
+**All four controls are met. This record is `accepted`.**
 
-When accepted, the reviewer field reads exactly **`Ahmed Anbar — self-review under W-002`**.
-This review **must not** be described as independent, here or anywhere else.
+Reviewed by **Ahmed Anbar — self-review under W-002** on **2026-08-12**. This review is
+**not independent** and must not be described as such, here or anywhere else. It is a
+structured self-review operating under a recorded, time-bounded exception that expires on
+2027-02-11 or when a qualified independent reviewer becomes available, whichever is first.
