@@ -46,6 +46,10 @@ env:
   # not packaged here: `cargo package --workspace` would include it, which would make the
   # rehearsal describe a file set that will never be published.
   CRATE: renvor
+  # Every generated artifact lands OUTSIDE the checkout. Build products in the source
+  # tree are how a later run packages something the previous run left behind, and how a
+  # cleanliness assertion turns into noise that gets suppressed.
+  REHEARSAL_DIR: ${{ runner.temp }}/rehearsal
 
 jobs:
   rehearse:
@@ -76,8 +80,8 @@ jobs:
       - name: List the exact file set that would ship
         run: |
           set -euo pipefail
-          mkdir -p rehearsal
-          cargo package -p "$CRATE" --list | tee "rehearsal/${CRATE}-package-list.txt"
+          mkdir -p "$REHEARSAL_DIR"
+          cargo package -p "$CRATE" --list | tee "${REHEARSAL_DIR}/${CRATE}-package-list.txt"
 
       - name: Build the package archive
         run: cargo package -p "$CRATE"
@@ -87,16 +91,10 @@ jobs:
       - name: Publish dry run
         run: cargo publish -p "$CRATE" --dry-run
 
-      - name: Collect artifacts and checksums
-        run: |
-          set -euo pipefail
-          cp target/package/*.crate rehearsal/
-          cd rehearsal
-          sha256sum ./*.crate ./*-package-list.txt > SHA256SUMS
-          cat SHA256SUMS
-
-      # cargo-cyclonedx writes the SBOM adjacent to the manifest it describes, so it is
-      # moved into the artifact directory rather than left in the source tree.
+      # cargo-cyclonedx writes a BOM adjacent to EVERY Cargo.toml in the workspace, not
+      # only the one named by --manifest-path. It therefore also emits one beside
+      # `xtask`, which is never published and whose SBOM would be meaningless here. Only
+      # the publishable crate's SBOM is kept; strays are removed.
       - name: Generate CycloneDX SBOM
         run: |
           set -euo pipefail
@@ -106,30 +104,47 @@ jobs:
             --spec-version 1.5 \
             --all \
             --override-filename "${CRATE}-sbom"
-          mv "crates/${CRATE}/${CRATE}-sbom.json" rehearsal/
+          mv "crates/${CRATE}/${CRATE}-sbom.json" "${REHEARSAL_DIR}/"
+          find . -name "${CRATE}-sbom.json" -delete
 
-      # Validating the SBOM parses and carries the expected spec version catches a silent
-      # tool change; an unread SBOM is a file, not evidence.
+      # An SBOM nobody parses is a file, not evidence. This catches a silent tool change
+      # that starts emitting a different format or spec version.
       - name: Validate the SBOM
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json, os, sys
-          crate = os.environ["CRATE"]
-          with open(f"rehearsal/{crate}-sbom.json", encoding="utf-8") as handle:
+          import json, os
+          path = os.path.join(os.environ["REHEARSAL_DIR"], os.environ["CRATE"] + "-sbom.json")
+          with open(path, encoding="utf-8") as handle:
               bom = json.load(handle)
           assert bom["bomFormat"] == "CycloneDX", bom.get("bomFormat")
           assert bom["specVersion"] == "1.5", bom["specVersion"]
+          subject = bom.get("metadata", {}).get("component", {})
+          assert subject.get("name") == os.environ["CRATE"], subject.get("name")
           print("bomFormat", bom["bomFormat"], "specVersion", bom["specVersion"])
+          print("subject", subject.get("name"), subject.get("version"))
           print("components", len(bom.get("components", [])))
           PY
 
-      - name: Checksum the SBOM alongside the rest
+      - name: Collect artifacts and checksums
         run: |
           set -euo pipefail
-          cd rehearsal
-          sha256sum "${CRATE}-sbom.json" >> SHA256SUMS
+          cp target/package/*.crate "${REHEARSAL_DIR}/"
+          cd "$REHEARSAL_DIR"
+          sha256sum ./*.crate ./*-package-list.txt ./*-sbom.json > SHA256SUMS
           cat SHA256SUMS
+
+      # Nothing above may write into the checkout. If something did, the release would be
+      # built from a tree that no longer matches the commit under review.
+      - name: Assert the checkout is unmodified
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "the rehearsal wrote into the source tree:" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+          echo "checkout clean: no generated file reached the source tree"
 
       # 90 days is the platform maximum for public repositories and matches
       # governance/evidence-retention-policy.md clause 1. These artifacts are evidence
@@ -137,7 +152,7 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-rehearsal
-          path: rehearsal/
+          path: ${{ env.REHEARSAL_DIR }}
           retention-days: 90
           if-no-files-found: error
 
