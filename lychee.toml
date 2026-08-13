@@ -13,8 +13,11 @@ max_retries = 2
 # a false failure rather than a broken link.
 user_agent = "Mozilla/5.0 (compatible; lychee link checker; +https://renvor.dev)"
 
-# GitHub returns 429 under rate limiting; that is not a broken link.
-accept = ["200..=299", "429"]
+# A link is valid only if the server actually served it. 429 was previously accepted here,
+# which meant "we were rate limited" counted as "the link works" — the check could pass
+# without ever confirming the target exists. Rate limiting is now prevented at the source
+# by the per-host limits below rather than absolved after the fact.
+accept = ["200..=299"]
 
 exclude = [
   # ---------------------------------------------------------------------------
@@ -44,3 +47,22 @@ exclude = [
 # output containing no authored hyperlinks.
 # REMOVE WHEN: lychee no longer treats inline data URIs in CSS as file paths.
 exclude_path = ["docs/build/assets/css"]
+
+# ---------------------------------------------------------------------------
+# Per-host limits for github.com (must stay last: a TOML table claims every key
+# that follows it, so any top-level setting added below would silently become a
+# per-host setting instead).
+# ---------------------------------------------------------------------------
+# Every external link in the built site points at github.com, and lychee's defaults
+# (10 concurrent requests per host, 50ms apart) opened enough simultaneous HTTP/2
+# streams on the single connection to that host for GitHub to reset them. That
+# surfaced as "HTTP/2 protocol error", a transport failure carrying no HTTP status
+# at all — indistinguishable in the report from a genuinely broken link, and it
+# reproduced on one runner while an identical concurrent job passed.
+#
+# One in-flight request at a time removes the stream contention that causes it.
+# This is a rate limit, not an exemption: github.com is still checked, still
+# required to answer 2xx, and still fails the build when a link is broken.
+[hosts."github.com"]
+concurrency = 1
+request_interval = "250ms"

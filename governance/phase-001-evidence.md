@@ -2235,6 +2235,767 @@ while the prose match stays suppressed.
 
 The file was restored byte-identically after the test (hash compared).
 
+## 3ai. Edge-architecture correction and landing-page release honesty (2026-08-12)
+
+**Nothing was committed, pushed, deployed, published, or changed on any external service in
+this pass.** DNS, the VPS, Kubernetes, certificates, registries, and repository settings were
+read only.
+
+### 3ai.1 Workspace topology — verified, matches record
+
+| Check | Result |
+|---|---|
+| Workspace root is **not** a Git repository | ✅ no `.git`; `git rev-parse` reports "not a git repository" |
+| Four independent repositories | ✅ `framework/`, `site/`, `docs/`, `infra/` each hold a **directory** `.git`, not a gitdir file |
+| Submodules | ✅ none — no `.gitmodules` anywhere in the workspace |
+| Symbolic links | ✅ none found to depth 4, excluding `node_modules` and `.git` |
+| `branding/` outside every repository | ✅ 2.6 GB local archive, no `.git` |
+| Migration backup intact | ✅ `branding/.migration-backup/landing-v7-original/` — 399 MB, `src/`, `static/`, `PRODUCT.md`, `docusaurus.config.ts`, lockfile all present |
+| `branding/landing-v7/` absent | ✅ correctly absent — moved to `site/`, not moved again |
+| Generated dependencies or tool state tracked | ✅ **zero** matches for `node_modules`, `target/`, `.docusaurus`, `build/`, `.venv`, `.claude/`, `.specify/`, `.remember/`, `.idea/`, `.DS_Store` in `git ls-files` for `framework` or `site` |
+
+| Repository | Remote | Branch | HEAD | Commits | Status |
+|---|---|---|---|---|---|
+| `framework/` | `renvor-rs/renvor` (public) | `main` | `ffb322f` | 21 | in sync with `origin/main` (0 ahead, 0 behind) |
+| `site/` | `renvor-rs/renvor-site` (private) | `main` | `8b68e32` | 1 | in sync, 15 tracked files |
+| `docs/` | `renvor-rs/renvor-docs` (private) | `main` | *(no commits)* | 0 | untracked `README.md`, `assets/renvor-mark-v7.svg` |
+| `infra/` | `renvor-rs/renvor-infra` (private) | `main` | *(no commits)* | 0 | untracked `README.md`, `assets/renvor-mark-v7.svg` |
+
+`docs/` and `infra/` are therefore accurately described as **initialised repositories with
+local, uncommitted starter files** — not as empty directories and not as pushed repositories.
+
+### 3ai.2 Authoritative DNS — re-verified read-only
+
+Queried directly against the authoritative nameservers. **Screenshots were not used.**
+
+| Item | Result |
+|---|---|
+| Authoritative NS | `coco.ns.cloudflare.com`, `earl.ns.cloudflare.com` |
+| `renvor.dev` A | `153.92.208.119` |
+| `docs.renvor.dev` A | `153.92.208.119` |
+| `www.renvor.dev` A | `153.92.208.119` |
+| `AAAA` on all three | none |
+| Proxy state | **DNS-only** — the authoritative answer is the origin IP, not a Cloudflare anycast address |
+| Wildcard `*.renvor.dev` | **absent** — proven by two freshly generated random hostnames (`zz9x4k7q2m`, `zz3v8n1p6t`) returning no answer, not by a missing lookup |
+| `CAA` | **absent** — nothing currently constrains which CA may issue for this domain |
+
+### 3ai.3 Origin TLS — unchanged, still not ready
+
+Inspected read-only by SNI against `153.92.208.119:443`. **Identical self-signed certificate
+for all three hostnames**: subject and issuer `CN=TRAEFIK DEFAULT CERT`, valid 2026-08-10 to
+2027-08-10. No hostname certificate exists.
+
+### 3ai.4 Publication status — the framework README was wrong
+
+Checked against the crates.io **registry index**, the path cargo itself reads. The web API
+returned HTTP 403 to a scripted request under the crates.io data-access policy, so it is not
+evidence either way; the index is.
+
+| Crate | Index response | Meaning |
+|---|---|---|
+| `renvor` | **HTTP 404** | not published |
+| `renvor-cli` | **HTTP 404** | not published |
+| `serde` *(control)* | HTTP 200 | the index and the method work |
+
+**`framework/README.md` claimed "The published `renvor` crate exposes three constants".** That
+statement was false — nothing is published. It is corrected in this pass. This was found while
+auditing the site and is outside the literal scope of the landing-page audit; it is recorded
+here rather than left standing, because a verified-false claim in a public README is the same
+defect class the release-honesty gate exists to catch.
+
+### 3ai.5 CTA destinations — measured
+
+| Destination | Result | Action |
+|---|---|---|
+| `https://github.com/renvor-rs/renvor` | **HTTP 200** | kept, and now the only external target |
+| `https://docs.renvor.dev/getting-started` | **no response** | removed |
+| `https://docs.renvor.dev` | **no response** | removed |
+| `https://crates.io/crates/renvor` | 404 by index; web returns 403 to scripts | removed |
+
+### 3ai.6 T110 — the corrective hosting decision
+
+Recorded in full at **T110** and rewritten into ADR-0006 D3, D4, D5, D10, and a new **D11**.
+Cloudflare is authoritative DNS only; the proxy stays off; TLS is issued at the origin by the
+existing cert-manager; the `www` redirect moves from a Cloudflare rule to Traefik.
+
+**A numbering defect was corrected at the same time.** ADR-0006 contained **two sections both
+numbered `D6`** — the delivery decision, and the T105 `www`-redirect decision appended after
+the Consequences section. The second is renumbered **D11** and moved into the decision
+sequence. D1–D11 now each appear exactly once.
+
+**T105 is preserved, not rewritten.** It recorded a correct decision under the architecture
+then in force, and its Cloudflare-versus-Traefik comparison is carried into D11 so the cost of
+the reversal is visible: the redirect now needs its own certificate and cannot answer while
+the origin is down — the two reasons Cloudflare was originally chosen.
+
+**ADR-0006 remains `proposed`.** T099, T101, and T106 are unresolved.
+
+### 3ai.7 Landing-page release honesty — what was false, and what it now says
+
+| Claim as published | Verified state | Correction |
+|---|---|---|
+| "Renvor **4.0 production release**" (hero) | no release exists | "In development — nothing released" |
+| "Renvor **4.0 stable**" (closing section) | no release exists | "In development — no release" |
+| `renover new` / `renover new commerce` | CLI unbuilt, unpublished | struck through, labelled not installable; the hero mock-up carries an explicit "Design mock-up" caption |
+| `renover add renvor-rbac` (×2) | no package exists | struck through, labelled not installable |
+| 8 package names each tagged **`crates.io`** | none published | tag changed to **`not published`**, with a caveat naming `renvor` and `renvor-cli` as 404 |
+| "Generate Next.js, Yew, Dioxus, or Leptos clients… Tauri" | no generator | "The design: …" + **Planned for Renvor 3.0** |
+| "Generate secure backend auth flows and matching frontend routes" | none | **Backend planned for 1.0 · screens for 3.0** |
+| "Use SQLx or SeaORM… Generated adapters include migrations" | none | "The design: …" + **Planned for Renvor 1.0** |
+| "Optional RBAC package" | none | "RBAC package planned for 4.0" |
+| "Authentication **is generated** across the stack" | none | "is **designed to** reach across the stack" |
+| "Production behavior **is** part of the application shape" | specification only | "is designed in" + "The specification exists; the runtime does not" |
+| Meta description asserting present capability | — | states development status first |
+| Navbar item **"Docs"** → a section saying docs are undeployed | — | relabelled **"Status"** |
+
+Release labels are **sourced from `PLAN.md`, not invented**: §11.1 REST 1.0, §11.2 GraphQL
+2.0, §13.1 backend auth 1.0, §13.2 frontend auth 3.0, §10.2 frontend matrix 3.0, Phase 030
+package ecosystem 4.0.
+
+**The development-status notice is deliberately outside every GSAP timeline.** A disclosure
+that fades in is absent for the first frames, absent under reduced motion, and absent if
+scripting fails. It renders above the hero at full opacity in all four theme/motion
+combinations.
+
+### 3ai.8 Site validation — commands and results
+
+Node 24.19.0, pnpm 11.21.0 (both matching `engines.node` ≥ 24 and `packageManager`).
+
+| Command | Result |
+|---|---|
+| `pnpm install --frozen-lockfile` | **exit 0** — "Already up to date" |
+| `pnpm run typecheck` (`tsc --noEmit`) | **exit 0** |
+| `pnpm run build` | **exit 0** — `onBrokenLinks: 'throw'` and `onBrokenAnchors: 'throw'` are in force, so every internal anchor resolved |
+
+Behavioural checks against the production build, served on a **verified-free** port 4891:
+
+| Check | Result |
+|---|---|
+| Desktop 1440×900 horizontal overflow | **0 px** |
+| Mobile 390×844 horizontal overflow | **0 px** |
+| Status notice within first viewport, both widths | ✅ (358 px wide inside a 390 px viewport) |
+| Images with `alt` | 3 of 3 |
+| Keyboard tab stops | **21**, **0** without an accessible name, **0** without a visible focus ring |
+| Tablist arrow keys | `ArrowRight` → Data (selected), `End` → Delivery, `Home` → Backend |
+| Evaluation-lens button via `Enter` | content changed ✅ |
+| External CTAs | 7, **all** to `github.com/renvor-rs/renvor` (HTTP 200) |
+| Surviving references to `docs.renvor.dev`, `crates.io/crates`, "4.0 production release", "4.0 stable" | **0 each**, in rendered HTML |
+
+**Reduced motion**, measured rather than asserted:
+
+| | `no-preference` | `reduce` |
+|---|---|---|
+| Pin spacers | 1 | **0** |
+| Elements with inline `transform` | 17 | **0** |
+| Elements with inline `opacity` | 36 | **0** |
+| Marquee `transform` | animated | **`none`** |
+| Status-notice opacity | 1 | **1** |
+
+**Contrast**, measured from **rendered pixels** rather than computed styles — the element's ink
+was hidden, the backdrop screenshotted, and the 5th/95th percentile luminance used so
+gradients and decorative bars are covered and antialiasing outliers are not:
+
+| Theme | Elements checked | Failures below 4.5:1 | Worst |
+|---|---|---|---|
+| Light | 31 | **0** | 4.56:1 |
+| Dark | 31 | **0** | 4.56:1 |
+
+Four contrast defects were **introduced and then fixed inside this pass**, all from the same
+mistake — using the theme token `var(--muted)` on surfaces that keep a fixed appearance in
+both themes:
+
+| Surface | Defect | Fix |
+|---|---|---|
+| `.solutionSideA` (blue→violet gradient, white text, fixed) | badge and note at **1.27:1** in light | literal `#fff`; measured 4.60:1 at the `#3267ff` stop, 5.55:1 at `#7048e8` |
+| `.authStarter` (dark card in both themes) | badge at **2.54:1** in light | literal `#fff` |
+| `.docsSection` (dark, with bright decorative bars behind the text) | caveat at **3.35:1** against the brightest sampled bar | `#e8eefa` → 4.88:1 |
+| `.unpublishedTag` at `opacity: .85`, 9.9 px | **4.04:1** | opacity removed → 5.57:1 |
+
+The `unavailableCommand` style also carried `opacity: .62`, measuring **2.70:1** on the
+gradient card. It was removed; the line-through carries the meaning without it. **A disclosure
+that is hard to read is not a disclosure.**
+
+### 3ai.9 Framework validation — both toolchains
+
+| Toolchain | Steps 1–9 | Step 10 | Exit |
+|---|---|---|---|
+| **1.94.0** (declared MSRV) | all **ok** | FAILED — working tree not clean | **3** |
+| **stable 1.97.1** | all **ok** | FAILED — working tree not clean | **3** |
+
+Exit 3 is the documented code for "every check passed but the tree is dirty". The four files
+it names are exactly this pass's uncommitted governance edits — `PLAN.md`, `README.md`,
+`decisions/0006-…md`, `specs/001-governance-foundation/tasks.md`. **This is the correct
+outcome**: committing was not authorised, so a clean tree was not achievable, and the gate was
+not weakened to produce a green result.
+
+Both runs include **secret scan (history)** and **secret scan (working tree)** — both passed
+on both toolchains.
+
+### 3ai.10 Secret scans — all four repositories
+
+`gitleaks` 8.30.1.
+
+| Repository | Scope | Result |
+|---|---|---|
+| `framework/` | history + working tree, via `cargo xtask verify` step 7 | **no leaks** (both toolchains) |
+| `site/` | history (1 commit, 519 KB) | **no leaks**, exit 0 |
+| `site/` | working tree (888 KB) | **no leaks**, exit 0 |
+| `docs/` | working tree (no commits exist) | **no leaks**, exit 0 |
+| `infra/` | working tree (no commits exist) | **no leaks**, exit 0 |
+
+**Prohibited-attribution scan** over all twelve changed files: three files matched a broad
+pattern, and all three are false positives of exactly the kind the constitution names —
+`codexhub` is a real Kubernetes namespace and live site on the shared host, and `.claude/` in
+`site/.gitignore` is a rule that *prevents* local agent state being committed. **No authorship
+attribution was found or added.**
+
+## 3aj. Open decisions — research for the maintainer, deliberately not decided (2026-08-12)
+
+**None of the decisions below is made here.** Each is presented with the evidence needed to
+rule on it, and each remains open.
+
+### 3aj.1 T098 — website-code licence and brand-asset terms
+
+Two distinct things need separate answers, and conflating them is the trap: **the website
+source code** and **the brand assets** (`renvor-mark-v7.svg`, the favicon, the dark variant).
+
+| Model | Website code | Brand assets | Consequence |
+|---|---|---|---|
+| **A — Match the framework** | `MIT OR Apache-2.0` | same | Simplest and consistent. **Grants everyone the right to use the Renvor mark**, including to brand a fork or a competing product. ADR-0005 identified exactly this as the risk to avoid |
+| **B — Split (recommended)** | `MIT OR Apache-2.0` | **all rights reserved**, with a short written trademark-style usage policy | Code stays reusable; the mark stays controlled. This is what the framework README already asserts as an interim state, so choosing it ratifies current practice rather than changing it. Costs one short policy document |
+| **C — Source-available site, reserved marks** | proprietary / no licence | all rights reserved | Maximum control. The repository is private, so this changes little today, and it forecloses reusing site components in the docs site later without a second decision |
+
+**Recommendation: B.** It is the only option that separates the two questions, and the
+framework README is already written as though B were chosen — leaving it undecided is what
+creates the inconsistency, not choosing it.
+
+**Precedent worth checking before ruling**: Rust itself, and most Rust-ecosystem projects,
+dual-licence code while reserving the name and logo under a separate trademark policy. B is
+the ecosystem-conventional answer, not a novel one.
+
+### 3aj.2 T099 — container registry
+
+| | **GHCR** (`ghcr.io`) | **GitLab registry already on the VPS** |
+|---|---|---|
+| Private source, public image | Supported — package visibility is independent of repository visibility | Supported |
+| Kubernetes pull credential | `imagePullSecret` from a token; GHCR supports repository-scoped tokens | `imagePullSecret` from a deploy token scoped to one project |
+| **Token lifetime** | **Classic PATs can be long-lived — the risk.** GitHub Actions can instead use a per-run `GITHUB_TOKEN` for *publishing*, so no long-lived push credential need exist | Deploy tokens support an expiry date, but **pull still needs a stored credential** |
+| Least-privilege publishing | **Strongest**: `packages: write` on the job only, OIDC-based, no stored push secret | Requires a stored GitLab credential in GitHub Actions — a cross-system long-lived secret |
+| Digest pinning | Native | Native |
+| **Failure coupling** | External to the VPS; a VPS outage does not prevent publishing | **Couples Renvor to another project's service on the same host.** A GitLab outage or migration breaks Renvor deploys, and GitLab is a Docker workload outside k3s |
+| Availability during a cluster rebuild | Independent | **Registry lives on the machine being rebuilt** — a chicken-and-egg problem during recovery |
+| Cost / quota | Free for public images; private images count against storage quota | Local disk (328 GB free) |
+
+**The decisive asymmetry is the publishing credential.** GHCR with GitHub Actions OIDC needs
+**no stored push secret at all**; the GitLab registry requires a long-lived cross-system
+credential held in GitHub. That is the same class of risk the release process already went to
+some trouble to avoid for crates.io.
+
+**The recovery argument is the second one**: pulling images from a registry that lives on the
+host you are trying to restore is a dependency loop. ADR-0006 D9 rests on "recovery is
+redeploying a known digest from a private registry" — which only holds if the registry is not
+on the failed machine.
+
+**Nothing was created.** No package, no token, no credential.
+
+### 3aj.3 T106 — backup design
+
+> **The read-only server inspection for this pass could not be completed, and the design below
+> therefore rests on the recorded 2026-08-11 audit rather than fresh observation.**
+>
+> Port 2022 on the origin is **reachable** — the failure was **authentication**, not
+> connectivity. The configured SSH profile targets user `deploy`, while `~/.ssh/config` maps
+> the host to user `root` with a different identity file. Resolving that means changing
+> credential configuration for a live production host shared with five unrelated namespaces,
+> which is outside a read-only pass and was not authorised. **No workaround was attempted.**
+>
+> **T102 already requires the server facts to be re-verified immediately before any
+> deployment.** This design must be re-checked at that point regardless.
+
+What needs protecting, and why each is different:
+
+| Asset | Where it lives | If lost |
+|---|---|---|
+| **k3s datastore** | `/var/lib/rancher/k3s/server/db/state.db` — **SQLite, not etcd** | All cluster state for **five production namespaces**. This is the single highest-value file on the host |
+| **Kubernetes manifests** | `renvor-infra` (for Renvor) | Recoverable from Git — for Renvor. **Neighbouring workloads have no such repository**, so their manifests exist only inside `state.db` |
+| **Secrets** | Cluster secrets inside `state.db` | Not in Git by policy. Losing them means re-issuing every credential on the host |
+| **Certificates** | cert-manager `Secret` objects inside `state.db` | Recoverable by re-issuing via ACME, **provided** DNS and rate limits allow. Let's Encrypt duplicate-certificate limits make a mass re-issue slow |
+
+**The design, stated as a proposal only — nothing was installed or configured:**
+
+1. **`state.db` is the whole job.** Because k3s here uses SQLite, `k3s etcd-snapshot` does not
+   apply. The correct primitive is SQLite's **online backup** (`sqlite3 .backup` or
+   `VACUUM INTO`), which is consistent under concurrent writes. **A plain `cp` of a live
+   SQLite file can capture a torn write and restore into a corrupt database** — this is the
+   most likely way a naive backup silently fails.
+2. **Stop-free, but verify.** Every snapshot should be integrity-checked
+   (`PRAGMA integrity_check`) *at creation*, and the result recorded. A backup that has never
+   been read is a hypothesis.
+3. **Off-host, encrypted, versioned.** The backup must not live on the disk it protects.
+   Encrypt before it leaves the host, because it contains every cluster secret.
+4. **Retention with at least one monthly.** Corruption and accidental deletion are often
+   discovered late; a 7-day window is not enough for a shared host.
+5. **A declarative export alongside the binary one.** A periodic
+   `kubectl get -o yaml --all-namespaces` export, **with secret *values* excluded**, is
+   human-readable, diffable, and lets a single object be restored without a full datastore
+   rollback. It is a complement to the datastore backup, never a replacement.
+6. **The restore test is the deliverable, not the backup.** Restore into a **throwaway
+   environment**, never the production host: stand up a scratch k3s, restore the snapshot,
+   confirm the API server starts and expected objects exist. **Record the date of the last
+   successful restore.** An untested backup is not a backup, and the shared-host context makes
+   an in-place restore test unacceptable.
+
+**Two scope facts the maintainer should weigh, unchanged from ADR-0006 D9**: the Renvor
+properties are **stateless**, so this gap does not block Renvor specifically; and the gap is
+**pre-existing and affects unrelated production workloads**, so it is outside Renvor's remit
+to fix unilaterally. The ruling being requested is whether it blocks Renvor deployment.
+
+### 3aj.4 T108 — `image-size`, researched against primary sources
+
+**The situation changed materially, and in a way that closes one of T108's three exit paths
+permanently.**
+
+| Fact | Source | Value |
+|---|---|---|
+| `GHSA-w3rx-r6r6-pgpr` — ICNS parser infinite loop | GitHub Advisory API | high, CVSS 7.5, affected `<= 2.0.2`, **first patched version: NONE** |
+| `GHSA-5p2g-fcmc-qvqq` — JXL and HEIF parser infinite loops | GitHub Advisory API | high, CVSS 7.5, affected `<= 2.0.2`, **first patched version: NONE** |
+| Advisories published / last updated | GitHub Advisory API | 2026-06-10 / **2026-08-07** |
+| `image-size` latest published version | npm registry | **2.0.2**, published **2025-04-02** — no release in ~16 months |
+| **`image-size` upstream repository** | GitHub API | **`archived: true`** |
+| Last code commit | GitHub API | 2025-04-02 (the 2.0.2 release itself) |
+| Installed path | `npm ls` | `@docusaurus/core@3.10.2 → @docusaurus/mdx-loader@3.10.2 → image-size@2.0.2` |
+| `@docusaurus/core` latest | npm registry | **3.10.2** — the version already installed. **No newer release exists** |
+
+**The upstream repository is archived, by the maintainer's own stated decision.** The README
+notice reads: *"Archiving this repo, because I don't want to deal with the same LLM generated
+'security advisory' about an infinite loop over and over again."* They add that the project
+may be revived **on Codeberg**, and that *"This repo on github will not be updated."*
+
+Two things follow, and they point in opposite directions:
+
+- **"Wait for an upstream fix" is no longer a strategy.** It is not pending; it is closed.
+- **The maintainer disputes the advisories' validity**, characterising them as LLM-generated.
+  That is not proof either way, but it is a primary-source signal that the severity may be
+  contested rather than settled, and it is recorded here rather than filtered out.
+
+**Docusaurus is actively working the problem, but has not shipped it:**
+
+| | |
+|---|---|
+| Issue [#12231](https://github.com/facebook/docusaurus/issues/12231) "Replace unmaintained dependency image-size with active CVEs (CVSS 7.5)" | **open**, `status: needs triage`, updated **2026-08-12** |
+| PR [#12235](https://github.com/facebook/docusaurus/pull/12235) — replaces `image-size` with `image-dimensions` | **open, DRAFT, unmerged**, labelled **`pr: breaking change`**, **no milestone** |
+| PR [#12234](https://github.com/facebook/docusaurus/pull/12234) — earlier attempt | closed |
+
+**That it is labelled a breaking change with no milestone is the important part**: it points
+at a Docusaurus **4.0**, not a 3.x patch. Planning around "the next patch release" would be
+planning around something that is not scheduled.
+
+**Reachability in this project, re-verified:** the documentation source contains **zero image
+embeds** — no `![…](…)` and no `<img>` across all six `.mdx` files and the README. `static/`
+holds only `.nojekyll` and `favicon.ico`, which are copied verbatim and never parsed by
+`mdx-loader`. The vulnerable parsers are **not reached**, and the site takes no untrusted
+image input.
+
+The safe choices, with consequences:
+
+| Option | Consequence |
+|---|---|
+| **1. Hold, keep the deployment gate closed** *(status quo)* | Honest and safe. But the gate is now indefinite, because the fix depends on an unscheduled Docusaurus major |
+| **2. Hold, but re-scope the gate to what is actually at risk** | The advisory is DoS-only, build-time-only, and unreachable with zero image embeds. A gate could be **"no MDX image embeds may be added while this is open"** — mechanically checkable in CI — which lets documentation deploy while keeping the risk genuinely at zero. **This is the strongest option and needs a maintainer ruling, not a unilateral change** |
+| **3. Override to `image-dimensions` ahead of upstream** | Follows Docusaurus's own chosen direction, but PR #12235 is a *draft breaking change*; overriding a transitive dependency across an API boundary that upstream is still designing is how a build breaks subtly |
+| **4. Wait for Codeberg revival** | Speculative. No timeline, no published package |
+
+**Not done, per instruction and policy**: Docusaurus was not downgraded, `npm audit fix
+--force` was not run, the advisory was not suppressed, no claim was made that a fix exists,
+and the documentation site was **not deployed**.
+
+### 3aj.5 T109 — `uuid`
+
+Unchanged, and re-stated so it is not silently carried: `GHSA-w5hq-g745-h8pq` (moderate,
+`uuid` < 11.1.1) remains **not reachable** — `sockjs` calls `uuid.v4()` with no `buf`
+argument, while the advisory affects v3/v5/v6 **with** `buf`; and `sockjs` arrives via
+`webpack-dev-server`, which runs only for `docusaurus start` and never in a production build.
+`sockjs` 0.3.24 remains the latest release and still pins `uuid ^8.3.2`, so no compatible
+update exists.
+
+**No three-major override was forced into a path CI never exercises.** Reassessment remains
+due **2026-09-11**, or immediately if `sockjs` ships a fix or the dev server enters a deployed
+path.
+
+## 3ak. T098 — website-code licence and brand-asset terms, DECIDED (2026-08-12)
+
+**Maintainer decision: option B — split the two questions**, because they are two questions.
+
+| | Decision |
+|---|---|
+| Website source code | **`MIT OR Apache-2.0`**, at the recipient's option — the same terms as the framework |
+| Renvor names, logos, marks, illustrations, brand assets | **All rights reserved**, under a written brand-usage policy |
+
+**The code licences grant no trademark or brand-identity rights, and no document may imply
+they do.** Apache-2.0 withholds trademark rights explicitly in its section 6; MIT is silent on
+trademarks rather than granting them. This is the conventional open-source separation — Rust,
+Python, and Linux all draw the same line — not a restriction invented here.
+
+**Permitted without asking**: truthful nominative reference ("built with Renvor", "compatible
+with Renvor"), links to the official project, the unmodified mark used as a link back,
+screenshots, tutorials, reviews and comparisons **including unfavourable ones**, academic and
+journalistic use, and community discussion. The policy states plainly that criticism needs no
+permission and will not be refused — a brand policy usable to suppress a bad review would be a
+bad policy.
+
+**Prior permission required**: naming a fork or derivative "Renvor" or something confusingly
+similar, confusingly similar logos or wordmarks, endorsement/partnership/certification claims,
+merchandise, modifying the marks, domain and app-store names implying official status, and
+company or product names incorporating Renvor.
+
+**Published file set — validated before this task was marked complete:**
+
+| File | Check |
+|---|---|
+| `site/LICENSE-MIT` | present, **SHA-256 byte-identical** to `framework/LICENSE-MIT` (`13f14c1f…`) |
+| `site/LICENSE-APACHE` | present, **SHA-256 byte-identical** to `framework/LICENSE-APACHE` (`cfc7749b…`) |
+| `site/BRAND-POLICY.md` | present, v1.0 dated 2026-08-12 |
+| `site/README.md` | licence section rewritten from "Undecided — see T098" |
+| `.gitignore` exclusion | **none of the four is ignored** — `git check-ignore` clean on all |
+| Internal link targets | `LICENSE-MIT`, `LICENSE-APACHE`, `BRAND-POLICY.md`, `static/img/renvor-mark-v7.svg` — **all resolve** |
+| Brand assets named in the policy | `renvor-mark-v7.svg`, `renvor-mark-v7-dark.svg`, `renvor-favicon-v7.svg` — **all present** |
+
+References updated consistently in `framework/README.md` (the interim "terms have not been
+decided yet" notice replaced with the decided terms), `docs/README.md`, and `infra/README.md`.
+
+> **`docs/` and `infra/` still have no code licence of their own.** T098 decided the *website
+> code* and the *brand assets*. Those two repositories' own terms are a separate, undecided
+> question, and their READMEs now say exactly that rather than pointing at a closed task.
+
+**The archived historical branding directories were not modified and were not licensed.** They
+remain in the local archive outside every repository, unpublished, and the brand policy states
+explicitly that it grants no rights to them and makes no claim about their status.
+
+## 3al. T099 — container registry, DECIDED (2026-08-12)
+
+**Maintainer decision: GitHub Container Registry (`ghcr.io`).**
+
+**Publishing credential — none stored:**
+
+- GitHub Actions publishes with the **short-lived `GITHUB_TOKEN`** minted for the workflow run.
+- Least privilege: **`contents: read` and `packages: write`, on the image-publishing job
+  only** — set per-job so no other job inherits package write access.
+- **No PAT, deploy token, repository secret, or long-lived registry credential was created**,
+  and none is required.
+
+> **This is not OIDC, and the earlier rationale saying so was wrong.** `GITHUB_TOKEN` is an
+> installation token that Actions injects into the run and revokes when it ends. OIDC is a
+> distinct mechanism where a workflow exchanges a signed identity token with an external
+> provider for temporary credentials — that is how crates.io trusted publishing works, and it
+> is **not** how GHCR is authenticated here. Both avoid a stored secret, which is why they are
+> easy to conflate; the distinction matters the moment someone tries to configure a trust
+> relationship GHCR neither needs nor offers. **The correction is recorded rather than quietly
+> substituted.**
+
+**Pull credential — none, by design:** the deployment image is **publicly pullable**, so the
+k3s host needs **no `imagePullSecret`** and stores no registry credential at all. GHCR package
+visibility is independent of repository visibility, so the sources stay private. The image
+carries only the built static site, already served publicly — publishing it discloses nothing
+a visitor could not already see.
+
+**The trade, stated so it is not inherited by accident**: image contents and pull counts
+become public, and the image cannot serve as a private distribution channel. Acceptable for a
+static site whose content is already public; **not** acceptable for an image carrying
+configuration, credentials, or unreleased material. `PLAN.md` §26.4 now says so explicitly, so
+the next image does not silently inherit "public" as a default.
+
+**Addressing**: immutable digest (`@sha256:…`) only; a tag may accompany a digest for
+readability, but the digest is what deploys.
+
+**Why the on-host GitLab registry was rejected**, recorded in ADR-0006's Alternatives table:
+publishing to it from GitHub Actions needs a **long-lived cross-system credential** — the
+exact artefact class the release process already worked to eliminate; and a registry that
+lives on the origin is **unavailable in precisely the recovery scenario** ADR-0006 D9 depends
+on it for.
+
+**Nothing was configured.** No package, workflow, image, credential, or infrastructure change.
+**Only the registry decision is complete; deployment remains blocked.**
+
+## 3am. T108 — `image-size` time-bounded exception; task REMAINS OPEN (2026-08-12)
+
+**The advisories are not suppressed, not dismissed, and not described as fixed or zero-risk.**
+
+| | |
+|---|---|
+| `GHSA-w3rx-r6r6-pgpr` | high, **CVSS 7.5**, ICNS parser infinite loop, affected `<= 2.0.2`, **first patched version: NONE** |
+| `GHSA-5p2g-fcmc-qvqq` | high, **CVSS 7.5**, JXL and HEIF parser infinite loops, affected `<= 2.0.2`, **first patched version: NONE** |
+| Upstream repository | **ARCHIVED.** Last code commit 2025-04-02. Maintainer's notice: *"Archiving this repo, because I don't want to deal with the same LLM generated 'security advisory' about an infinite loop over and over again"*, with possible revival on Codeberg and *"This repo on github will not be updated."* |
+| `@docusaurus/core` latest | **3.10.2** — the version installed. No newer release exists |
+| Docusaurus replacement | PR #12235 (`image-dimensions`) — **open, DRAFT, breaking change, no milestone**; issue #12231 open, `needs triage` |
+
+**No upstream fix is coming from `image-size`.** That is not a pending wait; it is closed.
+
+### Reachability, proven rather than asserted
+
+| Fact | Evidence |
+|---|---|
+| Reached only as a **build-time transitive** dependency | `@docusaurus/core@3.10.2 → @docusaurus/mdx-loader@3.10.2 → image-size@2.0.2` |
+| **No MDX or local image embeds** in documentation source | 0 matches for `![…](…)`, `<img>`, or image `require`/`import` across all six `.mdx` files |
+| **No untrusted image input** | The site accepts no uploads and takes no user-supplied images |
+| **Absent from production static output** | `build/` = 36 files, 988 KB. **0** files containing the string `image-size`; **0** containing ICNS/JXL/HEIF parser identifiers; **0** raster assets emitted; **0** `node_modules`; **0** requires of `image-size`. Only `favicon.ico`, served as bytes and never parsed |
+
+### Fail-closed control, implemented and tested in both directions
+
+`docs/scripts/check-image-inputs.mjs`, wired as **`prebuild` and `prestart`** so the build
+cannot run unless it passes. It exits non-zero on its own internal errors rather than
+skipping — a check that cannot run is a failure, matching the verification contract.
+
+| Test | Result |
+|---|---|
+| Clean tree | **exit 0** — "no MDX image embeds, no raster assets, no image imports" |
+| Markdown embed `![a diagram](./diagram.png)` | **REFUSED**, named `docs/intro.mdx:51` |
+| `<img src="/img/x.png">` | **REFUSED**, named the element and src |
+| Raster dropped into `static/img/` | **REFUSED**, named the file and extension |
+| **`npm run build` with an embed present** | **exit 1**, `BUILD REFUSED` printed, **0** "Generated static files" — the build genuinely did not produce output |
+| Test file restored afterwards | **byte-identical**, SHA-256 compared |
+
+### Why T108 is NOT complete
+
+Two required compensating controls **cannot be objectively verified, because their subjects do
+not exist**:
+
+| Unmet control | Why |
+|---|---|
+| *"absent from the production runtime container"* | **0 container definitions exist** in the repository — no `Dockerfile`, no `Containerfile`. There is no container to inspect |
+| *"absent from the runtime SBOM"* | **0 SBOM artifacts exist** — none is persisted in the tree, and no deployment workflow produces one |
+
+Both must be verified **when the deployment image and its SBOM are first produced**, and T108
+cannot close before then. Marking it complete now would record a verification that never
+happened.
+
+### Exception terms
+
+**Dated 2026-08-12. Reassess 2026-09-11**, or earlier if Docusaurus ships a maintained
+replacement or fixed release. **The exception expires immediately if** documentation begins
+accepting image input, the reachability proof fails, or the dependency enters a runtime
+artifact.
+
+**Not done**: Docusaurus was not downgraded; `npm audit fix --force` was not run; the
+advisories were not suppressed or deleted; the draft breaking-change PR was not adopted; and
+the documentation site was **not deployed**.
+
+## 3an. T111 — CAA policy prepared, no DNS change made (2026-08-12)
+
+A read-only check on 2026-08-12 found **no `CAA` record on `renvor.dev`**, so nothing
+currently constrains which CA may issue for the domain. ADR-0006 D5 requires one.
+
+**Policy**: Let's Encrypt only. **No wildcard certificate is planned**, and no wildcard DNS
+record exists.
+
+**Exact proposed records** — `flags` `0` (non-critical) throughout, so an unrecognised property
+tag cannot block issuance outright:
+
+```dns
+renvor.dev.  CAA  0 issue     "letsencrypt.org"
+renvor.dev.  CAA  0 issuewild ";"
+renvor.dev.  CAA  0 iodef     "mailto:admin@ahmedanbar.dev"
+```
+
+| Record | Effect |
+|---|---|
+| `issue "letsencrypt.org"` | Only Let's Encrypt may issue **single-name** certificates. Every other CA is refused |
+| `issuewild ";"` | **No CA may issue a wildcard.** `";"` is the explicit deny value. **This record is not redundant**: an `issue` record alone would still permit the named CA to issue wildcards, so omitting it would leave wildcard issuance open to Let's Encrypt |
+| `iodef "mailto:…"` | Requests that a CA report policy violations to the security contact. Advisory — CAs are not obliged to send it |
+
+**Inheritance**: `issue` and `issuewild` set at the apex are inherited by every subdomain that
+does not publish its own `CAA`, so this one set covers `docs.renvor.dev` and `www.renvor.dev`
+without separate records.
+
+**Sequencing warning**: cert-manager's HTTP-01 flow must be working **before** these records
+are added. A mistyped CA domain does not fail loudly — it silently refuses all issuance, and
+the symptom appears as an unexplained ACME failure.
+
+**Verification after creation**: a `CAA` lookup against **both** authoritative nameservers,
+followed by a test issuance. **T111 stays open until the maintainer separately authorises the
+DNS change and verifies it. No Cloudflare record was created or modified in this pass.**
+
+## 3ao. FR-032 and macOS — checked, no correction needed in this repository (2026-08-12)
+
+Phase 001 is **Linux-only**, and this was verified rather than assumed.
+
+| Check | Result |
+|---|---|
+| Renvor **FR-032** text | *"Release tags MUST be signed, and releases MUST run from a protected environment with named approvers."* (`spec.md:214`) — **release process, not platforms** |
+| Lines mentioning **both** FR-032 and macOS/Darwin | **0**, across every `.md`, `.yml`, `.yaml`, `.toml`, and `.rs` in the repository |
+| FR-032 references | `RELEASING.md`, `contracts/package-metadata.md`, `checklists/governance.md` CHK066, tasks **T071** (signing) and **T072** (protected release environment) — every one about signing and release protection |
+| CI runners | **all 7 jobs `ubuntu-latest`** across `ci.yml`, `docs.yml`, `security.yml`, `release-dry-run.yml`, `release-tag-verify.yml`. **No macOS runner exists** |
+| macOS references that do exist | `plan.md:27`, `spec.md:290`, `contracts/support-policy.md:27,30` — all state Linux is the only required platform for this phase and macOS enters when platform-sensitive behaviour appears (PLAN.md §17.2). **Already correct** |
+| Clarifications sessions | one session, 2026-08-11, six entries — **none mentions macOS** |
+
+**No artifact in this repository incorrectly connects FR-032 to macOS, so no correction was
+made and none is recorded as made.** No macOS CI runner, local macOS evidence requirement, or
+macOS merge gate was added.
+
+> **The FR-032 ↔ macOS linkage exists in a different project.** `attaa-next`'s Phase 001
+> specification defines its own **FR-032** as *"Every requirement above MUST hold on both macOS
+> and Linux"*, and carries a clarification entry explicitly tying macOS evidence to FR-032. The
+> two projects number their requirements independently. **That artifact is outside this
+> workspace and was not modified.**
+
+## 3ap. T106 and T102 — server reinspection still incomplete (2026-08-12)
+
+**Unchanged from §3aj.3, and restated because it gates ADR-0006.** The read-only server
+reinspection **failed at authentication**. Port 2022 is reachable, so this is not a
+connectivity problem: the configured SSH profile targets user `deploy`, while the host mapping
+uses a different user and identity file. **No SSH configuration, credential, user, key, alias,
+or port was changed, and no private-key content was read.**
+
+**The 2026-08-11 audit is retained as historical evidence, not as current proof.** Every server
+fact in ADR-0006 rests on it and carries that status.
+
+**T106 and T102 both remain open** until a separately authorised read-only inspection
+succeeds. **ADR-0006 is not accepted** while T101 or T106 is unresolved.
+
+## 3aq. T095–T097 — maintainer visual approval of the V7 landing page (2026-08-12)
+
+**Review date**: 2026-08-12
+**Reviewer**: Ahmed Anbar, maintainer — **self-review under W-002**, not an independent review
+**Method**: personal inspection of the **rendered production build** served locally at
+`http://localhost:4891/`, on desktop and mobile, in both light and dark themes
+
+### Exact state reviewed
+
+| | |
+|---|---|
+| Repository | `renvor-rs/renvor-site` (private) |
+| HEAD at review | **`8b68e326867e3c296b2117fd13ca855b478cd036`** (`8b68e32`, "Add the V7 landing source", committed 2026-08-12T14:47:12+03:00) |
+| **What was actually reviewed** | **HEAD *plus* the uncommitted working-tree corrections** — the reviewed content is **not yet in any commit** |
+| Source-set SHA-256 | `b4c0856f0f03c85870d421557d19b09330ef4d69d9022b982aa397746c3bc59b` |
+| Build-output SHA-256 | `ae95f1e5c6e9c935a7693d4fbedbbd3260abe7fa676dc9fd8dfe9c1fb815698f` (21 files, 908 KB) |
+
+> **The distinction is deliberate and load-bearing.** Recording only `8b68e32` would attach the
+> approval to a commit whose content is the *uncorrected* page. The two content hashes anchor
+> what was seen, so the attestation can be checked against the commit that eventually carries
+> it rather than assumed to match.
+
+### What was approved
+
+Landing-page presentation; the truthful development-status disclosure; the planned-version
+labels; the non-installable CLI demonstrations; the GitHub-only links; the responsive layout;
+the accessibility behaviour; the reduced-motion behaviour; and the animations.
+
+### What this approval is NOT
+
+**This is a visual and product approval of the page's presentation and truthfulness. It is
+not, and must not later be read as:**
+
+- evidence that the Renvor framework has been released — **it has not**;
+- evidence that any crate is published — `renvor` and `renvor-cli` both return **HTTP 404**
+  from the crates.io registry index;
+- authorisation to deploy the site — **deployment remains blocked** by T101 (CSP), T102
+  (server re-verification), T106 (backup ruling), T108 (`image-size`), and T111 (CAA);
+- acceptance of ADR-0006, which **remains `proposed`**.
+
+**T095, T096, and T097 are complete.** They closed on maintainer review of the rendered page,
+not on the automated checks — which were reported alongside as input to that review and were
+explicitly not treated as approval.
+
+## 3ar. T112 — link-check transport made deterministic (2026-08-12)
+
+Verification step 9 failed twice on pull request #11 without any link being broken. Both
+failures are preserved below rather than rewritten, because the second one disproved the
+diagnosis of the first and that is the useful part of the record.
+
+### Failure 1 — HTTP 503 (run 31639969949, attempt 1)
+
+Both `verify (1.94.0)` and `verify (stable)` failed at `[9/10] link check`, `lychee` exit 2:
+`🔍 257 Total 🔗 62 Unique ✅ 204 OK 🚫 21 Errors`. All 21 errors were
+**HTTP 503 Service Unavailable** from `github.com`; **0 were 404**. Every affected URL
+returned HTTP 200 when checked directly afterwards, and the same check passed locally on
+both toolchains. Read at the time as transient throttling.
+
+### Failure 2 — HTTP/2 protocol error (run 31639969949, attempt 2)
+
+Only the two failed jobs were re-run, with **no change to the commit**. The result split:
+
+| Job | Link check | Totals |
+|---|---|---|
+| `verify (stable)` — job 94271497549 | **ok — passed** | `✅ 225 OK 🚫 0 Errors 🔀 5 Redirects` |
+| `verify (1.94.0)` — job 94271497334 | **FAILED — lychee exit 2** | `✅ 187 OK 🚫 38 Errors` |
+
+The 38 errors were **14 real failures plus 24 cached repetitions** of those same 14, across
+**9 unique URLs**, all on `github.com`. Every one carried the message
+`HTTP/2 protocol error. Server may not support HTTP/2 properly` — a transport fault with
+**no HTTP status at all**. There were **0 HTTP 503** and **0 HTTP 404** responses; the string
+`503` appears 7 times in that log and every occurrence is a timestamp fragment or a Cargo
+line number, not a status. All 9 URLs resolved when checked directly: 4 returned HTTP 200 and
+5 returned HTTP 301 to their canonical `blob/` form, final HTTP 200.
+
+Two jobs, same commit, same configuration, same 62 URLs, running concurrently, produced
+0 errors and 38 errors. That isolates the cause to the transport rather than to the links,
+and it also rules out the throttling diagnosis: throttling returns a status, this returned
+none. None of the affected links originate in the pull request — they come from
+`docs/docusaurus.config.js` (`editUrl`, navbar and footer targets) and `docs/docs/governance.mdx`,
+neither of which is among the 7 changed paths.
+
+### Diagnosis
+
+Every external link in the built site points at one host. `lychee` 0.24.2 defaults to
+**10 concurrent requests per host at 50 ms intervals**, and `max_concurrency` was 8, so the
+checker opened many simultaneous HTTP/2 streams on a single connection to `github.com`.
+GitHub reset those streams under that load, which `reqwest` surfaces as a protocol error
+rather than a response. Both matrix jobs ran in parallel from one runner egress address,
+doubling the pressure on the same host from the same source.
+
+### Fix
+
+Three changes, all using options verified against the installed `lychee` 0.24.2 rather than
+assumed. Both `Config` and `HostConfig` carry `#[serde(deny_unknown_fields)]`, so an
+unsupported key fails the config parse loudly; this was confirmed by a negative control that
+appended a fabricated `http_version` key and was rejected with
+`unknown field 'http_version', expected one of 'concurrency', 'request_interval', 'headers'`.
+
+| Change | Where | Effect |
+|---|---|---|
+| `[hosts."github.com"] concurrency = 1` | `lychee.toml` | one in-flight request to `github.com` at a time, removing the stream contention |
+| `[hosts."github.com"] request_interval = "250ms"` | `lychee.toml` | minimum spacing between consecutive requests to that host |
+| `accept = ["200..=299"]` | `lychee.toml` | **429 removed** — a rate-limited response no longer counts as a working link |
+| `strategy.max-parallel: 1` | `.github/workflows/ci.yml` | the two matrix jobs no longer compete for the same host from one egress address |
+| `GITHUB_TOKEN: ${{ github.token }}` | `.github/workflows/ci.yml` | `lychee`'s documented env interface for `--github-token` |
+
+The per-host table is placed last in `lychee.toml` because a TOML table claims every key that
+follows it; a top-level setting added below it would silently become a per-host setting.
+
+**What the token does and does not do.** `handle_github` runs **only after a normal request
+has already failed**, and `check_github` returns success solely for bare `owner/repo` URLs —
+a URL naming a path inside a repository returns `InvalidGithubUrl`, so the original failure
+stands. The token therefore rescues repository URLs and avoids API rate limiting, but the
+per-host limits carry the actual determinism. One caveat is recorded rather than discovered
+later: for a **private** repository the API fallback returns OK for any URL beneath it without
+checking the path. Every `github.com` link here targets `renvor-rs/renvor`, which is public,
+so the caveat does not apply today; it would if a link ever pointed into a private repository.
+
+The token is the workflow run's built-in installation token under the existing top-level
+`contents: read`. It is not a stored secret, no personal access token was created, and
+`lychee` declares it with `hide_env_values = true` and holds it as a `SecretString`.
+
+### What was deliberately not done
+
+`github.com` was not excluded. No link was removed or rewritten. HTTP/2, TLS, timeout, 429
+and 5xx failures are **not** accepted — `--accept-timeouts` was not set. No
+`continue-on-error`, no failure downgraded to a warning. Retries stay **bounded** at
+`max_retries = 2`. Both toolchains and all ten verification steps are unchanged. No
+`http_version` or transport-forcing option was invented; `lychee` 0.24.2 exposes none.
+
+### Local validation
+
+| Check | Result |
+|---|---|
+| Config parses | exit 0 |
+| Fabricated key rejected | config error, as above |
+| Link check, 5 consecutive runs | **exit 0 every time**, `✅ 225 OK 🚫 0 Errors 🔀 5 Redirects` identical across all five |
+| Per-host statistics | `github.com │ 38 reqs │ 100.0% success │ 891ms median` |
+| Valid GitHub URLs (repo and file) | **exit 0**, 2 OK |
+| Fabricated GitHub URLs (missing file, missing repo) | **exit 2**, 2 errors, both `Rejected status code: 404 Not Found` |
+
+The last row is the one that matters: the fix removes a false failure without removing the
+ability to detect a real one.
+
 ## 6. Known limitations
 
 Populated by T083. Each requires a named owner and a target phase.
@@ -2272,9 +3033,13 @@ The phase remains open while any row here is present.
 | Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated | Release-control assurance | Maintainer | 2026-08-11 | open |
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
 | ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
-| **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — blocks deployment** |
-| **Website-code licence and brand-asset usage terms undecided** — brand assets are not covered by `MIT OR Apache-2.0` | T098; the **first content commit or push** to `renvor-rs/renvor-site`, which already exists | Maintainer | 2026-08-11 | **open** |
-| **Container registry undecided** — GHCR versus the VPS GitLab registry, including credential model | T099; creation of the private repositories | Maintainer | 2026-08-11 | **open** |
+| **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — copy corrected 2026-08-12 (§3ai.7), awaiting maintainer review of the rendered page.** Not closed by the party that did the work |
+| **`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli` | Public accuracy of the framework README | Maintainer | 2026-08-12 | **corrected 2026-08-12** — §3ai.4. Uncommitted |
+| **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **open** — policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made** |
+| ~~Step 9 link check fails on transport faults, not broken links~~ — HTTP 503 on one attempt, `HTTP/2 protocol error` on the next, while a concurrent job on the same commit reported `0 Errors` | ~~**T112**; pull request #11 required checks~~ | Maintainer | 2026-08-12 | **resolved 2026-08-12** — per-host concurrency 1 and a 250 ms interval for `github.com`, serialised matrix, run-scoped `GITHUB_TOKEN`, and **429 removed from `accept`**. Not weakened: no host excluded, no link rewritten, retries still bounded, fabricated URLs still fail with exit 2. §3ar |
+| ~~Website-code licence and brand-asset usage terms undecided~~ | ~~T098~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — option B: code `MIT OR Apache-2.0`, brand assets all rights reserved under `BRAND-POLICY.md`. File set validated, §3ak |
+| ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
+| **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** (0 container definitions, 0 SBOMs) | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **open** — verify when the image and SBOM are first produced, §3am |
 | **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |

@@ -5,7 +5,10 @@
   "description": "Renvor documentation site. Not published to any registry.",
   "scripts": {
     "docusaurus": "docusaurus",
+    "check:image-inputs": "node scripts/check-image-inputs.mjs",
+    "prestart": "node scripts/check-image-inputs.mjs",
     "start": "docusaurus start",
+    "prebuild": "node scripts/check-image-inputs.mjs",
     "build": "docusaurus build",
     "swizzle": "docusaurus swizzle",
     "deploy": "docusaurus deploy",

@@ -6,8 +6,10 @@
 
 > ## ⚠️ Pre-release — Renvor does not work yet
 >
-> **This project ships no runtime capability.** The published `renvor` crate exposes
-> three constants and nothing else. There is no framework here to use.
+> **This project ships no runtime capability, and nothing is published.** Neither `renvor`
+> nor `renvor-cli` exists on crates.io — verified against the registry index on 2026-08-12,
+> both HTTP 404. The `renvor` crate in this repository exposes three constants and nothing
+> else. There is no framework here to use, and **no way to install one.**
 >
 > What exists today is the *foundation*: governance, verified public names, a pinned
 > toolchain, a licence policy, a fail-closed verification sequence, and repository
@@ -102,14 +104,29 @@ right to use, reproduce, or modify the mark. **No implied trademark or brand lic
 granted**, and the presence of the file in a permissively licensed repository must not be
 read as one.
 
-**Usage terms for the mark have not been decided yet** and are tracked as open task
-**T098**. Until they are recorded, treat the mark as all rights reserved: do not use it to
-identify your own project, product, or fork, and do not use it in a way that implies
-endorsement or affiliation.
+**Usage terms were decided on 2026-08-12 (T098): all rights reserved, under a written brand
+usage policy.** The mark, the names **Renvor** and **`renover`**, and Renvor's wordmarks,
+illustrations, and visual identity are excluded from the code licences above.
+
+**Permitted without asking**: truthful nominative references ("built with Renvor",
+"compatible with Renvor"), links to the official project, use of the unmodified mark as a link
+back to it, screenshots, tutorials and reviews — **including criticism** — and community
+discussion.
+
+**Ask first** (`admin@ahmedanbar.dev`): naming a fork or derivative "Renvor" or something
+confusingly similar, confusingly similar logos, endorsement or official-status claims,
+merchandise, modifying the marks, and company or product names incorporating Renvor.
+
+The test: *could a reasonable person conclude your project **is** Renvor, is an official part
+of it, or is endorsed by it?* If yes, ask first.
+
+**You may fork the code — give the fork its own name.** Saying a fork is "based on Renvor" is
+truthful and permitted; calling it Renvor is not.
 
 This notice exists because ADR-0005 identified the real risk here as an *unintended*
 licensing claim. Stating the exclusion explicitly is what makes the claim intended and
-bounded rather than accidental.
+bounded rather than accidental. Apache-2.0 §6 already withholds trademark rights; this states
+plainly what that means in practice.
 
 ### Code Renvor generates for you is yours
 

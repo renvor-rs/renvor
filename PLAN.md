@@ -1542,30 +1542,77 @@ near-miss spelling encountered in drafts is an error to be corrected, never regi
 
 ### 26.3 Responsibility boundaries
 
-**Cloudflare** owns authoritative DNS, edge TLS, proxying, caching, security headers, and
-abuse controls. It does not own application content.
+*(Revised 2026-08-12 by maintainer decision — T110, ADR-0006 D3. This section previously
+assigned edge TLS, proxying, caching, security headers, and abuse controls to Cloudflare.
+**The proxy is not enabled**, so those responsibilities did not move to a different vendor —
+they moved to the origin, and to the operator.)*
 
-**Hostinger VPS** owns the origin: the Kubernetes cluster, workload scheduling, origin TLS,
-and persistent state. It does not own DNS.
+**Cloudflare** owns **authoritative DNS and nothing else**. It is not in the HTTP request
+path. It terminates no TLS, caches no response, filters no traffic, and serves no redirect
+for any Renvor hostname.
+
+**Hostinger VPS** owns the origin and, now, everything the edge would otherwise have
+covered: the Kubernetes cluster, workload scheduling, **public TLS issuance and renewal via
+cert-manager and Let's Encrypt**, the `www` redirect, cache and security headers, rate
+limiting, and persistent state. It does not own DNS.
 
 **GitHub** owns source, review, and the automation that builds and signs container images.
 It holds no long-lived infrastructure credential where a short-lived identity is available.
 
-The boundary matters at incident time: a DNS or edge fault is a Cloudflare action, an origin
-fault is a cluster action, and a content fault is a repository action. Confusing them
-lengthens outages.
+The request path is:
+
+```text
+Browser
+  → public DNS from Cloudflare
+  → Hostinger origin IP
+  → Traefik on the existing k3s cluster
+  ├── renvor.dev       → landing service
+  ├── docs.renvor.dev  → documentation service
+  └── www.renvor.dev   → permanent redirect to renvor.dev
+
+cert-manager
+  → Let's Encrypt
+  → publicly trusted certificates for all deployed hostnames
+```
+
+The boundary matters at incident time, and it is now simpler and less forgiving: a
+resolution fault is a Cloudflare action; **everything else is an origin action**. There is
+no edge to absorb a mistake, and no vendor status page that explains an outage.
+
+**No document in this repository may state or imply that Cloudflare protects, caches,
+filters, or terminates Renvor HTTP traffic while these records are DNS-only.** The full list
+of what is consequently absent — WAF, edge rate limiting, bot management, DDoS absorption —
+is recorded in ADR-0006 D4 and its Consequences.
 
 ### 26.4 Container image ownership
 
-Every deployed property ships as a container image built from a private repository:
+*(Registry decided 2026-08-12 — T099, ADR-0006 D7. This section previously specified private
+image storage with a scoped pull credential; the publication model changed, so the credential
+requirement is removed rather than restated.)*
+
+Every deployed property ships as a container image built from a private repository and
+published to **GitHub Container Registry (`ghcr.io`)**:
 
 - images are built by repository automation, never by hand on the server;
+- publishing authenticates with the **workflow run's short-lived `GITHUB_TOKEN`**, under
+  least privilege — **`contents: read` and `packages: write` on the publishing job only**.
+  **No personal access token, deploy token, repository secret, or long-lived registry
+  credential is created.** This is *not* OIDC: `GITHUB_TOKEN` is an installation token
+  scoped to the run and revoked when it ends;
+- the **deployment image is publicly pullable**, so the cluster stores **no
+  `imagePullSecret` and no registry credential at all**. Package visibility is independent of
+  repository visibility, so the source stays private. The image contains only the built
+  static site, which is already served publicly — publishing it discloses nothing a visitor
+  could not already see;
 - images are referenced **by immutable digest** in deployment manifests, never by a mutable
   tag such as `latest`;
 - images carry a signature, an SBOM, and build provenance;
-- images are scanned for vulnerabilities before promotion;
-- image storage is private, and the cluster authenticates with a narrowly scoped, rotatable
-  pull credential.
+- images are scanned for vulnerabilities before promotion.
+
+**A private image would be the correct default for anything carrying configuration,
+credentials, or unreleased material.** The public choice here is specific to a static site
+whose entire content is already public, and it must be re-decided — not inherited — the first
+time an image carries anything else.
 
 ### 26.5 Promotion and rollback
 
