@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **87 of 106 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. Signing (T071) and the protected release environment (T072) remain open pending maintainer decisions.
+**Status**: Open — implementation in progress, **100 of 113 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 13 open tasks are T082–T085, T087–T088, T101–T102, T106, T108–T109, T111, and T113.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -2995,6 +2995,72 @@ and 5xx failures are **not** accepted — `--accept-timeouts` was not set. No
 
 The last row is the one that matters: the fix removes a false failure without removing the
 ability to detect a real one.
+
+## 3as. T100 — Node 24 pinned in the landing repository (2026-08-13)
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-08-13 |
+| **Task** | **T100** — pin Node 24 in the landing repository, distinct from the framework's Node 22 |
+| **Repository** | `renvor-rs/renvor-site` |
+| **Pull request** | **`renvor-rs/renvor-site#2`**, merged with a merge commit. Deliberately not hyperlinked: the site repository is **private**, so its pull-request URL returns HTTP 404 to readers without repository access, including unauthenticated readers |
+| **Merged commit** | `fe0e468e8ed6b54d211423b056e0d44a0669b66c` |
+| **Reviewed source commit** | `78b2e0fa48212c3a8c5e7eba782e2648df7adf93` |
+| **Changed path** | `.nvmrc` |
+| **Exact content** | `24\n` — three bytes, hex `32 34 0a` |
+| **Diff scope** | one file, one insertion, zero deletions; the file is newly added |
+
+### Validation
+
+Performed locally at the reviewed source commit, using the Node version the new file itself
+declares rather than the shell default:
+
+| Check | Result |
+|---|---|
+| Node selected from `.nvmrc` | `v24.19.0` |
+| Package manager | pnpm `11.21.0`, matching the declared `packageManager: pnpm@11.21.0` |
+| `pnpm install --frozen-lockfile` | passed |
+| `pnpm run typecheck` | passed |
+| Production build | passed |
+| `pnpm-lock.yaml` | **byte-for-byte unchanged** (SHA-256 compared before and after) |
+
+### Verification basis
+
+The merge was verified through **live GitHub data**, and the signed source commit was
+**inspected locally**. The integration commit has exactly two parents —
+`4a6937aa0ea767606e558c9b5768763f5ab2d580` (the base) and the reviewed source commit — and
+its tree equals the reviewed source tree exactly, so integration introduced no content of its
+own. The merge commit carries GitHub's platform signature (`verified: true`); the source
+commit beneath it carries the maintainer's own SSH signature and survives in `main`'s
+ancestry because a merge commit was used rather than a squash.
+
+The framework's `.nvmrc` was not touched and still reads `22`. The two policies are recorded
+separately, which is what this task existed to guarantee.
+
+### Completion boundary
+
+**T100 proves only the repository-local Node 24 pin.** It does not prove CI, branch
+protection, deployment readiness, or deployment. A version pin binds only what reads it, and
+at the time of writing **nothing in the site repository reads it automatically**.
+
+### Remaining pre-deployment requirement
+
+`renvor-rs/renvor-site` has **no repository-owned CI**: pull request #2 merged with no checks
+reported, and the repository contains no workflow of its own.
+
+**GitHub reports `main` as unprotected**: REST reports `protected: false`, GraphQL reports
+zero branch-protection rules and no rule attached to `main`, and a direct push to `main`
+previously succeeded. The rulesets REST endpoint is unavailable for this private repository
+on the current plan, so repository rulesets were not inspected; the conclusion rests on the
+three signals above rather than on an exhaustive enumeration of every protection mechanism.
+
+The migration plan requires the landing repository's CI to consume its own `.nvmrc`; that
+half is unbuilt and is tracked as **T113**, which also covers the required checks, protected
+`main` with no administrator bypass, and SHA-pinned third-party actions.
+
+### Result
+
+`T100 complete; T113 open. No CI, branch-protection, deployment, server, DNS, registry, environment, credential, or private-key change was made.`
 
 ## 6. Known limitations
 
