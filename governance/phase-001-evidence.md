@@ -2895,6 +2895,107 @@ not, and must not later be read as:**
 not on the automated checks — which were reported alongside as input to that review and were
 explicitly not treated as approval.
 
+## 3ar. T112 — link-check transport made deterministic (2026-08-12)
+
+Verification step 9 failed twice on pull request #11 without any link being broken. Both
+failures are preserved below rather than rewritten, because the second one disproved the
+diagnosis of the first and that is the useful part of the record.
+
+### Failure 1 — HTTP 503 (run 31639969949, attempt 1)
+
+Both `verify (1.94.0)` and `verify (stable)` failed at `[9/10] link check`, `lychee` exit 2:
+`🔍 257 Total 🔗 62 Unique ✅ 204 OK 🚫 21 Errors`. All 21 errors were
+**HTTP 503 Service Unavailable** from `github.com`; **0 were 404**. Every affected URL
+returned HTTP 200 when checked directly afterwards, and the same check passed locally on
+both toolchains. Read at the time as transient throttling.
+
+### Failure 2 — HTTP/2 protocol error (run 31639969949, attempt 2)
+
+Only the two failed jobs were re-run, with **no change to the commit**. The result split:
+
+| Job | Link check | Totals |
+|---|---|---|
+| `verify (stable)` — job 94271497549 | **ok — passed** | `✅ 225 OK 🚫 0 Errors 🔀 5 Redirects` |
+| `verify (1.94.0)` — job 94271497334 | **FAILED — lychee exit 2** | `✅ 187 OK 🚫 38 Errors` |
+
+The 38 errors were **14 real failures plus 24 cached repetitions** of those same 14, across
+**9 unique URLs**, all on `github.com`. Every one carried the message
+`HTTP/2 protocol error. Server may not support HTTP/2 properly` — a transport fault with
+**no HTTP status at all**. There were **0 HTTP 503** and **0 HTTP 404** responses; the string
+`503` appears 7 times in that log and every occurrence is a timestamp fragment or a Cargo
+line number, not a status. All 9 URLs resolved when checked directly: 4 returned HTTP 200 and
+5 returned HTTP 301 to their canonical `blob/` form, final HTTP 200.
+
+Two jobs, same commit, same configuration, same 62 URLs, running concurrently, produced
+0 errors and 38 errors. That isolates the cause to the transport rather than to the links,
+and it also rules out the throttling diagnosis: throttling returns a status, this returned
+none. None of the affected links originate in the pull request — they come from
+`docs/docusaurus.config.js` (`editUrl`, navbar and footer targets) and `docs/docs/governance.mdx`,
+neither of which is among the 7 changed paths.
+
+### Diagnosis
+
+Every external link in the built site points at one host. `lychee` 0.24.2 defaults to
+**10 concurrent requests per host at 50 ms intervals**, and `max_concurrency` was 8, so the
+checker opened many simultaneous HTTP/2 streams on a single connection to `github.com`.
+GitHub reset those streams under that load, which `reqwest` surfaces as a protocol error
+rather than a response. Both matrix jobs ran in parallel from one runner egress address,
+doubling the pressure on the same host from the same source.
+
+### Fix
+
+Three changes, all using options verified against the installed `lychee` 0.24.2 rather than
+assumed. Both `Config` and `HostConfig` carry `#[serde(deny_unknown_fields)]`, so an
+unsupported key fails the config parse loudly; this was confirmed by a negative control that
+appended a fabricated `http_version` key and was rejected with
+`unknown field 'http_version', expected one of 'concurrency', 'request_interval', 'headers'`.
+
+| Change | Where | Effect |
+|---|---|---|
+| `[hosts."github.com"] concurrency = 1` | `lychee.toml` | one in-flight request to `github.com` at a time, removing the stream contention |
+| `[hosts."github.com"] request_interval = "250ms"` | `lychee.toml` | minimum spacing between consecutive requests to that host |
+| `accept = ["200..=299"]` | `lychee.toml` | **429 removed** — a rate-limited response no longer counts as a working link |
+| `strategy.max-parallel: 1` | `.github/workflows/ci.yml` | the two matrix jobs no longer compete for the same host from one egress address |
+| `GITHUB_TOKEN: ${{ github.token }}` | `.github/workflows/ci.yml` | `lychee`'s documented env interface for `--github-token` |
+
+The per-host table is placed last in `lychee.toml` because a TOML table claims every key that
+follows it; a top-level setting added below it would silently become a per-host setting.
+
+**What the token does and does not do.** `handle_github` runs **only after a normal request
+has already failed**, and `check_github` returns success solely for bare `owner/repo` URLs —
+a URL naming a path inside a repository returns `InvalidGithubUrl`, so the original failure
+stands. The token therefore rescues repository URLs and avoids API rate limiting, but the
+per-host limits carry the actual determinism. One caveat is recorded rather than discovered
+later: for a **private** repository the API fallback returns OK for any URL beneath it without
+checking the path. Every `github.com` link here targets `renvor-rs/renvor`, which is public,
+so the caveat does not apply today; it would if a link ever pointed into a private repository.
+
+The token is the workflow run's built-in installation token under the existing top-level
+`contents: read`. It is not a stored secret, no personal access token was created, and
+`lychee` declares it with `hide_env_values = true` and holds it as a `SecretString`.
+
+### What was deliberately not done
+
+`github.com` was not excluded. No link was removed or rewritten. HTTP/2, TLS, timeout, 429
+and 5xx failures are **not** accepted — `--accept-timeouts` was not set. No
+`continue-on-error`, no failure downgraded to a warning. Retries stay **bounded** at
+`max_retries = 2`. Both toolchains and all ten verification steps are unchanged. No
+`http_version` or transport-forcing option was invented; `lychee` 0.24.2 exposes none.
+
+### Local validation
+
+| Check | Result |
+|---|---|
+| Config parses | exit 0 |
+| Fabricated key rejected | config error, as above |
+| Link check, 5 consecutive runs | **exit 0 every time**, `✅ 225 OK 🚫 0 Errors 🔀 5 Redirects` identical across all five |
+| Per-host statistics | `github.com │ 38 reqs │ 100.0% success │ 891ms median` |
+| Valid GitHub URLs (repo and file) | **exit 0**, 2 OK |
+| Fabricated GitHub URLs (missing file, missing repo) | **exit 2**, 2 errors, both `Rejected status code: 404 Not Found` |
+
+The last row is the one that matters: the fix removes a false failure without removing the
+ability to detect a real one.
+
 ## 6. Known limitations
 
 Populated by T083. Each requires a named owner and a target phase.
@@ -2935,6 +3036,7 @@ The phase remains open while any row here is present.
 | **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — copy corrected 2026-08-12 (§3ai.7), awaiting maintainer review of the rendered page.** Not closed by the party that did the work |
 | **`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli` | Public accuracy of the framework README | Maintainer | 2026-08-12 | **corrected 2026-08-12** — §3ai.4. Uncommitted |
 | **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **open** — policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made** |
+| ~~Step 9 link check fails on transport faults, not broken links~~ — HTTP 503 on one attempt, `HTTP/2 protocol error` on the next, while a concurrent job on the same commit reported `0 Errors` | ~~**T112**; pull request #11 required checks~~ | Maintainer | 2026-08-12 | **resolved 2026-08-12** — per-host concurrency 1 and a 250 ms interval for `github.com`, serialised matrix, run-scoped `GITHUB_TOKEN`, and **429 removed from `accept`**. Not weakened: no host excluded, no link rewritten, retries still bounded, fabricated URLs still fail with exit 2. §3ar |
 | ~~Website-code licence and brand-asset usage terms undecided~~ | ~~T098~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — option B: code `MIT OR Apache-2.0`, brand assets all rights reserved under `BRAND-POLICY.md`. File set validated, §3ak |
 | ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
 | **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** (0 container definitions, 0 SBOMs) | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **open** — verify when the image and SBOM are first produced, §3am |

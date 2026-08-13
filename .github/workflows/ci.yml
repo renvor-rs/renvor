@@ -29,6 +29,11 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Both matrix jobs run the same link check against the same host. In parallel they
+      # compete for github.com's connection budget from a single runner egress address,
+      # which is how one job hit HTTP/2 stream resets while the other passed on the same
+      # commit. Serialising them costs wall-clock and buys a deterministic result.
+      max-parallel: 1
       matrix:
         toolchain: ["1.94.0", "stable"]
     steps:
@@ -74,5 +79,17 @@ jobs:
           rm -f gitleaks gitleaks.tar.gz
           gitleaks version
 
+      # GITHUB_TOKEN is lychee's documented environment interface for `--github-token`.
+      # With it, a github.com link whose plain HTTP request fails is re-checked through the
+      # GitHub API, so a transport-level fault no longer decides whether a link is "broken".
+      # The fallback resolves repository URLs only — a URL naming a path inside a repository
+      # is still judged by its HTTP response, which is why the per-host limits in
+      # lychee.toml carry the actual determinism.
+      #
+      # This is the run's built-in installation token, scoped by the workflow-level
+      # `contents: read` above; it is not a stored secret and grants nothing beyond reading
+      # this repository. lychee holds it as a secret value and does not print it.
       - name: cargo xtask verify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo xtask verify
