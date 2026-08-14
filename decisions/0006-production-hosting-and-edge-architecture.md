@@ -356,6 +356,59 @@ Consequences:
 | Availability | The redirect shares the origin's fate. There is no independent path |
 | Status | **Not implemented.** No Traefik router, middleware, Ingress, or certificate exists for `www`. Creating them is a separate authorised action, and belongs to `renvor-infra` |
 
+### D12 — Hybrid source-control topology: GitHub for the three public properties, private self-hosted GitLab for infrastructure *(decided 2026-08-14; supersedes the all-GitHub, all-private repository model in ADR-0005 and `PLAN.md` §26.1)*
+
+**Application source, review, and CI live on GitHub. Infrastructure configuration moves to a
+private, self-hosted GitLab instance.** The four repositories no longer share one host or one
+visibility.
+
+| Repository | Host | Visibility | Role |
+|---|---|---|---|
+| `renvor-rs/renvor` | GitHub | **Public** | Framework source, releases, governance. Unchanged |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(changed 2026-08-14)* | Landing source, review, CI |
+| `renvor-rs/renvor-docs` | GitHub | **Public** *(changed 2026-08-14)* | Production documentation site. **Commit-empty** — see below |
+| `renvor-infra` | **Private self-hosted GitLab** at `gitlab.ahmedanbar.dev` | **Private** | Kubernetes manifests, ingress and TLS configuration, runbooks |
+
+**Why the split.** The three application properties benefit from being public: their CI is
+reviewable, their dependency and secret scanning are available, and nothing in them is
+confidential — the landing page's entire content is intended to be read by strangers.
+Infrastructure configuration is the opposite. It describes the shape of a live system, and
+keeping it on an instance the maintainer controls removes it from a third party's blast
+radius without pretending it is secret from that third party.
+
+**This changes where infrastructure source lives. It changes nothing about where images go.**
+**D7 stands unmodified**: public application images remain planned for **GitHub Container
+Registry**, published with the workflow's short-lived `GITHUB_TOKEN`. The GitLab Registry is
+**not** used, and the two grounds on which it was rejected under T099 — the long-lived
+cross-system publishing credential, and a registry that is unavailable in exactly the
+recovery scenario D9 depends on it for — are unchanged by this record and still hold. Moving
+infrastructure *source* to that host does not move the *registry* to it.
+
+**`renvor-rs/renvor-docs` is public but deliberately commit-empty.** It has no commits, and it
+gets none until two independent conditions are met: its **licence is decided** — the website
+code licence and brand-asset terms question recorded in the migration plan §1.8, which
+`renvor-site` settled under T098 and this repository has not — and **T108 permits migration**,
+because the documentation toolchain carries the unresolved `image-size` advisories. Until
+both hold, `framework/docs` stays authoritative and nothing is copied. Creating the empty
+public repository now reserves the name and makes the intent legible; it does not start the
+migration, and **T108 is not altered by this record.**
+
+**GitHub remains the review and CI surface for all three application properties.** Branch
+protection, required checks, and pull-request review stay on GitHub. GitLab hosts no
+application CI, and no GitLab CI, runner, registry, or Pages feature is enabled for
+`renvor-infra`.
+
+Consequences:
+
+| Consequence | Detail |
+|---|---|
+| Two hosts to operate | Account, access, and backup concerns now exist in two places rather than one. The GitLab side is a single-tenant instance the maintainer administers |
+| GitLab administrators retain access | Instance administrators inherently retain administrative access to every project. With a single-maintainer instance this is the same person, but it is a property of the deployment, not an absence of one |
+| Infrastructure repository is not yet canonical | The GitHub `renvor-infra` repository is preserved, private, and empty as a temporary recovery placeholder. **GitLab is not canonical for infrastructure until T114 passes** |
+| Backup surface changed | Infrastructure history would live on the same VPS the infrastructure describes — the failure mode D9 warns about. **T114 exists precisely to close this** and requires encrypted off-VPS backup with a proven restore before cutover |
+| Public site source | `renvor-site` source is now world-readable. The secret and metadata audits recorded in the evidence ledger were run before the change to establish that nothing sensitive was exposed by it |
+| Status | **Not complete.** This record stays `proposed`; T113 and T114 stay open; Phase 001 is not complete; no Renvor 1.0 claim is made or implied |
+
 ## Alternatives considered
 
 | Alternative | Rejected because |
@@ -497,6 +550,15 @@ their closure does not accelerate the rest.
 
 Acceptance requires the remaining question to be resolved, either in this record or split
 into a scoped follow-up record. **This record therefore stays `proposed`.**
+
+**D12 does not move this record closer to acceptance, and adds a gate of its own.** The
+hybrid topology recorded on 2026-08-14 changes where infrastructure source lives, which
+changes where infrastructure history would be backed up. That is the same class of concern as
+T106, on a host the maintainer administers rather than shares. It is tracked as **T114**, and
+**T114 is open**: until it passes, the self-hosted GitLab project is a destination, not the
+canonical infrastructure repository, and the GitHub `renvor-infra` repository is preserved
+untouched as a recovery placeholder. **Neither T113 nor T114 is complete, this record is not
+accepted, and Phase 001 is not complete.**
 
 **T106 cannot close on the current evidence.** A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
