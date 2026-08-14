@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **100 of 113 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 13 open tasks are T082–T085, T087–T088, T101–T102, T106, T108–T109, T111, and T113.
+**Status**: Open — implementation in progress, **101 of 113 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 12 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, and T113.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -3061,6 +3061,178 @@ half is unbuilt and is tracked as **T113**, which also covers the required check
 ### Result
 
 `T100 complete; T113 open. No CI, branch-protection, deployment, server, DNS, registry, environment, credential, or private-key change was made.`
+
+## 3at. T101 — V7 landing CSP compatibility verified; no production header, live-server access, or deployment action (2026-08-14)
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-08-14 |
+| **Operator** | Ahmed Anbar |
+| **Task** | **T101** — verify CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) |
+| **Repository** | `renvor-rs/renvor-site` |
+| **Pull request** | **`renvor-rs/renvor-site#3`**, merged with a merge commit. Deliberately not hyperlinked: the site repository is **private**, so its pull-request URL returns HTTP 404 to readers without repository access |
+| **Merge commit** | `206cefdff74399d96f723a75d961fb8d700e0fd5` |
+| **Parent 1 — base** | `fe0e468e8ed6b54d211423b056e0d44a0669b66c` |
+| **Parent 2 — audited signed source** | `f8f1786a02c2d921859068fbd487b5d5e57a764c` |
+| **Source tree = merge tree** | `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec` |
+| **Integration verification** | Live GitHub read-only verification on 2026-08-14 reports merge commit `206cefdff74399d96f723a75d961fb8d700e0fd5` as `verified=true`, `reason=valid`; source commit `f8f1786a02c2d921859068fbd487b5d5e57a764c` is the audited signed maintainer commit |
+| **Clean site build** | Node.js `v24.19.0`, pnpm `11.21.0` |
+| **Enforcement harness** | `@playwright/test` 1.62.1 under Node.js `v22.12.0`; `serve` 14.2.6 |
+
+**The verified state is immutable and exactly identified.** The source tree and the merge tree
+are the same object, `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`, so **integration added no
+content beyond the audited source tree** — what was tested is byte-identical to what was
+merged. Every result below is bound to that tree and to no other.
+
+### Scope of the change under test
+
+The Docusaurus configuration was changed by adding exactly one line:
+
+```
+baseUrlIssueBanner: false,
+```
+
+That is the whole production-source change — one file, one insertion, zero deletions.
+Disabling Docusaurus's base-URL issue banner removed its generated diagnostic content from
+the tested output and reduced the CSP hash and allowance surface. The r4 evidence validates
+the resulting tree; it does not establish that the prior banner could be admitted only with
+`unsafe-inline`. The resulting build still intentionally authorises one inline script by
+hash and one exact style attribute through `unsafe-hashes`.
+
+**Build provenance, which is separate from harness provenance.** The tested artifact came
+from a **clean production build from clean generated directories**, run on Node.js
+`v24.19.0` with pnpm `11.21.0`. Those versions describe the build only. The Playwright
+enforcement harness ran separately, under Node.js `v22.12.0`, and used no pnpm — see the
+`Enforcement harness` row above.
+
+### The exact candidate policy — 434 bytes
+
+```
+default-src 'self'; script-src 'self' 'sha256-0xt7rjlfRsoD7aukiSWSNvMBWU159Lh5cl3WNaV1g+w='; style-src 'self'; style-src-attr 'unsafe-hashes' 'sha256-biLFinpqYMtWHmXfkA1BPeCY0/fNt46SAZ+BBk5YUog='; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; child-src 'none'; frame-src 'none'; media-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; worker-src 'none'; manifest-src 'none'
+```
+
+SHA-256 `ab861669ba0b7b7760df0913319e9d261649787f1f599c0bca7f199874d91bed`, **exactly 434
+bytes, no trailing newline**.
+
+**This policy is not free of inline allowances, and must not be described as such.** It
+carries **one hashed style-attribute allowance using `unsafe-hashes`**
+(`style-src-attr 'unsafe-hashes' 'sha256-biLFinpqYMtWHmXfkA1BPeCY0/fNt46SAZ+BBk5YUog='`) and
+**`data:` allowances for both images and fonts**. What it does not carry is `unsafe-inline`,
+`unsafe-eval`, or any third-party origin.
+
+### Results
+
+| Phase | Result |
+|---|---|
+| Negative-control Enforcement preflight | **3/3 passed** — one per Chromium, Firefox, and WebKit |
+| Final exact-head r4 Enforcement matrix | **48/48 passed** |
+
+The **negative control is what makes the matrix meaningful**. It served the same enforced
+policy against a deliberately non-compliant `data:` sentinel script and required the browser
+to block it on all three engines, with `disposition: enforce`. Without it, a 48/48 pass would
+be equally consistent with a policy that was never actually applied.
+
+### Matrix dimensions
+
+Every combination of:
+
+| Dimension | Values |
+|---|---|
+| Engine | Chromium, Firefox, WebKit |
+| Route | landing, genuine HTTP 404 |
+| Viewport | desktop, mobile |
+| Theme | light, dark |
+| Motion | normal, reduced |
+
+3 × 2 × 2 × 2 × 2 = **48 cases, all passed**.
+
+**GSAP and the fonts were exercised substantively, not merely loaded.** Animation behaviour
+ran under the enforced policy in both the normal and reduced-motion paths.
+
+GSAP ran without `unsafe-inline` or `unsafe-eval`. `Outfit Variable` and
+`Geist Mono Variable` were fetched from same-origin `/assets/fonts/...` resources under
+`font-src 'self'`. The candidate policy also allowed `data:` fonts, but r4 did not establish
+that allowance as necessary.
+
+Across all 48 cases the run recorded **zero application CSP events or refusals, zero page
+errors, zero failed requests, zero third-party requests, zero duplicate events, and zero
+collector transport errors**.
+
+### Artifact hashes
+
+| Artifact | SHA-256 |
+|---|---|
+| Policy | `ab861669ba0b7b7760df0913319e9d261649787f1f599c0bca7f199874d91bed` |
+| Final stage-c specification | `e8825eb629a9e4b7139c7cd60c3b3884af43540c2d0bb8e21d8a436a4f8643aa` |
+| Playwright configuration | `cdd3041669c17023447d120c849ddbee3a4ae750177866b44f22001a63045663` |
+| Collector | `bed6644cfd21b2e7514ff7e3e1d5d0200f7562001c8f4a546bc7ece97c89311b` |
+| Classifier | `f41079dfaf2cd906bf179512c16585d2a9ba292ed880a2210cd5b62ceb47ebe5` |
+| Server | `9a100766034ab2d8464f029f9d307754df74173c296ff5b014a42b3b6beaaff7` |
+| Harness package | `1bbf70eb816f4456ad7ad2efaeea55c377ed461fbd93f1e7f7306c33bca0951f` |
+| JSON reporter | `5d905ede431e0c3cea7b29a6d2a6687eaae0c49c9de40b4a90b95cee0797cd20` |
+| Request ledger | `75053214beed6617e0c561425f876a6616428ce7f1e989abac738c67e233a6dd` |
+
+**Repository state was unchanged by the run.** The site state files captured **before and
+after** are byte-identical at
+`80ebdf604ae662fc976a74c8e8ba27649b27b60d99d01e09f807a3194579a81b`, and the framework state
+files before and after are byte-identical at
+`202c371722a99754260dab7de989ab3fcfa62a9663455a23cfb63e8982f844c7`. Testing mutated neither
+repository.
+
+### Normative versus diagnostic
+
+The request ledger contains **946 records**. **That aggregate is diagnostic inventory only.**
+It is **not 946 tests, not 946 assertions, and not a pass threshold**, and no conclusion in
+this section rests on the number matching any particular value. Aggregate counts vary
+legitimately with sub-resource cache revalidation between runs.
+
+**What is normative** are the semantic, per-representation, enforced-policy, and per-case
+assertions. Every full `200` or `404` document response carried the byte-exact enforced
+policy, and `Content-Security-Policy-Report-Only` was absent. Chromium and Firefox also
+exercised conditional server `304` responses carrying the matching ETag and no CSP header;
+Chromium exposed its reload to Playwright as `200`, while Firefox exposed `304`. WebKit
+performed an unconditional second `200` and received the byte-exact policy again. Continued
+enforcement across conditional revalidation demonstrated inheritance from the cached
+representation. The negative-control events reported `disposition: enforce`, and every one
+of the 48 application cases independently produced zero application violations.
+
+### Boundary — what this does not establish
+
+**Testing used a local enforcement harness serving the built site over loopback. It was not
+production, and it was not Traefik.** A policy proven in that harness is evidence of page
+compatibility, not evidence of a deployed control.
+
+**A header was configured and served — locally.** The disposable local server set
+`Content-Security-Policy` to the 434-byte candidate policy on every full `200` and `404`
+document response; that is precisely what made the run an Enforcement test rather than a
+report-only observation, and enforcement persisted across the conditional `304` responses
+described above, which carried no CSP header of their own. The
+statements below deny **production** header configuration and **live-server** access, not the
+existence of that local header.
+
+This section closes **T101 only**. Specifically:
+
+- **It does not prove production deployment readiness.**
+- **No production response header was configured or enabled** — no production CSP and no
+  production response-header policy exists anywhere.
+- **No Traefik middleware was written, configured, or enabled.**
+- **No live-server access or production-infrastructure action occurred** — no deployment,
+  image publication, DNS, server, Kubernetes, registry, environment, credential, Cloudflare,
+  or other infrastructure mutation.
+- **T102, T106, T108, T111, and T113 remain deployment gates** and are unaffected by this
+  closure.
+- **ADR-0006 remains `proposed`**, solely because its one remaining internal unresolved
+  question — **T106**, the maintainer ruling on the shared server's absent backups — is still
+  open. T101 no longer blocks it.
+
+The candidate policy was validated against the production build generated from tree
+`e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`. Any new production build must be revalidated.
+Recompute a particular hash only when the corresponding inline script or style-attribute
+bytes change; unrelated output changes do not alter that digest.
+
+### Result
+
+`T101 complete. A local harness served the enforcement header; no production response header was configured or enabled, and no Traefik middleware was written, configured, or enabled. No live-server access or production-infrastructure action occurred — no deployment, image publication, DNS, server, Kubernetes, registry, environment, credential, Cloudflare, or private-key change was made. ADR-0006 remains proposed pending T106.`
 
 ## 6. Known limitations
 
