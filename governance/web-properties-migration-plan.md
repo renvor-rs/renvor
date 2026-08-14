@@ -1,7 +1,11 @@
 # Web Properties Migration Plan
 
-**Status**: Planning only — nothing has been created, pushed, or deployed
-**Decided by**: [ADR-0005](../decisions/0005-web-properties-and-deployment-topology.md) (topology), [ADR-0006](../decisions/0006-production-hosting-and-edge-architecture.md) (hosting and edge)
+**Status**: Partly executed, **nothing deployed**. `renvor-rs/renvor-site` exists and has
+commits; `renvor-rs/renvor-docs` exists and is commit-empty; the infrastructure repository has
+no commits on either host. **No site is deployed and no image is published.** The status line
+previously read "Planning only — nothing has been created, pushed, or deployed"; that was
+accurate when written and is superseded by §5.
+**Decided by**: [ADR-0005](../decisions/0005-web-properties-and-deployment-topology.md) (topology), [ADR-0006](../decisions/0006-production-hosting-and-edge-architecture.md) (hosting and edge; **D12 revises the topology 2026-08-14**)
 **Authoritative plan section**: `PLAN.md` §26
 **Owner**: Ahmed Anbar
 
@@ -225,10 +229,81 @@ credentials, or Cloudflare tokens.
 | Dependency updates | Reviewable pull requests; no unreviewed floating updates |
 | Release evidence | Digest, signature, SBOM, provenance, scan result, and the previous digest for rollback |
 
-### 4.1 Unresolved — registry choice
+### 4.1 ~~Unresolved — registry choice~~ — RESOLVED 2026-08-12 (T099)
 
-GitHub Container Registry (pairs with GitHub OIDC, no long-lived credential) versus the
+~~GitHub Container Registry (pairs with GitHub OIDC, no long-lived credential) versus the
 GitLab registry already running on the VPS (no external dependency, but couples Renvor to
-another project's service and requires a long-lived pull credential).
+another project's service and requires a long-lived pull credential).~~ ~~**Not decided.**
+Must be settled before the private repositories are created.~~
 
-**Not decided.** Must be settled before the private repositories are created.
+**Decided 2026-08-12 — GitHub Container Registry (`ghcr.io`)**, recorded as ADR-0006 D7 and
+`PLAN.md` §26.4. Publishing uses the workflow's short-lived `GITHUB_TOKEN` with
+`contents: read` and `packages: write` **on the publishing job only**; **this is not OIDC**,
+and the "pairs with GitHub OIDC" phrasing struck through above was the error T099 corrected.
+The deployment image is **publicly pullable**, so the cluster stores no `imagePullSecret`.
+
+**The GitLab registry was rejected and stays rejected.** ADR-0006 D12 moves *infrastructure
+source* to a private self-hosted GitLab instance on 2026-08-14, and that does **not** reopen
+this question: the two grounds for rejection — a long-lived cross-system publishing
+credential, and a registry that is unavailable in exactly the recovery scenario it is needed
+in — are untouched by where the manifests are stored.
+
+**Nothing is configured.** No package, image, workflow, or credential exists.
+
+---
+
+## 5. Topology revision — 2026-08-14 (ADR-0006 D12)
+
+Sections 1–4 above were written when all four repositories were planned as private GitHub
+repositories. That model is superseded. **The sections above are retained as the dated record
+of what was planned and verified at the time; this section states what is current.**
+
+| Repository | Host | Visibility | Status 2026-08-14 |
+|---|---|---|---|
+| `renvor-rs/renvor` | GitHub | Public | Unchanged |
+| `renvor-rs/renvor-site` | GitHub | **Public** | Source, review, and CI on GitHub |
+| `renvor-rs/renvor-docs` | GitHub | **Public** | **Commit-empty.** No README, licence, `.gitignore`, or workflow |
+| `renvor-infra` | **Private self-hosted GitLab** | Private | Destination only — **not canonical until T114** |
+
+### 5.1 Why `renvor-docs` stays commit-empty
+
+Two independent conditions, both open:
+
+1. **Licence undecided.** §1.8 required two separate decisions — website code licence and
+   brand-asset usage terms — before a repository receives its first content. `renvor-site`
+   settled its own under **T098**. **`renvor-docs` has not**, and the documentation site will
+   carry framework prose, generated API reference, and brand assets under a different mix than
+   the landing page does.
+2. **T108 does not yet permit migration.** The documentation toolchain carries the unresolved
+   `image-size` advisories. **T108 is not altered by this section.**
+
+Until both hold, **`framework/docs` remains authoritative**, nothing is copied, and
+`docs.renvor.dev` does not exist. §2 above continues to define what must be true before the
+site is deployed.
+
+### 5.2 Infrastructure cutover is gated on T114
+
+The manifests, runbooks, and edge configuration described in §3 are destined for the private
+GitLab project. **They are not there, and they are not to be pushed there yet.** The local
+`infra` README and assets remain uncommitted, blocked by content classification, licensing,
+and **T114**.
+
+T114 requires an **encrypted off-VPS backup** of the GitLab application and configuration, an
+**exact-version isolated restore proof**, **matching repository refs and hashes** between the
+original and the restored copy, a recorded **retention policy with RPO and RTO**, and
+**separate human approval** before cutover. Until it passes, the GitHub `renvor-infra`
+repository is preserved, private, and empty as a temporary recovery placeholder.
+
+The concern is specific rather than procedural: infrastructure history stored on the same VPS
+the infrastructure describes is unavailable in precisely the recovery scenario ADR-0006 D9
+depends on — the same reasoning that rejected the GitLab registry under T099.
+
+### 5.3 What this revision does not change
+
+- **T099 and GHCR.** Public application images remain planned for GitHub Container Registry.
+  The GitLab Registry is not used, and is disabled on the GitLab project.
+- **T108.** Untouched.
+- **The framework's independence.** §2.3 still holds: `cargo build`, `test`, `package`, and
+  `publish` must succeed from a clone of `renvor-rs/renvor` alone.
+- **Deployment.** Nothing here deploys anything. T102, T106, T108, T111, T113, and T114 all
+  remain open, ADR-0006 remains `proposed`, and Phase 001 is not complete.

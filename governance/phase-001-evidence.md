@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **101 of 113 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 12 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, and T113.
+**Status**: Open — implementation in progress, **101 of 114 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26; T114 added 2026-08-14 by ADR-0006 D12). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 13 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, T113, and T114.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
@@ -3233,6 +3233,58 @@ bytes change; unrelated output changes do not alter that digest.
 ### Result
 
 `T101 complete. A local harness served the enforcement header; no production response header was configured or enabled, and no Traefik middleware was written, configured, or enabled. No live-server access or production-infrastructure action occurred — no deployment, image publication, DNS, server, Kubernetes, registry, environment, credential, Cloudflare, or private-key change was made. ADR-0006 remains proposed pending T106.`
+
+## 3au. ADR-0006 D12 — hybrid source-control topology decided; GitHub public for applications, private self-hosted GitLab for infrastructure (2026-08-14)
+
+**This section records a decision and the preflight that authorised it. At the time of this
+commit the transition had not been executed**: `renvor-rs/renvor-site` and
+`renvor-rs/renvor-docs` were still private, no GitLab group or project existed, and no
+infrastructure content had been pushed anywhere.
+
+| Item | Result |
+|---|---|
+| **Decision** | ADR-0006 **D12**, dated 2026-08-14. Supersedes the all-GitHub, all-private repository model in ADR-0005 and `PLAN.md` §26.1 without rewriting either |
+| **Application properties** | `renvor-rs/renvor`, `renvor-rs/renvor-site`, `renvor-rs/renvor-docs` — GitHub, public, and GitHub remains the source, review, and CI surface for all three |
+| **Infrastructure** | `renvor-infra` targets the private self-hosted GitLab instance at `gitlab.ahmedanbar.dev`. **Destination only — not canonical until T114** |
+| **Registry** | **Unchanged.** T099 and D7 stand: public application images remain planned for GHCR. **The GitLab Registry is not used** and is disabled on the GitLab project |
+| **`renvor-docs`** | Public and deliberately **commit-empty** until its licence is decided and **T108 permits migration**. `framework/docs` stays authoritative. **T108 is not altered** |
+| **New gate** | **T114** — encrypted off-VPS backup, exact-version isolated restore proof, matching repository refs and hashes, retention/RPO/RTO, and separate human approval |
+
+### Preflight verified before any write (2026-08-14)
+
+| Check | Observed |
+|---|---|
+| Framework live `main` | `a942a689effb565adc3fbf3adc7a9fcd174d9cca`; PR #14 `merged=true` with that exact merge SHA |
+| Site live `main` | `206cefdff74399d96f723a75d961fb8d700e0fd5` |
+| Visibility at preflight | framework public; site, docs, and the GitHub infra placeholder all private |
+| Docs and infra repositories | **0 commits each**; untracked `README.md` plus `assets/renvor-mark-v7.svg` (543 bytes, `237479dc…`, byte-identical in both) and nothing else |
+| GitLab instance | **CE 19.0.1**, revision `35d349e97ce`, at `gitlab.ahmedanbar.dev` |
+| GitLab identity | `ahmedanbar`, id 35, `state=active`, `is_admin=true`, `can_create_group=true`, `can_create_project=true` |
+| GitLab Renvor objects | **None** — no `renvor-rs` group and no Renvor project. Two unrelated groups and nine unrelated projects exist, all private |
+| Secret scanning | `gitleaks` 8.30.1, redacted, full history **and** current files across all four repositories — 59 commits scanned, **no leaks found**, every scan exit 0 |
+| Site GitHub metadata | 0 Actions secrets, 0 Dependabot secrets, 0 variables, 0 environments, 0 deploy keys, 0 webhooks, 0 tags, 0 releases; wiki and Pages disabled; not a fork, not archived |
+
+### A tooling correction worth recording
+
+`glab`'s configured default host is **`gitlab.com`**. The first version probe therefore
+answered for GitLab SaaS — `19.3.0-pre`, `enterprise: true`, `kas.gitlab.com` — not for the
+self-hosted instance. Re-querying with `--hostname gitlab.ahmedanbar.dev` returned the real
+figures above. **Every GitLab call in this workflow must name the host explicitly**; without
+it, a group would have been created on public SaaS instead of the private instance.
+
+### Two preflight conditions did not hold, and were resolved by rebaselining rather than by force
+
+The authorising workflow expected the site branch `docs/update-deployment-gates` to be local
+only, at `3e72a4685e63635a209ecfe5b6f1a1003adb427d`, with no pull request. **Both were false**:
+the branch was already pushed at `b6ed04d219c27a4f69526751c17a9db5aba2c575`, seven commits
+ahead of `main`, with pull request **#4** open and all five checks green. Reaching the
+expected state would have required a force push, a branch deletion, or closing a green pull
+request. **The maintainer rebaselined onto the live state instead.** No history was rewritten,
+no ref was force-updated, and no branch was deleted.
+
+### Boundary
+
+`T113 and T114 are open. ADR-0006 remains proposed pending T106. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a decision and a preflight only — at commit time no repository visibility had changed, no GitLab group or project existed, no infrastructure content had been pushed, and no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, or private-key action had occurred.`
 
 ## 6. Known limitations
 

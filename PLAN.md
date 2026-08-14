@@ -1512,18 +1512,41 @@ are unchanged. Decisions here are recorded in ADR-0005 and ADR-0006.
 
 ### 26.1 Repository topology
 
-Four repositories under the `renvor-rs` organization, each with one owner and one purpose:
+*(Revised 2026-08-14 by maintainer decision — ADR-0006 D12. This section previously placed
+all four repositories on GitHub and made three of them private. The table below is current;
+the superseded model and the reasoning for replacing it are recorded in ADR-0006 D12, which
+does not rewrite the original decision.)*
 
-| Repository | Visibility | Source of truth for | Must never contain |
-|---|---|---|---|
-| `renvor-rs/renvor` | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-site` | **Private** | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
-| `renvor-rs/renvor-docs` | **Private** | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
-| `renvor-rs/renvor-infra` | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+Four repositories, no longer on one host and no longer sharing one visibility:
 
-**Private source, public site.** A private repository does not imply a private website. All
-four deployed properties are publicly reachable; only the *source* of the three website and
-deployment repositories is restricted.
+| Repository | Host | Visibility | Source of truth for | Must never contain |
+|---|---|---|---|---|
+| `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
+| `renvor-infra` | **Private self-hosted GitLab** (`gitlab.ahmedanbar.dev`) | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+
+**GitHub is the source, review, and CI surface for all three application properties.** Branch
+protection, required checks, and pull-request review stay on GitHub. The GitLab instance runs
+no application CI and no registry for Renvor.
+
+**`renvor-rs/renvor-docs` is public and deliberately commit-empty.** It receives no commit —
+no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
+permits migration**. Until both hold, `framework/docs` remains authoritative. See ADR-0006
+D12 and §26.12.
+
+**`renvor-infra` is not yet canonical on GitLab.** The cutover is gated on **T114** (encrypted
+off-VPS backup with a proven restore). Until T114 passes, the GitHub `renvor-infra`
+repository is preserved, private, and empty as a temporary recovery placeholder.
+
+**Image publication is unaffected.** Public application images remain planned for **GitHub
+Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used**; moving
+infrastructure source to that host does not move the registry to it.
+
+**Private source, public site.** A private repository does not imply a private website, and
+the reverse also holds: the two application repositories that became public in 2026-08-14
+were already intended to serve public content. All four deployed properties are publicly
+reachable.
 
 **The framework repository never depends on the other three.** Compiling, testing,
 packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
