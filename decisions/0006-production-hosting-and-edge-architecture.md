@@ -191,7 +191,7 @@ that is the same exposure every domain on any authoritative provider carries.
 |---|---|---|
 | HSTS | **Only after** every deployed hostname serves valid TLS and has survived at least one renewal cycle. Enabling it early makes a TLS mistake unrecoverable for the `max-age`. No preload until then | Traefik response headers |
 | Cache | Hashed static assets: long `max-age`, `immutable`. HTML: short TTL with revalidation, so a rollback is visible immediately. **There is no edge cache — every request is an origin request**, so cache headers now govern browser behaviour only | Workload response headers |
-| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors`. **CSP must still be validated against the V7 landing implementation** (GSAP, self-hosted variable fonts) — unchanged, and still **T101** | Traefik middleware |
+| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors`. **CSP was validated 2026-08-14 against the exact tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`** (site pull request #3, merge `206cefdff74399d96f723a75d961fb8d700e0fd5`): a 434-byte candidate policy ran in full **Enforcement** — negative control 3/3, matrix 48/48 across three engines, both routes, both viewports, both themes, and both motion settings — with **zero application CSP violations**. GSAP ran without `unsafe-inline` or `unsafe-eval`; `Outfit Variable` and `Geist Mono Variable` were fetched from same-origin `/assets/fonts/...` resources under `font-src 'self'`, and although the candidate policy also allowed `data:` fonts, r4 did not establish that allowance as necessary. The policy does carry one hashed style-attribute allowance using `unsafe-hashes`, and `data:` for images and fonts. **T101 — RESOLVED 2026-08-14**, evidence §3at. **The middleware itself is still not written, configured, or enabled**, and the candidate policy's hashes are artifact-bound | Traefik middleware |
 | Rate limiting | Both sites are static, so sustained POST volume is abuse by definition. **This is no longer defence-in-depth behind an edge; it is the only rate limit that exists** | Traefik middleware |
 
 **Struck entirely:**
@@ -418,15 +418,16 @@ header policy back out of version control, and must be recorded rather than swit
 ## Unresolved questions
 
 **Each unresolved question below carries an explicit owner and a blocking task, so none can
-be forgotten.** Question 2 was resolved on 2026-08-12. **The remaining three — T099, T101,
-and T106 — still block acceptance of this record, which therefore stays `proposed`.**
+be forgotten.** Questions 1, 2 and 5 were resolved on 2026-08-12 — **T099**, **T105**, and
+**T110** — and question 4 was resolved on 2026-08-14 — **T101**. **One remains — T106 — and
+it still blocks acceptance of this record, which therefore stays `proposed`.**
 
 | # | Unresolved question | Owner | Blocking task |
 |---|---|---|---|
 | ~~1~~ | ~~GitHub Container Registry versus the VPS GitLab registry, including the credential model~~ | Ahmed Anbar | **T099 — RESOLVED 2026-08-12: GHCR, `GITHUB_TOKEN` publishing, public image, no pull secret. See D7** |
 | ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12 (Cloudflare). Superseded 2026-08-12 by T110 → Traefik, see D11.** T105 is not reopened |
 | 3 | Maintainer ruling on the shared server's absent backups | Ahmed Anbar | **T106** |
-| 4 | CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts) | Ahmed Anbar | **T101** |
+| ~~4~~ | ~~CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts)~~ | Ahmed Anbar | **T101 — RESOLVED 2026-08-14: a 434-byte policy enforced against tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`; negative control 3/3, matrix 48/48, zero application violations. See D5 and evidence §3at.** A local harness served the enforcement header; **no production response header was configured or enabled, no Traefik middleware was written, configured, or enabled, and no live-server access or production-infrastructure action occurred** |
 | ~~5~~ | ~~Whether the Cloudflare proxy is enabled and the origin authenticated to the edge~~ | Ahmed Anbar | **T110 — RESOLVED 2026-08-12: DNS-only, no proxy. See D3, D4, D5, D10, D11** |
 
 1. ~~**Registry choice is not decided.**~~ **Resolved 2026-08-12 — GHCR (T099).** Publishing
@@ -442,8 +443,26 @@ and T106 — still block acceptance of this record, which therefore stays `propo
    **D11**. Neither the rule nor the Traefik router has been created.
 3. **Whether the neighbouring workloads' missing backups should block Renvor deployment.**
    This record says no — Renvor is stateless — but flags it for the maintainer's judgement.
-4. **CSP compatibility with the V7 landing page has not been tested** and may require
-   explicit allowances for GSAP and self-hosted variable fonts.
+4. ~~**CSP compatibility with the V7 landing page has not been tested** and may require
+   explicit allowances for GSAP and self-hosted variable fonts.~~ **Resolved 2026-08-14 —
+   tested, in Enforcement, against an immutable build (T101).** The verified state is the
+   exact tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`, reached through site pull request
+   #3 (merge `206cefdff74399d96f723a75d961fb8d700e0fd5`, base
+   `fe0e468e8ed6b54d211423b056e0d44a0669b66c`, audited signed source
+   `f8f1786a02c2d921859068fbd487b5d5e57a764c`); the merge added no content beyond that source
+   tree. A 434-byte candidate policy was served as `Content-Security-Policy` — enforcing, not
+   report-only — and the negative control passed **3/3** while the full matrix passed
+   **48/48**, with zero application CSP events. **GSAP ran without `unsafe-inline` or
+   `unsafe-eval`.** `Outfit Variable` and `Geist Mono Variable` were fetched from same-origin
+   `/assets/fonts/...` resources under `font-src 'self'`. The candidate policy also allowed
+   `data:` fonts, but r4 did not establish that allowance as necessary. The policy is not
+   allowance-free — it carries one hashed style-attribute allowance using `unsafe-hashes`,
+   plus `data:` for images and fonts. See D5 and evidence §3at. **Boundary: this was a local
+   enforcement harness, not production and not Traefik. That harness did configure and serve
+   the enforcement header; what did not happen is production. No production response header
+   was configured or enabled, no Traefik middleware was written, configured, or enabled, and
+   no live-server access or production-infrastructure action occurred — no deployment, DNS,
+   server, or other infrastructure change was made.**
 
 ## Compliance
 
@@ -471,13 +490,13 @@ architecture choices inside its own scope are unresolved.** Accepting it would p
 decision record whose own text says some of its decisions have not been made — the document
 would assert authority it does not have.
 
-**Two questions remain open**, each carrying an owner and a blocking task: **T106** (backup
-ruling) and **T101** (CSP compatibility). Three are now closed — **T105** (`www` redirect
-location), **T110** (proxy versus DNS-only), and **T099** (registry) — and their closure does
-not accelerate the rest.
+**One question remains open**, carrying an owner and a blocking task: **T106** (the backup
+ruling). Four are now closed — **T099** (registry), **T101** (CSP compatibility, closed
+2026-08-14), **T105** (`www` redirect location), and **T110** (proxy versus DNS-only) — and
+their closure does not accelerate the rest.
 
-Acceptance requires both remaining questions resolved, either in this record or split into
-scoped follow-up records. **This record therefore stays `proposed`.**
+Acceptance requires the remaining question to be resolved, either in this record or split
+into a scoped follow-up record. **This record therefore stays `proposed`.**
 
 **T106 cannot close on the current evidence.** A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
@@ -489,6 +508,27 @@ touches a live shared production host and requires separate authorisation.
 previously a Cloudflare Transform Rule; it is now a Traefik middleware the project must write
 and maintain itself, against a landing page using GSAP and self-hosted variable fonts. The
 question is the same and the party who has to answer it has changed.
+
+**T101 closed on 2026-08-14 — as a compatibility result, not as a shipped control.** The
+landing page was proven compatible with a strict enforced policy: the exact tree
+`e7fbc9d1438eaf58dee2c7d634dac4003b8664ec` was served under a 434-byte
+`Content-Security-Policy` with a negative control passing 3/3 and the full matrix passing
+48/48, producing zero application CSP violations. **GSAP ran without `unsafe-inline` or
+`unsafe-eval`.** `Outfit Variable` and `Geist Mono Variable` were fetched from same-origin
+`/assets/fonts/...` resources under `font-src 'self'`. The candidate policy also allowed
+`data:` fonts, but r4 did not establish that allowance as necessary. **What closed is the
+question "is the page compatible"; what did not close is "is the header shipped"** — a local
+harness configured and served the enforcement header, but **no production response header was
+configured or enabled, no Traefik middleware was written, configured, or enabled, and no
+live-server access or production-infrastructure action occurred**. Writing that middleware
+remains this project's own work under D5.
+
+**The candidate policy's hashes are artifact-bound.** The candidate policy was validated
+against the production build generated from tree
+`e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`. Any new production build must be revalidated.
+Recompute a particular hash only when the corresponding inline script or style-attribute
+bytes change; unrelated output changes do not alter that digest. A stale hash fails closed:
+the asset is blocked, not silently permitted.
 
 ### A second, independent gate specific to this record
 
