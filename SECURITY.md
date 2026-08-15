@@ -65,8 +65,9 @@ claim about the application built on top of it.
 ## Current status — read this before relying on it
 
 **Renvor is pre-release and ships no runtime capability yet.** As of this writing the
-published crate exposes version constants only. There is presently no attack surface in
-the library itself. This policy is established now, ahead of any code, so that a reporting
+`renvor` crate in this repository exposes version constants only, and **nothing has been
+published to any registry** — `renvor`, `renvor-cli`, and `renover` are all absent from
+crates.io. There is presently no attack surface in the library itself. This policy is established now, ahead of any code, so that a reporting
 path exists from the first line of functionality rather than being retrofitted after the
 first incident.
 

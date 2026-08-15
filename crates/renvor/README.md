@@ -1,6 +1,9 @@
 # renvor
 
-Facade crate for the [Renvor](https://renvor.dev) framework.
+Facade crate for the [Renvor](https://github.com/renvor-rs/renvor) framework.
+
+> `renvor.dev` is reserved for the project but **serves no content yet**, so this README
+> links to the repository instead. It will point at the site once that site is deployed.
 
 ## This release provides no runtime capability
 

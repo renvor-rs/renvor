@@ -469,7 +469,7 @@ or modified files.**
 | `LICENSE-APACHE` | 11,358 | Fetched from the canonical source `https://www.apache.org/licenses/LICENSE-2.0.txt` (HTTP 200), sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, contains `END OF TERMS AND CONDITIONS` |
 | `LICENSE-MIT` | 1,096 | Standard MIT text, © 2026 Ahmed Anbar and the Renvor contributors |
 
-Byte-identical copies placed at `crates/renvor/` so the published crate carries both.
+Byte-identical copies placed at `crates/renvor/` so the crate carries both when it is published.
 Verified identical by sha256.
 
 ## 3m. T030 / T044 — shipped file set (`cargo package -p renvor --list`)
@@ -1451,7 +1451,7 @@ record. **Not remediated in this pass** — remediation was outside its authoris
   been breached.** Remediation deadlines are 14 days (High) and 30 days (Medium) from
   detection.
 - **Reachability**: all five are transitive npm dependencies of the **documentation site**.
-  The published crate has **zero dependencies** of any kind, and the packaged archive
+  The crate that would be published has **zero dependencies** of any kind, and the packaged archive
   contains 8 files, none from `docs/` (§3z.4). **None of these advisories reaches the
   crate that would be published.** `cargo deny check` passes because it governs the Cargo
   graph, which is genuinely clean — not because it was configured to overlook these.
@@ -3598,6 +3598,103 @@ Tracked in §6 (known limitations) with an owner and a target phase.
 
 `T113 is complete. It proves the landing repository's own CI and branch protection, and nothing else. It does NOT prove deployment readiness and it deploys nothing — T102, T106, T108, and T111 remain open, and no Renvor site is deployed. This section records read-only observations of GitHub and of three public hostnames; no repository, workflow, protection setting, server, DNS record, registry, environment, or credential was created, modified, or deleted.`
 
+## 3ax. T087 — runtime-capability and availability-claim audit (2026-08-15)
+
+T087 has two halves, and **they did not both pass on first inspection.** SC-013 — no runtime
+capability implemented — passed cleanly. FR-044 — no unshipped capability described as
+available — **failed in four places**, and the corrections are recorded below rather than
+folded in silently.
+
+### 3ax.1 SC-013 — no runtime framework capability is implemented. **Pass.**
+
+| Measure | Value |
+|---|---|
+| Rust source files, excluding `target/` and `node_modules/` | **2** — `crates/renvor/src/lib.rs`, `xtask/src/main.rs` |
+| Library code in `crates/renvor/src/lib.rs`, non-comment, non-blank, excluding `#[cfg(test)]` | **3 lines** |
+| Public items exported by `renvor` | **3**, all `pub const … : &str` — `VERSION`, `MSRV`, `EXECUTABLE` |
+| `pub fn`, `pub struct`, `pub trait`, `pub mod`, `macro_rules!`, `extern` | **0 of each** |
+| Dependencies of `renvor` | **0** |
+| `unsafe` | forbidden at the workspace level (`unsafe_code = "forbid"`) |
+
+**Method, stated because a single method can fail silently.** Two independent enumerations
+were run and agreed. `cargo public-api` is **not installed**, so it was not used and is not
+claimed. (1) **rustdoc** — `cargo doc -p renvor --no-deps --offline` produced exactly three
+item pages: `constant.VERSION.html`, `constant.MSRV.html`, `constant.EXECUTABLE.html`.
+(2) **grep** — `grep -rnE '^\s*pub(\s|\()' crates/renvor/src/` returned the same three lines,
+with a control pattern proven to match first.
+
+**Against the FR-047 exclusion list — zero of each**: application kernel, lifecycle,
+configuration, error taxonomy, dependency injection, command-line behaviour, project
+generation, HTTP, GraphQL, persistence, authentication, frontend or desktop output,
+installable-package machinery. `xtask` declares **`publish = false`** and is a fixed
+ten-step process runner — verification tooling, not framework capability — consistent with
+ADR-0002's thin-by-contract rule.
+
+### 3ax.2 FR-044 — four false availability claims found and corrected
+
+**All four asserted that the `renvor` crate is published. It is not.** Verified read-only on
+2026-08-15 against the crates.io **sparse index**, with a control proving the method:
+
+| Name | Result |
+|---|---|
+| `renvor` | **HTTP 404** |
+| `renvor-cli` | **HTTP 404** |
+| `renover` | **HTTP 404** |
+| `serde` *(control)* | **HTTP 200** |
+
+> **A bare `curl` to the crates.io API returns 403 from a bot gate, not 404.** Read without a
+> user agent, that 403 could be mistaken for "absent". Both the API and the sparse index were
+> queried with an explicit user agent, and the `serde` control proves a present crate returns
+> 200 through the same path.
+
+| # | Location | Was | Now |
+|---|---|---|---|
+| 1 | `SUPPORT.md` | "The **published** `renvor` crate exposes version constants only" | "**Nothing is published** — neither `renvor` nor `renvor-cli` exists on crates.io" |
+| 2 | `SECURITY.md` | "the **published** crate exposes version constants only" | "…and **nothing has been published to any registry**" |
+| 3 | `docs/docs/intro.mdx` | "The **published** `renvor` crate exposes three constants" | "…and it is **not published**, so there is no way to install it" |
+| 4 | `docs/src/pages/index.js` | "The **published** `renvor` crate exposes three constants" | same correction, on the docs-site home page |
+
+**Root cause, recorded because it is the reusable lesson.** This exact wording was caught once
+before: §3ai.4 records `framework/README.md` claiming "The published `renvor` crate exposes
+three constants" and corrects it. **The fix was applied to `README.md` alone and never
+generalised**, leaving four copies of the same sentence live — including the two
+highest-traffic reader surfaces. **Link checking cannot catch this**: a false factual claim is
+not a broken link. The defect class is *"a correction applied at the site where it was noticed
+rather than across every instance of the claim"*, and the guard against it is a repository-wide
+re-sweep after every factual correction, with a control proving the sweep can match.
+
+**Generalised in this pass.** A repository-wide sweep for any assertion that a crate *is*
+published found and corrected three further instances that the reader-facing sweep did not
+cover: `governance/phase-001-evidence.md` ×2 and `decisions/0002` (an accepted-costs bullet now
+reading "once it is published — **nothing is published today**"). One survivor is deliberate:
+`PLAN.md` §26.7 "a signed release tag or the published crate" names an artifact *class* in a
+build rule and asserts nothing about today.
+
+### 3ax.3 Two further corrections made in the same pass
+
+| Location | Defect | Correction |
+|---|---|---|
+| `docs/docs/governance.mdx` | Stated that **every** Phase 001 decision record "currently remains `proposed`… because one of W-002's compensating controls — all required CI checks passing — is not yet met". **Both halves stale**: five of six are `accepted`, and control 3 has been met since 2026-08-11 | Now states five accepted, ADR-0006 alone `proposed`, blocked on **T106** |
+| `crates/renvor/README.md` | Linked the project home to `https://renvor.dev`, which **serves no Renvor content**. This file ships inside the published crate, so it would have been the crate page's only home link — and `lychee.toml` EX-001 excludes that host, so link checking could never flag it | Points at the repository, with a note that it moves to the site once deployed |
+
+### 3ax.4 Categories swept and found clean
+
+Stated explicitly rather than omitted: **no** failing install instruction anywhere
+(`cargo add renvor`, `cargo install renvor-cli`, `renover new` appear nowhere as usable
+commands); **no** present-tense framework feature claim; **no** claim that any site is
+deployed or reachable; **no** version number implying a release — everything is `0.0.0`; **no**
+broken relative link in `README.md`. Each sweep was run with a control pattern proven to match
+before the result was trusted.
+
+**`PLAN.md` and `CONSTITUTION.md` CLI text is not a finding.** Describing a plan is not
+claiming a capability: `PLAN.md` is headed "Program execution authority" and states Renvor
+"**will be**"; the constitution uses MUST as a requirement on a framework not yet built. T087
+asks for that distinction to be preserved, and it is.
+
+### Boundary
+
+`SC-013 is met: zero runtime framework capabilities are implemented. FR-044 required four corrections in reader-facing documents plus three generalised elsewhere, all recorded above. This audit is read-only with respect to external systems — no crate, package, image, release, or tag was published, and no repository setting, server, DNS record, or credential was created, modified, or deleted. Nothing here makes any capability available; it removes claims that something already was.`
+
 ## 6. Known limitations
 
 Populated by T083. Each requires a named owner and a target phase.
@@ -3695,7 +3792,7 @@ The phase remains open while any row here is present.
 | ~~Website-code licence and brand-asset usage terms undecided~~ | ~~T098~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — option B: code `MIT OR Apache-2.0`, brand assets all rights reserved under `BRAND-POLICY.md`. File set validated, §3ak |
 | ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
 | **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** for the documentation site | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to Phase 012 (documentation deployment).** Verify when that image and SBOM are first produced, §3am. The Phase 001 fail-closed image-input guard stays in force. **The two High advisories remain unfixed, unsuppressed, and not waived.** *(Note: `renvor-site` now produces both a container and two SBOMs, but that is the **landing** pipeline; T108 concerns the **documentation** runtime, which still has neither.)* **Transferring it does not close it** |
-| **Open npm advisories in the documentation dependency tree** — originally 5 (3 High, 2 Medium) detected 2026-08-11T23:39:22Z; **2 closed, 3 remain** per §3aa. Documentation site only; the published crate has **zero dependencies** and is unaffected | Documentation site; any future release while open | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15.** The two High `image-size` advisories ride with **T108** to Phase 012; the moderate `uuid` advisory rides with **T109** into the recurring-obligations register (§7.2), reassessment **2026-09-11, not yet performed**. Full clause-5 advisory records are still outstanding. See §3z.10 and §3aa. **Transferring them does not close them** |
+| **Open npm advisories in the documentation dependency tree** — originally 5 (3 High, 2 Medium) detected 2026-08-11T23:39:22Z; **2 closed, 3 remain** per §3aa. Documentation site only; the crate that would be published has **zero dependencies** and is unaffected | Documentation site; any future release while open | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15.** The two High `image-size` advisories ride with **T108** to Phase 012; the moderate `uuid` advisory rides with **T109** into the recurring-obligations register (§7.2), reassessment **2026-09-11, not yet performed**. Full clause-5 advisory records are still outstanding. See §3z.10 and §3aa. **Transferring them does not close them** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |

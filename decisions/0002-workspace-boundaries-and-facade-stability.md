@@ -64,8 +64,9 @@ keep the public surface stable while the crates behind it change.
 
 **Accepted costs:**
 
-- **A near-empty published crate.** `renvor 0.0.0` does nothing. Anyone who finds it on
-  the registry learns only that the project exists. The crate description and README say
+- **A near-empty published crate**, once it is published — **nothing is published today**.
+  `renvor 0.0.0` does nothing. Anyone who finds it on the registry would learn only that
+  the project exists. The crate description and README say
   so explicitly rather than implying capability.
 - **`resolver = "3"` is load-bearing and easy to delete.** It looks redundant to anyone
   who knows edition 2024 defaults to resolver 3 — which is exactly the misunderstanding
