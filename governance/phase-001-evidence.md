@@ -1,8 +1,9 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **101 of 114 tasks complete**; the public repository is pushed, protected, and scanned; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26; T114 added 2026-08-14 by ADR-0006 D12). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **nothing has been published, tagged, or released**. The 13 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, T113, and T114.
+**Status**: Open — implementation in progress, **101 completed, 1 cancelled, 12 open (114 total)** — the cancelled task is **T114**, closed as not applicable rather than passed, so the raw Markdown checkbox count of 102 is 101 completed plus 1 cancelled; the framework repository is pushed, protected, and scanned, and all four repositories are public; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26; T114 added 2026-08-14 by ADR-0006 D12 and **cancelled 2026-08-15 by D13**, §3av). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **no crate, package, container image, release, or tag has been published, and no site has been deployed** — *(qualified 2026-08-15: this read "nothing has been published, tagged, or released", which became imprecise once `renvor-rs/renvor-infra` was **published as a public repository** on 2026-08-15, §3av. Publishing repository source is not publishing an artifact. Verified read-only 2026-08-15: `crates.io` returns **HTTP 404** for `renvor`, `renvor-cli`, and `renover`; all four repositories hold **zero releases and zero tags**; **no repository contains an image-publishing workflow** — the framework's seven workflows are `ci`, `docs`, `release-dry-run`, `release-tag-verify`, `security`, Dependabot, and CodeQL, `renvor-site` has `landing-ci` (top-level `contents: read`, no registry login, no `packages: write`) plus Dependabot, and `renvor-docs` and `renvor-infra` have **zero workflows and zero runs**; and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content. **GHCR was not independently enumerated** — the available token lacks `read:packages` and anonymous GHCR returns HTTP 403 without distinguishing absent from private — so the no-image statement rests on the absence of any publishing workflow and any run that could have performed one, not on a registry listing.)* The 12 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, and T113. **T114 is cancelled / not applicable, not complete** — the GitLab canonical cutover it gated was abandoned and its restore requirements were never met (§3av).
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
+**Current topology (2026-08-15, ADR-0006 D13)**: all four repositories — `renvor-rs/renvor`, `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, `renvor-rs/renvor-infra` — are **public on GitHub and canonical there**. **No Renvor repository is private**, and no Renvor process depends on GitLab. **This ledger is dated and append-only**: sections before §3av describe the state on their own dates, including sections written while repositories were private or planned as private. Read any earlier section as evidence of its date, and **§3av as current state**. ADR-0006 is still `proposed` pending T106.
 **Gates**: this record gates entry to Phase 002. It is complete only when every acceptance criterion below carries dated evidence and `open_blockers` is empty.
 
 ---
@@ -1461,8 +1462,10 @@ record. **Not remediated in this pass** — remediation was outside its authoris
 - **Owner**: Ahmed Anbar. **Named owner assignment and the full clause-5 advisory records
   are still outstanding** — this entry starts the trail, it does not complete it.
 
-**No release is blocked today**, because nothing is published and no release is in
-progress. The High advisories become release blockers under policy §7 the moment one is.
+**No release is blocked today**, because **no release artifact** is published and no release
+is in progress. *(Scope clarified 2026-08-15: "published" here means a crate, package, image,
+or release — repository **source** was later published for `renvor-infra`, §3av, which is not
+a release and blocks nothing.)* The High advisories become release blockers under policy §7 the moment one is.
 
 ## 3aa. T107–T109 — documentation dependency advisory triage (2026-08-12)
 
@@ -2698,6 +2701,25 @@ visibility is independent of repository visibility, so the sources stay private.
 carries only the built static site, already served publicly — publishing it discloses nothing
 a visitor could not already see.
 
+> **Correction appended 2026-08-15 — two clauses above are wrong, and one was wrong when
+> written.** The dated-evidence framing at the head of this ledger is not enough here, because
+> one of these was never true, not merely overtaken.
+>
+> - "*so the sources stay private*" — **stale.** True on 2026-08-12; **false since ADR-0006
+>   D13.** No Renvor repository is private. The load-bearing fact is the *independence* of
+>   package visibility from repository visibility, which is unaffected.
+> - "*already served publicly … nothing a visitor could not already see*" — **this was false
+>   on 2026-08-12 and is false now.** **No Renvor site has ever been deployed.** Measured
+>   2026-08-15, `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each resolve to the
+>   shared origin and return **HTTP 404**, with HTTPS failing validation against a public
+>   trust store because Traefik serves its default self-signed certificate. **Something
+>   answers; no Renvor content is served.** The argument holds as a property of the design
+>   once a site exists; it was never an observation.
+>
+> **The original wording above is left unedited** — this section is dated evidence, and the
+> error is part of what the record has to show. The same two clauses were corrected in place
+> in `PLAN.md` §26.4 and ADR-0006 D7, which are current-state documents rather than evidence.
+
 **The trade, stated so it is not inherited by accident**: image contents and pull counts
 become public, and the image cannot serve as a private distribution channel. Acceptable for a
 static site whose content is already public; **not** acceptable for an image carrying
@@ -3234,7 +3256,27 @@ bytes change; unrelated output changes do not alter that digest.
 
 `T101 complete. A local harness served the enforcement header; no production response header was configured or enabled, and no Traefik middleware was written, configured, or enabled. No live-server access or production-infrastructure action occurred — no deployment, image publication, DNS, server, Kubernetes, registry, environment, credential, Cloudflare, or private-key change was made. ADR-0006 remains proposed pending T106.`
 
-## 3au. ADR-0006 D12 — hybrid source-control topology decided; GitHub public for applications, private self-hosted GitLab for infrastructure (2026-08-14)
+## 3au. ADR-0006 D12 — hybrid source-control topology decided; GitHub public for applications, private self-hosted GitLab for infrastructure (2026-08-14) — **SUPERSEDED 2026-08-15, see §3av**
+
+> **Dated evidence, not current state.** This section records what was decided and verified on
+> **2026-08-14**, when the hybrid topology was accepted into `main`. It was superseded on
+> **2026-08-15** by ADR-0006 **D13** (all-public GitHub), recorded in **§3av**. **Everything
+> below is retained byte-for-byte as recorded on 2026-08-14** — only this heading and this
+> banner were added, and no cell, row, or sentence inside the section was edited or annotated.
+> Read it as describing 2026-08-14. **The GitLab cutover it anticipated never happened.**
+>
+> **Statements below that are false today are corrected here rather than inside the preserved
+> evidence. The list is illustrative, not exhaustive** — read every statement in this section
+> as describing 2026-08-14:
+>
+> - "**Infrastructure** | `renvor-infra` targets the private self-hosted GitLab instance at
+>   `gitlab.ahmedanbar.dev`. **Destination only — not canonical until T114**" — true on
+>   2026-08-14. **Superseded 2026-08-15**: `renvor-rs/renvor-infra` is public on GitHub and
+>   canonical there. Per the T114 cancellation record the cutover was abandoned before it ran;
+>   *the GitLab instance was deliberately not inspected, so no claim is made about its
+>   contents.*
+> - "**New gate** | **T114**…" and "*T113 and T114 are open*" — **T114 was cancelled on
+>   2026-08-15, not passed.** T113 remains open. See §3av.
 
 **This section records a decision and the preflight that authorised it. At the time of this
 commit the transition had not been executed**: `renvor-rs/renvor-site` and
@@ -3285,6 +3327,139 @@ no ref was force-updated, and no branch was deleted.
 ### Boundary
 
 `T113 and T114 are open. ADR-0006 remains proposed pending T106. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a decision and a preflight only — at commit time no repository visibility had changed, no GitLab group or project existed, no infrastructure content had been pushed, and no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, or private-key action had occurred.`
+
+## 3av. ADR-0006 D13 — public GitHub adopted for all four repositories; `renvor-infra` published and protected; T114 cancelled (2026-08-15)
+
+**D13 supersedes D12.** All four Renvor repositories are public on GitHub and canonical there.
+Private self-hosted GitLab is no longer part of the Renvor source-control topology. **D12 is
+preserved in ADR-0006 and in §3au as dated history; it was a real decision, accepted into
+`main` on 2026-08-14, and is not rewritten.**
+
+| Item | Result |
+|---|---|
+| **Decision** | ADR-0006 **D13**, dated 2026-08-15. Supersedes **D12** |
+| **Topology** | `renvor-rs/renvor`, `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, `renvor-rs/renvor-infra` — all GitHub, all public, all canonical |
+| **Surface** | GitHub is the source, review, and future CI surface for all four. **No Renvor process depends on GitLab** for source control, CI, registry, deployment, or disaster recovery |
+| **Registry** | **Unchanged.** T099 and D7 stand: public application images remain planned for GHCR. The GitLab Registry is not used |
+| **`renvor-docs`** | **Unchanged** — still public and deliberately commit-empty, still gated on its licence decision and **T108** |
+| **Deployment** | **None.** No server, DNS, Cloudflare, Kubernetes, GHCR, or production change. T102, T106, T108, T111, T113 all remain open |
+
+### `renvor-infra` publication (2026-08-15)
+
+| Check | Observed |
+|---|---|
+| Visibility | **PRIVATE → PUBLIC**, `renvor-infra` only. The other three repositories were not modified |
+| Initial commit | `aa52237f4af421e089c31cfe306faa5db7c25e08` — signed, GitHub `verified: true` (`reason: valid`), **zero parents**, no body, **zero trailers** |
+| Signing key | ED25519 `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM`, matching `governance/allowed-signers` and the GitHub-registered signing key |
+| Identity | author and committer both `Ahmed Anbar <admin@ahmedanbar.dev>` |
+| Committed tree | `7aaf7705946b0a91b7571167adf4aef1c4ba89f4`, identical local and remote |
+| Committed paths | exactly three — `.gitignore`, `README.md`, `assets/renvor-mark-v7.svg` |
+| Push | explicit non-force refspec `aa52237f4af421e089c31cfe306faa5db7c25e08:refs/heads/main`; no `--force`, `--mirror`, `--all`, `--tags`, wildcard, or `-u` |
+| Anonymous read | unauthenticated HTTPS `git ls-remote` with credential helpers disabled returned the exact SHA; raw `README.md` fetch returned HTTP 200 |
+| Write surface | 1 collaborator (the maintainer); 0 teams, 0 deploy keys, 0 webhooks |
+| Still empty of | 0 Actions runs, 0 releases, 0 environments, 0 variables, 0 Actions secrets, 0 tags, 0 forks; Pages absent |
+
+### Content minimisation before publication
+
+The `README.md` was rewritten for public release. **Removed**: the origin IPv4 address,
+component patch versions, authoritative nameserver names, the unrelated-namespace inventory,
+dated server-audit evidence, and the detailed description of absent edge protections.
+**Retained**: purpose, high-level architecture, the DNS-only decision, the
+additive-and-reversible principle, the workload security baseline, the no-plaintext-secret
+rule, links to the three sibling repositories, and licensing. `assets/renvor-mark-v7.svg` was
+preserved **byte-for-byte** (`237479dcac0732a3d2e7e072976a9a0acaa7e6134730e5db040d55fc5319ef5f`).
+
+**This is minimisation for a newly public repository. It is not a claim that previously
+published framework history became secret.**
+
+| File | SHA-256 | Bytes |
+|---|---|---|
+| `.gitignore` | `52be9559f966ea6c9fb183a6899bf4e4805e4680fc16f821e34f15faf90873f9` | 1751 |
+| `README.md` | `175f94ea78d5c40a935c56fee17baa5b8b76e29144dd9bf4f76727342f07fffc` | 4700 |
+| `assets/renvor-mark-v7.svg` | `237479dcac0732a3d2e7e072976a9a0acaa7e6134730e5db040d55fc5319ef5f` | 543 |
+
+**No Kubernetes manifest, deployment workflow, GitHub Actions workflow, credential, licence
+file, CODEOWNERS, or dependency file was added.**
+
+### Security audit before publication
+
+`gitleaks` 8.30.1, redacted mode, across **all four repositories** — complete Git history
+(framework 26 commits, site 14 commits) **and** filesystem including untracked files, because
+`renvor-docs` and `renvor-infra` are commit-empty and history scanning alone would have been
+vacuous for them. **Every scan exit 0, zero findings.** A filename-only scan for
+private-key-like files found **0** across all four repositories, so no such file needed to be
+opened and none was. The SVG was inspected structurally: no script, no event handler, no
+`javascript:` URL, no external resource, no `<image>`/`<use>`/`<foreignObject>`, no DOCTYPE or
+entity, no metadata, no base64 data URI — 1 `svg`, 1 `defs`, 1 `linearGradient`, 3 `stop`,
+3 `path`.
+
+### Protection, verified by read-back from GitHub
+
+| Setting | Value |
+|---|---|
+| Ruleset | id **`20889836`**, name **`main protection`**, target branch (default), enforcement **`active`** |
+| Bypass actors | **0** |
+| Rules active | `pull_request`, `required_signatures`, `required_linear_history`, `non_fast_forward`, `deletion` |
+| Pull-request parameters | 0 approvals required (sole maintainer), conversation resolution **required**, no CODEOWNERS review, no last-push approval, merge methods squash + rebase |
+| Required status checks | **none** — the repository has no CI yet |
+| Merge methods | squash ✅, rebase ✅, merge commit ❌, automatic branch deletion ❌ |
+| Secret scanning | **enabled** |
+| Push protection | **enabled** |
+| Vulnerability alerts | **enabled** |
+| Dependency graph | active |
+| Paid features | **none enabled, no trial started** |
+
+Verification was read-only. **No test force push or destructive test was performed.** Rules
+were confirmed to apply to `refs/heads/main` via the repository rules endpoint.
+
+### T114 cancelled — not passed
+
+**T114 is closed as CANCELLED / NOT APPLICABLE.** The GitLab canonical cutover it gated was
+abandoned. Recorded precisely:
+
+- **(a)** an encrypted off-VPS backup **was created** on 2026-08-14;
+- **(b)** the exact-version isolated restore proof **never completed**, and **no restore
+  result was accepted**;
+- **(c)** matching restored repository refs and hashes were **never proven**;
+- **(d)** **no RPO or RTO figure was measured**; no GitLab RPO or RTO guarantee is claimed;
+- **(e)** the separate human cutover approval was **never granted**, because the cutover was
+  cancelled.
+
+On **2026-08-15 Ahmed Anbar intentionally deleted** the local Phase 3 and Phase 4 GitLab
+backup and evidence directory **`/Users/ahmedanbar/Backups`**. **None of those local backup
+artifacts is preserved.** This statement is scoped to that directory alone and makes **no
+claim about any unrelated backup held elsewhere**.
+
+**Public GitHub now provides failure-domain separation for Git repository content**, which is
+what T114 existed to protect. **GitHub does not preserve GitLab-specific issues, variables,
+users, logs, packages, registry content, or other GitLab metadata**, and no claim is made that
+it does.
+
+**Self-hosted GitLab was not deleted, decommissioned, or modified.** No GitLab deletion or
+decommissioning is authorised by this record.
+
+**This is the cancellation of an obsolete conditional gate. It is not successful completion of
+its recovery requirements, and the checked box in `tasks.md` must never be read as one.**
+
+### Task counts, recalculated mechanically
+
+Counted from `specs/001-governance-foundation/tasks.md` by matching `^- \[[ xX]\] `:
+
+| Measure | Value |
+|---|---|
+| Total tasks | **114** |
+| Completed normally | **101** |
+| Cancelled / not applicable | **1** — T114 |
+| Open | **12** — T082–T085, T087–T088, T102, T106, T108–T109, T111, T113 |
+| Raw Markdown checked entries | **102** = 101 completed + 1 cancelled |
+
+**Read as `101 completed, 1 cancelled, 12 open (114 total)`. The figure 102 is the raw
+checkbox count and must not be reported as 102 tasks completed.** No replacement task was
+added; there is no T115.
+
+### Boundary
+
+`ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
 
 ## 6. Known limitations
 

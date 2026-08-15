@@ -759,7 +759,7 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Acceptance:** clean checkout passes formatting/lint/test/doc placeholders; secrets and build output are ignored; workflow permissions are minimal; all public names are confirmed; no ADR is falsely marked accepted; release dry-run workflow can package a placeholder internal crate without publishing.
 
-**Web properties (Section 26):** Phase 001 records the four-repository topology, ownership, security boundaries, and the deployment decision process only. It does **not** create the private repositories, provision infrastructure, change DNS, or deploy any site. Each of those is a separate approval gate.
+**Web properties (Section 26):** Phase 001 records the four-repository topology, ownership, security boundaries, and the deployment decision process only. It does **not** provision infrastructure, change DNS, or deploy any site. Each of those is a separate approval gate. *(Wording corrected 2026-08-15 — this read "does not create the private repositories"; under ADR-0006 D13 no Renvor repository is private, and the three companion repositories now exist. Their creation did not deploy anything and closed no gate.)*
 
 ### Phase 002 — Core kernel, errors, configuration, and lifecycle
 
@@ -1512,41 +1512,80 @@ are unchanged. Decisions here are recorded in ADR-0005 and ADR-0006.
 
 ### 26.1 Repository topology
 
-*(Revised 2026-08-14 by maintainer decision — ADR-0006 D12. This section previously placed
-all four repositories on GitHub and made three of them private. The table below is current;
-the superseded model and the reasoning for replacing it are recorded in ADR-0006 D12, which
-does not rewrite the original decision.)*
+*(Revision note 2026-08-14, now itself dated — ADR-0006 D12. This section previously placed
+all four repositories on GitHub and made three of them private. That note went on to say "the
+table below is current", which described the table **as it stood on 2026-08-14** and no longer
+describes the table below. The superseded model and the reasoning for replacing it are
+recorded in ADR-0006 D12, which does not rewrite the original decision.)*
 
-Four repositories, no longer on one host and no longer sharing one visibility:
+*(Revised 2026-08-15 — ADR-0006 **D13**, which supersedes **D12**. This section previously
+recorded a hybrid topology with `renvor-infra` on a private self-hosted GitLab instance. That
+was the operative decision from 2026-08-14 until 2026-08-15. **D12 is preserved in ADR-0006 as
+dated history**; what follows is current state. **ADR-0006 is still `proposed` pending T106**,
+so the table below records an observed live fact and the maintainer's direction; the record
+carries no accepted normative authority until that acceptance gate closes.)*
+
+Four repositories, all public on GitHub, all canonical there:
 
 | Repository | Host | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|---|
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
-| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
-| `renvor-infra` | **Private self-hosted GitLab** (`gitlab.ahmedanbar.dev`) | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **to be served** at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | **Will be** the production documentation site at `docs.renvor.dev`; **commit-empty today**, so it is a reserved destination, not yet a source of truth | Framework source copied by hand, cluster credentials |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | **Will be** Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation; **today a `README.md`, a `.gitignore`, and the brand mark — no manifest** | Application source, plaintext secrets of any kind |
 
-**GitHub is the source, review, and CI surface for all three application properties.** Branch
-protection, required checks, and pull-request review stay on GitHub. The GitLab instance runs
-no application CI and no registry for Renvor.
+**GitHub is the source, review, and future CI surface for all four repositories.** *("future"
+added 2026-08-15 — `renvor-docs` and `renvor-infra` have zero workflows and zero runs, so
+GitHub is not yet a CI surface for them. This now matches ADR-0006 D13 and
+`governance/phase-001-evidence.md` §3av, which both already read "future CI surface".)* **No
+Renvor process reads from, writes to, or depends on a GitLab instance** for source control,
+CI, registry, deployment, or disaster recovery.
 
-**`renvor-rs/renvor-docs` is public and deliberately commit-empty.** It receives no commit —
-no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
-permits migration**. Until both hold, `framework/docs` remains authoritative. See ADR-0006
-D12 and §26.12.
+**Protection and required checks are a requirement on each repository, not a description of
+all four.** *(Corrected 2026-08-15 — this previously asserted that branch protection, required
+checks, and pull-request review already lived on GitHub "for every one of them", which was
+false for two of the four.)* Observed 2026-08-15:
 
-**`renvor-infra` is not yet canonical on GitLab.** The cutover is gated on **T114** (encrypted
-off-VPS backup with a proven restore). Until T114 passes, the GitHub `renvor-infra`
-repository is preserved, private, and empty as a temporary recovery placeholder.
+| Repository | `main` protected | Required status checks observed |
+|---|---|---|
+| `renvor-rs/renvor` | yes — pull request, strict checks, administrators included, conversation resolution, force push and deletion blocked | 4 — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` |
+| `renvor-rs/renvor-site` | yes — same controls | 5 — `build`, `accessibility`, `links`, `dependencies`, `container` |
+| `renvor-rs/renvor-infra` | yes, by ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **none** — the repository has no CI yet |
+| `renvor-rs/renvor-docs` | **no** — commit-empty, so no `main` branch exists to protect and no protection or ruleset is configured | **none** — no commits, no workflows |
+
+Bringing `renvor-infra` and `renvor-docs` up to the full control set is future work gated on
+those repositories acquiring CI and content respectively. **Neither gap is closed by this
+record, and neither may be described as satisfied.**
+
+**`renvor-rs/renvor-docs` is the public canonical *destination* for the production
+documentation site, and it is deliberately commit-empty.** It has no commits and receives none
+— no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
+permits migration**. **Until that separately reviewed migration happens, `framework/docs` is
+the authoritative documentation content**, and the empty repository is a reserved name and a
+statement of intent rather than a source of truth. **Unchanged by D13.** See ADR-0006 D13 and
+§26.12.
+
+**`renvor-rs/renvor-infra` is public and canonical**, published 2026-08-15 at signed commit
+`aa52237f4af421e089c31cfe306faa5db7c25e08`, protected by active ruleset `20889836` requiring
+pull requests, signed commits, linear history, conversation resolution, and blocking force
+pushes and branch deletion with zero bypass actors. It contains a README, a `.gitignore`, and
+the brand mark — **no Kubernetes manifest and no deployment workflow. Publishing it deployed
+nothing and closed no deployment gate.**
 
 **Image publication is unaffected.** Public application images remain planned for **GitHub
-Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used**; moving
-infrastructure source to that host does not move the registry to it.
+Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used** and
+remains rejected on the original T099 grounds.
 
-**Private source, public site.** A private repository does not imply a private website, and
-the reverse also holds: the two application repositories that became public in 2026-08-14
-were already intended to serve public content. All four deployed properties are publicly
-reachable.
+**All source public. No site deployed.** *(Revised 2026-08-15 — D13. This previously read
+"Private source, public site" and reasoned about a private repository, which no longer exists.
+A first attempt at the correction then claimed "all deployed properties are publicly
+reachable"; **that was false and is retracted here — no Renvor site has ever been
+deployed**.)* The two application repositories became public on 2026-08-14 and `renvor-infra`
+followed on 2026-08-15; each was already intended to serve or describe public content. **All
+four repositories are publicly readable. No Renvor site is deployed, no image is published,
+and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content.** Repository visibility
+and website visibility remain separate decisions — repository visibility is a current fact,
+site visibility is a future gate, and neither implies the other.
 
 **The framework repository never depends on the other three.** Compiling, testing,
 packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
@@ -1613,8 +1652,10 @@ is recorded in ADR-0006 D4 and its Consequences.
 image storage with a scoped pull credential; the publication model changed, so the credential
 requirement is removed rather than restated.)*
 
-Every deployed property ships as a container image built from a private repository and
-published to **GitHub Container Registry (`ghcr.io`)**:
+Every deployed property ships as a container image built from its own repository and
+published to **GitHub Container Registry (`ghcr.io`)**: *(wording corrected 2026-08-15 — this
+read "built from a private repository"; no Renvor repository is private, and the registry
+decision itself is unchanged)*
 
 - images are built by repository automation, never by hand on the server;
 - publishing authenticates with the **workflow run's short-lived `GITHUB_TOKEN`**, under
@@ -1624,9 +1665,17 @@ published to **GitHub Container Registry (`ghcr.io`)**:
   scoped to the run and revoked when it ends;
 - the **deployment image is publicly pullable**, so the cluster stores **no
   `imagePullSecret` and no registry credential at all**. Package visibility is independent of
-  repository visibility, so the source stays private. The image contains only the built
-  static site, which is already served publicly — publishing it discloses nothing a visitor
-  could not already see;
+  repository visibility. *(Corrected 2026-08-15 — this continued "so the source stays private.
+  The image contains only the built static site, which is already served publicly". **Both
+  clauses were false**: no Renvor repository is private under ADR-0006 D13, and **no Renvor
+  site is served at all** — measured 2026-08-15, `renvor.dev`, `docs.renvor.dev`, and
+  `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, over plain HTTP
+  or over HTTPS with certificate validation bypassed; against a public trust store the TLS
+  handshake fails, because Traefik serves its default self-signed certificate. **Something
+  answers; no Renvor content is served.**)* The image **will contain** only the built static
+  site, intended to be served publicly at `renvor.dev`; **once that site is deployed**,
+  publishing the image will disclose nothing a visitor could not already see. **That is a
+  property of the design, not an observation** — nothing is deployed today;
 - images are referenced **by immutable digest** in deployment manifests, never by a mutable
   tag such as `latest`;
 - images carry a signature, an SBOM, and build provenance;
@@ -1680,10 +1729,12 @@ records the exact tag or digest it built from, so any published page can be trac
 framework revision it describes.
 
 **Rust API documentation and crate metadata remain docs.rs- and crates.io-compatible.** The
-private documentation site is an addition, never a replacement, and never a prerequisite for
-publishing a crate.
+separate documentation site is an addition, never a replacement, and never a prerequisite for
+publishing a crate. *(Corrected 2026-08-15 — this read "The private documentation site". Wrong
+twice: `renvor-rs/renvor-docs` is public, and **no documentation site exists** — the
+repository is commit-empty.)*
 
-### 26.8 How private website repositories consume the public framework
+### 26.8 How the website repositories consume the public framework
 
 The website repositories consume the framework only through **published, versioned
 artifacts**: a release tag, a published crate, or a release asset addressed by digest.
@@ -1706,10 +1757,22 @@ No repository — public or private — contains a plaintext secret.
 
 ### 26.10 Independent review and release
 
-Landing, documentation, and deployment change independently. Each of the three private
-repositories has a protected `main`, required pull requests, required checks, a separate
-preview gate, and a protected production environment. A landing-page change cannot ship a
-documentation change, and neither can ship a cluster change.
+Landing, documentation, and deployment change independently. Each of the three companion
+repositories **must have** a protected `main`, required pull requests, required checks, a
+separate preview gate, and a protected production environment. A landing-page change cannot
+ship a documentation change, and neither can ship a cluster change.
+
+*(Corrected 2026-08-15 — this read "Each of the three private repositories **has**…", which
+stated a requirement as an accomplished fact and described repositories that are no longer
+private. **Only `renvor-rs/renvor-site` currently meets the protection and required-checks
+half of this**; `renvor-rs/renvor-infra` is protected but has no required checks, and
+`renvor-rs/renvor-docs` is commit-empty and unprotected. **No companion repository has a
+preview gate or a protected production environment**: `renvor-site`, `renvor-docs`, and
+`renvor-infra` each have **zero GitHub environments**, and creating them is future deployment
+work. The framework repository has exactly one environment, `release` — a crates.io publishing
+gate with required reviewers and a branch policy, carrying **zero deployments** — which is not
+a site preview or production environment and does not satisfy this clause for anything. See
+§26.1.)*
 
 ### 26.11 Integration with the phased roadmap
 
@@ -1717,7 +1780,7 @@ This section changes no phase boundary. It adds obligations to existing phases:
 
 | Phase | Obligation added |
 |---|---|
-| **Phase 001** | Record the topology, ownership, security boundaries, and the deployment decision process. Phase 001 does **not** create the private repositories, provision infrastructure, or deploy anything. |
+| **Phase 001** | Record the topology, ownership, security boundaries, and the deployment decision process. Phase 001 does **not** provision infrastructure or deploy anything. *(Wording corrected 2026-08-15 — this read "does not create the private repositories"; no Renvor repository is private under ADR-0006 D13, and repository creation is not provisioning or deployment.)* |
 | **Phase 012** | Prepare the complete versioned production documentation set on `docs.renvor.dev`. |
 | **Phase 013** | REST 1.0 documentation and landing content may make general-availability claims **only after** the Phase 013 release gates pass and the crates are publicly installable. |
 | Later release phases | The same two sites are updated for the GraphQL, full-stack, desktop, and package releases, under the same truthfulness rule. |
