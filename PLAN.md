@@ -1517,36 +1517,48 @@ all four repositories on GitHub and made three of them private. The table below 
 the superseded model and the reasoning for replacing it are recorded in ADR-0006 D12, which
 does not rewrite the original decision.)*
 
-Four repositories, no longer on one host and no longer sharing one visibility:
+*(Revised 2026-08-15 — ADR-0006 **D13**, which supersedes **D12**. This section previously
+recorded a hybrid topology with `renvor-infra` on a private self-hosted GitLab instance. That
+was the operative decision from 2026-08-14 until 2026-08-15. **D12 is preserved in ADR-0006 as
+dated history**; what follows is current state.)*
+
+Four repositories, all public on GitHub, all canonical there:
 
 | Repository | Host | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|---|
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
 | `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
 | `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
-| `renvor-infra` | **Private self-hosted GitLab** (`gitlab.ahmedanbar.dev`) | **Private** | Kubernetes manifests, ingress, TLS configuration, and operational runbooks | Application source, plaintext secrets of any kind |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation | Application source, plaintext secrets of any kind |
 
-**GitHub is the source, review, and CI surface for all three application properties.** Branch
-protection, required checks, and pull-request review stay on GitHub. The GitLab instance runs
-no application CI and no registry for Renvor.
+**GitHub is the source, review, and CI surface for all four repositories.** Branch protection,
+required checks, and pull-request review live on GitHub for every one of them. **No Renvor
+process reads from, writes to, or depends on a GitLab instance** for source control, CI,
+registry, deployment, or disaster recovery.
 
 **`renvor-rs/renvor-docs` is public and deliberately commit-empty.** It receives no commit —
 no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
-permits migration**. Until both hold, `framework/docs` remains authoritative. See ADR-0006
-D12 and §26.12.
+permits migration**. Until both hold, `framework/docs` remains authoritative. **Unchanged by
+D13.** See ADR-0006 D13 and §26.12.
 
-**`renvor-infra` is not yet canonical on GitLab.** The cutover is gated on **T114** (encrypted
-off-VPS backup with a proven restore). Until T114 passes, the GitHub `renvor-infra`
-repository is preserved, private, and empty as a temporary recovery placeholder.
+**`renvor-rs/renvor-infra` is public and canonical**, published 2026-08-15 at signed commit
+`aa52237f4af421e089c31cfe306faa5db7c25e08`, protected by active ruleset `20889836` requiring
+pull requests, signed commits, linear history, conversation resolution, and blocking force
+pushes and branch deletion with zero bypass actors. It contains a README, a `.gitignore`, and
+the brand mark — **no Kubernetes manifest and no deployment workflow. Publishing it deployed
+nothing and closed no deployment gate.**
 
 **Image publication is unaffected.** Public application images remain planned for **GitHub
-Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used**; moving
-infrastructure source to that host does not move the registry to it.
+Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used** and
+remains rejected on the original T099 grounds.
 
-**Private source, public site.** A private repository does not imply a private website, and
-the reverse also holds: the two application repositories that became public in 2026-08-14
-were already intended to serve public content. All four deployed properties are publicly
-reachable.
+**All source public, all sites public.** *(Revised 2026-08-15 — D13. This previously read
+"Private source, public site" and reasoned about a private repository, which no longer
+exists.)* The two application repositories became public on 2026-08-14 and `renvor-infra`
+followed on 2026-08-15; each was already intended to serve or describe public content. **All
+four repositories and all deployed properties are publicly reachable.** Repository visibility
+and website visibility remain separate decisions — this alignment is a current fact, not a
+rule that one implies the other.
 
 **The framework repository never depends on the other three.** Compiling, testing,
 packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
@@ -1613,8 +1625,10 @@ is recorded in ADR-0006 D4 and its Consequences.
 image storage with a scoped pull credential; the publication model changed, so the credential
 requirement is removed rather than restated.)*
 
-Every deployed property ships as a container image built from a private repository and
-published to **GitHub Container Registry (`ghcr.io`)**:
+Every deployed property ships as a container image built from its own repository and
+published to **GitHub Container Registry (`ghcr.io`)**: *(wording corrected 2026-08-15 — this
+read "built from a private repository"; no Renvor repository is private, and the registry
+decision itself is unchanged)*
 
 - images are built by repository automation, never by hand on the server;
 - publishing authenticates with the **workflow run's short-lived `GITHUB_TOKEN`**, under

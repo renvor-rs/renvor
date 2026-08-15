@@ -252,7 +252,12 @@ in — are untouched by where the manifests are stored.
 
 ---
 
-## 5. Topology revision — 2026-08-14 (ADR-0006 D12)
+## 5. Topology revision — 2026-08-14 (ADR-0006 D12) — **SUPERSEDED 2026-08-15, see §6**
+
+> **This section is dated history, not current state.** It records the hybrid topology that
+> was operative from 2026-08-14 until 2026-08-15, when **ADR-0006 D13** replaced it with
+> all-public GitHub. It is retained unchanged because it is the record of what was decided
+> and why. **§6 states what is current.**
 
 Sections 1–4 above were written when all four repositories were planned as private GitHub
 repositories. That model is superseded. **The sections above are retained as the dated record
@@ -263,7 +268,7 @@ of what was planned and verified at the time; this section states what is curren
 | `renvor-rs/renvor` | GitHub | Public | Unchanged |
 | `renvor-rs/renvor-site` | GitHub | **Public** | Source, review, and CI on GitHub |
 | `renvor-rs/renvor-docs` | GitHub | **Public** | **Commit-empty.** No README, licence, `.gitignore`, or workflow |
-| `renvor-infra` | **Private self-hosted GitLab** | Private | Destination only — **not canonical until T114** |
+| `renvor-infra` | **Private self-hosted GitLab** | Private | *(as of 2026-08-14; superseded 2026-08-15 — see §6)* Destination only — **not canonical until T114** |
 
 ### 5.1 Why `renvor-docs` stays commit-empty
 
@@ -307,3 +312,78 @@ depends on — the same reasoning that rejected the GitLab registry under T099.
   `publish` must succeed from a clone of `renvor-rs/renvor` alone.
 - **Deployment.** Nothing here deploys anything. T102, T106, T108, T111, T113, and T114 all
   remain open, ADR-0006 remains `proposed`, and Phase 001 is not complete.
+
+---
+
+## 6. Topology revision — 2026-08-15 (ADR-0006 D13, supersedes D12)
+
+**All four repositories are public on GitHub and canonical there.** §5 is superseded and
+retained above as dated history. This section states what is current.
+
+| Repository | Host | Visibility | Canonical | Status 2026-08-15 |
+|---|---|---|---|---|
+| `renvor-rs/renvor` | GitHub | Public | **Yes** | Unchanged |
+| `renvor-rs/renvor-site` | GitHub | Public | **Yes** | Source, review, and CI on GitHub |
+| `renvor-rs/renvor-docs` | GitHub | Public | **Yes** | **Commit-empty, unchanged** — §5.1 still governs |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | **Yes** | Published at signed commit `aa52237f4af421e089c31cfe306faa5db7c25e08` |
+
+### 6.1 The infrastructure repository was published, not deployed
+
+The local `infra` README and brand asset described in §3 were published to
+`renvor-rs/renvor-infra` on 2026-08-15 as a single signed root commit containing exactly
+three paths: `.gitignore`, `README.md`, and `assets/renvor-mark-v7.svg`.
+
+The README was **rewritten for public release** before publication. Removed: the origin IPv4
+address, component patch versions, authoritative nameserver names, the unrelated-namespace
+inventory, dated server-audit evidence, and the detailed description of absent edge
+protections. Retained: purpose, high-level architecture, the DNS-only decision, the
+additive-and-reversible principle, the workload security baseline, the no-plaintext-secret
+rule, and licensing. The brand mark was preserved byte-for-byte. **This is minimisation for a
+newly public repository. It is not a claim that previously published framework history became
+secret.**
+
+**No Kubernetes manifest, deployment workflow, GitHub Actions workflow, credential, licence
+file, CODEOWNERS, or dependency file was added.** Publishing the repository deployed nothing.
+
+Protection, verified by read-back from GitHub: ruleset `20889836` (`main protection`,
+enforcement `active`, target default branch, **zero bypass actors**) requiring pull requests
+with zero approvals for the sole maintainer, conversation resolution, signed commits, and
+linear history, while blocking force pushes and branch deletion. Secret scanning, push
+protection, and vulnerability alerts are enabled; merge commits are disabled with squash and
+rebase allowed.
+
+### 6.2 The GitLab cutover was abandoned and T114 is cancelled
+
+**§5.2's cutover never happened.** An encrypted off-VPS backup was created on 2026-08-14, but
+the **exact-version isolated restore proof never completed and no restore result was
+accepted**; **matching repository refs and hashes were never proven**; **no RPO or RTO figure
+was measured**; and the **separate cutover approval was never granted**, because the cutover
+was cancelled.
+
+On **2026-08-15 the maintainer intentionally deleted** the local Phase 3 and Phase 4 GitLab
+backup and evidence directory `/Users/ahmedanbar/Backups`. **None of those local backup
+artifacts is preserved.** This statement is scoped to that directory alone and makes no claim
+about any unrelated backup held elsewhere.
+
+**T114 is closed as cancelled / not applicable, not as passed.** D13 removes the gate by
+removing its subject: infrastructure source lives on public GitHub, so no infrastructure
+history sits on the VPS and no GitLab restore is required for Renvor recovery.
+
+**What this does and does not guarantee.** Public GitHub plus local working copies provide
+failure-domain separation for **Git repository content**. They do **not** preserve
+GitLab-specific issues, variables, users, logs, packages, registry content, or any other
+GitLab metadata, and no such claim is made. **No GitLab RPO or RTO guarantee is claimed.**
+
+**Self-hosted GitLab was not deleted, decommissioned, or modified.** It simply is not part of
+the Renvor topology, and no Renvor source-control, CI, registry, deployment, or recovery
+process depends on it.
+
+### 6.3 What this revision does not change
+
+- **T099 and GHCR.** Public application images remain planned for GitHub Container Registry.
+  The GitLab Registry is not used and remains rejected on the original T099 grounds.
+- **T108 and the `renvor-docs` licence gate.** Untouched. §5.1 continues to govern.
+- **The framework's independence.** §2.3 still holds.
+- **Deployment.** Nothing here deploys anything. **T102, T106, T108, T111, and T113 remain
+  open**, ADR-0006 remains `proposed`, and Phase 001 is not complete. No server, DNS,
+  Cloudflare, Kubernetes, GHCR, or production state was modified.
