@@ -282,8 +282,10 @@ in — are untouched by where the manifests are stored.
 > - the table row "`renvor-infra` | **Private self-hosted GitLab** | Private | Destination
 >   only — **not canonical until T114**" was true on 2026-08-14. **Superseded 2026-08-15**:
 >   `renvor-rs/renvor-infra` is public on GitHub and canonical there.
-> - "*T102, T106, T108, T111, T113, and T114 all remain open*" — **T114 was cancelled on
->   2026-08-15, not passed.** The other five remain open. See §6.2.
+> - "*T102, T106, T108, T111, T113, and T114 all remain open*" — **none of the six is open
+>   today.** **T114 was cancelled** and **T106 and T113 were completed** on 2026-08-15;
+>   **T102, T108, and T111 were transferred and remain non-completed**, which is not the same
+>   as open. See §6.2 and §6.3.
 
 Sections 1–4 above were written when all four repositories were planned as private GitHub
 repositories. That model is superseded. **The sections above are retained as the dated record

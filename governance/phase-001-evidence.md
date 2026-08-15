@@ -3931,9 +3931,19 @@ byte-for-byte preservation claim made in the same commit.
 ### 3az.4 The other half of T088 — zero open blockers
 
 T088 also requires confirming zero open blockers. **Satisfied by categorisation, not by
-rewording**: every remaining item in §8 is explicitly **transferred** (T102, T108, T109, T111)
-or **cancelled** (T114), each with an owner and a named destination, and each still counted as
-non-completed. **No blocker was closed by being restated.**
+rewording** — and the categorisation has **three** kinds, not two:
+
+- **Transferred** — T102, T108, T109, T111, each with an owner and a named destination, each
+  still counted as non-completed.
+- **Cancelled** — T114, whose subject ceased to exist and whose requirements were never met.
+- **Carried** — the shared server's absent backups. **This one is neither transferred nor
+  cancelled**, and saying so matters: it is a real, unremediated exposure belonging to
+  **unrelated third-party workloads**, which **T106 explicitly declined to own or fix**. It
+  stays in §8, un-struck, as a standing record. *(An earlier wording of this paragraph said
+  every remaining item was transferred or cancelled. That was false — it silently absorbed a
+  carried exposure into two categories that both imply someone has taken responsibility.)*
+
+**No blocker was closed by being restated.**
 
 ### Boundary
 
@@ -4090,7 +4100,7 @@ accompany a date, and the obligation fires at whichever arrives first.
 
 ## 8. Open blockers
 
-The phase remains open while any row here is present.
+**The phase remains open while any row here is *uncategorised*.** *(Narrowed 2026-08-15. The rubric previously read "while any row here is present", which no closure could ever satisfy — struck-through resolved rows are retained deliberately as history, so the table is never empty.)* A row may remain here at closure **only** if it is explicitly **resolved**, **transferred** to a named destination, **cancelled**, or **carried** as an unremediated exposure with a stated owner. **A row with no category is an open blocker and blocks the phase.**
 
 | Blocker | Blocks | Owner | Raised | State |
 |---|---|---|---|---|
@@ -4098,7 +4108,7 @@ The phase remains open while any row here is present.
 | ~~T041 cannot reach exit 0~~ | ~~Phase closure~~ | Maintainer | 2026-08-11 | **resolved** — task order corrected, both toolchains exit 0, §3q/§3r |
 | ~~T052 delivery test not confirmed~~ | ~~T052~~ | Maintainer | 2026-08-11 | **resolved** — maintainer attestation of arrival, §3t. Note: only delivery was tested; SPF/DKIM/DMARC and external-sender deliverability are **not** claimed |
 | ~~T043 literal form unmet~~ | ~~T043~~ | Maintainer | 2026-08-11 | **resolved** — step 10 reports a clean tree, §3r |
-| ~~**All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted~~ | ~~T026, T039, T040 acceptance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — the workflows exist and run, so W-002 control 3 is met: `main` requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with `enforce_admins: true`. **5 of 6 records are `accepted`** — ADR-0001 through ADR-0005, each with reviewer `Ahmed Anbar — self-review under W-002` and a review date. **ADR-0006 alone remains `proposed`**, blocked on **T106**, which is a different blocker and is listed separately |
+| ~~**All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted~~ | ~~T026, T039, T040 acceptance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — the workflows exist and run, so W-002 control 3 is met: `main` requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with `enforce_admins: true`. **all six records are `accepted`** — ADR-0001 through ADR-0006, each with reviewer `Ahmed Anbar — self-review under W-002` and a review date. ADR-0006 was the last, accepted once **T106** closed the same day. *(This cell first read "5 of 6 … ADR-0006 alone remains `proposed`", which was true for part of 2026-08-15 and stale by the end of it. **§8 is a live table, so a dated-but-stale current claim here is a defect**, not history.)* |
 | ~~Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated~~ | ~~Release-control assurance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — verified read-only against the API: `orgs/renvor-rs/memberships/AhmedAnbar` returns `role: admin`, `state: active`, and `orgs/renvor-rs/members?role=admin` returns exactly `["AhmedAnbar"]`, so the account is an org owner and the **sole** one. **Method limit, stated:** this is GitHub's authoritative record read as that account; it is not a third-party attestation, and the single-owner fact is itself a concentration risk rather than a control |
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
 | ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
@@ -4110,7 +4120,7 @@ The phase remains open while any row here is present.
 | ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
 | **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** for the documentation site | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to Phase 012 (documentation deployment).** Verify when that image and SBOM are first produced, §3am. The Phase 001 fail-closed image-input guard stays in force. **The two High advisories remain unfixed, unsuppressed, and not waived.** *(Note: `renvor-site` now produces both a container and two SBOMs, but that is the **landing** pipeline; T108 concerns the **documentation** runtime, which still has neither.)* **Transferring it does not close it** |
 | **Open npm advisories in the documentation dependency tree** — originally 5 (3 High, 2 Medium) detected 2026-08-11T23:39:22Z; **2 closed, 3 remain** per §3aa. Documentation site only; the crate that would be published has **zero dependencies** and is unaffected | Documentation site; any future release while open | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15.** The two High `image-size` advisories ride with **T108** to Phase 012; the moderate `uuid` advisory rides with **T109** into the recurring-obligations register (§7.2), reassessment **2026-09-11, not yet performed**. Full clause-5 advisory records are still outstanding. See §3z.10 and §3aa. **Transferring them does not close them** |
-| **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
+| **No backup tooling or cluster snapshots on the production VPS** — all state for the unrelated production namespaces sits in one unreplicated datastore. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability; **formerly ADR-0006 acceptance via T106** | Maintainer | 2026-08-11 | **CARRIED — recorded, not owned, and explicitly not remediated.** **T106 ruled on it 2026-08-15** (§3ay): the gap does **not** block deployment of Renvor's **stateless** properties, and the ruling **remediates nothing** for the unrelated namespaces. **The exposure is unchanged and is not Renvor's to close.** Any **stateful** Renvor workload stays blocked until separately reviewed backup and restore controls exist |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
 | ~~T008 candidate names~~ | ~~T019, T020, T021~~ | Maintainer | 2026-08-11 | resolved — `governance/name-availability.md` |

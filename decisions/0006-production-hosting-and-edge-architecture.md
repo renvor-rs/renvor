@@ -405,6 +405,10 @@ Consequences:
 > - "*Branch protection, required checks, and pull-request review stay on GitHub*" — this
 >   described where those controls live, not that every repository had them. It did not then
 >   and does not now. See D13 and `PLAN.md` §26.1 for the observed per-repository state.
+> - the Status row "*This record stays `proposed`; T113 and T114 stay open*" — **this record
+>   was accepted on 2026-08-15**, once T106 closed. The record's own state is the one thing a
+>   reader is most likely to take from a decision record, so it is called out here explicitly
+>   rather than left to the blanket "read as 2026-08-14" instruction above.
 
 **Application source, review, and CI live on GitHub. Infrastructure configuration moves to a
 private, self-hosted GitLab instance.** The four repositories no longer share one host or one
@@ -787,7 +791,7 @@ no GitLab restore is required for Renvor recovery. **No GitLab recovery guarante
 
 ~~**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not complete.**~~ **Superseded 2026-08-15**: **T113 closed** on live re-verification (§3aw), **T106 closed** by maintainer ruling (§3ay), and **this record was accepted the same day**. Phase 001 is a closure candidate with **0 open tasks** — 108 completed, 1 waived (T088, under W-003), 1 cancelled (T114), and 4 transferred and still non-completed (T102, T108, T109, T111).
 
-**T106 cannot close on the current evidence.** A read-only reinspection of the server was
+~~**T106 cannot close on the current evidence.**~~ **Superseded 2026-08-15 — T106 closed** on a successful read-only inspection (evidence §3ay). The paragraph below records the earlier failure and is retained as the reason acceptance waited: A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
 `deploy` while the host mapping uses a different user and identity. The 2026-08-11 audit is
 retained as **historical evidence, not current proof**. Resolving the credential mismatch
@@ -827,6 +831,6 @@ deployment** — tracked as **T102**, which remains deliberately open and must n
 complete in advance. Deploying against a stale audit is the failure mode that gate exists
 to prevent.
 
-On acceptance the reviewer field will read exactly
+On acceptance the reviewer field was to read exactly — *and as of 2026-08-15 it does*:
 **`Ahmed Anbar — self-review under W-002`**, and the review must not be described as
 independent.

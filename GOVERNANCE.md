@@ -116,7 +116,7 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-Two waivers are currently active: **W-001** (approval gap) and **W-002** (decision-record
+**Three** waivers are currently active: **W-001** (approval gap), **W-003** (the Phase 001 independent requirements-and-security-review gap, granted 2026-08-15 at T088 — see `governance/waivers.md`), and **W-002** (decision-record
 review gap). Both expire **2027-02-11** or when a second maintainer joins, whichever comes
 first.
 

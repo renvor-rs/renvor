@@ -64,10 +64,29 @@ gitleaks dir --redact --no-banner . ; rc_dir=$?
 **Validates**: SC-001 · **Blocks**: organization and repository creation, jointly with Gate 0
 
 ```bash
-# Check each package name; a 404 means available
-curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/renvor
-curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/renvor-cli
+set -euo pipefail
+UA='renvor-name-check'          # crates.io bot-gates unidentified clients with 403
+idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
+
+# POSITIVE CONTROL FIRST. If a name known to exist does not return 200, the check is
+# broken and every 404 below is meaningless.
+[ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
+  || { echo "FAIL: control crate did not return 200 — registry check is not working"; exit 1; }
+
+for name in renvor renvor-cli renover; do
+  code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
+  case "$code" in
+    404) echo "$name: AVAILABLE (404)" ;;
+    200) echo "$name: TAKEN (200)" ;;
+    *)   echo "FAIL: $name returned $code — inconclusive, not 'available'"; exit 1 ;;
+  esac
+done
 ```
+
+> **404 means available only if 200 is reachable.** Query the **sparse index**, not the web
+> API: `https://crates.io/api/v1/…` bot-gates unidentified clients with **HTTP 403**, and a
+> 403 read as "not found" turns a taken name into an available one. Any status other than 200
+> or 404 is **inconclusive and must fail the gate**, never be recorded as available.
 
 Record every result in `governance/name-availability.md` with location, date, status, and checker.
 
@@ -263,13 +282,35 @@ cargo package -p renvor
 cargo publish --dry-run -p renvor
 shasum -a 256 target/package/renvor-*.crate
 
-# Prove the negative
-curl -s https://crates.io/api/v1/crates/renvor | jq '.versions | length'
+# Prove the negative — and prove the check can detect a positive first.
+UA='renvor-release-check'
+idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
 
-# Prove no long-lived credential exists
-grep -ri "CARGO_REGISTRY_TOKEN" --include="*.yml" .github/
+[ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
+  || { echo "FAIL: control crate did not return 200 — cannot prove the negative"; exit 1; }
+for name in renvor renvor-cli renover; do
+  code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
+  [ "$code" = 404 ] || { echo "FAIL: $name returned $code, expected 404"; exit 1; }
+done
+echo "registry: nothing published (404 x3, control 200)"
+
+# Prove no long-lived credential exists. Fail closed: count the workflow files first,
+# because a wrong path makes an absence check pass silently.
+wf=$(find .github/workflows -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
+[ "$wf" -gt 0 ] || { echo "FAIL: zero workflow files found — wrong path, not a clean result"; exit 1; }
+grep -ril "CARGO_REGISTRY_TOKEN" --include="*.yml" .github/ || echo "no stored registry token"
 gh secret list
 ```
+
+> **`curl … | jq '.versions | length'` is NOT a valid way to prove nothing is published, and
+> this gate used to say it was.** *(Corrected 2026-08-15.)* The web API bot-gates unidentified
+> clients with **HTTP 403**, whose body has no `.versions` key, so `null | length` prints
+> **`0`** — the exact number the gate treats as proof. Measured the same day, that command
+> prints **`0` for `serde`**, a crate with hundreds of published versions. **It could not
+> distinguish a published crate from an unpublished one, and it failed OPEN**: an operator
+> following it verbatim would have recorded "the registry reports zero versions" as a pass no
+> matter what was actually published. The replacement queries the sparse index and asserts a
+> **positive control returns 200** before trusting any 404.
 
 Then verify the release-identity controls — the half of SC-014 that is not about credentials:
 
@@ -286,7 +327,7 @@ gh api repos/{owner}/{repo}/environments/{env}/deployment_protection_rules
 grep -rn "actions/attest\|cyclonedx\|sha256" .github/workflows/
 ```
 
-**Expected**: the file list contains only intended files; the artifact builds; the dry run passes; the registry reports **zero** versions; `CARGO_REGISTRY_TOKEN` appears only as an environment binding fed by the OIDC action, never as a stored secret; `gh secret list` shows no registry credential; a signing key is configured and tags verify; a protected environment exists with **named individual** approvers and a tag-only deployment-branch restriction; SBOM, checksum, and attestation steps are present in the release path.
+**Expected**: the file list contains only intended files; the artifact builds; the dry run passes; the **positive control returns 200 and all three project names return 404** on the sparse index; `CARGO_REGISTRY_TOKEN` appears only as an environment binding fed by the OIDC action, never as a stored secret; `gh secret list` shows no registry credential; a signing key is configured and tags verify; a protected environment exists with **named individual** approvers and a tag-only deployment-branch restriction; SBOM, checksum, and attestation steps are present in the release path.
 
 **Note**: trusted publishing itself cannot be configured in this phase — it requires a package that already exists on the registry, and nothing is published. Its absence here is expected, not a gap.
 
