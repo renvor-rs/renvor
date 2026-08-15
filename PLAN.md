@@ -759,7 +759,7 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Acceptance:** clean checkout passes formatting/lint/test/doc placeholders; secrets and build output are ignored; workflow permissions are minimal; all public names are confirmed; no ADR is falsely marked accepted; release dry-run workflow can package a placeholder internal crate without publishing.
 
-**Web properties (Section 26):** Phase 001 records the four-repository topology, ownership, security boundaries, and the deployment decision process only. It does **not** create the private repositories, provision infrastructure, change DNS, or deploy any site. Each of those is a separate approval gate.
+**Web properties (Section 26):** Phase 001 records the four-repository topology, ownership, security boundaries, and the deployment decision process only. It does **not** provision infrastructure, change DNS, or deploy any site. Each of those is a separate approval gate. *(Wording corrected 2026-08-15 — this read "does not create the private repositories"; under ADR-0006 D13 no Renvor repository is private, and the three companion repositories now exist. Their creation did not deploy anything and closed no gate.)*
 
 ### Phase 002 — Core kernel, errors, configuration, and lifecycle
 
@@ -1512,15 +1512,18 @@ are unchanged. Decisions here are recorded in ADR-0005 and ADR-0006.
 
 ### 26.1 Repository topology
 
-*(Revised 2026-08-14 by maintainer decision — ADR-0006 D12. This section previously placed
-all four repositories on GitHub and made three of them private. The table below is current;
-the superseded model and the reasoning for replacing it are recorded in ADR-0006 D12, which
-does not rewrite the original decision.)*
+*(Revision note 2026-08-14, now itself dated — ADR-0006 D12. This section previously placed
+all four repositories on GitHub and made three of them private. That note went on to say "the
+table below is current", which described the table **as it stood on 2026-08-14** and no longer
+describes the table below. The superseded model and the reasoning for replacing it are
+recorded in ADR-0006 D12, which does not rewrite the original decision.)*
 
 *(Revised 2026-08-15 — ADR-0006 **D13**, which supersedes **D12**. This section previously
 recorded a hybrid topology with `renvor-infra` on a private self-hosted GitLab instance. That
 was the operative decision from 2026-08-14 until 2026-08-15. **D12 is preserved in ADR-0006 as
-dated history**; what follows is current state.)*
+dated history**; what follows is current state. **ADR-0006 is still `proposed` pending T106**,
+so the table below records an observed live fact and the maintainer's direction; the record
+carries no accepted normative authority until that acceptance gate closes.)*
 
 Four repositories, all public on GitHub, all canonical there:
 
@@ -1531,15 +1534,33 @@ Four repositories, all public on GitHub, all canonical there:
 | `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
 | `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation | Application source, plaintext secrets of any kind |
 
-**GitHub is the source, review, and CI surface for all four repositories.** Branch protection,
-required checks, and pull-request review live on GitHub for every one of them. **No Renvor
+**GitHub is the source, review, and CI surface for all four repositories.** **No Renvor
 process reads from, writes to, or depends on a GitLab instance** for source control, CI,
 registry, deployment, or disaster recovery.
 
-**`renvor-rs/renvor-docs` is public and deliberately commit-empty.** It receives no commit —
-no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
-permits migration**. Until both hold, `framework/docs` remains authoritative. **Unchanged by
-D13.** See ADR-0006 D13 and §26.12.
+**Protection and required checks are a requirement on each repository, not a description of
+all four.** *(Corrected 2026-08-15 — this previously asserted that branch protection, required
+checks, and pull-request review already lived on GitHub "for every one of them", which was
+false for two of the four.)* Observed 2026-08-15:
+
+| Repository | `main` protected | Required status checks observed |
+|---|---|---|
+| `renvor-rs/renvor` | yes — pull request, strict checks, administrators included, conversation resolution, force push and deletion blocked | 4 — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` |
+| `renvor-rs/renvor-site` | yes — same controls | 5 — `build`, `accessibility`, `links`, `dependencies`, `container` |
+| `renvor-rs/renvor-infra` | yes, by ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **none** — the repository has no CI yet |
+| `renvor-rs/renvor-docs` | **no** — commit-empty, so no `main` branch exists to protect and no protection or ruleset is configured | **none** — no commits, no workflows |
+
+Bringing `renvor-infra` and `renvor-docs` up to the full control set is future work gated on
+those repositories acquiring CI and content respectively. **Neither gap is closed by this
+record, and neither may be described as satisfied.**
+
+**`renvor-rs/renvor-docs` is the public canonical *destination* for the production
+documentation site, and it is deliberately commit-empty.** It has no commits and receives none
+— no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
+permits migration**. **Until that separately reviewed migration happens, `framework/docs` is
+the authoritative documentation content**, and the empty repository is a reserved name and a
+statement of intent rather than a source of truth. **Unchanged by D13.** See ADR-0006 D13 and
+§26.12.
 
 **`renvor-rs/renvor-infra` is public and canonical**, published 2026-08-15 at signed commit
 `aa52237f4af421e089c31cfe306faa5db7c25e08`, protected by active ruleset `20889836` requiring
@@ -1552,13 +1573,16 @@ nothing and closed no deployment gate.**
 Container Registry** under T099 and ADR-0006 D7. The **GitLab Registry is not used** and
 remains rejected on the original T099 grounds.
 
-**All source public, all sites public.** *(Revised 2026-08-15 — D13. This previously read
-"Private source, public site" and reasoned about a private repository, which no longer
-exists.)* The two application repositories became public on 2026-08-14 and `renvor-infra`
+**All source public. No site deployed.** *(Revised 2026-08-15 — D13. This previously read
+"Private source, public site" and reasoned about a private repository, which no longer exists.
+A first attempt at the correction then claimed "all deployed properties are publicly
+reachable"; **that was false and is retracted here — no Renvor site has ever been
+deployed**.)* The two application repositories became public on 2026-08-14 and `renvor-infra`
 followed on 2026-08-15; each was already intended to serve or describe public content. **All
-four repositories and all deployed properties are publicly reachable.** Repository visibility
-and website visibility remain separate decisions — this alignment is a current fact, not a
-rule that one implies the other.
+four repositories are publicly readable. No Renvor site is deployed, no image is published,
+and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content.** Repository visibility
+and website visibility remain separate decisions — repository visibility is a current fact,
+site visibility is a future gate, and neither implies the other.
 
 **The framework repository never depends on the other three.** Compiling, testing,
 packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
@@ -1720,10 +1744,22 @@ No repository — public or private — contains a plaintext secret.
 
 ### 26.10 Independent review and release
 
-Landing, documentation, and deployment change independently. Each of the three private
-repositories has a protected `main`, required pull requests, required checks, a separate
-preview gate, and a protected production environment. A landing-page change cannot ship a
-documentation change, and neither can ship a cluster change.
+Landing, documentation, and deployment change independently. Each of the three companion
+repositories **must have** a protected `main`, required pull requests, required checks, a
+separate preview gate, and a protected production environment. A landing-page change cannot
+ship a documentation change, and neither can ship a cluster change.
+
+*(Corrected 2026-08-15 — this read "Each of the three private repositories **has**…", which
+stated a requirement as an accomplished fact and described repositories that are no longer
+private. **Only `renvor-rs/renvor-site` currently meets the protection and required-checks
+half of this**; `renvor-rs/renvor-infra` is protected but has no required checks, and
+`renvor-rs/renvor-docs` is commit-empty and unprotected. **No companion repository has a
+preview gate or a protected production environment**: `renvor-site`, `renvor-docs`, and
+`renvor-infra` each have **zero GitHub environments**, and creating them is future deployment
+work. The framework repository has exactly one environment, `release` — a crates.io publishing
+gate with required reviewers and a branch policy, carrying **zero deployments** — which is not
+a site preview or production environment and does not satisfy this clause for anything. See
+§26.1.)*
 
 ### 26.11 Integration with the phased roadmap
 
@@ -1731,7 +1767,7 @@ This section changes no phase boundary. It adds obligations to existing phases:
 
 | Phase | Obligation added |
 |---|---|
-| **Phase 001** | Record the topology, ownership, security boundaries, and the deployment decision process. Phase 001 does **not** create the private repositories, provision infrastructure, or deploy anything. |
+| **Phase 001** | Record the topology, ownership, security boundaries, and the deployment decision process. Phase 001 does **not** provision infrastructure or deploy anything. *(Wording corrected 2026-08-15 — this read "does not create the private repositories"; no Renvor repository is private under ADR-0006 D13, and repository creation is not provisioning or deployment.)* |
 | **Phase 012** | Prepare the complete versioned production documentation set on `docs.renvor.dev`. |
 | **Phase 013** | REST 1.0 documentation and landing content may make general-availability claims **only after** the Phase 013 release gates pass and the crates are publicly installable. |
 | Later release phases | The same two sites are updated for the GraphQL, full-stack, desktop, and package releases, under the same truthfulness rule. |

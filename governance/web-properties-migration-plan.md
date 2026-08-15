@@ -1,16 +1,28 @@
 # Web Properties Migration Plan
 
-**Status**: Partly executed, **nothing deployed**. `renvor-rs/renvor-site` exists and has
-commits; `renvor-rs/renvor-docs` exists and is commit-empty; the infrastructure repository has
-no commits on either host. **No site is deployed and no image is published.** The status line
-previously read "Planning only — nothing has been created, pushed, or deployed"; that was
-accurate when written and is superseded by §5.
-**Decided by**: [ADR-0005](../decisions/0005-web-properties-and-deployment-topology.md) (topology), [ADR-0006](../decisions/0006-production-hosting-and-edge-architecture.md) (hosting and edge; **D12 revises the topology 2026-08-14**)
+**Status**: Partly executed, **nothing deployed**. All four repositories exist, are public on
+GitHub, and are canonical there. `renvor-rs/renvor-site` has commits;
+`renvor-rs/renvor-docs` is **commit-empty**; `renvor-rs/renvor-infra` **has one commit**,
+`aa52237f4af421e089c31cfe306faa5db7c25e08`, published 2026-08-15. **No site is deployed and no
+image is published.** *(Status line corrected 2026-08-15. It previously read "the
+infrastructure repository has no commits on either host", which stopped being true when
+`renvor-infra` was published, and it pointed at §5 as current when §5 is now superseded. An
+earlier line reading "Planning only — nothing has been created, pushed, or deployed" was
+accurate when written and is superseded too.)*
+**Decided by**: [ADR-0005](../decisions/0005-web-properties-and-deployment-topology.md) (topology), [ADR-0006](../decisions/0006-production-hosting-and-edge-architecture.md) (hosting and edge; **D12 revised the topology 2026-08-14; D13 supersedes D12 2026-08-15**)
 **Authoritative plan section**: `PLAN.md` §26
 **Owner**: Ahmed Anbar
 
-This document defines what must be true before each private repository is created and each
-site is deployed. Every item is a precondition, not a description of existing state.
+> **How to read this document.** **§6 is the only section that states current state.**
+> **Sections 1–5 are dated history** and are retained unedited as the record of what was
+> planned, verified, and decided at the time. Where §1–5 describe the repositories as private
+> or as unbuilt, read them as describing 2026-08-11 to 2026-08-14; **no Renvor repository is
+> private** and all four exist. Nothing in §1–5 has been rewritten to match today.
+
+This document defines what must be true before each site is deployed, and defined what must
+be true before each repository was created. Every item is a precondition, not a description of
+existing state. **ADR-0006 is still `proposed` pending T106**, so nothing here may be cited as
+a settled constraint on that record's authority.
 
 ---
 
@@ -256,8 +268,15 @@ in — are untouched by where the manifests are stored.
 
 > **This section is dated history, not current state.** It records the hybrid topology that
 > was operative from 2026-08-14 until 2026-08-15, when **ADR-0006 D13** replaced it with
-> all-public GitHub. It is retained unchanged because it is the record of what was decided
-> and why. **§6 states what is current.**
+> all-public GitHub. **Its body is retained byte-for-byte as written on 2026-08-14** — only
+> this heading and this banner were added, and no word inside the section, its table, or its
+> subsections was edited or annotated. **§6 states what is current.**
+>
+> **The statement below that is false today, corrected here rather than inside the preserved
+> text:** the table row "`renvor-infra` | **Private self-hosted GitLab** | Private |
+> Destination only — **not canonical until T114**" was true on 2026-08-14. **Superseded
+> 2026-08-15**: `renvor-rs/renvor-infra` is public on GitHub and canonical there, and **T114
+> was cancelled rather than passed** — see §6.2.
 
 Sections 1–4 above were written when all four repositories were planned as private GitHub
 repositories. That model is superseded. **The sections above are retained as the dated record
@@ -268,7 +287,7 @@ of what was planned and verified at the time; this section states what is curren
 | `renvor-rs/renvor` | GitHub | Public | Unchanged |
 | `renvor-rs/renvor-site` | GitHub | **Public** | Source, review, and CI on GitHub |
 | `renvor-rs/renvor-docs` | GitHub | **Public** | **Commit-empty.** No README, licence, `.gitignore`, or workflow |
-| `renvor-infra` | **Private self-hosted GitLab** | Private | *(as of 2026-08-14; superseded 2026-08-15 — see §6)* Destination only — **not canonical until T114** |
+| `renvor-infra` | **Private self-hosted GitLab** | Private | Destination only — **not canonical until T114** |
 
 ### 5.1 Why `renvor-docs` stays commit-empty
 

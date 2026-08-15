@@ -74,8 +74,10 @@ unmaintained.
 
 Two new namespaces, `renvor-landing` and `renvor-docs`, are added to the running cluster.
 
-> **These are Kubernetes namespace names, not repository names.** The private repositories
-> are `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, and `renvor-rs/renvor-infra`. The
+> **These are Kubernetes namespace names, not repository names.** The companion repositories
+> are `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, and `renvor-rs/renvor-infra` — all
+> public on GitHub since D13. *(This read "the private repositories"; corrected 2026-08-15,
+> and the namespace-versus-repository point it makes is unaffected.)* The
 > namespace `renvor-landing` predates the `renvor-site` repository name and has deliberately
 > **not** been renamed here: no namespace exists yet, and renaming cluster objects is a
 > deployment decision rather than a documentation one. Whether the namespace should be
@@ -207,8 +209,11 @@ A GitOps controller (Flux/Argo CD) is rejected **for now**: it is a continuously
 in-cluster component with broad permissions, added to a shared server, to manage two static
 sites. The complexity is not yet earned.
 
-Instead, each private repository has a deployment workflow that authenticates with a
-narrowly scoped credential and updates a single Deployment's image **by digest**. This is
+Instead, each deploying repository **will have** a deployment workflow that authenticates with
+a narrowly scoped credential and updates a single Deployment's image **by digest**. *(Corrected
+2026-08-15 — this read "each private repository **has** a deployment workflow", which was
+wrong twice: no Renvor repository is private under D13, and **no deployment workflow exists in
+any of them**. This is the design, not the state.)* This is
 revisited if the number of deployed properties grows beyond about five, or when a second
 maintainer joins.
 
@@ -243,8 +248,11 @@ already running on this host, and it is rejected on two grounds recorded in full
 **Pull authentication — none, by design:**
 
 - The **production deployment image is publicly pullable.** GHCR package visibility is
-  independent of repository visibility, so the source repositories stay private while the
-  built artefact is public.
+  independent of repository visibility. *(Corrected 2026-08-15 — this concluded "so the source
+  repositories stay private while the built artefact is public". **All four repositories are
+  public under D13**, so that clause no longer describes anything. The independence itself is
+  the load-bearing fact and is unchanged: it is what lets the image be public regardless of
+  what the source does, and it would still hold if a repository became private again.)*
 - Consequently **the k3s host needs no `imagePullSecret`**, and no registry credential is
   stored in the cluster at all.
 - The image contains only the built static site — HTML, CSS, JS already served publicly at
@@ -316,8 +324,9 @@ than it was under the previous decision, and is the first thing to add once ther
 something deployed to observe.
 
 Log retention uses existing node journald policy. Component updates follow upstream releases
-through the private repositories' dependency policy, applied deliberately — never
-automatically on a shared production host.
+through the companion repositories' dependency policy, applied deliberately — never
+automatically on a shared production host. *(Read "the private repositories'" before
+2026-08-15; no Renvor repository is private under D13 and the policy is unchanged.)*
 
 ### D11 — Traefik serves the permanent `www` redirect *(revised 2026-08-12; supersedes the T105 decision)*
 
@@ -361,10 +370,24 @@ Consequences:
 > **This decision is superseded and is retained as dated history, not as current state.**
 > It was accepted into `main` on 2026-08-14 and was the operative topology until
 > 2026-08-15, when **D13** replaced it with all-public GitHub. The text below is preserved
-> verbatim because it is the evidence for why the hybrid topology was chosen, and because
-> the reasoning it records — that infrastructure configuration describes the shape of a
-> live system — survives the change of host. **Read every statement below as describing
-> 2026-08-14, not today.**
+> **byte-for-byte as it was accepted on 2026-08-14**, because it is the evidence for why the
+> hybrid topology was chosen, and because the reasoning it records — that infrastructure
+> configuration describes the shape of a live system — survives the change of host. Only this
+> heading and this banner were added; **no word inside the decision body, its tables, or its
+> consequences was edited, qualified, or annotated**, so `git diff` against the 2026-08-14
+> text shows no change within it. **Read every statement below as describing 2026-08-14, not
+> today.**
+>
+> **Two statements below are known to be false today, and are corrected here rather than
+> inside the preserved text:**
+>
+> - "*Infrastructure repository is not yet canonical … GitLab is not canonical for
+>   infrastructure until T114 passes*" — true on 2026-08-14. **Superseded 2026-08-15 by
+>   D13**: `renvor-rs/renvor-infra` is public on GitHub and canonical there, GitLab is
+>   canonical for nothing, and **T114 was cancelled rather than passed**.
+> - "*Branch protection, required checks, and pull-request review stay on GitHub*" — this
+>   described where those controls live, not that every repository had them. It did not then
+>   and does not now. See D13 and `PLAN.md` §26.1 for the observed per-repository state.
 
 **Application source, review, and CI live on GitHub. Infrastructure configuration moves to a
 private, self-hosted GitLab instance.** The four repositories no longer share one host or one
@@ -412,7 +435,7 @@ Consequences:
 |---|---|
 | Two hosts to operate | Account, access, and backup concerns now exist in two places rather than one. The GitLab side is a single-tenant instance the maintainer administers |
 | GitLab administrators retain access | Instance administrators inherently retain administrative access to every project. With a single-maintainer instance this is the same person, but it is a property of the deployment, not an absence of one |
-| Infrastructure repository is not yet canonical *(true 2026-08-14; superseded 2026-08-15 by D13)* | The GitHub `renvor-infra` repository is preserved, private, and empty as a temporary recovery placeholder. **GitLab is not canonical for infrastructure until T114 passes** |
+| Infrastructure repository is not yet canonical | The GitHub `renvor-infra` repository is preserved, private, and empty as a temporary recovery placeholder. **GitLab is not canonical for infrastructure until T114 passes** |
 | Backup surface changed | Infrastructure history would live on the same VPS the infrastructure describes — the failure mode D9 warns about. **T114 exists precisely to close this** and requires encrypted off-VPS backup with a proven restore before cutover |
 | Public site source | `renvor-site` source is now world-readable. The secret and metadata audits recorded in the evidence ledger were run before the change to establish that nothing sensitive was exposed by it |
 | Status | **Not complete.** This record stays `proposed`; T113 and T114 stay open; Phase 001 is not complete; no Renvor 1.0 claim is made or implied |
@@ -430,9 +453,29 @@ GitLab is no longer part of the Renvor source-control topology.
 | `renvor-rs/renvor-docs` | GitHub | Public | **Yes** | **Commit-empty**, unchanged — still gated on its licence decision and T108 |
 | `renvor-rs/renvor-infra` | GitHub | **Public** *(changed 2026-08-15)* | **Yes** | Kubernetes deployment configuration and public operational documentation, at signed commit `aa52237f4af421e089c31cfe306faa5db7c25e08` |
 
-**GitHub is the source, review, and future CI surface for all four.** Branch protection,
-required checks, and pull-request review live on GitHub for every repository. No Renvor
-process reads from, writes to, or authenticates against a GitLab instance.
+**GitHub is the source, review, and future CI surface for all four.** No Renvor process reads
+from, writes to, or authenticates against a GitLab instance.
+
+**Protection is required of every repository; it is not yet present on every repository.**
+*(Corrected 2026-08-15 — a first draft of this decision asserted that branch protection,
+required checks, and pull-request review already lived on GitHub "for every repository". That
+was false for two of the four and is retracted.)* Observed 2026-08-15:
+
+| Repository | `main` protection | Required status checks |
+|---|---|---|
+| `renvor-rs/renvor` | classic protection — pull request, strict checks, administrators included, conversation resolution, force push and deletion blocked | **4** — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` |
+| `renvor-rs/renvor-site` | classic protection — same controls | **5** — `build`, `accessibility`, `links`, `dependencies`, `container` |
+| `renvor-rs/renvor-infra` | ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **none** — no CI exists in the repository |
+| `renvor-rs/renvor-docs` | **none** — commit-empty, so no `main` branch exists to protect; no protection and no ruleset are configured | **none** — no commits, no workflows |
+
+**Closing the two gaps is future work and is not claimed by this record.** `renvor-infra`
+cannot have required checks until it has CI; `renvor-docs` cannot have a protected branch
+until it has a commit, which is itself gated on its licence decision and **T108**.
+
+**`renvor-rs/renvor-docs` remains the public canonical *destination* for the production
+documentation site and nothing more.** It is commit-empty, and **`framework/docs` remains the
+authoritative documentation content until the separately reviewed migration** permitted by
+T108 and its licence decision. Naming a destination is not migrating to it.
 
 **`renvor-infra` publication, 2026-08-15.** The repository was published from a single signed
 root commit containing exactly three paths — `.gitignore`, `README.md`, and
@@ -468,6 +511,33 @@ maintainer chooses. What changed is that Renvor does not use it and does not dep
 **Nothing was deployed.** No server, DNS, Cloudflare, Kubernetes, GHCR, or production change
 was made by this record. Every deployment gate that was open before it remains open.
 
+#### D13 alternatives considered
+
+Three topologies were genuinely available for `renvor-infra`. They are compared on the axes
+that actually differ between them — the failure domain of the history, what the repository
+discloses, what it costs to operate, and what recovery obligation it creates. **Axes on which
+all three are identical are named as such rather than used as false differentiators**: none of
+them changes the registry decision (D7/T099 stand under all three), none of them deploys
+anything, and none of them alters T102, T106, T108, T111, or T113.
+
+| Option | What it gives | What it costs | Verdict |
+|---|---|---|---|
+| **A — Public GitHub** *(chosen)* | Git history lives outside the VPS's failure domain by construction, so no backup-and-restore gate is needed to make infrastructure history survivable. One host, one account model, one protection mechanism. Secret scanning and push protection apply. Review is legible to anyone, which matters for a project whose governance claims to be auditable. | **Infrastructure configuration becomes world-readable.** This is the real price, and it is the reason for the pre-publication minimisation recorded above. GitHub is a third party in the blast radius. The repository is a fourth surface to protect, and it currently has no CI and therefore no required checks. | **Chosen.** The disclosure cost is bounded and was reduced deliberately; the recovery benefit is structural rather than procedural. |
+| **B — Private GitHub** | Same single-host operating model and the same failure-domain separation as A, without world-readable manifests. Strictly closer to A than to C. | Free private repositories do not get the full protection feature set that this project relies on elsewhere — the ruleset and required-check tooling the other repositories use was **only observable and configurable on this account for public repositories**, which is exactly how T113's protection gap was originally discovered on a then-private `renvor-site`. Buying it would mean a paid plan, which is out of scope. It also keeps the review surface closed, which weakens the auditability claim the governance record makes. | **Rejected**, and it is the closest alternative. If disclosure ever proves to cost more than expected, this is the option to revisit — the migration back is a visibility toggle, not a re-hosting. |
+| **C — Private self-hosted GitLab** *(the D12 status quo)* | Nothing leaves the maintainer's control. Infrastructure that describes a live system is not handed to a third party. This reasoning was correct on 2026-08-14 and is not repudiated. | **Puts the history of the system on the machine the history describes** — the exact failure mode D9 warns about, and the reason T114 existed. Making it safe required an encrypted off-VPS backup with a *proven* restore, matching refs and hashes, measured RPO/RTO, and a separate approval. **That proof was attempted and never completed.** It also doubles the account, access, and backup surface, and instance administrators inherently retain access. | **Rejected.** Not because the reasoning was wrong, but because the obligation it created was not met and the alternative removes the obligation instead of discharging it. |
+| **D — Keep `renvor-infra` unpublished entirely** | Zero disclosure, zero new surface. | The manifests still have to live somewhere to be reviewed, and "on one laptop" is a worse failure domain than either A or C. It defers the decision without answering it. | **Rejected as a non-answer**, recorded because doing nothing was genuinely available. |
+
+**Why A over B specifically.** The two differ only in disclosure. The decisive fact is that
+the protection controls this project depends on — rulesets, required signatures, enforced
+linear history, secret scanning with push protection — are available on public repositories on
+the current plan and were verified active on `renvor-infra` after publication. Choosing B
+would have traded a *verified* protection posture for an *unverifiable* one, in exchange for
+hiding configuration that had already been minimised of every operationally sensitive value.
+
+**What the chosen option does not solve.** A does not preserve GitLab metadata, does not give
+`renvor-infra` CI or required checks, does not deploy anything, and does not create any backup
+guarantee for the VPS itself. Each of those remains exactly as open as it was.
+
 Consequences:
 
 | Consequence | Detail |
@@ -478,6 +548,27 @@ Consequences:
 | GitLab metadata is not preserved anywhere | Local clones plus GitHub protect **Git repository content only**. They do not preserve GitLab issues, variables, users, logs, packages, registry content, or any other GitLab-specific metadata. No claim is made that they do |
 | The infrastructure repository is still empty of manifests | Publishing it does not deploy anything and does not close any deployment gate. T102, T106, T108, T111, and T113 are untouched |
 | Status | **Not complete.** This record stays `proposed` pending T106; Phase 001 is not complete; no Renvor 1.0 claim is made or implied |
+
+#### What D13 is, and what authority it does and does not carry
+
+**Separate the two things this record contains.**
+
+**The topology is an observed live fact.** All four repositories are public on GitHub; the
+visibility, the commit, the tree, the ruleset, and the security settings were read back from
+GitHub after the change and are reproducible by anyone with the URLs. That does not depend on
+this record being accepted — it would remain true if this record were rejected tomorrow.
+
+**The choice of that topology is the maintainer's direction, recorded here.** Ahmed Anbar
+authorised the visibility change and the abandonment of the GitLab cutover.
+
+**Neither makes this record normative.** **ADR-0006 is still `proposed`**, because **T106 —
+the maintainer ruling on the shared server's absent backups — is unresolved**, and this record
+must not be accepted while a material architecture question inside its own scope has no
+answer. Until Phase 001 convergence resolves T106 and this record is accepted with a dated
+reviewer, **ADR-0006 carries no accepted normative authority**: nothing may cite it as a
+settled constraint, and "ADR-0006 says so" is not a valid justification for any later change.
+`PLAN.md` §26.1 records the same topology as current state on the strength of the observation,
+not on the strength of this record's status.
 
 ## Alternatives considered
 
