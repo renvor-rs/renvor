@@ -82,10 +82,16 @@ The four compensating controls that must all be met before acceptance:
 3. All required CI and security checks passing.
 4. A dated review record stored with the ADR.
 
-**As of 2026-08-11, control 3 is unmet** — the workflows that produce the required checks
-do not exist yet. Every Phase 001 decision record therefore remains `proposed`. Marking
-one `accepted` now would assert a review that has not happened, which is precisely what
+**As of 2026-08-11, control 3 was unmet** — the workflows that produce the required checks
+did not exist yet, so every Phase 001 decision record remained `proposed`. Marking one
+`accepted` then would have asserted a review that had not happened, which is precisely what
 W-002 exists to prevent.
+
+**Updated 2026-08-15: control 3 has been met since the workflows landed**, and `main` now
+requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with
+administrators included. **All six Phase 001 decision records — ADR-0001 through ADR-0006 —
+are `accepted`**, each with reviewer `Ahmed Anbar — self-review under W-002` and a recorded
+review date. **None of those reviews is independent**, and none may be described as such.
 
 When a second qualified person joins, W-002 ends immediately, every record accepted under
 it is re-reviewed, and the waiver is closed.
