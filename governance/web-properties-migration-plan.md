@@ -21,9 +21,10 @@ accurate when written and is superseded too.)*
 > No sentence inside §1–5 has been altered to match today.
 
 This document defines what must be true before each site is deployed, and defined what must
-be true before each repository was created. **Every item in §1–4 is a precondition, not a
-description of existing state.** **§5 and §6 are descriptions of state**, dated 2026-08-14 and
-2026-08-15 respectively; §6 is the current one. **ADR-0006 is still `proposed` pending T106**,
+be true before each repository was created. **Items in §1–4 are preconditions rather than
+descriptions of existing state, except where a subsection is explicitly dated as an
+observation** — §1.2 "What V7 actually is — verified 2026-08-11" is one such. **§5 and §6 are
+descriptions of state**, dated 2026-08-14 and 2026-08-15 respectively; §6 is the current one. **ADR-0006 is still `proposed` pending T106**,
 so nothing here may be cited as a settled constraint on that record's authority.
 
 ---

@@ -262,7 +262,7 @@ already running on this host, and it is rejected on two grounds recorded in full
   **No Renvor site is deployed.** Measured 2026-08-15, all three hostnames resolve to the
   shared origin and return **HTTP 404** over plain HTTP, and over HTTPS once validation is
   bypassed; against a public trust store the handshake fails on Traefik's default self-signed
-  certificate — consistent with D11's note above. **Something answers; no Renvor content is
+  certificate — consistent with D11's note below. **Something answers; no Renvor content is
   served.** The argument is sound as a property of the design and unsound as an observation,
   so it is stated as the former.)*
 - The trade is accepted knowingly: image *contents* and pull *counts* become public, and the

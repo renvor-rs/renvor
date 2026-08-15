@@ -1669,14 +1669,13 @@ decision itself is unchanged)*
   The image contains only the built static site, which is already served publicly". **Both
   clauses were false**: no Renvor repository is private under ADR-0006 D13, and **no Renvor
   site is served at all** — measured 2026-08-15, `renvor.dev`, `docs.renvor.dev`, and
-  `www.renvor.dev` each resolve to the shared origin and receive **HTTP 404**, over plain HTTP
+  `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, over plain HTTP
   or over HTTPS with certificate validation bypassed; against a public trust store the TLS
   handshake fails, because Traefik serves its default self-signed certificate. **Something
   answers; no Renvor content is served.**)* The image **will contain** only the built static
-  site, intended to be
-  served publicly at `renvor.dev`; **once that site is deployed**, publishing the image will
-  disclose nothing a visitor could not already see. **That is a property of the design, not an
-  observation** — nothing is deployed today;
+  site, intended to be served publicly at `renvor.dev`; **once that site is deployed**,
+  publishing the image will disclose nothing a visitor could not already see. **That is a
+  property of the design, not an observation** — nothing is deployed today;
 - images are referenced **by immutable digest** in deployment manifests, never by a mutable
   tag such as `latest`;
 - images carry a signature, an SBOM, and build provenance;
