@@ -3354,7 +3354,14 @@ bytes change; unrelated output changes do not alter that digest.
 >   *the GitLab instance was deliberately not inspected, so no claim is made about its
 >   contents.*
 > - "**New gate** | **T114**…" and "*T113 and T114 are open*" — **T114 was cancelled on
->   2026-08-15, not passed.** T113 remains open. See §3av.
+>   2026-08-15, not passed** (§3av), and **T113 was closed on 2026-08-15** on live
+>   re-verification (§3aw). Neither is open.
+> - the closing **Boundary** paragraph — "*T113 and T114 are open. ADR-0006 remains proposed
+>   pending T106. Phase 001 is not complete…*" — was true on 2026-08-14. **Superseded
+>   2026-08-15**: T114 cancelled, T113 closed, **ADR-0006 accepted**, and Phase 001 is a
+>   closure candidate with 0 open tasks. **The clause "no Renvor 1.0 claim is made" still
+>   stands.** *(An earlier attempt annotated that paragraph in place, which would have broken
+>   the byte-for-byte claim this banner makes. It was reverted and the correction moved here.)*
 
 **This section records a decision and the preflight that authorised it. At the time of this
 commit the transition had not been executed**: `renvor-rs/renvor-site` and
@@ -3525,19 +3532,25 @@ Counted from `specs/001-governance-foundation/tasks.md` by matching `^- \[[ xX]\
 
 | Measure | Value |
 |---|---|
-| Total tasks | **114** |
-| Completed normally | **101** |
-| Cancelled / not applicable | **1** — T114 |
-| Open | **12** — T082–T085, T087–T088, T102, T106, T108–T109, T111, T113 |
-| Raw Markdown checked entries | **102** = 101 completed + 1 cancelled |
+*(Counts as they stood on 2026-08-15 when this section was written. **They moved later the same day** — the current figures are in the Status line at the head of this ledger and in §4. Retained because §3av records a dated state.)*
 
-**Read as `101 completed, 1 cancelled, 12 open (114 total)`. The figure 102 is the raw
-checkbox count and must not be reported as 102 tasks completed.** No replacement task was
-added; there is no T115.
+| Measure | As at §3av | Current |
+|---|---|---|
+| Total tasks | **114** | **114** |
+| Completed | **101** | **108** |
+| Waived / not met | 0 | **1** — T088, under **W-003** |
+| Cancelled / not applicable | **1** — T114 | **1** — T114 |
+| Transferred, still non-completed | 0 | **4** — T102, T108, T109, T111 |
+| Open | **12** | **0** |
+
+**Read the current state as `108 completed, 1 waived, 1 cancelled, 4 transferred (114 total)`.**
+**Counting is now by task ID and explicit status marker, not by counting checkboxes** — T114
+was moved out of checkbox grammar on 2026-08-15 precisely because a checkbox count reported a
+cancelled disaster-recovery gate as completed. No replacement task was added; there is no T115.
 
 ### Boundary
 
-`ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
+`ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made.` *(Dated 2026-08-15, true when written. ADR-0006 was accepted and T113 closed later the same day. **No Renvor 1.0 claim is made — that part still stands.**)* `This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
 
 *(T113 closed 2026-08-15 — §3aw. The boundary paragraph above is dated 2026-08-15 and stated
 what was true when §3av was written; T113 was still open at that moment.)*
@@ -3878,6 +3891,74 @@ non-completed. **No blocker was closed by being restated.**
 ### Boundary
 
 `T088 is WAIVED / NOT MET under W-003. It is not complete and must never be counted as a completed task. No independent human review of Phase 001 has occurred. The reviews performed are advisory and non-independent. Security release blockers remain unwaivable, and Phase 001 requires genuine independent re-review before any public release.`
+
+## 3ba. T085 — full quickstart gate sequence from a clean isolated checkout (2026-08-15)
+
+**Run from a fresh clone, not from the working tree.** The point of T085 is to prove a
+contributor starting from nothing reaches a passing run, so a tree that has been built in for
+days cannot be the subject. The clone was made with `--no-local`, so objects were transferred
+rather than hardlinked, and its HEAD was asserted equal to the branch HEAD before any gate ran.
+
+| | |
+|---|---|
+| Isolated checkout | fresh `git clone --no-local` into a scratch directory outside the work tree |
+| HEAD asserted | `ab75494639960adc063ccfb97150cbe0f53b316d` — **matched** the branch HEAD |
+| Platform | macOS 26.3 (Darwin 25.3.0, arm64) |
+| Operator | Ahmed Anbar |
+
+### 3ba.1 Gate results
+
+| Gate | Validates | Result |
+|---|---|---|
+| **0** — repository clean before a remote exists | SC-004, SC-005 | **Pass.** `gitleaks git` **exit 0**, `gitleaks dir` **exit 0**, both "no leaks found", version **8.30.1**, each recorded separately. Branch `docs/complete-phase-001`; `git status --porcelain` **0 lines** |
+| **1** — names verified before anything is claimed | SC-001 | **Pass.** 14 rows in `governance/name-availability.md` matched `available`/`owned-by-project`; **non-zero asserted**, so the check cannot pass vacuously |
+| **2** — clean checkout verifies itself | SC-002, SC-003, SC-004, SC-016 | **Pass on both toolchains.** `rustc 1.94.0` → **10/10**; `rustc 1.97.1` (current stable) → **10/10**. Step 10 reports 0 untracked and 0 modified on each |
+| **3** — governance discoverable, licence declared | SC-006, SC-015 | **Pass after correcting the gate itself** — see §3ba.2. All 7 governance documents present; workspace declares `MIT OR Apache-2.0`; `crates/renvor` inherits it; `resolver = "3"` explicit |
+| **4** — push authorised by a scan of what is actually shipping | SC-005 | **Pass.** Both scans re-run in the isolated checkout, both **exit 0**, with a date distinct from Gate 0's run |
+| **5** — protections are real, not configured-and-bypassable | SC-007, SC-008 | **Pass, read-only.** `main` requires pull requests and 4 checks, `strict: true`, `enforce_admins: true`, force pushes and deletions blocked; every `uses:` pinned to a 40-character SHA; every workflow declares `permissions`. **No push was attempted** — see §3ba.3 |
+| **6** — documentation builds and links resolve | SC-012 | **Pass.** Docusaurus build succeeds; `lychee` reports **225 OK, 0 errors** across 257 links |
+| **7** — release rehearsal publishes nothing | SC-010, SC-014 | **Pass.** 1 artifact, **0 publish operations**; registry re-checked 2026-08-15 → **HTTP 404** for `renvor`, `renvor-cli`, `renover`, with `serde` **200** as a control; no stored registry credential |
+| **8** — evidence complete | SC-009, SC-011, SC-013 | **Pass.** §4 carries 7 of 7 PLAN criteria and 16 of 16 success criteria, all dated; all six ADRs accepted with reviewer and date; §8 holds no uncategorised blocker |
+
+### 3ba.2 The run found a defect in the gate, not in the repository
+
+**Gate 3 failed on first execution, and the gate was wrong.** Its licence assertion required a
+literal `license = "MIT OR Apache-2.0"` in `crates/renvor/Cargo.toml`. **ADR-0002 makes
+`[workspace.package]` the single authoritative declaration site and forbids members from
+restating it**, so the member correctly reads `license.workspace = true` — and a crate that
+*passed* the assertion would have been **violating** the ADR it was meant to protect.
+
+Corrected to assert both halves — the workspace declares the terms, the member inherits them —
+plus an explicit `resolver = "3"` check. **A gate that fails on a correct repository is as much
+a defect as one that passes on a broken one**, and this one would have rewarded the exact
+violation ADR-0002 exists to prevent. It was caught only because the gate was actually run from
+a clean checkout rather than assumed to still hold.
+
+### 3ba.3 Gate 5 is now read-only, and that is a change from the original sequence
+
+The original Gate 5 ended with `git push origin main   # expected: rejected`. **That is a write
+attempt against a protected production branch whose safety depends on the very configuration
+under test.** It was replaced with assertions that read the protection settings. **No push was
+attempted during this run**, and none is required: if a read shows protection absent, that is
+the finding.
+
+### 3ba.4 SC-016 verified across every location that states the MSRV
+
+| Location | Value |
+|---|---|
+| `Cargo.toml` `[workspace.package].rust-version` | `1.94.0` |
+| `rust-toolchain.toml` `channel` | `1.94.0` |
+| `crates/renvor/src/lib.rs` `MSRV` | `1.94.0` |
+| `SUPPORT.md` MSRV statement | `1.94.0` |
+
+**0 mismatches.** `crates/renvor/Cargo.toml` restates `rust-version` **0 times**, as ADR-0002
+requires. `resolver = "3"` is declared explicitly at the workspace root. References to `1.97.1`
+and `1.98.0` elsewhere describe *current* and *next* stable in policy text and are **not** MSRV
+declarations.
+
+### Boundary
+
+`T085 is complete. Every gate was run from a fresh isolated clone on 2026-08-15; no historical result was reused. Gate 5 is read-only and no push was attempted. Nothing was published, deployed, or configured — the only external calls were read-only GitHub queries, a crates.io registry read, and an HTTP read of three hostnames.`
 
 ## 6. Known limitations
 

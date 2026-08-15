@@ -785,8 +785,7 @@ Phase 4 backup and evidence directory. **D13 removes the gate by removing its su
 infrastructure source is on public GitHub, so no infrastructure history lives on the VPS and
 no GitLab restore is required for Renvor recovery. **No GitLab recovery guarantee is claimed.**
 
-**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not
-complete.**
+~~**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not complete.**~~ **Superseded 2026-08-15**: **T113 closed** on live re-verification (§3aw), **T106 closed** by maintainer ruling (§3ay), and **this record was accepted the same day**. Phase 001 is a closure candidate with **0 open tasks** — 108 completed, 1 waived (T088, under W-003), 1 cancelled (T114), and 4 transferred and still non-completed (T102, T108, T109, T111).
 
 **T106 cannot close on the current evidence.** A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user

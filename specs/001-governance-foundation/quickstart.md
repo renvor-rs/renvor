@@ -133,10 +133,26 @@ for f in LICENSE-MIT LICENSE-APACHE SECURITY.md CONTRIBUTING.md \
 done
 
 # Assert the declared terms, not merely that the word "license" appears somewhere.
-grep -qE '^license *= *"MIT OR Apache-2.0"' crates/renvor/Cargo.toml \
-  || { echo "FAIL: renvor does not declare MIT OR Apache-2.0"; exit 1; }
+#
+# ADR-0002 makes `[workspace.package]` the SINGLE authoritative declaration site and
+# forbids members from restating it, so the literal terms live in the ROOT manifest and
+# the member inherits. Checking the member for a literal `license = "..."` is wrong twice:
+# it fails on a correct workspace, and a crate that PASSED it would be violating ADR-0002.
+# Assert both halves — the root declares, the member inherits.
+grep -qE '^license *= *"MIT OR Apache-2.0"' Cargo.toml \
+  || { echo "FAIL: workspace does not declare MIT OR Apache-2.0"; exit 1; }
+grep -qE '^license\.workspace *= *true' crates/renvor/Cargo.toml \
+  || { echo "FAIL: renvor does not inherit the workspace licence"; exit 1; }
+grep -qE '^resolver *= *"3"' Cargo.toml \
+  || { echo "FAIL: resolver 3 not declared explicitly"; exit 1; }
 echo "GATE 3 file and licence checks PASS"
 ```
+
+> **This assertion was itself wrong when first written, and running the gate is what found
+> it.** *(Corrected 2026-08-15 during the T085 run.)* It required a literal `license` key in
+> `crates/renvor/Cargo.toml`, which ADR-0002 explicitly prohibits. A gate that fails on a
+> correct repository is as much a defect as one that passes on a broken one — and this one
+> would have rewarded the exact violation the ADR was written to prevent.
 
 Then manually: from the rendered README, confirm all six governance documents are reachable in one link. Send a test report through the private path in `SECURITY.md` and confirm it arrives at a monitored contact.
 
