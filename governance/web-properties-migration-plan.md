@@ -24,8 +24,8 @@ This document defines what must be true before each site is deployed, and define
 be true before each repository was created. **Items in §1–4 are preconditions rather than
 descriptions of existing state, except where a subsection is explicitly dated as an
 observation** — §1.2 "What V7 actually is — verified 2026-08-11" is one such. **§5 and §6 are
-descriptions of state**, dated 2026-08-14 and 2026-08-15 respectively; §6 is the current one. **ADR-0006 is still `proposed` pending T106**,
-so nothing here may be cited as a settled constraint on that record's authority.
+descriptions of state**, dated 2026-08-14 and 2026-08-15 respectively; §6 is the current one.
+**ADR-0006 was accepted on 2026-08-15**, once T106 closed.
 
 ---
 
@@ -282,8 +282,10 @@ in — are untouched by where the manifests are stored.
 > - the table row "`renvor-infra` | **Private self-hosted GitLab** | Private | Destination
 >   only — **not canonical until T114**" was true on 2026-08-14. **Superseded 2026-08-15**:
 >   `renvor-rs/renvor-infra` is public on GitHub and canonical there.
-> - "*T102, T106, T108, T111, T113, and T114 all remain open*" — **T114 was cancelled on
->   2026-08-15, not passed.** The other five remain open. See §6.2.
+> - "*T102, T106, T108, T111, T113, and T114 all remain open*" — **none of the six is open
+>   today.** **T114 was cancelled** and **T106 and T113 were completed** on 2026-08-15;
+>   **T102, T108, and T111 were transferred and remain non-completed**, which is not the same
+>   as open. See §6.2 and §6.3.
 
 Sections 1–4 above were written when all four repositories were planned as private GitHub
 repositories. That model is superseded. **The sections above are retained as the dated record
@@ -387,7 +389,7 @@ was measured**; and the **separate cutover approval was never granted**, because
 was cancelled.
 
 On **2026-08-15 the maintainer intentionally deleted** the local Phase 3 and Phase 4 GitLab
-backup and evidence directory `/Users/ahmedanbar/Backups`. **None of those local backup
+backup and evidence directory — **the maintainer's local backup directory** *(absolute path withheld 2026-08-15)*. **None of those local backup
 artifacts is preserved.** This statement is scoped to that directory alone and makes no claim
 about any unrelated backup held elsewhere.
 
@@ -410,6 +412,9 @@ process depends on it.
   The GitLab Registry is not used and remains rejected on the original T099 grounds.
 - **T108 and the `renvor-docs` licence gate.** Untouched. §5.1 continues to govern.
 - **The framework's independence.** §2.3 still holds.
-- **Deployment.** Nothing here deploys anything. **T102, T106, T108, T111, and T113 remain
-  open**, ADR-0006 remains `proposed`, and Phase 001 is not complete. No server, DNS,
-  Cloudflare, Kubernetes, GHCR, or production state was modified.
+- **Deployment.** Nothing here deploys anything. **T102, T108, and T111 remain non-completed
+  and are transferred** to the deployment workflow and Phase 012; **T106 closed 2026-08-15**
+  by maintainer ruling and **T113 closed 2026-08-15** on live re-verification; **ADR-0006 was
+  accepted 2026-08-15**. No server, DNS, Cloudflare, Kubernetes, GHCR, or production state was
+  modified. *(This bullet read "T102, T106, T108, T111, and T113 remain open, ADR-0006 remains
+  `proposed`" when written on 2026-08-15; updated the same day as those closed.)*

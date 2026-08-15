@@ -3,9 +3,9 @@
 | Field | Value |
 |---|---|
 | **ID** | 0006 |
-| **State** | `proposed` |
-| **Reviewer** | *(pending — see Acceptance gate)* |
-| **Review date** | *(pending)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-15 |
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
 
@@ -405,6 +405,10 @@ Consequences:
 > - "*Branch protection, required checks, and pull-request review stay on GitHub*" — this
 >   described where those controls live, not that every repository had them. It did not then
 >   and does not now. See D13 and `PLAN.md` §26.1 for the observed per-repository state.
+> - the Status row "*This record stays `proposed`; T113 and T114 stay open*" — **this record
+>   was accepted on 2026-08-15**, once T106 closed. The record's own state is the one thing a
+>   reader is most likely to take from a decision record, so it is called out here explicitly
+>   rather than left to the blanket "read as 2026-08-14" instruction above.
 
 **Application source, review, and CI live on GitHub. Infrastructure configuration moves to a
 private, self-hosted GitLab instance.** The four repositories no longer share one host or one
@@ -577,7 +581,7 @@ Consequences:
 | Failure-domain separation for Git content | Repository content now exists on GitHub and in local working copies, which do not share the VPS's failure domain — the concern D9 and T114 were written about, **avoided** by not putting infrastructure history on the VPS in the first place. *("avoided", not "resolved", corrected 2026-08-15: two copies in two failure domains is **separation, not a backup**. There is no tested restore, no retention policy, and no recovery owner, and the GitHub copy sits in the same single account as everything else. The concern is sidestepped architecturally; it is not discharged by evidence)* |
 | GitLab metadata is not preserved anywhere | Local clones plus GitHub protect **Git repository content only**. They do not preserve GitLab issues, variables, users, logs, packages, registry content, or any other GitLab-specific metadata. No claim is made that they do |
 | The infrastructure repository is still empty of manifests | Publishing it does not deploy anything and does not close any deployment gate. T102, T106, T108, T111, and T113 are untouched |
-| Status | **Not complete.** This record stays `proposed` pending T106; Phase 001 is not complete; no Renvor 1.0 claim is made or implied |
+| Status | **Accepted 2026-08-15**, once T106 closed — see the Acceptance gate. *(This row read "Not complete. This record stays `proposed` pending T106" when D13 was written on 2026-08-15; T106 was ruled on later the same day.)* **Acceptance is not deployment**: T102, T108, and T111 remain non-completed and transferred, and **no Renvor 1.0 claim is made or implied** |
 
 #### What D13 is, and what authority it does and does not carry
 
@@ -591,14 +595,17 @@ this record being accepted — it would remain true if this record were rejected
 **The choice of that topology is the maintainer's direction, recorded here.** Ahmed Anbar
 authorised the visibility change and the abandonment of the GitLab cutover.
 
-**Neither makes this record normative.** **ADR-0006 is still `proposed`**, because **T106 —
-the maintainer ruling on the shared server's absent backups — is unresolved**, and this record
-must not be accepted while a material architecture question inside its own scope has no
-answer. Until Phase 001 convergence resolves T106 and this record is accepted with a dated
-reviewer, **ADR-0006 carries no accepted normative authority**: nothing may cite it as a
-settled constraint, and "ADR-0006 says so" is not a valid justification for any later change.
-`PLAN.md` §26.1 records the same topology as current state on the strength of the observation,
-not on the strength of this record's status.
+**Neither, by itself, made this record normative.** *(This paragraph stated that ADR-0006 was
+`proposed` pending T106. **T106 was resolved by maintainer ruling on 2026-08-15** — evidence
+§3ay — and this record was accepted the same day. The distinction it drew is preserved because
+it still governs how the record should be read.)*
+
+**The topology would remain true even if this record were rejected**, because it is an
+observation; and **the record is now `accepted`**, so its decisions may be cited as settled
+architecture. Those are two different kinds of authority and the second is the weaker claim:
+acceptance rests on a **non-independent self-review under W-002**, which is a recorded
+exception, not a substitute for independent review. `PLAN.md` §26.1 continues to record the
+topology on the strength of the observation, so nothing there depends on this record's status.
 
 ## Alternatives considered
 
@@ -663,14 +670,15 @@ header policy back out of version control, and must be recorded rather than swit
 
 **Each unresolved question below carries an explicit owner and a blocking task, so none can
 be forgotten.** Questions 1, 2 and 5 were resolved on 2026-08-12 — **T099**, **T105**, and
-**T110** — and question 4 was resolved on 2026-08-14 — **T101**. **One remains — T106 — and
-it still blocks acceptance of this record, which therefore stays `proposed`.**
+**T110** — question 4 was resolved on 2026-08-14 — **T101** — and **question 3 was resolved on
+2026-08-15 — T106**, the maintainer ruling on the shared server's absent backups.
+**All five are now closed, and this record is `accepted` as of 2026-08-15.**
 
 | # | Unresolved question | Owner | Blocking task |
 |---|---|---|---|
 | ~~1~~ | ~~GitHub Container Registry versus the VPS GitLab registry, including the credential model~~ | Ahmed Anbar | **T099 — RESOLVED 2026-08-12: GHCR, `GITHUB_TOKEN` publishing, public image, no pull secret. See D7** |
 | ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12 (Cloudflare). Superseded 2026-08-12 by T110 → Traefik, see D11.** T105 is not reopened |
-| 3 | Maintainer ruling on the shared server's absent backups | Ahmed Anbar | **T106** |
+| ~~3~~ | ~~Maintainer ruling on the shared server's absent backups~~ | Ahmed Anbar | **T106 — RESOLVED 2026-08-15.** The absence of shared-cluster backups does not block deployment of Renvor's **stateless** properties; it remediates nothing for the unrelated stateful namespaces; any **stateful** Renvor workload stays blocked; a deployment must be additive, isolated, resource-bounded, digest-addressed, and reversible. Resource-bounding and isolation must be **created, not inherited** — **no cluster-wide `ResourceQuota`, `LimitRange`, or `NetworkPolicy` exists to inherit** — and **NetworkPolicy enforcement must be verified on the CNI in use first**. The absence of backups is **total**, so the exemption ends the moment any Renvor workload holds state. Evidence §3ay |
 | ~~4~~ | ~~CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts)~~ | Ahmed Anbar | **T101 — RESOLVED 2026-08-14: a 434-byte policy enforced against tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`; negative control 3/3, matrix 48/48, zero application violations. See D5 and evidence §3at.** A local harness served the enforcement header; **no production response header was configured or enabled, no Traefik middleware was written, configured, or enabled, and no live-server access or production-infrastructure action occurred** |
 | ~~5~~ | ~~Whether the Cloudflare proxy is enabled and the origin authenticated to the edge~~ | Ahmed Anbar | **T110 — RESOLVED 2026-08-12: DNS-only, no proxy. See D3, D4, D5, D10, D11** |
 
@@ -727,20 +735,43 @@ it still blocks acceptance of this record, which therefore stays `proposed`.**
 | 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — all four required checks passing on `renvor-rs/renvor` |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
-### All four W-002 controls are met, and this record still remains `proposed`
+### Accepted 2026-08-15 — all four W-002 controls met and every unresolved question closed
 
-W-002 is not the only gate. **A record must not be accepted while it states that material
-architecture choices inside its own scope are unresolved.** Accepting it would publish a
-decision record whose own text says some of its decisions have not been made — the document
-would assert authority it does not have.
+*(This heading previously read "All four W-002 controls are met, and this record still remains
+`proposed`". The reasoning it recorded is preserved below because it is why acceptance waited.)*
 
-**One question remains open**, carrying an owner and a blocking task: **T106** (the backup
-ruling). Four are now closed — **T099** (registry), **T101** (CSP compatibility, closed
-2026-08-14), **T105** (`www` redirect location), and **T110** (proxy versus DNS-only) — and
-their closure does not accelerate the rest.
+W-002 was never the only gate. **A record must not be accepted while it states that material
+architecture choices inside its own scope are unresolved.** Accepting it then would have
+published a decision record whose own text said some of its decisions had not been made — a
+document asserting authority it did not have.
 
-Acceptance requires the remaining question to be resolved, either in this record or split
-into a scoped follow-up record. **This record therefore stays `proposed`.**
+**All five questions are now closed** — **T099** (registry), **T101** (CSP compatibility,
+2026-08-14), **T105** (`www` redirect location), **T110** (proxy versus DNS-only), and
+**T106** (the backup ruling, **2026-08-15**, evidence §3ay). The condition for acceptance is
+therefore met.
+
+| Acceptance requirement | Status |
+|---|---|
+| W-002 control 1 — written alternatives-and-consequences review | ✅ seven alternatives for the record, plus **D13's own four-option review** with a "why A over B" and an explicit "what this does not solve" |
+| W-002 control 2 — verification against the governance checklist | ✅ T086; **79/79**, with both former failures CHK048 and CHK050 resolved by T103 and T104 |
+| W-002 control 3 — all required CI and security checks passing | ✅ `main` requires `verify (1.94.0)`, `verify (stable)`, `security`, `docs`, strict, `enforce_admins: true` |
+| W-002 control 4 — a dated review record stored with the ADR | ✅ this section, dated **2026-08-15** |
+| Every unresolved question inside the record's own scope closed | ✅ T099, T101, T105, T106, T110 |
+
+**State `accepted`. Reviewer `Ahmed Anbar — self-review under W-002`. Review date 2026-08-15.**
+
+> **This review is NOT independent and must never be described as independent** — not here,
+> not in the evidence pack, not in `GOVERNANCE.md`, and not in any public document. It is a
+> **structured self-review operating under a recorded exception**, exactly as the T006 ruling
+> transcribed in `GOVERNANCE.md` requires. The project has one maintainer and no second person
+> qualifies. **When a qualified independent reviewer becomes available, W-002 ends immediately
+> and this record is re-reviewed.**
+
+**What acceptance does not confer.** It does **not** authorise a deployment, and it changes no
+gate: **T102, T108, and T111 remain non-completed and transferred**, T113 is complete but
+proves only the landing repository's own CI and protection, and **no Renvor site is deployed**.
+Acceptance makes this record's decisions citable as settled architecture; it does not make any
+of them executed.
 
 **D12 added a gate of its own, and D13 cancelled it. Neither moved this record closer to
 acceptance.** *(This paragraph rewritten 2026-08-15; it previously recorded T114 as open.)*
@@ -758,10 +789,9 @@ Phase 4 backup and evidence directory. **D13 removes the gate by removing its su
 infrastructure source is on public GitHub, so no infrastructure history lives on the VPS and
 no GitLab restore is required for Renvor recovery. **No GitLab recovery guarantee is claimed.**
 
-**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not
-complete.**
+~~**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not complete.**~~ **Superseded 2026-08-15**: **T113 closed** on live re-verification (§3aw), **T106 closed** by maintainer ruling (§3ay), and **this record was accepted the same day**. Phase 001 is a closure candidate with **0 open tasks** — 108 completed, 1 waived (T088, under W-003), 1 cancelled (T114), and 4 transferred and still non-completed (T102, T108, T109, T111).
 
-**T106 cannot close on the current evidence.** A read-only reinspection of the server was
+~~**T106 cannot close on the current evidence.**~~ **Superseded 2026-08-15 — T106 closed** on a successful read-only inspection (evidence §3ay). The paragraph below records the earlier failure and is retained as the reason acceptance waited: A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
 `deploy` while the host mapping uses a different user and identity. The 2026-08-11 audit is
 retained as **historical evidence, not current proof**. Resolving the credential mismatch
@@ -801,6 +831,6 @@ deployment** — tracked as **T102**, which remains deliberately open and must n
 complete in advance. Deploying against a stale audit is the failure mode that gate exists
 to prevent.
 
-On acceptance the reviewer field will read exactly
+On acceptance the reviewer field was to read exactly — *and as of 2026-08-15 it does*:
 **`Ahmed Anbar — self-review under W-002`**, and the review must not be described as
 independent.

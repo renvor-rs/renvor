@@ -37,8 +37,9 @@ export default function Home() {
             <div className="col col--8 col--offset-2">
               <h2>Renvor does not work yet</h2>
               <p>
-                The published <code>renvor</code> crate exposes three constants and
-                nothing else. What exists today is the project foundation — governance,
+                The <code>renvor</code> crate exposes three constants and nothing else —
+                and it is <strong>not published</strong>, so there is no way to install
+                it. What exists today is the project foundation — governance,
                 verified names, a pinned toolchain, a licence policy, and a fail-closed
                 verification sequence — built before any code, so the first line of
                 functionality lands into a project that can already verify itself.

@@ -33,14 +33,27 @@ git status --porcelain                   # must print nothing
 # After pruning
 git count-objects -vH                    # size should drop to the reachable set
 
-# Final scan of the state that will ship
-gitleaks detect --no-banner --redact
+# Final scan of the state that will ship.
+# `gitleaks detect` was removed in gitleaks 8.x: `git` scans history, `dir` scans the
+# working tree INCLUDING untracked files. Both are required — a secret that is untracked
+# today is one `git add` away from being permanent, and `git` alone would never see it.
+gitleaks git --redact --no-banner .      # history
+gitleaks dir --redact --no-banner .      # working tree, untracked included
+gitleaks version                         # record the version with the result
 
 # Branch name, before any remote exists
 git branch --show-current                # must print: main
 ```
 
-**Expected**: the tracked set matches the Stage 0 include/exclude decisions exactly; no `.idea/`, `.DS_Store`, or agent tool state anywhere in the index; working tree clean; object count reduced; zero secret findings recorded with date and tool version; branch is `main`.
+**Expected**: the tracked set matches the Stage 0 include/exclude decisions exactly; no `.idea/`, `.DS_Store`, or agent tool state anywhere in the index; working tree clean; object count reduced; **both** secret scans exit 0 with zero findings, each recorded with its own date and the tool version; branch is `main`.
+
+**Record the exit code, not just the message.** `gitleaks` exits 0 for a clean scan and non-zero when it finds something; a scan whose exit code was never captured is not evidence. Capture it immediately — a shell's `$?` and `PIPESTATUS` are reset by the very next command, including a bare assignment:
+
+```bash
+gitleaks git --redact --no-banner . ; rc_git=$?
+gitleaks dir --redact --no-banner . ; rc_dir=$?
+[ "$rc_git" = 0 ] && [ "$rc_dir" = 0 ] || { echo "GATE 0 FAILED"; exit 1; }
+```
 
 **If `gitleaks` reports a finding**: stop. Rotate, revoke, purge, record, re-scan — in that order — before anything is created or pushed. A finding here is cheap; the same finding after the first push is permanent.
 
@@ -51,10 +64,29 @@ git branch --show-current                # must print: main
 **Validates**: SC-001 · **Blocks**: organization and repository creation, jointly with Gate 0
 
 ```bash
-# Check each package name; a 404 means available
-curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/renvor
-curl -s -o /dev/null -w "%{http_code}\n" https://crates.io/api/v1/crates/renvor-cli
+set -euo pipefail
+UA='renvor-name-check'          # crates.io bot-gates unidentified clients with 403
+idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
+
+# POSITIVE CONTROL FIRST. If a name known to exist does not return 200, the check is
+# broken and every 404 below is meaningless.
+[ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
+  || { echo "FAIL: control crate did not return 200 — registry check is not working"; exit 1; }
+
+for name in renvor renvor-cli renover; do
+  code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
+  case "$code" in
+    404) echo "$name: AVAILABLE (404)" ;;
+    200) echo "$name: TAKEN (200)" ;;
+    *)   echo "FAIL: $name returned $code — inconclusive, not 'available'"; exit 1 ;;
+  esac
+done
 ```
+
+> **404 means available only if 200 is reachable.** Query the **sparse index**, not the web
+> API: `https://crates.io/api/v1/…` bot-gates unidentified clients with **HTTP 403**, and a
+> 403 read as "not found" turns a taken name into an available one. Any status other than 200
+> or 404 is **inconclusive and must fail the gate**, never be recorded as available.
 
 Record every result in `governance/name-availability.md` with location, date, status, and checker.
 
@@ -113,10 +145,33 @@ PATH=/usr/bin:/bin cargo xtask verify   # hide the optional tooling
 **Validates**: SC-006, SC-015
 
 ```bash
-ls LICENSE-MIT LICENSE-APACHE SECURITY.md CONTRIBUTING.md \
-   CODE_OF_CONDUCT.md GOVERNANCE.md SUPPORT.md
-grep -c "license" crates/renvor/Cargo.toml
+set -euo pipefail
+for f in LICENSE-MIT LICENSE-APACHE SECURITY.md CONTRIBUTING.md \
+         CODE_OF_CONDUCT.md GOVERNANCE.md SUPPORT.md; do
+  test -f "$f" || { echo "FAIL: missing $f"; exit 1; }
+done
+
+# Assert the declared terms, not merely that the word "license" appears somewhere.
+#
+# ADR-0002 makes `[workspace.package]` the SINGLE authoritative declaration site and
+# forbids members from restating it, so the literal terms live in the ROOT manifest and
+# the member inherits. Checking the member for a literal `license = "..."` is wrong twice:
+# it fails on a correct workspace, and a crate that PASSED it would be violating ADR-0002.
+# Assert both halves — the root declares, the member inherits.
+grep -qE '^license *= *"MIT OR Apache-2.0"' Cargo.toml \
+  || { echo "FAIL: workspace does not declare MIT OR Apache-2.0"; exit 1; }
+grep -qE '^license\.workspace *= *true' crates/renvor/Cargo.toml \
+  || { echo "FAIL: renvor does not inherit the workspace licence"; exit 1; }
+grep -qE '^resolver *= *"3"' Cargo.toml \
+  || { echo "FAIL: resolver 3 not declared explicitly"; exit 1; }
+echo "GATE 3 file and licence checks PASS"
 ```
+
+> **This assertion was itself wrong when first written, and running the gate is what found
+> it.** *(Corrected 2026-08-15 during the T085 run.)* It required a literal `license` key in
+> `crates/renvor/Cargo.toml`, which ADR-0002 explicitly prohibits. A gate that fails on a
+> correct repository is as much a defect as one that passes on a broken one — and this one
+> would have rewarded the exact violation the ADR was written to prevent.
 
 Then manually: from the rendered README, confirm all six governance documents are reachable in one link. Send a test report through the private path in `SECURITY.md` and confirm it arrives at a monitored contact.
 
@@ -131,16 +186,24 @@ Then manually: from the rendered README, confirm all six governance documents ar
 Gate 0's scan ran before the workspace, policy files, governance documents, and workflows existed. It describes a repository that no longer exists. This gate re-scans the state actually about to become public.
 
 ```bash
-# Fresh scan of the current tree and history
-gitleaks detect --no-banner --redact
+# Fresh scan of the current tree AND history. Both subcommands, both exit codes.
+gitleaks git --redact --no-banner . ; rc_git=$?
+gitleaks dir --redact --no-banner . ; rc_dir=$?
+[ "$rc_git" = 0 ] && [ "$rc_dir" = 0 ] || { echo "GATE 4 FAILED — do not push"; exit 1; }
 
-# Confirm the four push preconditions are met
-test -f LICENSE-MIT && test -f LICENSE-APACHE && echo "licences present"
-test -f SECURITY.md && echo "security contact present"
-grep -c 'available\|owned-by-project' governance/name-availability.md   # all rows
+# Confirm the four push preconditions are met. Fail closed: `test` and `grep -c` are
+# asserted, never eyeballed, because a passing-looking command that printed nothing is
+# indistinguishable from a check that never ran.
+test -f LICENSE-MIT && test -f LICENSE-APACHE || { echo "FAIL: licence text missing"; exit 1; }
+test -f SECURITY.md || { echo "FAIL: security contact missing"; exit 1; }
+rows=$(grep -c 'available\|owned-by-project' governance/name-availability.md)
+[ "$rows" -gt 0 ] || { echo "FAIL: zero name rows matched — wrong file or wrong pattern"; exit 1; }
+echo "name rows confirmed: $rows"
 ```
 
-**Expected**: zero findings, recorded with a **fresh** date distinct from the Gate 0 scan; both licence texts present; security contact live; every name row confirmed.
+**Expected**: **both** scans exit 0 with zero findings, recorded with a **fresh** date distinct from the Gate 0 scan; both licence texts present; security contact live; every name row confirmed with a **non-zero** count.
+
+> **A zero-result check is not a passing check until you have proved it can fail.** Before trusting any `grep` used as a gate, run it against a string you know is present and confirm it matches. An empty result from a mistyped pattern, a wrong path, or an unquoted shell variable looks exactly like a clean result.
 
 **If this scan finds something Gate 0 did not**, that is the gate working — a credential was introduced by one of the tasks in between. Rotate, revoke, purge, record, re-scan before pushing.
 
@@ -150,21 +213,47 @@ grep -c 'available\|owned-by-project' governance/name-availability.md   # all ro
 
 **Validates**: SC-007, SC-008
 
-```bash
-gh api repos/{owner}/{repo} --jq '.visibility'
-gh api repos/{owner}/{repo}/branches/main/protection
-gh api repos/{owner}/{repo}/code-scanning/alerts --jq 'length'
-grep -rn "uses:" .github/workflows/ | grep -v "@[0-9a-f]\{40\}"   # must print nothing
-grep -L "permissions:" .github/workflows/*.yml                     # must print nothing
-```
-
-Then attempt the thing protection is supposed to stop:
+**Every command in this gate is read-only.** *(Revised 2026-08-15.)* An earlier version ended with `git push origin main` "expected: rejected". That is a **write attempt** against a protected production branch: it depends on protection being correctly configured to be safe, which is the very thing under test, and a misconfiguration turns the check into the incident. Protection is verified by **reading the settings**, not by trying to break them.
 
 ```bash
-git push origin main       # expected: rejected
+set -euo pipefail
+OWNER=renvor-rs REPO=renvor
+
+# Visibility
+[ "$(gh api "repos/$OWNER/$REPO" --jq '.visibility')" = public ] \
+  || { echo "FAIL: not public"; exit 1; }
+
+# Protection — assert each control rather than printing the blob
+prot=$(gh api "repos/$OWNER/$REPO/branches/main/protection")
+echo "$prot" | jq -e '.required_pull_request_reviews != null'      >/dev/null || { echo "FAIL: PR not required"; exit 1; }
+echo "$prot" | jq -e '.enforce_admins.enabled == true'             >/dev/null || { echo "FAIL: admins can bypass"; exit 1; }
+echo "$prot" | jq -e '.required_status_checks.strict == true'      >/dev/null || { echo "FAIL: checks not strict"; exit 1; }
+echo "$prot" | jq -e '.allow_force_pushes.enabled == false'        >/dev/null || { echo "FAIL: force push allowed"; exit 1; }
+echo "$prot" | jq -e '.allow_deletions.enabled == false'           >/dev/null || { echo "FAIL: deletion allowed"; exit 1; }
+echo "$prot" | jq -e '(.required_status_checks.contexts | length) >= 4' >/dev/null || { echo "FAIL: fewer than 4 required checks"; exit 1; }
+
+# Scanning controls
+gh api "repos/$OWNER/$REPO/code-scanning/alerts" --jq 'length' >/dev/null \
+  || { echo "FAIL: code scanning unreachable"; exit 1; }
+
+# Workflow hygiene — FAIL CLOSED. Count first: an empty directory, a wrong path, or an
+# unquoted variable makes both greps print nothing, which is indistinguishable from a pass.
+wf_count=$(find .github/workflows -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
+[ "$wf_count" -gt 0 ] || { echo "FAIL: zero workflow files found — wrong path, not a clean result"; exit 1; }
+echo "workflow files: $wf_count"
+
+unpinned=$(grep -rn "uses:" .github/workflows/ | grep -v "@[0-9a-f]\{40\}" || true)
+[ -z "$unpinned" ] || { echo "FAIL: unpinned actions:"; echo "$unpinned"; exit 1; }
+
+nopermissions=$(grep -L "permissions:" .github/workflows/*.yml || true)
+[ -z "$nopermissions" ] || { echo "FAIL: workflows without permissions:"; echo "$nopermissions"; exit 1; }
+
+echo "GATE 5 PASS"
 ```
 
-**Expected**: visibility `public`; protection requires a pull request and the four named checks; `enforce_admins` true; every scanning control enabled; every third-party action pinned to a 40-character SHA; every workflow declares permissions; the direct push is refused.
+**Expected**: visibility `public`; protection requires a pull request and at least the four named checks; `enforce_admins` true; force pushes and deletions blocked; every scanning control enabled; every third-party action pinned to a 40-character SHA; every workflow declares permissions.
+
+> **Do not test protection by attempting a push.** If a read shows protection is absent, that is the finding — configure it and re-read. A successful direct push to `main` is not a useful experiment; it is an unreviewed change to the production branch.
 
 **The one permitted waiver**: `required_approving_review_count: 0` under W-001 in `governance/waivers.md`. Any *other* waiver — especially a cost or availability one — means something did not go to plan, since research Finding 3 confirmed every control is free on a public repository.
 
@@ -193,13 +282,35 @@ cargo package -p renvor
 cargo publish --dry-run -p renvor
 shasum -a 256 target/package/renvor-*.crate
 
-# Prove the negative
-curl -s https://crates.io/api/v1/crates/renvor | jq '.versions | length'
+# Prove the negative — and prove the check can detect a positive first.
+UA='renvor-release-check'
+idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
 
-# Prove no long-lived credential exists
-grep -ri "CARGO_REGISTRY_TOKEN" --include="*.yml" .github/
+[ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
+  || { echo "FAIL: control crate did not return 200 — cannot prove the negative"; exit 1; }
+for name in renvor renvor-cli renover; do
+  code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
+  [ "$code" = 404 ] || { echo "FAIL: $name returned $code, expected 404"; exit 1; }
+done
+echo "registry: nothing published (404 x3, control 200)"
+
+# Prove no long-lived credential exists. Fail closed: count the workflow files first,
+# because a wrong path makes an absence check pass silently.
+wf=$(find .github/workflows -maxdepth 1 -name '*.yml' | wc -l | tr -d ' ')
+[ "$wf" -gt 0 ] || { echo "FAIL: zero workflow files found — wrong path, not a clean result"; exit 1; }
+grep -ril "CARGO_REGISTRY_TOKEN" --include="*.yml" .github/ || echo "no stored registry token"
 gh secret list
 ```
+
+> **`curl … | jq '.versions | length'` is NOT a valid way to prove nothing is published, and
+> this gate used to say it was.** *(Corrected 2026-08-15.)* The web API bot-gates unidentified
+> clients with **HTTP 403**, whose body has no `.versions` key, so `null | length` prints
+> **`0`** — the exact number the gate treats as proof. Measured the same day, that command
+> prints **`0` for `serde`**, a crate with hundreds of published versions. **It could not
+> distinguish a published crate from an unpublished one, and it failed OPEN**: an operator
+> following it verbatim would have recorded "the registry reports zero versions" as a pass no
+> matter what was actually published. The replacement queries the sparse index and asserts a
+> **positive control returns 200** before trusting any 404.
 
 Then verify the release-identity controls — the half of SC-014 that is not about credentials:
 
@@ -216,7 +327,7 @@ gh api repos/{owner}/{repo}/environments/{env}/deployment_protection_rules
 grep -rn "actions/attest\|cyclonedx\|sha256" .github/workflows/
 ```
 
-**Expected**: the file list contains only intended files; the artifact builds; the dry run passes; the registry reports **zero** versions; `CARGO_REGISTRY_TOKEN` appears only as an environment binding fed by the OIDC action, never as a stored secret; `gh secret list` shows no registry credential; a signing key is configured and tags verify; a protected environment exists with **named individual** approvers and a tag-only deployment-branch restriction; SBOM, checksum, and attestation steps are present in the release path.
+**Expected**: the file list contains only intended files; the artifact builds; the dry run passes; the **positive control returns 200 and all three project names return 404** on the sparse index; `CARGO_REGISTRY_TOKEN` appears only as an environment binding fed by the OIDC action, never as a stored secret; `gh secret list` shows no registry credential; a signing key is configured and tags verify; a protected environment exists with **named individual** approvers and a tag-only deployment-branch restriction; SBOM, checksum, and attestation steps are present in the release path.
 
 **Note**: trusted publishing itself cannot be configured in this phase — it requires a package that already exists on the registry, and nothing is published. Its absence here is expected, not a gap.
 
@@ -228,14 +339,17 @@ grep -rn "actions/attest\|cyclonedx\|sha256" .github/workflows/
 
 Open `governance/phase-001-evidence.md` and confirm:
 
-- one row per PLAN.md Phase 001 acceptance criterion **and** per SC-001…SC-015;
+- one row per PLAN.md Phase 001 acceptance criterion **and** per **SC-001 through SC-016** — *(corrected 2026-08-15: this read "SC-001…SC-015" and silently omitted **SC-016**, the single-source MSRV and resolver-3 criterion)*;
 - every row has an evidence link, command, platform, operator, date, and result;
-- `open_blockers` is empty;
+- `open_blockers` is empty, **or** every remaining entry is explicitly categorised as transferred, waived, or cancelled with an owner and a destination — an open blocker may not be closed by rewording it;
 - known limitations include the FR-049 residual risk (verified-but-unreserved package names), with a named owner and target phase;
-- all four ADRs are `accepted`, each with a reviewer and review date;
+- **all six decision records — ADR-0001 through ADR-0006 — are accounted for**, each either `accepted` with a reviewer and a review date, or explicitly `proposed` with the named blocking task that keeps it there. *(Corrected 2026-08-15: this read "all four ADRs", which predates ADR-0005 and ADR-0006. It must never be read as permission to ignore the two it omitted.)* Under **W-002** the reviewer field reads exactly `Ahmed Anbar — self-review under W-002` and **must not be described as independent**;
+- **the task counts are recomputed by ID and explicit status**, not by counting checkboxes, and completed / open / transferred / waived / cancelled are reported as separate figures — see "How to count the tasks in this file" in `tasks.md`;
 - no runtime framework capability was implemented (review against FR-047).
 
-**Expected**: 100% criterion coverage, zero unevidenced rows, zero open blockers.
+**Expected**: 100% criterion coverage, zero unevidenced rows, and every blocker either closed or explicitly categorised.
+
+> **Every gate must be run fresh for the run being recorded.** *(Added 2026-08-15.)* Historical evidence from an earlier pass may be **cited** as history, but it may never be **reused** as the result of the current run: the tree, the toolchain, the dependency set, and the live GitHub state all move. Each gate's evidence carries its own date, and a date that predates the commit under evaluation is a failed gate, not a passing one. This is the same reasoning that makes Gates 0 and 4 both mandatory rather than redundant.
 
 ---
 
@@ -251,7 +365,7 @@ Open `governance/phase-001-evidence.md` and confirm:
 | 5 Protections | SC-007, SC-008 | Protection baseline snapshot, waiver W-001 |
 | 6 Documentation | SC-012 | Build log, link-check report |
 | 7 Release rehearsal | SC-010, SC-014 | Artifact, checksum, file list, zero-version proof, signing and environment evidence |
-| 8 Evidence | SC-009, SC-011, SC-013 | `governance/phase-001-evidence.md` |
+| 8 Evidence | SC-009, SC-011, SC-013; coverage of SC-001…**SC-016** | `governance/phase-001-evidence.md` |
 
 **Four blocking gates**, in order:
 

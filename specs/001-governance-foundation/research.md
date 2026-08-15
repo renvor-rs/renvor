@@ -183,7 +183,7 @@ The bootstrap procedure recorded in `RELEASING.md` must specify: a least-scope, 
 | Tests | `cargo test --workspace --all-features` | Rust (pinned) | Fail |
 | API docs | `cargo doc --workspace --no-deps` with `-D warnings` | Rust (pinned) | Fail |
 | Dependency/licence policy | `cargo deny check` | `cargo-deny` | Fail with install instruction |
-| Secret scan | `gitleaks detect` | `gitleaks` | Fail with install instruction |
+| Secret scan | `gitleaks git .` **and** `gitleaks dir .` | `gitleaks` | Fail with install instruction |
 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS | Fail with install instruction |
 | Link check | `lychee` over built output | `lychee` | Fail with install instruction |
 

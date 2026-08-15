@@ -40,8 +40,10 @@
 >   D13**, which weighed public GitHub, private GitHub, and private self-hosted GitLab and
 >   chose public. D13's alternatives review is where that reversal is argued.
 >
-> **ADR-0006 is itself still `proposed` pending T106**, so this banner records an observed live
-> fact and the maintainer's direction, not a newly accepted normative rule.
+> **ADR-0006 was `proposed` when this banner was written and was accepted on 2026-08-15**, once
+> T106 closed. This banner records an observed live fact and the maintainer's direction; the
+> supersession it describes now also rests on an accepted record, reviewed under W-002 as a
+> **non-independent** self-review.
 
 ## Context
 

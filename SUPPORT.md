@@ -5,8 +5,9 @@ document.
 
 ## Current status
 
-**Renvor is pre-release and ships no runtime capability.** The published `renvor` crate
-exposes version constants only. Everything below is the *support contract* that will
+**Renvor is pre-release and ships no runtime capability.** **Nothing is published** —
+neither `renvor` nor `renvor-cli` exists on crates.io. The `renvor` crate in this
+repository exposes version constants only. Everything below is the *support contract* that will
 govern the framework as it is built — established before the code, deliberately, so the
 promise is not retrofitted around whatever happened to be convenient.
 

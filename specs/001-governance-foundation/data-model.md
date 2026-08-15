@@ -70,19 +70,23 @@ One row per public name Renvor intends to occupy.
 | `consequences` | prose | Including the costs accepted, not only the benefits |
 | `reviewer` | string | Required to enter `accepted` |
 | `review_date` | date | Required to enter `accepted` |
-| `superseded_by` | id | Required to enter `superseded` |
+| `superseded_by` | id, optionally scoped | Required to enter `superseded`. **May also be populated on an `accepted` record to express *partial* supersession** — an id followed by an explicit scope, e.g. `ADR-0006 D13 (2026-08-15) — repository visibility only`. *(Added 2026-08-15: ADR-0005 is the first record to need this. Its four-repository separation still stands while its visibility column and one deployment-status sentence were superseded, and forcing the whole record to `superseded` would have discarded a decision that remains in force.)* |
 
 **Validation rules**
 
 - `state: accepted` without both `reviewer` and `review_date` is a **defect in this phase's own acceptance** (FR-013, SC-009), not a paperwork lapse.
-- Phase 001 must end with exactly four records in `accepted`: 0001 naming, 0002 workspace boundaries, 0003 MSRV and dependency policy, 0004 documentation platform (FR-014).
+- Phase 001 must end with **all six** decision records accounted for. *(Corrected 2026-08-15 — this read "exactly four records in `accepted`: 0001, 0002, 0003, 0004", which was written before ADR-0005 and ADR-0006 existed and would have let a phase close while ignoring two records.)* FR-014's four remain mandatory — **0001** naming, **0002** workspace boundaries, **0003** MSRV and dependency policy, **0004** documentation platform — and **0005** web properties and deployment topology and **0006** production hosting and edge architecture are additionally in scope. Each of the six must be either `accepted` with a `reviewer` and `review_date`, or explicitly `proposed` with the named blocking task recorded.
+- A record carrying a **scoped** `superseded_by` while remaining `accepted` must state, inside the record, exactly which parts are superseded and which remain in force. An unscoped `superseded_by` on an `accepted` record is a defect.
 - A superseded record is never edited or deleted; the successor links back.
 
 **State transitions**
 
 ```text
   proposed ──▶ accepted ──▶ superseded
-      │            ▲
+      │            ▲   │
+      │            │   └──▶ accepted, partially superseded
+      │            │          (scoped `superseded_by`; record stays in force
+      │            │           except for the parts it names)
       │            │ requires reviewer + review_date
       └──▶ rejected
 ```
@@ -307,7 +311,7 @@ The evidence that the repository was safe to make public. Opened before the repo
 
 | Field | Type | Rules |
 |---|---|---|
-| `criterion` | string | One row per PLAN.md Phase 001 acceptance criterion and per spec success criterion SC-001…SC-015 |
+| `criterion` | string | One row per PLAN.md Phase 001 acceptance criterion and per spec success criterion **SC-001…SC-016** *(corrected 2026-08-15 — this read SC-015 and omitted SC-016, the single-source MSRV and resolver-3 criterion)* |
 | `evidence_link` | string | Artifact, log, or record |
 | `command_or_action`, `platform`, `operator`, `date`, `result` | — | All required |
 | `open_blockers` | list | Non-empty means the phase stays open |

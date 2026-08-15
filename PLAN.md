@@ -1521,9 +1521,11 @@ recorded in ADR-0006 D12, which does not rewrite the original decision.)*
 *(Revised 2026-08-15 — ADR-0006 **D13**, which supersedes **D12**. This section previously
 recorded a hybrid topology with `renvor-infra` on a private self-hosted GitLab instance. That
 was the operative decision from 2026-08-14 until 2026-08-15. **D12 is preserved in ADR-0006 as
-dated history**; what follows is current state. **ADR-0006 is still `proposed` pending T106**,
-so the table below records an observed live fact and the maintainer's direction; the record
-carries no accepted normative authority until that acceptance gate closes.)*
+dated history**; what follows is current state. **ADR-0006 was `proposed` when this note was
+first written and was accepted on 2026-08-15**, once T106 — its last unresolved question —
+was closed by maintainer ruling. The table below was already an observed live fact
+independent of that status; it is now also backed by an accepted record, reviewed under
+W-002 as a **non-independent** self-review.)*
 
 Four repositories, all public on GitHub, all canonical there:
 

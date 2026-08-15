@@ -1,6 +1,6 @@
 # Phase 001 Evidence Pack
 
-**Status**: Open — implementation in progress, **101 completed, 1 cancelled, 12 open (114 total)** — the cancelled task is **T114**, closed as not applicable rather than passed, so the raw Markdown checkbox count of 102 is 101 completed plus 1 cancelled; the framework repository is pushed, protected, and scanned, and all four repositories are public; **5 of 6 decision records accepted**; governance checklist 79/79 (14 web-property tasks added 2026-08-11 by `PLAN.md` §26; T114 added 2026-08-14 by ADR-0006 D12 and **cancelled 2026-08-15 by D13**, §3av). Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **no crate, package, container image, release, or tag has been published, and no site has been deployed** — *(qualified 2026-08-15: this read "nothing has been published, tagged, or released", which became imprecise once `renvor-rs/renvor-infra` was **published as a public repository** on 2026-08-15, §3av. Publishing repository source is not publishing an artifact. Verified read-only 2026-08-15: `crates.io` returns **HTTP 404** for `renvor`, `renvor-cli`, and `renover`; all four repositories hold **zero releases and zero tags**; **no repository contains an image-publishing workflow** — the framework's seven workflows are `ci`, `docs`, `release-dry-run`, `release-tag-verify`, `security`, Dependabot, and CodeQL, `renvor-site` has `landing-ci` (top-level `contents: read`, no registry login, no `packages: write`) plus Dependabot, and `renvor-docs` and `renvor-infra` have **zero workflows and zero runs**; and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content. **GHCR was not independently enumerated** — the available token lacks `read:packages` and anonymous GHCR returns HTTP 403 without distinguishing absent from private — so the no-image statement rests on the absence of any publishing workflow and any run that could have performed one, not on a registry listing.)* The 12 open tasks are T082–T085, T087–T088, T102, T106, T108–T109, T111, and T113. **T114 is cancelled / not applicable, not complete** — the GitLab canonical cutover it gated was abandoned and its restore requirements were never met (§3av).
+**Status**: **Phase 001 closure candidate** — **108 completed, 1 waived, 1 cancelled, 4 transferred (114 total)**. **Counted by task ID and explicit status marker, not by counting checkboxes** — see "How to count the tasks in this file" in `specs/001-governance-foundation/tasks.md`. **Waived**: **T088** (`WAIVED / NOT MET` under **W-003** — no independent human review of Phase 001 has occurred). **Cancelled**: **T114** (GitLab cutover abandoned; its recovery requirements were never met). **Transferred and still non-completed**: **T102**, **T108**, **T109**, **T111** — the four deployment gates, each with a named destination. **All six decision records accepted** (ADR-0001…ADR-0006), each reviewed as a **non-independent** self-review under W-002. Governance checklist 79/79. Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **no crate, package, container image, release, or tag has been published, and no site has been deployed** — *(verified read-only 2026-08-15: `crates.io` sparse index returns HTTP 404 for `renvor`, `renvor-cli`, and `renover` with `serde` returning 200 as a control; all four repositories hold zero releases and zero tags; no repository contains an image-publishing workflow; and `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each resolve to a shared origin returning HTTP 404 with no Renvor content. `renvor-rs/renvor-infra` **source** was published as a public repository on 2026-08-15, which is not an artifact publication. **GHCR was not independently enumerated** — the available token lacks `read:packages` and anonymous GHCR returns HTTP 403 without distinguishing absent from private — so the no-image statement rests on the absence of any publishing workflow or run, not on a registry listing.)* **Zero tasks remain open.** **Phase 001 is not, and must not be described as, independently reviewed**, and **no Renvor 1.0 claim is made or implied**.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`
 **Current topology (2026-08-15, ADR-0006 D13)**: all four repositories — `renvor-rs/renvor`, `renvor-rs/renvor-site`, `renvor-rs/renvor-docs`, `renvor-rs/renvor-infra` — are **public on GitHub and canonical there**. **No Renvor repository is private**, and no Renvor process depends on GitLab. **This ledger is dated and append-only**: sections before §3av describe the state on their own dates, including sections written while repositories were private or planned as private. Read any earlier section as evidence of its date, and **§3av as current state**. ADR-0006 is still `proposed` pending T106.
@@ -193,7 +193,7 @@ Authorised by the maintainer for creation and restore-verification only.
 
 | Field | Value |
 |---|---|
-| Path | `/Users/ahmedanbar/Documents/renvor-git-backup-2026-08-11.tar.gz` (outside the work tree) |
+| Path | the maintainer's local backup directory, file `renvor-git-backup-2026-08-11.tar.gz` (outside the work tree) *(absolute path withheld 2026-08-15)* |
 | Contents | The complete `.git` directory — objects, refs, reflogs, index, config |
 | Size | 68,254,289 bytes (65.1 MiB) |
 | SHA-256 | `7d98f5c6f40396ac838c8964a90586e14705ed17f5383de3c5be7e0b4494b9bf` |
@@ -469,7 +469,7 @@ or modified files.**
 | `LICENSE-APACHE` | 11,358 | Fetched from the canonical source `https://www.apache.org/licenses/LICENSE-2.0.txt` (HTTP 200), sha256 `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30`, contains `END OF TERMS AND CONDITIONS` |
 | `LICENSE-MIT` | 1,096 | Standard MIT text, © 2026 Ahmed Anbar and the Renvor contributors |
 
-Byte-identical copies placed at `crates/renvor/` so the published crate carries both.
+Byte-identical copies placed at `crates/renvor/` so the crate carries both when it is published.
 Verified identical by sha256.
 
 ## 3m. T030 / T044 — shipped file set (`cargo package -p renvor --list`)
@@ -511,7 +511,7 @@ Clears the §3b blocker. Authorised as a local-only pass.
 
 | Field | Value |
 |---|---|
-| Path | `/Users/ahmedanbar/Documents/renvor-pre-rewrite-backup-2026-08-11.tar.gz` |
+| Path | the maintainer's local backup directory, file `renvor-pre-rewrite-backup-2026-08-11.tar.gz` *(absolute path withheld 2026-08-15)* |
 | Size / permissions | 709,415 bytes · `-rw-------` |
 | SHA-256 | `b13f370b5b3639b68b625e3036d4b05a7c456fc1ba3b840925361276f6a3067c` |
 | Contents | Complete `.git` (index included), all tracked and staged changes, all untracked Phase 001 files, `.claude/` (12 files), `.specify/` (20 files). Excludes `target/` (regenerable) and `Branding/` (1.4 GB, untouched by this pass) |
@@ -1105,7 +1105,9 @@ The advisory policy is incorporated **by authoritative reference**, not copied, 
 numbers exist in one file and every other mention resolves in its favour.
 
 **Decision records: 5 accepted, 1 proposed.** ADR-0006 remains `proposed` — T099, T101,
-T102, T105, and T106 all remain open and were not touched in this pass.
+T102, T105, and T106 all remain open and were not touched in this pass. *(Dated statement,
+true when written. **ADR-0006 was accepted 2026-08-15** after T106 closed; T099, T101, and
+T105 closed earlier. **T102 remains non-completed and transferred.**)*
 
 ## 3z. T070–T081 — release documentation and non-publishing rehearsal (2026-08-12)
 
@@ -1451,7 +1453,7 @@ record. **Not remediated in this pass** — remediation was outside its authoris
   been breached.** Remediation deadlines are 14 days (High) and 30 days (Medium) from
   detection.
 - **Reachability**: all five are transitive npm dependencies of the **documentation site**.
-  The published crate has **zero dependencies** of any kind, and the packaged archive
+  The crate that would be published has **zero dependencies** of any kind, and the packaged archive
   contains 8 files, none from `docs/` (§3z.4). **None of these advisories reaches the
   crate that would be published.** `cargo deny check` passes because it governs the Cargo
   graph, which is genuinely clean — not because it was configured to overlook these.
@@ -1583,8 +1585,8 @@ Reassessment **2026-09-11**, tracked at **T109**.
 | Algorithm | Ed25519 (`ssh-ed25519`) |
 | Public fingerprint | `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` |
 | Comment | `Ahmed Anbar <admin@ahmedanbar.dev> Renvor signing` |
-| Private-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor` |
-| Public-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor.pub` |
+| Private-key path | *(withheld — see the redaction note below)* |
+| Public-key path | *(withheld — see the redaction note below)* |
 | Private permissions | `-rw-------` (0600) |
 | Public permissions | `-rw-r--r--` (0644) |
 | Encryption | `aes256-ctr`, `bcrypt` KDF, **100 rounds** |
@@ -1593,6 +1595,31 @@ Reassessment **2026-09-11**, tracked at **T109**.
 
 **No private-key contents and no passphrase appear in this record, in the repository, or in
 any output.**
+
+> **Path redaction, 2026-08-15 (maintainer decision).** The two rows above previously gave the
+> **absolute filesystem paths** of the signing key pair. This repository is public, so those
+> rows published the exact on-disk location of the release signing private key to anyone. A
+> path is not a key and discloses no key material, but it converts any read access into
+> precise targeting, and it proves nothing that the rows retained above do not already prove.
+>
+> **What is retained, because it is what actually establishes signing identity and hygiene:**
+> the algorithm, the **public fingerprint** — which is the verifiable identity, and which is
+> already published in `governance/allowed-signers` — the key comment, both permission modes,
+> the passphrase encryption and KDF rounds, the creation timestamp, and the signing-only
+> purpose. Nothing verifiable was lost.
+>
+> **Scope of this redaction:** it changes the published document. **Git history is not
+> rewritten**, so the earlier revisions of this file still contain the paths and remain
+> reachable; this is a deliberate trade — rewriting a public repository's history is more
+> disruptive than the disclosure it would remove, and would break every signature and SHA
+> already recorded in this ledger. **No key was read, opened, moved, copied, rotated, or
+> deleted** by this change, and none is proposed here.
+>
+> **A separate, unaddressed matter is recorded as a future security action**: the key pair is
+> stored in a **directory synchronised to a third-party file-sync service**, which widens its
+> blast radius beyond this machine to that account and every device syncing it. **That is a
+> storage-hardening question, not a documentation question**, it is out of scope for this
+> phase, and it is tracked in §7 (recurring obligations) rather than silently closed here.
 
 ### 3ad.2 A generation defect, caught and corrected
 
@@ -1656,7 +1683,7 @@ Repository-local Git configuration (global identity untouched — it remains
 ```text
 user.name  = Ahmed Anbar          gpg.format      = ssh
 user.email = admin@ahmedanbar.dev commit.gpgsign  = true
-user.signingkey = /Users/ahmedanbar/Dropbox/ssh/renvor.pub
+user.signingkey = <path withheld — public key file, see §3ad.1>
 tag.gpgsign = true
 gpg.ssh.allowedSignersFile = governance/allowed-signers
 ```
@@ -1871,6 +1898,16 @@ first release: row 21 must be closed first.
 
 ## 3af. Workspace reorganisation, repository reconciliation, DNS and TLS (2026-08-12)
 
+> **Absolute local paths retained here, deliberately** *(noted 2026-08-15)*. The signing-key
+> and backup paths elsewhere in this ledger were withheld on the same date, because a path
+> proved nothing those records did not already prove. **This section is the exception**:
+> §3af.3a diagnoses a stale compiled-in `CARGO_MANIFEST_DIR`, and the finding **is** the
+> before-and-after comparison of two absolute paths. Redacting them would delete the evidence
+> rather than protect anything. The paths here disclose a working-directory layout and a
+> macOS account name — **no key, credential, or backup location** — and the account name is
+> already public in this project's commit metadata. **Whether to generalise them anyway is
+> recorded as an open question for the maintainer, not silently decided here.**
+
 **Nothing was deployed, published, released, or provisioned.** No GitHub repository was
 created, renamed, or made public. No Cloudflare record was created or changed. No
 certificate was issued. No Kubernetes object was touched.
@@ -1934,7 +1971,7 @@ across all 14 versions. `Branding` → `branding` used a unique intermediate nam
 filesystem is **case-insensitive** — confirmed by `Branding` and `branding` resolving to the
 same inode — so a direct case-only rename was avoided.
 
-**Recovery artefacts** at `/Users/ahmedanbar/Documents/renvor-migration-backup-20260812T095519Z/`:
+**Recovery artefacts** in the maintainer's local backup directory, under `renvor-migration-backup-20260812T095519Z/` *(absolute path withheld 2026-08-15)*:
 
 | Artefact | SHA-256 |
 |---|---|
@@ -2171,12 +2208,62 @@ reader encountering the source is not misled about its status.
 
 ## 4. Acceptance criteria coverage
 
-Populated by T082. One row per PLAN.md Phase 001 acceptance criterion and per SC-001
-through SC-016.
+**Populated 2026-08-15 (T082).** One row per PLAN.md Phase 001 acceptance criterion and per
+**SC-001 through SC-016**. **Every row carries an evidence link, a command or action, a
+platform, an operator, a date, and a result.** Rows whose result is anything other than a clean
+pass say so in the result cell rather than in a footnote.
+
+**Operator `AA` = Ahmed Anbar. Platform `mac` = macOS 26.3 (Darwin 25.3.0, arm64);
+`gha` = GitHub Actions `ubuntu-latest`.**
+
+> **These results are self-recorded and reviewed under W-002 and W-003 as a NON-INDEPENDENT
+> self-review.** No independent human has verified this table. That is a recorded exception,
+> not a claim of independence.
+
+### 4.1 PLAN.md Phase 001 acceptance criteria
 
 | Criterion | Evidence link | Command or action | Platform | Operator | Date | Result |
 |---|---|---|---|---|---|---|
-| *(not yet populated)* | | | | | | |
+| Clean checkout passes formatting, lint, test, and doc placeholders | §3q, §3r | `cargo xtask verify` steps 1–5 | mac + gha | AA | 2026-08-15 | **Pass** — exit 0 on both toolchains |
+| Secrets and build output are ignored | §3a, §3c | `.gitignore` review; `git status --porcelain` empty after a full verify | mac | AA | 2026-08-15 | **Pass** — step 10 reports 0 untracked, 0 modified |
+| Workflow permissions are minimal | §3v, §3aw.4 | every workflow declares top-level `permissions`; elevation only on the job needing it | gha | AA | 2026-08-15 | **Pass** — framework workflows and `renvor-site`'s `landing-ci` all at `contents: read` with no job-level widening |
+| All public names are confirmed | §3g, `governance/name-availability.md` | registry, DNS, and executable-name checks | mac | AA | 2026-08-12 | **Pass**, with limitation **R-1** — names are verified but **unreserved**, and **R-3** — clearance is bounded, not exhaustive |
+| No ADR is falsely marked accepted | §3ay, ADR-0006 Acceptance gate | all six ADR headers read; W-002 controls checked per record | mac | AA | 2026-08-15 | **Pass** — 6 of 6 accepted, each with reviewer `Ahmed Anbar — self-review under W-002` and a review date. **Explicitly not independent** |
+| Release dry-run workflow packages a placeholder internal crate without publishing | §3z, §3z.4 | `cargo package`, `cargo publish --dry-run` | mac + gha | AA | 2026-08-12 | **Pass** — 1 artifact, **0 publish operations**; registry still 404 for all three names on 2026-08-15 |
+| **§26**: Phase 001 records topology, ownership, security boundaries, and the deployment decision process **only** — it provisions nothing and deploys nothing | §3av, §3ay, §3aw | live read-only inspection of GitHub, the shared host, and three hostnames | mac | AA | 2026-08-15 | **Pass** — **no Renvor namespace, workload, PVC, or ingress exists**; no DNS record was created or changed; no site is deployed |
+
+### 4.2 Success criteria SC-001 – SC-016
+
+| Criterion | Evidence link | Command or action | Platform | Operator | Date | Result |
+|---|---|---|---|---|---|---|
+| **SC-001** — public names dated, definite, under project control; 0 unconfirmed names in frozen references; 0 registry names claimed by publication | §3g, §3ai.4, §3ax.2 | `governance/name-availability.md`; crates.io sparse index with a `serde` control | mac | AA | 2026-08-15 | **Pass** — `renvor`, `renvor-cli`, `renover` all **HTTP 404**; 0 claimed by publication. Residual risk **R-1** |
+| **SC-002** — a contributor reaches a passing verification run from a fresh clone with no undocumented steps | §3ba (T085) | quickstart Gates 0–8 from a clean isolated checkout | mac | AA | 2026-08-15 | **Pass** — see §3ba for the gate-by-gate record |
+| **SC-003** — verification completes with 0 failing and 0 **silently skipped** checks on both toolchains | §3q, §3r, §3ba | `cargo xtask verify` under 1.94.0 and current stable | mac + gha | AA | 2026-08-15 | **Pass** — 10/10 both toolchains; every step prints an explicit result, so a skip cannot pass silently |
+| **SC-004** — after a full verification run on a clean checkout, 0 untracked and 0 modified files | §3r, §3ba | `cargo xtask verify` step 10 | mac + gha | AA | 2026-08-15 | **Pass** |
+| **SC-005** — **both** required secret scans report 0 findings, each with its own tool version, date, and scope | §5, §3ba | `gitleaks git` (history) and `gitleaks dir` (tree incl. untracked), 8.30.1 | mac | AA | 2026-08-15 | **Pass** — both **exit 0**, 0 findings, recorded separately. A single clean scan would **not** satisfy this |
+| **SC-006** — six governance documents within 1 link of the root; security path findable in under 2 minutes | §3i | link inventory from the rendered README; `SECURITY.md` path test | mac | AA | 2026-08-12 | **Pass** |
+| **SC-007** — 100% of workflows declare read-only default permissions; 100% of third-party steps use immutable references; 0 unwaived exceptions | §3v, §3aw.2 | permissions grep; 40-character SHA check on every `uses:` | mac + gha | AA | 2026-08-15 | **Pass** — framework workflows clean; `renvor-site` **9 of 9** actions pinned with version comments |
+| **SC-008** — 100% of public-tier security controls enabled and verified before the first content push; control-unavailability waivers **0**; approval waivers exactly **1** | §3l, §3av | protection and security settings read back from GitHub | mac | AA | 2026-08-15 | **Pass** — control-unavailability waivers **0**; approval waivers **1** (W-001). W-002 and W-003 are explicit reviewed exceptions and are **counted separately**, per the waiver ledger |
+| **SC-009** — 0 decision records accepted without a recorded reviewer and review date; 100% of required decisions accepted before the phase closes | §3ay, ADR headers | all six ADR header tables read | mac | AA | 2026-08-15 | **Pass** — 6 of 6 accepted with reviewer and date; **0** accepted without both |
+| **SC-010** — the rehearsal produces 1 artifact and performs 0 publish operations; the registry shows 0 new versions | §3z.4, §3ax.2 | `cargo package`; registry re-check | mac | AA | 2026-08-15 | **Pass** — 1 artifact, 0 publishes, registry **404** |
+| **SC-011** — 100% of PLAN Phase 001 acceptance criteria map to dated evidence; 0 unevidenced | §4.1 above | this table | mac | AA | 2026-08-15 | **Pass** — 7 of 7 criteria evidenced and dated |
+| **SC-012** — the documentation set builds and link checking reports 0 broken links | §3ba, verify step 8–9 | `docusaurus build`; `lychee` | mac + gha | AA | 2026-08-15 | **Pass** — build succeeds; **225 OK, 0 errors** over 257 links |
+| **SC-013** — 0 runtime framework capabilities implemented, confirmed against the exclusion list | §3ax.1 | rustdoc item enumeration + `pub` grep, two independent methods | mac | AA | 2026-08-15 | **Pass** — 3 public items, all `pub const &str`; 3 lines of library code; 0 of every excluded category |
+| **SC-014** — 0 long-lived registry or publishing credentials anywhere; 100% of release-identity controls configured or covered by a dated waiver | §3ad, §3ae | `gh secret list`; workflow grep; signing configuration; `release` environment | mac + gha | AA | 2026-08-15 | **Pass** — no `CARGO_REGISTRY_TOKEN` stored; signing key configured, **signing-only**, passphrase-encrypted; protected `release` environment with required reviewers and **0 deployments**. Key **storage** hardening is an open obligation (§7.4, **R-13**), not a credential leak |
+| **SC-015** — 100% of publishable packages declare `MIT OR Apache-2.0`; both licence texts present; 0 unlicensed or divergent | §3h, §3ba | `Cargo.toml` assertion; licence file presence | mac | AA | 2026-08-15 | **Pass** — `renvor` declares `MIT OR Apache-2.0`; both texts present at root and in the crate |
+| **SC-016** — MSRV reads exactly `1.94.0` everywhere it is stated, 0 mismatches; resolver 3 declared explicitly; minimum-version resolution demonstrated | §3s, §3ba | single-source MSRV check; `resolver = "3"` in the root manifest | mac + gha | AA | 2026-08-15 | **Pass** — 0 mismatches; resolver 3 explicit. Limitation **R-7**: the floor is proven against a **zero-dependency** crate and must be revalidated before Phase 006 (FR-061) |
+
+**Coverage: 6 of 6 PLAN.md `Acceptance:` criteria, plus 1 additional Phase 001 scope
+constraint, and 16 of 16 success criteria — 23 rows, all evidenced and dated. 0 unevidenced
+rows.**
+
+> **Why 6 + 1 and not 7.** *(Clarified 2026-08-15.)* `PLAN.md` §20's Phase 001 **`Acceptance:`**
+> line contains exactly **six** semicolon-separated criteria, and §4.1's first six rows map to
+> them one-to-one and in order. The seventh row covers the **`Web properties (Section 26):`**
+> constraint, which sits in the same Phase 001 block under a **different label** and is a scope
+> constraint rather than an acceptance criterion. It is covered because it is a real Phase 001
+> gate, but counting it as a seventh *acceptance criterion* overstated the source. **This is
+> over-coverage, not a gap** — no criterion under the `Acceptance:` label is missing.
 
 ## 5. Secret scans
 
@@ -2188,7 +2275,22 @@ authorises.
 |---|---|---|---|---|---|---|
 | pre-creation (a) | Gates organization and repository creation | gitleaks `git` | 8.30.1 | 2026-08-11 19:11 | Full history — 2 commits (`1b182d0`..`bfb6925`), 311.63 KB | **0** |
 | pre-creation (b) | Gates organization and repository creation | gitleaks `dir` | 8.30.1 | 2026-08-11 19:11 | Working tree — 4.80 MB of text across 122,660 files | **0** |
-| pre-push | Gates the first content push | | | | | *(not run — T053)* |
+| pre-push (a) | Gates the first content push | gitleaks `git` | 8.30.1 | 2026-08-11 17:28 | Full history — **all 8 proposed commits** at `ddfc39d`, 1.29 MB | **0** |
+| pre-push (b) | Gates the first content push | gitleaks `dir` | 8.30.1 | 2026-08-11 17:28 | Working tree — 6.57 MB of text | **0** |
+| convergence (a) | Phase 001 closure re-scan | gitleaks `git` | 8.30.1 | 2026-08-15 | Full history at the convergence head | **0**, exit 0 |
+| convergence (b) | Phase 001 closure re-scan | gitleaks `dir` | 8.30.1 | 2026-08-15 | Working tree including untracked files | **0**, exit 0 |
+
+> **The two `pre-push` rows were blank until 2026-08-15, reading "*(not run — T053)*".** That
+> was stale, not accurate: **T053 ran on 2026-08-11 and its results were recorded in §3n and
+> §3s** — the summary table here was simply never filled in from them. **SC-005 depends on this
+> table**, so a blank row here made a satisfied criterion look unevidenced. Populated from §3s,
+> the re-scan taken against the exact proposed commits, which is the run that actually gated
+> the first content push. *(Found 2026-08-15 by advisory review, which located the blank cells
+> by running a detector proven to fire on real blanks.)*
+>
+> **The canary test accompanies both pre-push rows**: the FP-001 allowlist suppressed exactly
+> one prose match and **detected** an injected canary credential, with the test file restored
+> byte-identically. An allowlist that had silently widened would have failed this.
 
 ### T013 command note — `gitleaks detect` no longer exists
 
@@ -3276,7 +3378,14 @@ bytes change; unrelated output changes do not alter that digest.
 >   *the GitLab instance was deliberately not inspected, so no claim is made about its
 >   contents.*
 > - "**New gate** | **T114**…" and "*T113 and T114 are open*" — **T114 was cancelled on
->   2026-08-15, not passed.** T113 remains open. See §3av.
+>   2026-08-15, not passed** (§3av), and **T113 was closed on 2026-08-15** on live
+>   re-verification (§3aw). Neither is open.
+> - the closing **Boundary** paragraph — "*T113 and T114 are open. ADR-0006 remains proposed
+>   pending T106. Phase 001 is not complete…*" — was true on 2026-08-14. **Superseded
+>   2026-08-15**: T114 cancelled, T113 closed, **ADR-0006 accepted**, and Phase 001 is a
+>   closure candidate with 0 open tasks. **The clause "no Renvor 1.0 claim is made" still
+>   stands.** *(An earlier attempt annotated that paragraph in place, which would have broken
+>   the byte-for-byte claim this banner makes. It was reverted and the correction moved here.)*
 
 **This section records a decision and the preflight that authorised it. At the time of this
 commit the transition had not been executed**: `renvor-rs/renvor-site` and
@@ -3426,7 +3535,7 @@ abandoned. Recorded precisely:
   cancelled.
 
 On **2026-08-15 Ahmed Anbar intentionally deleted** the local Phase 3 and Phase 4 GitLab
-backup and evidence directory **`/Users/ahmedanbar/Backups`**. **None of those local backup
+backup and evidence directory — **the maintainer's local backup directory** *(absolute path withheld 2026-08-15)*. **None of those local backup
 artifacts is preserved.** This statement is scoped to that directory alone and makes **no
 claim about any unrelated backup held elsewhere**.
 
@@ -3447,19 +3556,466 @@ Counted from `specs/001-governance-foundation/tasks.md` by matching `^- \[[ xX]\
 
 | Measure | Value |
 |---|---|
-| Total tasks | **114** |
-| Completed normally | **101** |
-| Cancelled / not applicable | **1** — T114 |
-| Open | **12** — T082–T085, T087–T088, T102, T106, T108–T109, T111, T113 |
-| Raw Markdown checked entries | **102** = 101 completed + 1 cancelled |
+*(Counts as they stood on 2026-08-15 when this section was written. **They moved later the same day** — the current figures are in the Status line at the head of this ledger and in §4. Retained because §3av records a dated state.)*
 
-**Read as `101 completed, 1 cancelled, 12 open (114 total)`. The figure 102 is the raw
-checkbox count and must not be reported as 102 tasks completed.** No replacement task was
-added; there is no T115.
+| Measure | As at §3av | Current |
+|---|---|---|
+| Total tasks | **114** | **114** |
+| Completed | **101** | **108** |
+| Waived / not met | 0 | **1** — T088, under **W-003** |
+| Cancelled / not applicable | **1** — T114 | **1** — T114 |
+| Transferred, still non-completed | 0 | **4** — T102, T108, T109, T111 |
+| Open | **12** | **0** |
+
+**Read the current state as `108 completed, 1 waived, 1 cancelled, 4 transferred (114 total)`.**
+**Counting is now by task ID and explicit status marker, not by counting checkboxes** — T114
+was moved out of checkbox grammar on 2026-08-15 precisely because a checkbox count reported a
+cancelled disaster-recovery gate as completed. No replacement task was added; there is no T115.
 
 ### Boundary
 
-`ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
+`ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made.` *(Dated 2026-08-15, true when written. ADR-0006 was accepted and T113 closed later the same day. **No Renvor 1.0 claim is made — that part still stands.**)* `This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
+
+*(T113 closed 2026-08-15 — §3aw. The boundary paragraph above is dated 2026-08-15 and stated
+what was true when §3av was written; T113 was still open at that moment.)*
+
+## 3aw. T113 — landing repository CI and branch protection, verified from the live repository (2026-08-15)
+
+**T113 is closed on a read-only re-verification of `renvor-rs/renvor-site` performed
+2026-08-15, not on the pull request alone.** The work landed on 2026-08-14; this section
+records that it is still in force, because a gate that was configured and then silently
+weakened is not a gate.
+
+**Nothing in this section changed the site repository.** Every observation below is a read.
+No push, no setting change, no workflow run triggered, no deployment.
+
+### 3aw.1 What landed
+
+| Item | Value |
+|---|---|
+| Pull request | `renvor-rs/renvor-site` **#4**, state **MERGED** |
+| Merged at | **2026-08-14T18:28:38Z** |
+| Reviewed head | `b6ed04d219c27a4f69526751c17a9db5aba2c575` |
+| Merge commit | `d3575e5e8b5b8c16f21c6dde1578d8e9993422c4` |
+| Current `main` | **`d3575e5e8b5b8c16f21c6dde1578d8e9993422c4`** — the merge commit is still the branch head, so nothing has landed on top of the reviewed state |
+| Checks on the merge commit | `build`, `accessibility`, `links`, `dependencies`, `container` — all **success** |
+
+### 3aw.2 The workflow enforces what T113 required
+
+Read from `origin/main:.github/workflows/landing-ci.yml`.
+
+| T113 requirement | How `landing-ci` satisfies it |
+|---|---|
+| CI consumes the repository-local `.nvmrc` | `actions/setup-node` with `node-version-file: ${{ env.NODE_VERSION_FILE }}` in **every** Node job — the version lives in one place and CI reads it |
+| Frozen install | `pnpm install --frozen-lockfile` |
+| Typecheck | `pnpm run typecheck` |
+| Production build | `rm -rf build .docusaurus` then `pnpm run build`, asserting `build/index.html` and `build/404.html` exist |
+| Accessibility | Playwright suite run against the **artifact downloaded from the `build` job**, not a fresh local build — accessibility is asserted about the same bytes that were typechecked and built |
+| Link check | `lycheeverse/lychee-action` over `build/**/*.html` with an absolute `--root-dir` |
+| Dependency scan | `trivy` filesystem scan, `scanners: vuln`, `severity: HIGH,CRITICAL`, **`exit-code: 1`** — findings fail the build |
+| Container scan | `trivy` image scan of `renvor-site:ci`, `scanners: vuln,secret`, `severity: HIGH,CRITICAL`, **`exit-code: 1`**, `ignore-unfixed: false` |
+
+**Beyond the requirement**, and recorded because it is real work: the container job smoke-tests
+the image under production constraints — `--read-only`, `--cap-drop ALL`,
+`--security-opt no-new-privileges`, `--user 65532:65532` — asserting `/health` 200, `/` 200,
+and a missing path **404**; and the pipeline emits **two SBOMs**, a dependency SBOM and a
+**runtime SBOM generated from the image** with `syft` pinned to `v1.51.0`, both SPDX-JSON,
+uploaded with explicit retention and `if-no-files-found: error` so a missing artifact fails
+rather than passing quietly.
+
+**Third-party action pinning — 9 of 9.** Every `uses:` resolves to a full 40-character commit
+SHA with a trailing version comment: `actions/cache`, `actions/checkout`,
+`actions/download-artifact`, `actions/setup-node`, `actions/upload-artifact`,
+`anchore/sbom-action`, `aquasecurity/trivy-action`, `lycheeverse/lychee-action`,
+`pnpm/action-setup`. Verified mechanically by extracting every `uses:` value and testing the
+post-`@` component for length 40.
+
+### 3aw.3 Protection on `main`, read back from GitHub 2026-08-15
+
+| Control | Observed |
+|---|---|
+| Pull request required | **yes** (0 approvals — the W-001 single-maintainer gap, unchanged) |
+| Required status checks | **5** — `build`, `accessibility`, `links`, `dependencies`, `container` |
+| Strict (branch must be up to date) | **true** |
+| Administrator bypass | **none** — `enforce_admins: true` |
+| Conversation resolution | **required** |
+| Force pushes | **blocked** |
+| Deletions | **blocked** |
+
+**This is the exact gap T113 was opened to close.** On 2026-08-13 the same endpoints reported
+`protected: false`, zero branch-protection rules, and a direct push to `main` that had
+succeeded.
+
+### 3aw.4 The task's exclusions held
+
+T113 excluded image publication, environments, credentials, deployment, server access, and DNS
+changes. Verified 2026-08-15:
+
+- `landing-ci.yml` declares **one** top-level `permissions: contents: read` and **no job-level
+  override anywhere in the file**; there is no `docker login`, no `docker/login-action`, no
+  `ghcr.io` reference, no `push: true`, and no `packages: write`. The `container` job builds
+  `renvor-site:ci` **locally** and never authenticates to a registry.
+- `renvor-rs/renvor-site` has **0 GitHub environments**, **0 releases**, **0 tags**.
+- **No site is deployed.** Measured the same day, `renvor.dev`, `docs.renvor.dev`, and
+  `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, with HTTPS
+  failing validation against a public trust store because Traefik serves its default
+  self-signed certificate.
+
+### 3aw.5 Observed gaps, recorded rather than glossed
+
+**Neither was required by T113**, and neither blocks its closure — both are recorded because
+the divergence between the four repositories should be a decision rather than an accident:
+
+| Control | `renvor-rs/renvor-site` | `renvor-rs/renvor` (framework) | `renvor-rs/renvor-infra` |
+|---|---|---|---|
+| `required_signatures` | **false** | **false** | **enforced** (ruleset `20889836`) |
+| `required_linear_history` | **false** | **enforced** | **enforced** |
+
+> **Corrected 2026-08-15.** This table previously read "Gap on `renvor-site` / Framework
+> repository: enforced, enforced", asserting that the framework repository enforced **both**.
+> **It does not.** Read back from GitHub: `renvor-rs/renvor` has `required_signatures: false`
+> on both the protection object and the dedicated endpoint, and holds **0 rulesets**. The
+> claim was half false, and it erred in the direction that made the framework repository look
+> stronger — the failure mode this ledger is written to prevent.
+>
+> **The sharper finding:** `renvor-infra`, the least critical of the four, is the **only**
+> repository that enforces signed commits, because it was protected by a **ruleset** while the
+> other two use classic branch protection configured without that control. **Commits on
+> `renvor-rs/renvor` are signed in practice** — the five most recent on `main` all return
+> `verified: true, reason: valid` — but that is maintainer configuration, **not server-side
+> enforcement**, and an unsigned commit would not be rejected. Carried as limitation **R-16**.
+
+Tracked in §6 (known limitations) with an owner and a target phase.
+
+### Boundary
+
+`T113 is complete. It proves the landing repository's own CI and branch protection, and nothing else. It does NOT prove deployment readiness and it deploys nothing — T102, T106, T108, and T111 remain open, and no Renvor site is deployed. This section records read-only observations of GitHub and of three public hostnames; no repository, workflow, protection setting, server, DNS record, registry, environment, or credential was created, modified, or deleted.`
+
+## 3ax. T087 — runtime-capability and availability-claim audit (2026-08-15)
+
+T087 has two halves, and **they did not both pass on first inspection.** SC-013 — no runtime
+capability implemented — passed cleanly. FR-044 — no unshipped capability described as
+available — **failed in four places**, and the corrections are recorded below rather than
+folded in silently.
+
+### 3ax.1 SC-013 — no runtime framework capability is implemented. **Pass.**
+
+| Measure | Value |
+|---|---|
+| Rust source files, excluding `target/` and `node_modules/` | **2** — `crates/renvor/src/lib.rs`, `xtask/src/main.rs` |
+| Library code in `crates/renvor/src/lib.rs`, non-comment, non-blank, excluding `#[cfg(test)]` | **3 lines** |
+| Public items exported by `renvor` | **3**, all `pub const … : &str` — `VERSION`, `MSRV`, `EXECUTABLE` |
+| `pub fn`, `pub struct`, `pub trait`, `pub mod`, `macro_rules!`, `extern` | **0 of each** |
+| Dependencies of `renvor` | **0** |
+| `unsafe` | forbidden at the workspace level (`unsafe_code = "forbid"`) |
+
+**Method, stated because a single method can fail silently.** Two independent enumerations
+were run and agreed. `cargo public-api` is **not installed**, so it was not used and is not
+claimed. (1) **rustdoc** — `cargo doc -p renvor --no-deps --offline` produced exactly three
+item pages: `constant.VERSION.html`, `constant.MSRV.html`, `constant.EXECUTABLE.html`.
+(2) **grep** — `grep -rnE '^\s*pub(\s|\()' crates/renvor/src/` returned the same three lines,
+with a control pattern proven to match first.
+
+**Against the FR-047 exclusion list — zero of each**: application kernel, lifecycle,
+configuration, error taxonomy, dependency injection, command-line behaviour, project
+generation, HTTP, GraphQL, persistence, authentication, frontend or desktop output,
+installable-package machinery. `xtask` declares **`publish = false`** and is a fixed
+ten-step process runner — verification tooling, not framework capability — consistent with
+ADR-0002's thin-by-contract rule.
+
+### 3ax.2 FR-044 — four false availability claims found and corrected
+
+**All four asserted that the `renvor` crate is published. It is not.** Verified read-only on
+2026-08-15 against the crates.io **sparse index**, with a control proving the method:
+
+| Name | Result |
+|---|---|
+| `renvor` | **HTTP 404** |
+| `renvor-cli` | **HTTP 404** |
+| `renover` | **HTTP 404** |
+| `serde` *(control)* | **HTTP 200** |
+
+> **A bare `curl` to the crates.io API returns 403 from a bot gate, not 404.** Read without a
+> user agent, that 403 could be mistaken for "absent". Both the API and the sparse index were
+> queried with an explicit user agent, and the `serde` control proves a present crate returns
+> 200 through the same path.
+
+| # | Location | Was | Now |
+|---|---|---|---|
+| 1 | `SUPPORT.md` | "The **published** `renvor` crate exposes version constants only" | "**Nothing is published** — neither `renvor` nor `renvor-cli` exists on crates.io" |
+| 2 | `SECURITY.md` | "the **published** crate exposes version constants only" | "…and **nothing has been published to any registry**" |
+| 3 | `docs/docs/intro.mdx` | "The **published** `renvor` crate exposes three constants" | "…and it is **not published**, so there is no way to install it" |
+| 4 | `docs/src/pages/index.js` | "The **published** `renvor` crate exposes three constants" | same correction, on the docs-site home page |
+
+**Root cause, recorded because it is the reusable lesson.** This exact wording was caught once
+before: §3ai.4 records `framework/README.md` claiming "The published `renvor` crate exposes
+three constants" and corrects it. **The fix was applied to `README.md` alone and never
+generalised**, leaving four copies of the same sentence live — including the two
+highest-traffic reader surfaces. **Link checking cannot catch this**: a false factual claim is
+not a broken link. The defect class is *"a correction applied at the site where it was noticed
+rather than across every instance of the claim"*, and the guard against it is a repository-wide
+re-sweep after every factual correction, with a control proving the sweep can match.
+
+**Generalised in this pass.** A repository-wide sweep for any assertion that a crate *is*
+published found and corrected three further instances that the reader-facing sweep did not
+cover: `governance/phase-001-evidence.md` ×2 and `decisions/0002` (an accepted-costs bullet now
+reading "once it is published — **nothing is published today**"). One survivor is deliberate:
+`PLAN.md` §26.7 "a signed release tag or the published crate" names an artifact *class* in a
+build rule and asserts nothing about today.
+
+### 3ax.3 Two further corrections made in the same pass
+
+| Location | Defect | Correction |
+|---|---|---|
+| `docs/docs/governance.mdx` | Stated that **every** Phase 001 decision record "currently remains `proposed`… because one of W-002's compensating controls — all required CI checks passing — is not yet met". **Both halves stale**: five of six are `accepted`, and control 3 has been met since 2026-08-11 | Now states five accepted, ADR-0006 alone `proposed`, blocked on **T106** |
+| `crates/renvor/README.md` | Linked the project home to `https://renvor.dev`, which **serves no Renvor content**. This file ships inside the published crate, so it would have been the crate page's only home link — and `lychee.toml` EX-001 excludes that host, so link checking could never flag it | Points at the repository, with a note that it moves to the site once deployed |
+
+### 3ax.4 Categories swept and found clean
+
+Stated explicitly rather than omitted: **no** failing install instruction anywhere
+(`cargo add renvor`, `cargo install renvor-cli`, `renover new` appear nowhere as usable
+commands); **no** present-tense framework feature claim; **no** claim that any site is
+deployed or reachable; **no** version number implying a release — everything is `0.0.0`; **no**
+broken relative link in `README.md`. Each sweep was run with a control pattern proven to match
+before the result was trusted.
+
+**`PLAN.md` and `CONSTITUTION.md` CLI text is not a finding.** Describing a plan is not
+claiming a capability: `PLAN.md` is headed "Program execution authority" and states Renvor
+"**will be**"; the constitution uses MUST as a requirement on a framework not yet built. T087
+asks for that distinction to be preserved, and it is.
+
+### Boundary
+
+`SC-013 is met: zero runtime framework capabilities are implemented. FR-044 required four corrections in reader-facing documents plus three generalised elsewhere, all recorded above. This audit is read-only with respect to external systems — no crate, package, image, release, or tag was published, and no repository setting, server, DNS record, or credential was created, modified, or deleted. Nothing here makes any capability available; it removes claims that something already was.`
+
+## 3ay. T106 — maintainer ruling on the shared server's absent backups (2026-08-15)
+
+**T106 blocked acceptance of ADR-0006.** It is resolved by a maintainer ruling taken on live,
+**read-only** evidence rather than on the 2026-08-11 audit, which ADR-0006 had already demoted
+to historical.
+
+### 3ay.1 The inspection
+
+**Strictly read-only, over SSH, on the live shared production host.** No file, service,
+workload, namespace, container, Kubernetes object, DNS record, or configuration was created,
+modified, or deleted. **No secret value, credential content, or private key was read**, and the
+self-hosted GitLab instance was **not** accessed. An earlier attempt on 2026-08-12 failed at
+authentication; the profile now in use resolves correctly, and the failure is recorded in §3ap
+rather than overwritten.
+
+### 3ay.2 Backup and snapshot capability — **none, of any kind**
+
+| Mechanism | Observed |
+|---|---|
+| `restic`, `borg`, `borgmatic`, `duplicity`, `duplicati`, `rsnapshot`, `rclone`, `bacula`, `amanda`, `velero`, `kopia` | **all absent** |
+| Backup cron job or systemd timer | **none** — cron holds only prune and distro-maintenance jobs; timers are distro maintenance only. `dpkg-db-backup` backs up the **package database**, not data |
+| Volume-snapshot CRDs | **none** |
+| LVM (`lvs`, `pvs`) | **empty** — no volume groups; root is a plain `ext4` partition |
+| Filesystem snapshots | **unavailable** — `ext4`, not ZFS or btrfs |
+| k3s cluster-state snapshots | **inapplicable** — the datastore is **embedded SQLite** (`state.db`), so the etcd-snapshot feature does not apply and no `etcdsnapshotfile` exists |
+| `/var/backups` | Debian **alternatives database only** |
+
+**This is not "backups are weak". There is no backup of any kind, for anything.**
+
+> **What this section deliberately does not publish.** The ruling needs the *absence* of a
+> backup mechanism, because that is the fact it turns on. It does not need per-workload
+> volume names and sizes, or precise free capacity, so those are recorded in the inspection
+> and withheld here. **Minimisation was applied to `renvor-infra` before publication on the
+> same principle** (§3av); it is applied here for the same reason. **Several identifiers for
+> this host — its address, firewall state, open ports, and component versions — are already
+> published elsewhere in this repository and predate this section.** Bringing those to the
+> same standard is a separate, larger task and is recorded as limitation **R-17**, not
+> silently treated as handled by this note.
+
+### 3ay.3 What is unprotected, and what is Renvor's
+
+| | |
+|---|---|
+| Unrelated stateful data | **5 PersistentVolumeClaims totalling roughly 57 GiB across two unrelated namespaces. 0 StatefulSets.** *(Per-workload names and volume sizes were recorded during the inspection and are deliberately **not** published here — they identify third parties' data without adding anything the ruling needs.)* |
+| Storage class | `local-path` — node-local, **no replication, no snapshot support** |
+| **Renvor's footprint** | **zero** — no `renvor*` namespace, 0 PVCs, 0 workloads, 0 ingresses. Renvor is genuinely stateless here because it is *absent* here |
+| Unrelated namespaces | `attaa`, `codexhub`, `portfolio`, `gitlab` (+ `cert-manager`, `default`, `kube-node-lease`, `kube-public`, `kube-system`) |
+| `gitlab` namespace | **two ClusterIP service shims only** — GitLab runs entirely **outside** Kubernetes |
+| Cluster-wide policy objects | **None exist for Renvor to inherit.** A Renvor deployment must therefore **create its own** `ResourceQuota`, `LimitRange`, and `NetworkPolicy` rather than relying on cluster defaults, and **NetworkPolicy enforcement must be verified on the CNI in use** before it is relied upon |
+| Headroom | **Ample for two static-site namespaces** — CPU, memory, disk, and pod-slot utilisation were all measured well below capacity at the time of the ruling. *(Precise free-capacity figures are deliberately **not** published. On a host documented as having no `LimitRange` and no `ResourceQuota`, exact headroom tells an attacker how much to consume and tells this ruling nothing it does not already say.)* |
+
+### 3ay.4 The ruling
+
+> The absence of shared-cluster backups **does not block** future deployment of Renvor's
+> **stateless** landing and documentation properties. **This does not remediate, accept
+> ownership of, or make guarantees for the unrelated stateful namespaces.** Any future
+> **stateful** Renvor workload remains **blocked** until separately reviewed backup and restore
+> controls exist. A Renvor deployment must remain **additive, isolated, resource-bounded,
+> digest-addressed, and reversible without modifying unrelated workloads**.
+>
+> **Addition 1 — resource-bounding and isolation must be created, not inherited.** **No
+> cluster-wide `ResourceQuota`, `LimitRange`, or `NetworkPolicy` exists for Renvor to inherit,
+> and no neighbouring namespace models them.** Renvor must supply its own, and **NetworkPolicy
+> enforcement must be verified on the CNI in use before it is relied upon** — a NetworkPolicy
+> that no controller enforces is decoration, and would make the isolation claim false while
+> looking satisfied.
+>
+> **Addition 2 — the absence is total, which is why the ruling is narrow.** There is no backup
+> of any kind, not merely no *cluster* backups. **Node loss is total loss** for all 57 GiB of
+> unrelated stateful data. Renvor is exempt **only** because it is stateless and reconstructible
+> from public GitHub plus a registry. **That exemption ends the moment any Renvor workload holds
+> state** — a database, a cache with durable meaning, an upload volume, or a queue.
+
+### 3ay.5 What this ruling does and does not do
+
+| | |
+|---|---|
+| **Does** | Unblock **acceptance of ADR-0006**, and nothing else |
+| **Does not** | Authorise any deployment. **T102, T108, and T111 remain non-completed and transferred**, and T102 must still run immediately before any deployment |
+| **Does not** | Remediate the neighbours' exposure, or create any obligation of Renvor's toward it. The gap is **recorded, not owned** |
+| **Does not** | Make any RPO, RTO, or recovery guarantee for anything on this host |
+
+### Boundary
+
+`T106 is complete. The inspection was strictly read-only: no file, service, workload, namespace, container, Kubernetes object, DNS record, or configuration was created, modified, or deleted; no secret value, credential, or private key was read; the self-hosted GitLab instance was not accessed. Nothing was deployed. This ruling unblocks ADR-0006 acceptance only — every deployment gate that was open before it remains open.`
+
+## 3az. T088 — phase-level review, WAIVED under W-003 and NOT MET (2026-08-15)
+
+**No independent human requirements and security review of Phase 001 has occurred.** This
+section records that plainly, because the alternative — describing what did happen as though it
+satisfied the requirement — is the exact failure the constitution's review rule exists to
+prevent.
+
+### 3az.1 Why a second waiver was needed
+
+`PLAN.md` §6.1 step 10 requires "an independent requirements and security review"; constitution
+§Development and Phase Workflow #7 requires that review to compare implementation evidence
+against the specification, constitution, compatibility matrix, and security checklist.
+`GOVERNANCE.md` defines an independent reviewer as a **person** who (1) did not author the
+record, (2) did not author the change it justifies, and (3) is not directed by the author in a
+way that would make declining to approve professionally costly.
+
+**W-002 does not cover this.** W-002 waives FR-013 — *decision-record* review. T088 is a
+*phase-level* gate under a different rule. Treating W-002 as covering it would have been a
+technicality of exactly the kind `GOVERNANCE.md` says the project does not use.
+
+**W-003 was granted by Ahmed Anbar on 2026-08-15**, with all seven mandatory fields, and is
+recorded in `governance/waivers.md` together with the scope limits that were part of the grant.
+
+### 3az.2 The limits of the grant, restated
+
+- **W-003 waives only the independent-human-review requirement for Phase 001.**
+- **It does not waive any finding, failed check, missing evidence, acceptance criterion, or
+  security blocker.** A waiver of *who reviews* is not a waiver of *what must be true*.
+- **Security release blockers are never waived.**
+- **Phase 001 must receive genuine independent re-review before any public release.**
+- Expires **2027-02-11**, or **immediately** when a qualified independent reviewer becomes
+  available — whichever occurs first.
+
+### 3az.3 What review actually happened — advisory, NON-INDEPENDENT
+
+**These reviews are not independent and are never to be described as such.** They were run in
+clean contexts, against explicit written requirement lists, by AI agents directed by the same
+party that authored the work. That is a compensating control, not a substitute.
+
+**They found real defects, which is the honest argument for keeping them and the reason they
+must not be oversold:**
+
+| Review | Representative findings |
+|---|---|
+| Requirements (PR #16) | **Two blocking**: a surviving claim that application source "stays private" when no repository is private, and a claim the landing site is "already served publicly" when no site is deployed. Both sat within a few lines of an identical sentence that *had* been corrected |
+| Security (PR #16) | Cancelled disaster-recovery gate counted as completed by any checkbox parser; publication of the release signing key's filesystem path |
+| Delta verification | A **blocking** error of the author's own: "returns no HTTP response", inferred from `curl` printing `000`, which is curl's own failure code and not an absence of response |
+| T087 audit | **Four blocking** false statements that the `renvor` crate is published, in four separate files, from a correction applied once and never generalised |
+
+**Every finding was individually dispositioned** — fixed, or refused with a stated reason —
+rather than accepted in bulk. Where a fix was refused, the reason is recorded: generalising a
+hostname inside preserved-verbatim text was declined because it would have falsified a
+byte-for-byte preservation claim made in the same commit.
+
+### 3az.4 The other half of T088 — zero open blockers
+
+T088 also requires confirming zero open blockers. **Satisfied by categorisation, not by
+rewording** — and the categorisation has **three** kinds, not two:
+
+- **Transferred** — T102, T108, T109, T111, each with an owner and a named destination, each
+  still counted as non-completed.
+- **Cancelled** — T114, whose subject ceased to exist and whose requirements were never met.
+- **Carried** — the shared server's absent backups. **This one is neither transferred nor
+  cancelled**, and saying so matters: it is a real, unremediated exposure belonging to
+  **unrelated third-party workloads**, which **T106 explicitly declined to own or fix**. It
+  stays in §8, un-struck, as a standing record. *(An earlier wording of this paragraph said
+  every remaining item was transferred or cancelled. That was false — it silently absorbed a
+  carried exposure into two categories that both imply someone has taken responsibility.)*
+
+**No blocker was closed by being restated.**
+
+### Boundary
+
+`T088 is WAIVED / NOT MET under W-003. It is not complete and must never be counted as a completed task. No independent human review of Phase 001 has occurred. The reviews performed are advisory and non-independent. Security release blockers remain unwaivable, and Phase 001 requires genuine independent re-review before any public release.`
+
+## 3ba. T085 — full quickstart gate sequence from a clean isolated checkout (2026-08-15)
+
+**Run from a fresh clone, not from the working tree.** The point of T085 is to prove a
+contributor starting from nothing reaches a passing run, so a tree that has been built in for
+days cannot be the subject. The clone was made with `--no-local`, so objects were transferred
+rather than hardlinked, and its HEAD was asserted equal to the branch HEAD before any gate ran.
+
+| | |
+|---|---|
+| Isolated checkout | fresh `git clone --no-local` into a scratch directory outside the work tree |
+| HEAD asserted | `ab75494639960adc063ccfb97150cbe0f53b316d` — **matched** the branch HEAD |
+| Platform | macOS 26.3 (Darwin 25.3.0, arm64) |
+| Operator | Ahmed Anbar |
+
+### 3ba.1 Gate results
+
+| Gate | Validates | Result |
+|---|---|---|
+| **0** — repository clean before a remote exists | SC-004, SC-005 | **Pass.** `gitleaks git` **exit 0**, `gitleaks dir` **exit 0**, both "no leaks found", version **8.30.1**, each recorded separately. Branch `docs/complete-phase-001`; `git status --porcelain` **0 lines** |
+| **1** — names verified before anything is claimed | SC-001 | **Pass.** 14 rows in `governance/name-availability.md` matched `available`/`owned-by-project`; **non-zero asserted**, so the check cannot pass vacuously |
+| **2** — clean checkout verifies itself | SC-002, SC-003, SC-004, SC-016 | **Pass on both toolchains.** `rustc 1.94.0` → **10/10**; `rustc 1.97.1` (current stable) → **10/10**. Step 10 reports 0 untracked and 0 modified on each |
+| **3** — governance discoverable, licence declared | SC-006, SC-015 | **Pass after correcting the gate itself** — see §3ba.2. All 7 governance documents present; workspace declares `MIT OR Apache-2.0`; `crates/renvor` inherits it; `resolver = "3"` explicit |
+| **4** — push authorised by a scan of what is actually shipping | SC-005 | **Pass.** Both scans re-run in the isolated checkout, both **exit 0**, with a date distinct from Gate 0's run |
+| **5** — protections are real, not configured-and-bypassable | SC-007, SC-008 | **Pass, read-only.** `main` requires pull requests and 4 checks, `strict: true`, `enforce_admins: true`, force pushes and deletions blocked; every `uses:` pinned to a 40-character SHA; every workflow declares `permissions`. **No push was attempted** — see §3ba.3 |
+| **6** — documentation builds and links resolve | SC-012 | **Pass.** Docusaurus build succeeds; `lychee` reports **225 OK, 0 errors** across 257 links |
+| **7** — release rehearsal publishes nothing | SC-010, SC-014 | **Pass.** 1 artifact, **0 publish operations**; registry re-checked 2026-08-15 → **HTTP 404** for `renvor`, `renvor-cli`, `renover`, with `serde` **200** as a control; no stored registry credential |
+| **8** — evidence complete | SC-009, SC-011, SC-013 | **Pass.** §4 carries 7 of 7 PLAN criteria and 16 of 16 success criteria, all dated; all six ADRs accepted with reviewer and date; §8 holds no uncategorised blocker |
+
+### 3ba.2 The run found a defect in the gate, not in the repository
+
+**Gate 3 failed on first execution, and the gate was wrong.** Its licence assertion required a
+literal `license = "MIT OR Apache-2.0"` in `crates/renvor/Cargo.toml`. **ADR-0002 makes
+`[workspace.package]` the single authoritative declaration site and forbids members from
+restating it**, so the member correctly reads `license.workspace = true` — and a crate that
+*passed* the assertion would have been **violating** the ADR it was meant to protect.
+
+Corrected to assert both halves — the workspace declares the terms, the member inherits them —
+plus an explicit `resolver = "3"` check. **A gate that fails on a correct repository is as much
+a defect as one that passes on a broken one**, and this one would have rewarded the exact
+violation ADR-0002 exists to prevent. It was caught only because the gate was actually run from
+a clean checkout rather than assumed to still hold.
+
+### 3ba.3 Gate 5 is now read-only, and that is a change from the original sequence
+
+The original Gate 5 ended with `git push origin main   # expected: rejected`. **That is a write
+attempt against a protected production branch whose safety depends on the very configuration
+under test.** It was replaced with assertions that read the protection settings. **No push was
+attempted during this run**, and none is required: if a read shows protection absent, that is
+the finding.
+
+### 3ba.4 SC-016 verified across every location that states the MSRV
+
+| Location | Value |
+|---|---|
+| `Cargo.toml` `[workspace.package].rust-version` | `1.94.0` |
+| `rust-toolchain.toml` `channel` | `1.94.0` |
+| `crates/renvor/src/lib.rs` `MSRV` | `1.94.0` |
+| `SUPPORT.md` MSRV statement | `1.94.0` |
+
+**0 mismatches.** `crates/renvor/Cargo.toml` restates `rust-version` **0 times**, as ADR-0002
+requires. `resolver = "3"` is declared explicitly at the workspace root. References to `1.97.1`
+and `1.98.0` elsewhere describe *current* and *next* stable in policy text and are **not** MSRV
+declarations.
+
+### Boundary
+
+`T085 is complete. Every gate was run from a fresh isolated clone on 2026-08-15; no historical result was reused. Gate 5 is read-only and no push was attempted. Nothing was published, deployed, or configured — the only external calls were read-only GitHub queries, a crates.io registry read, and an HTTP read of three hostnames.`
 
 ## 6. Known limitations
 
@@ -3474,19 +4030,77 @@ Seeded 2026-08-11 from the T016–T022 name verification. T083 consolidates and 
 | R-3 | `renover` clearance is **bounded, not exhaustive** — no global executable-name registry exists; non-Debian distributions, BSD ports, Windows package managers, and privately distributed binaries were not checked | Ahmed Anbar | Ongoing |
 | R-4 | **No trademark or common-law search** was performed for the product name `Renvor`; `contracts/public-identity.md` names one as that row's verification method | Ahmed Anbar | Before first public announcement |
 | R-5 | `renvor.dev` is in its registry **Add Grace Period** and expires **2027-08-11**; renewal is an operational obligation | Ahmed Anbar | T084 recurring obligations |
-| — | Local `stable` toolchain stale at 1.94.0 (see §8) | Ahmed Anbar | Separate diagnosis |
+| ~~R-6~~ | ~~Local `stable` toolchain stale at 1.94.0 (see §8)~~ | Ahmed Anbar | **Resolved 2026-08-11** — §3p; `rustc +stable` is 1.97.1 |
+
+**Finalised 2026-08-15 (T083).** The rows below were added on that date. Each carries a named
+owner and a target phase, and **none is closed by being written down**.
+
+| ID | Limitation | Owner | Target phase |
+|---|---|---|---|
+| R-7 | **MSRV 1.94.0 has never been validated against real persistence dependencies.** FR-061 requires revalidation before Phase 006, because Phase 001's only crate has **zero dependencies**, so the floor is currently proven against nothing that could raise it | Ahmed Anbar | **Before Phase 006** — registered in §7 |
+| R-8 | **`renvor-rs/renvor-site` does not require signed commits or linear history** (`required_signatures: false`, `required_linear_history: false`, observed 2026-08-15). T113 did not require either, so this is a divergence rather than a failure — but it is a divergence in the repository that will serve the public landing page | Ahmed Anbar | Phase 012, with the landing deployment; earlier if a second contributor joins |
+| R-17 | **The framework repository publishes operational detail about a live shared production host that its own minimisation standard says to remove.** §3av records that the `renvor-infra` README was minimised before publication by removing **the origin IPv4 address, component patch versions, authoritative nameserver names, and the unrelated-namespace inventory**. This repository publishes all four, in `decisions/0006` and in dated `phase-001-evidence` sections, alongside the host's firewall state and open ports. **Every one of those predates 2026-08-15 and none was introduced by the Phase 001 convergence change** — which is why it is recorded rather than fixed here: correcting it means editing accepted decision records and dated evidence across the repository, and that is its own reviewed change. **The affected stateful workloads belong to third parties**, so the maintainer should also consider whether their owners warrant notice. *(Raised 2026-08-15 by advisory security review.)* | Ahmed Anbar | **Before any deployment or further publication** — treat as blocking for both |
+| R-16 | **`renvor-rs/renvor` does not enforce signed commits.** `required_signatures` is **false** on the framework repository — the most security-critical of the four — while `renvor-infra`, the least critical, **does** enforce it via ruleset `20889836`. The cause is mechanism, not intent: the framework uses **classic branch protection** configured without that control, and holds **0 rulesets**. **Commits are signed in practice** (the five most recent on `main` all verify), so this is an **enforcement** gap, not a provenance gap — an unsigned commit would not be rejected. *(Found 2026-08-15 by advisory review, correcting an earlier claim in this ledger that the framework "enforces both".)* | Ahmed Anbar | Before the first signed release — registered in §7.4 |
+| R-9 | **`renvor-rs/renvor-infra` has no CI and therefore no required status checks.** Its ruleset requires pull requests, signed commits, and linear history with zero bypass actors, but **nothing is verified** on the way in. A manifest could be merged unreviewed by machine | Ahmed Anbar | The phase that adds the first manifest — protection without verification must not outlive the repository's emptiness |
+| R-10 | **`renvor-rs/renvor-docs` is commit-empty, unprotected, and has secret scanning and push protection disabled.** There is no `main` branch to protect. The controls must exist **before** its first commit, not after | Ahmed Anbar | Phase 012, before the documentation migration permitted by T108 |
+| R-11 | **The T095–T097 landing-approval anchors cannot be recomputed.** §3aq records a source-set SHA-256 and a build-output SHA-256 but **not the method that produced them** — no file set, no ordering, no statement of whether filenames are included. The approval is therefore not mechanically re-attachable to any later commit, and the site has since advanced to `d3575e5e…`. A hash that cannot be reproduced verifies nothing | Ahmed Anbar | Phase 012 — re-approve against a reproducible anchor before the landing deploys, and record the recipe with it |
+| R-12 | **GHCR cannot be independently enumerated with the credentials in use.** The available token lacks `read:packages`, and anonymous GHCR returns HTTP 403 for absent and private packages alike. "No image has been published" therefore rests on the absence of any publishing workflow or run, **not** on a registry listing | Ahmed Anbar | The phase performing the first image publication |
+| R-13 | **The release signing key pair is stored in a directory synchronised to a third-party file-sync service.** Its blast radius extends beyond this machine to that account and every device syncing it. **No key was read, moved, rotated, copied, or deleted** in recording this | Ahmed Anbar | Registered in §7 as a security action; before the first signed release |
+| R-14 | **Absolute local filesystem paths remain published in §3af**, disclosing a working-directory layout and a macOS account name. They are retained because §3af.3a's finding **is** the before-and-after comparison of two absolute paths; redacting them would delete the evidence. Signing-key and backup paths elsewhere were withheld on 2026-08-15 | Ahmed Anbar | Open question for the maintainer — no phase assigned |
+| R-15 | **Phase 001's evidence rests on a single-maintainer, non-independent review.** W-002 covers decision records; the phase-level requirements and security review required by `PLAN.md` §6.1 step 10 has no independent human reviewer. Advisory AI review is **not** a substitute and is never described as one | Ahmed Anbar | When a qualified independent reviewer becomes available — see T088 and the waiver ledger |
 
 ## 7. Recurring obligations
 
-Populated by T084.
+**Populated 2026-08-15 (T084).** Every row carries an owner, a first due date, what triggers
+it early, and the condition under which it is removed. **An obligation with no removal
+condition is a permanent obligation and says so.** Dates are absolute; a condition may
+accompany a date, and the obligation fires at whichever arrives first.
 
-| Obligation | Owner | First due |
-|---|---|---|
-| *(not yet populated)* | | |
+**Nothing in this register is discharged by appearing in it.**
+
+### 7.1 Waiver expiries
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **W-001 expires** — the single-maintainer approval gap (spec FR-027; a pull request must carry an approving review from someone other than its author) | Ahmed Anbar | **2027-02-11** | **Immediately** when a second maintainer with merge rights joins | Add the second maintainer, enable the required-approving-review setting, **re-review every change merged under the waiver**, close W-001 |
+| **W-002 expires** — the decision-record independent-review gap (spec FR-013) | Ahmed Anbar | **2027-02-11** | **Immediately** when a qualified independent reviewer becomes available | Raise the review requirement to a genuinely independent reviewer, **re-review every ADR accepted under the waiver**, close W-002 |
+| **W-003 expires** — the Phase 001 **independent requirements and security review** gap (`PLAN.md` §6.1 step 10; constitution §7; T088), granted 2026-08-15 | Ahmed Anbar | **2027-02-11** | **Immediately** when a qualified independent human reviewer becomes available | The first qualified reviewer **re-reviews Phase 001 in full** against the specification, constitution, compatibility matrix, and security checklist; T088 is then satisfied rather than waived; W-003 closes. **Phase 001 must receive that re-review before any public release** |
+| **Re-review Phase 001 before any public release** — a standing precondition created by W-003, listed separately because it fires on a *release*, not on a date | Ahmed Anbar | **Before the first public release**, whenever that occurs | Any release preparation beginning while W-003 is active | Discharged only by a genuine independent human review. **Not dischargeable by agent review, self-review, or automated checks** |
+
+> **An expired-but-open waiver is a release blocker.** A waiver reaching its date without its
+> condition being met is **not** automatically renewed; it must be re-justified and re-dated,
+> or the underlying rule complied with.
+
+### 7.2 Toolchain and dependency obligations
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Quarterly MSRV policy review** (FR-060) — confirm 1.94.0 is still the correct floor and that it reads identically in every location that states it | Ahmed Anbar | **2026-11-11** *(first quarter after the 2026-08-11 policy)* | A dependency raising its own MSRV above the floor | **Permanent** — the policy is a standing commitment, not a task |
+| **Revalidate MSRV 1.94.0 against real persistence dependencies before Phase 006** (FR-061; analyze finding G6; limitation R-7) | Ahmed Anbar | **Before Phase 006 begins** | Adding any dependency with a declared `rust-version` | Discharged once revalidation is recorded with the dependency set it was run against |
+| **Reassess `image-size` — `GHSA-w3rx-r6r6-pgpr`, `GHSA-5p2g-fcmc-qvqq`** (both High, CVSS 7.5; no fixed version exists and upstream is archived). **T108** | Ahmed Anbar | **2026-09-11** | Docusaurus shipping a maintained replacement or a fixed release | Removed when a fixed or replaced dependency lands, **or** when the documentation toolchain no longer reaches the package |
+| **Reassess `GHSA-w5hq-g745-h8pq`** (moderate, `uuid` < 11.1.1, reached only through `sockjs` ← `webpack-dev-server`). **T109** | Ahmed Anbar | **2026-09-11** | `sockjs` shipping a fix, **or** the dev server entering a deployed path | Removed when `sockjs` updates its `uuid` constraint, or when the dev-server path is eliminated. **The 2026-09-11 reassessment has NOT occurred and must not be recorded as done** |
+| **Advisory triage windows** (`governance/dependency-advisory-policy.md`) — Critical or known-exploited **24 h**, High **48 h**, Medium **5 days**, Low **10 days**, from confirmed detection | Ahmed Anbar | **On every detection** | — | **Permanent** |
+
+### 7.3 Evidence and release obligations
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Evidence retention** (`governance/evidence-retention-policy.md`) — CI artifacts **90 days**; per-release evidence until the later of **seven years** after publication or **three years** after that release's supported lifetime ends; identity and provenance metadata for the **lifetime of the project** | Ahmed Anbar | **At first publication** | — | **Permanent** |
+| **`renvor.dev` domain renewal** — registered in the Add Grace Period, expires **2027-08-11** (limitation R-5) | Ahmed Anbar | **2027-08-11**, acted on well before | Registrar notice | **Permanent** while the project uses the domain |
+| **Package-name watch** — `renvor` and `renvor-cli` are verified but **unreserved**; a third party may claim either before first publication (limitation R-1, FR-049 forbids placeholder crates) | Ahmed Anbar | **Continuous until first publication** | Any observed registration of either name | Discharged at first crates.io publication |
+
+### 7.4 Security actions
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Harden signing-key storage** — the release signing key pair is stored in a directory synchronised to a third-party file-sync service, widening its blast radius to that account and every device syncing it (limitation R-13). **Recorded 2026-08-15 as a future security action.** No key was read, moved, rotated, copied, or deleted in recording it, and none is proposed here | Ahmed Anbar | **Before the first signed release** | Any suspected compromise of the sync account or a syncing device | Discharged when the key is held in storage that is not synchronised to a third-party service, **or** when the maintainer records a dated decision accepting the risk with its reasoning |
+| **Controls before `renvor-docs` receives its first commit** — branch protection, required checks, secret scanning, and push protection must exist **before** content, not after (limitation R-10) | Ahmed Anbar | **Before the first commit to `renvor-rs/renvor-docs`** | Any attempt to migrate documentation | Discharged when the controls are configured and read back |
+| **Enforce signed commits on `renvor-rs/renvor`** — the framework repository has `required_signatures: false` while `renvor-infra` enforces it (limitation **R-16**). Commits are signed in practice; enforcement is absent | Ahmed Anbar | **Before the first signed release** | Any second contributor gaining merge rights | Discharged when the framework repository rejects an unsigned commit server-side — by enabling the classic-protection setting or adopting a ruleset — verified by read-back |
+| **Required checks for `renvor-rs/renvor-infra`** — its ruleset requires pull requests and signed commits but verifies nothing, because it has no CI (limitation R-9) | Ahmed Anbar | **Before the first manifest is merged** | Any pull request adding a manifest | Discharged when CI exists and its checks are required |
 
 ## 8. Open blockers
 
-The phase remains open while any row here is present.
+**The phase remains open while any row here is *uncategorised*.** *(Narrowed 2026-08-15. The rubric previously read "while any row here is present", which no closure could ever satisfy — struck-through resolved rows are retained deliberately as history, so the table is never empty.)* A row may remain here at closure **only** if it is explicitly **resolved**, **transferred** to a named destination, **cancelled**, or **carried** as an unremediated exposure with a stated owner. **A row with no category is an open blocker and blocks the phase.**
 
 | Blocker | Blocks | Owner | Raised | State |
 |---|---|---|---|---|
@@ -3494,19 +4108,19 @@ The phase remains open while any row here is present.
 | ~~T041 cannot reach exit 0~~ | ~~Phase closure~~ | Maintainer | 2026-08-11 | **resolved** — task order corrected, both toolchains exit 0, §3q/§3r |
 | ~~T052 delivery test not confirmed~~ | ~~T052~~ | Maintainer | 2026-08-11 | **resolved** — maintainer attestation of arrival, §3t. Note: only delivery was tested; SPF/DKIM/DMARC and external-sender deliverability are **not** claimed |
 | ~~T043 literal form unmet~~ | ~~T043~~ | Maintainer | 2026-08-11 | **resolved** — step 10 reports a clean tree, §3r |
-| **All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted | T026, T039, T040 acceptance | Maintainer | 2026-08-11 | **open** |
-| Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated | Release-control assurance | Maintainer | 2026-08-11 | open |
+| ~~**All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted~~ | ~~T026, T039, T040 acceptance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — the workflows exist and run, so W-002 control 3 is met: `main` requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with `enforce_admins: true`. **all six records are `accepted`** — ADR-0001 through ADR-0006, each with reviewer `Ahmed Anbar — self-review under W-002` and a review date. ADR-0006 was the last, accepted once **T106** closed the same day. *(This cell first read "5 of 6 … ADR-0006 alone remains `proposed`", which was true for part of 2026-08-15 and stale by the end of it. **§8 is a live table, so a dated-but-stale current claim here is a defect**, not history.)* |
+| ~~Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated~~ | ~~Release-control assurance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — verified read-only against the API: `orgs/renvor-rs/memberships/AhmedAnbar` returns `role: admin`, `state: active`, and `orgs/renvor-rs/members?role=admin` returns exactly `["AhmedAnbar"]`, so the account is an org owner and the **sole** one. **Method limit, stated:** this is GitHub's authoritative record read as that account; it is not a third-party attestation, and the single-owner fact is itself a concentration risk rather than a control |
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
 | ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
-| **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — copy corrected 2026-08-12 (§3ai.7), awaiting maintainer review of the rendered page.** Not closed by the party that did the work |
-| **`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli` | Public accuracy of the framework README | Maintainer | 2026-08-12 | **corrected 2026-08-12** — §3ai.4. Uncommitted |
-| **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **open** — policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made** |
+| ~~**V7 landing page fails the release-honesty gate**~~ — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | ~~T095–T097~~; **any public landing deployment** | Maintainer | 2026-08-11 | **resolved as to the review itself, 2026-08-12** — the maintainer inspected the **rendered production build** and approved it; T095–T097 are complete (§3aq). **Residual, carried to limitation R-11 rather than closed silently:** §3aq anchored that approval to a source-set SHA-256 and a build-output SHA-256 but **never recorded how they were computed**, so the approval cannot be mechanically re-attached to the site's current `main` (`d3575e5e…`), which has advanced since. **The drift check could not be performed**, and no claim is made that it was. Re-approval against a reproducible anchor is required before the landing deploys |
+| ~~**`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli`~~ | ~~Public accuracy of the framework README~~ | Maintainer | 2026-08-12 | **resolved — corrected 2026-08-12 (§3ai.4) and committed.** Verified 2026-08-15: the correction is on `main`, the working tree is clean for that file, and `README.md` now opens with "nothing is published. Neither `renvor` nor `renvor-cli` exists on crates.io". Re-checked the registry the same day: **HTTP 404** for `renvor`, `renvor-cli`, and `renover` |
+| **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to the future deployment workflow.** Policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made**, and no DNS record was created, modified, or deleted. Blocked until cert-manager HTTP-01 issuance is proven **and** Ahmed Anbar separately authorises the exact writes. **Transferring it does not close it** |
 | ~~Step 9 link check fails on transport faults, not broken links~~ — HTTP 503 on one attempt, `HTTP/2 protocol error` on the next, while a concurrent job on the same commit reported `0 Errors` | ~~**T112**; pull request #11 required checks~~ | Maintainer | 2026-08-12 | **resolved 2026-08-12** — per-host concurrency 1 and a 250 ms interval for `github.com`, serialised matrix, run-scoped `GITHUB_TOKEN`, and **429 removed from `accept`**. Not weakened: no host excluded, no link rewritten, retries still bounded, fabricated URLs still fail with exit 2. §3ar |
 | ~~Website-code licence and brand-asset usage terms undecided~~ | ~~T098~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — option B: code `MIT OR Apache-2.0`, brand assets all rights reserved under `BRAND-POLICY.md`. File set validated, §3ak |
 | ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
-| **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** (0 container definitions, 0 SBOMs) | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **open** — verify when the image and SBOM are first produced, §3am |
-| **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
-| **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
+| **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** for the documentation site | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to Phase 012 (documentation deployment).** Verify when that image and SBOM are first produced, §3am. The Phase 001 fail-closed image-input guard stays in force. **The two High advisories remain unfixed, unsuppressed, and not waived.** *(Note: `renvor-site` now produces both a container and two SBOMs, but that is the **landing** pipeline; T108 concerns the **documentation** runtime, which still has neither.)* **Transferring it does not close it** |
+| **Open npm advisories in the documentation dependency tree** — originally 5 (3 High, 2 Medium) detected 2026-08-11T23:39:22Z; **2 closed, 3 remain** per §3aa. Documentation site only; the crate that would be published has **zero dependencies** and is unaffected | Documentation site; any future release while open | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15.** The two High `image-size` advisories ride with **T108** to Phase 012; the moderate `uuid` advisory rides with **T109** into the recurring-obligations register (§7.2), reassessment **2026-09-11, not yet performed**. Full clause-5 advisory records are still outstanding. See §3z.10 and §3aa. **Transferring them does not close them** |
+| **No backup tooling or cluster snapshots on the production VPS** — all state for the unrelated production namespaces sits in one unreplicated datastore. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability; **formerly ADR-0006 acceptance via T106** | Maintainer | 2026-08-11 | **CARRIED — recorded, not owned, and explicitly not remediated.** **T106 ruled on it 2026-08-15** (§3ay): the gap does **not** block deployment of Renvor's **stateless** properties, and the ruling **remediates nothing** for the unrelated namespaces. **The exposure is unchanged and is not Renvor's to close.** Any **stateful** Renvor workload stays blocked until separately reviewed backup and restore controls exist |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
 | ~~T008 candidate names~~ | ~~T019, T020, T021~~ | Maintainer | 2026-08-11 | resolved — `governance/name-availability.md` |
