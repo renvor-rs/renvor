@@ -2253,8 +2253,17 @@ pass say so in the result cell rather than in a footnote.
 | **SC-015** — 100% of publishable packages declare `MIT OR Apache-2.0`; both licence texts present; 0 unlicensed or divergent | §3h, §3ba | `Cargo.toml` assertion; licence file presence | mac | AA | 2026-08-15 | **Pass** — `renvor` declares `MIT OR Apache-2.0`; both texts present at root and in the crate |
 | **SC-016** — MSRV reads exactly `1.94.0` everywhere it is stated, 0 mismatches; resolver 3 declared explicitly; minimum-version resolution demonstrated | §3s, §3ba | single-source MSRV check; `resolver = "3"` in the root manifest | mac + gha | AA | 2026-08-15 | **Pass** — 0 mismatches; resolver 3 explicit. Limitation **R-7**: the floor is proven against a **zero-dependency** crate and must be revalidated before Phase 006 (FR-061) |
 
-**Coverage: 7 of 7 PLAN acceptance criteria and 16 of 16 success criteria, all evidenced and
-dated. 0 unevidenced rows.**
+**Coverage: 6 of 6 PLAN.md `Acceptance:` criteria, plus 1 additional Phase 001 scope
+constraint, and 16 of 16 success criteria — 23 rows, all evidenced and dated. 0 unevidenced
+rows.**
+
+> **Why 6 + 1 and not 7.** *(Clarified 2026-08-15.)* `PLAN.md` §20's Phase 001 **`Acceptance:`**
+> line contains exactly **six** semicolon-separated criteria, and §4.1's first six rows map to
+> them one-to-one and in order. The seventh row covers the **`Web properties (Section 26):`**
+> constraint, which sits in the same Phase 001 block under a **different label** and is a scope
+> constraint rather than an acceptance criterion. It is covered because it is a real Phase 001
+> gate, but counting it as a seventh *acceptance criterion* overstated the source. **This is
+> over-coverage, not a gap** — no criterion under the `Acceptance:` label is missing.
 
 ## 5. Secret scans
 
@@ -2266,7 +2275,22 @@ authorises.
 |---|---|---|---|---|---|---|
 | pre-creation (a) | Gates organization and repository creation | gitleaks `git` | 8.30.1 | 2026-08-11 19:11 | Full history — 2 commits (`1b182d0`..`bfb6925`), 311.63 KB | **0** |
 | pre-creation (b) | Gates organization and repository creation | gitleaks `dir` | 8.30.1 | 2026-08-11 19:11 | Working tree — 4.80 MB of text across 122,660 files | **0** |
-| pre-push | Gates the first content push | | | | | *(not run — T053)* |
+| pre-push (a) | Gates the first content push | gitleaks `git` | 8.30.1 | 2026-08-11 17:28 | Full history — **all 8 proposed commits** at `ddfc39d`, 1.29 MB | **0** |
+| pre-push (b) | Gates the first content push | gitleaks `dir` | 8.30.1 | 2026-08-11 17:28 | Working tree — 6.57 MB of text | **0** |
+| convergence (a) | Phase 001 closure re-scan | gitleaks `git` | 8.30.1 | 2026-08-15 | Full history at the convergence head | **0**, exit 0 |
+| convergence (b) | Phase 001 closure re-scan | gitleaks `dir` | 8.30.1 | 2026-08-15 | Working tree including untracked files | **0**, exit 0 |
+
+> **The two `pre-push` rows were blank until 2026-08-15, reading "*(not run — T053)*".** That
+> was stale, not accurate: **T053 ran on 2026-08-11 and its results were recorded in §3n and
+> §3s** — the summary table here was simply never filled in from them. **SC-005 depends on this
+> table**, so a blank row here made a satisfied criterion look unevidenced. Populated from §3s,
+> the re-scan taken against the exact proposed commits, which is the run that actually gated
+> the first content push. *(Found 2026-08-15 by advisory review, which located the blank cells
+> by running a detector proven to fire on real blanks.)*
+>
+> **The canary test accompanies both pre-push rows**: the FP-001 allowlist suppressed exactly
+> one prose match and **detected** an injected canary credential, with the test file restored
+> byte-identically. An allowlist that had silently widened would have failed this.
 
 ### T013 command note — `gitleaks detect` no longer exists
 
