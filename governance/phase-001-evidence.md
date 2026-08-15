@@ -193,7 +193,7 @@ Authorised by the maintainer for creation and restore-verification only.
 
 | Field | Value |
 |---|---|
-| Path | `/Users/ahmedanbar/Documents/renvor-git-backup-2026-08-11.tar.gz` (outside the work tree) |
+| Path | the maintainer's local backup directory, file `renvor-git-backup-2026-08-11.tar.gz` (outside the work tree) *(absolute path withheld 2026-08-15)* |
 | Contents | The complete `.git` directory — objects, refs, reflogs, index, config |
 | Size | 68,254,289 bytes (65.1 MiB) |
 | SHA-256 | `7d98f5c6f40396ac838c8964a90586e14705ed17f5383de3c5be7e0b4494b9bf` |
@@ -511,7 +511,7 @@ Clears the §3b blocker. Authorised as a local-only pass.
 
 | Field | Value |
 |---|---|
-| Path | `/Users/ahmedanbar/Documents/renvor-pre-rewrite-backup-2026-08-11.tar.gz` |
+| Path | the maintainer's local backup directory, file `renvor-pre-rewrite-backup-2026-08-11.tar.gz` *(absolute path withheld 2026-08-15)* |
 | Size / permissions | 709,415 bytes · `-rw-------` |
 | SHA-256 | `b13f370b5b3639b68b625e3036d4b05a7c456fc1ba3b840925361276f6a3067c` |
 | Contents | Complete `.git` (index included), all tracked and staged changes, all untracked Phase 001 files, `.claude/` (12 files), `.specify/` (20 files). Excludes `target/` (regenerable) and `Branding/` (1.4 GB, untouched by this pass) |
@@ -1583,8 +1583,8 @@ Reassessment **2026-09-11**, tracked at **T109**.
 | Algorithm | Ed25519 (`ssh-ed25519`) |
 | Public fingerprint | `SHA256:Y77mGrK4VudFhkJt+EKyCysSqH6nsp6N4GP0kIPKVTM` |
 | Comment | `Ahmed Anbar <admin@ahmedanbar.dev> Renvor signing` |
-| Private-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor` |
-| Public-key path | `/Users/ahmedanbar/Dropbox/ssh/renvor.pub` |
+| Private-key path | *(withheld — see the redaction note below)* |
+| Public-key path | *(withheld — see the redaction note below)* |
 | Private permissions | `-rw-------` (0600) |
 | Public permissions | `-rw-r--r--` (0644) |
 | Encryption | `aes256-ctr`, `bcrypt` KDF, **100 rounds** |
@@ -1593,6 +1593,31 @@ Reassessment **2026-09-11**, tracked at **T109**.
 
 **No private-key contents and no passphrase appear in this record, in the repository, or in
 any output.**
+
+> **Path redaction, 2026-08-15 (maintainer decision).** The two rows above previously gave the
+> **absolute filesystem paths** of the signing key pair. This repository is public, so those
+> rows published the exact on-disk location of the release signing private key to anyone. A
+> path is not a key and discloses no key material, but it converts any read access into
+> precise targeting, and it proves nothing that the rows retained above do not already prove.
+>
+> **What is retained, because it is what actually establishes signing identity and hygiene:**
+> the algorithm, the **public fingerprint** — which is the verifiable identity, and which is
+> already published in `governance/allowed-signers` — the key comment, both permission modes,
+> the passphrase encryption and KDF rounds, the creation timestamp, and the signing-only
+> purpose. Nothing verifiable was lost.
+>
+> **Scope of this redaction:** it changes the published document. **Git history is not
+> rewritten**, so the earlier revisions of this file still contain the paths and remain
+> reachable; this is a deliberate trade — rewriting a public repository's history is more
+> disruptive than the disclosure it would remove, and would break every signature and SHA
+> already recorded in this ledger. **No key was read, opened, moved, copied, rotated, or
+> deleted** by this change, and none is proposed here.
+>
+> **A separate, unaddressed matter is recorded as a future security action**: the key pair is
+> stored in a **directory synchronised to a third-party file-sync service**, which widens its
+> blast radius beyond this machine to that account and every device syncing it. **That is a
+> storage-hardening question, not a documentation question**, it is out of scope for this
+> phase, and it is tracked in §7 (recurring obligations) rather than silently closed here.
 
 ### 3ad.2 A generation defect, caught and corrected
 
@@ -1656,7 +1681,7 @@ Repository-local Git configuration (global identity untouched — it remains
 ```text
 user.name  = Ahmed Anbar          gpg.format      = ssh
 user.email = admin@ahmedanbar.dev commit.gpgsign  = true
-user.signingkey = /Users/ahmedanbar/Dropbox/ssh/renvor.pub
+user.signingkey = <path withheld — public key file, see §3ad.1>
 tag.gpgsign = true
 gpg.ssh.allowedSignersFile = governance/allowed-signers
 ```
@@ -1871,6 +1896,16 @@ first release: row 21 must be closed first.
 
 ## 3af. Workspace reorganisation, repository reconciliation, DNS and TLS (2026-08-12)
 
+> **Absolute local paths retained here, deliberately** *(noted 2026-08-15)*. The signing-key
+> and backup paths elsewhere in this ledger were withheld on the same date, because a path
+> proved nothing those records did not already prove. **This section is the exception**:
+> §3af.3a diagnoses a stale compiled-in `CARGO_MANIFEST_DIR`, and the finding **is** the
+> before-and-after comparison of two absolute paths. Redacting them would delete the evidence
+> rather than protect anything. The paths here disclose a working-directory layout and a
+> macOS account name — **no key, credential, or backup location** — and the account name is
+> already public in this project's commit metadata. **Whether to generalise them anyway is
+> recorded as an open question for the maintainer, not silently decided here.**
+
 **Nothing was deployed, published, released, or provisioned.** No GitHub repository was
 created, renamed, or made public. No Cloudflare record was created or changed. No
 certificate was issued. No Kubernetes object was touched.
@@ -1934,7 +1969,7 @@ across all 14 versions. `Branding` → `branding` used a unique intermediate nam
 filesystem is **case-insensitive** — confirmed by `Branding` and `branding` resolving to the
 same inode — so a direct case-only rename was avoided.
 
-**Recovery artefacts** at `/Users/ahmedanbar/Documents/renvor-migration-backup-20260812T095519Z/`:
+**Recovery artefacts** in the maintainer's local backup directory, under `renvor-migration-backup-20260812T095519Z/` *(absolute path withheld 2026-08-15)*:
 
 | Artefact | SHA-256 |
 |---|---|
@@ -3426,7 +3461,7 @@ abandoned. Recorded precisely:
   cancelled.
 
 On **2026-08-15 Ahmed Anbar intentionally deleted** the local Phase 3 and Phase 4 GitLab
-backup and evidence directory **`/Users/ahmedanbar/Backups`**. **None of those local backup
+backup and evidence directory — **the maintainer's local backup directory** *(absolute path withheld 2026-08-15)*. **None of those local backup
 artifacts is preserved.** This statement is scoped to that directory alone and makes **no
 claim about any unrelated backup held elsewhere**.
 
@@ -3461,6 +3496,108 @@ added; there is no T115.
 
 `ADR-0006 remains proposed pending T106. T113 remains open. Phase 001 is not complete and no Renvor 1.0 claim is made. This section records a repository publication, its security audit, and its branch protection only — no deployment, image publication, registry, DNS, server, Kubernetes, environment, credential, Cloudflare, GHCR, or private-key action occurred, and no self-hosted GitLab instance was accessed, modified, deleted, or decommissioned.`
 
+*(T113 closed 2026-08-15 — §3aw. The boundary paragraph above is dated 2026-08-15 and stated
+what was true when §3av was written; T113 was still open at that moment.)*
+
+## 3aw. T113 — landing repository CI and branch protection, verified from the live repository (2026-08-15)
+
+**T113 is closed on a read-only re-verification of `renvor-rs/renvor-site` performed
+2026-08-15, not on the pull request alone.** The work landed on 2026-08-14; this section
+records that it is still in force, because a gate that was configured and then silently
+weakened is not a gate.
+
+**Nothing in this section changed the site repository.** Every observation below is a read.
+No push, no setting change, no workflow run triggered, no deployment.
+
+### 3aw.1 What landed
+
+| Item | Value |
+|---|---|
+| Pull request | `renvor-rs/renvor-site` **#4**, state **MERGED** |
+| Merged at | **2026-08-14T18:28:38Z** |
+| Reviewed head | `b6ed04d219c27a4f69526751c17a9db5aba2c575` |
+| Merge commit | `d3575e5e8b5b8c16f21c6dde1578d8e9993422c4` |
+| Current `main` | **`d3575e5e8b5b8c16f21c6dde1578d8e9993422c4`** — the merge commit is still the branch head, so nothing has landed on top of the reviewed state |
+| Checks on the merge commit | `build`, `accessibility`, `links`, `dependencies`, `container` — all **success** |
+
+### 3aw.2 The workflow enforces what T113 required
+
+Read from `origin/main:.github/workflows/landing-ci.yml`.
+
+| T113 requirement | How `landing-ci` satisfies it |
+|---|---|
+| CI consumes the repository-local `.nvmrc` | `actions/setup-node` with `node-version-file: ${{ env.NODE_VERSION_FILE }}` in **every** Node job — the version lives in one place and CI reads it |
+| Frozen install | `pnpm install --frozen-lockfile` |
+| Typecheck | `pnpm run typecheck` |
+| Production build | `rm -rf build .docusaurus` then `pnpm run build`, asserting `build/index.html` and `build/404.html` exist |
+| Accessibility | Playwright suite run against the **artifact downloaded from the `build` job**, not a fresh local build — accessibility is asserted about the same bytes that were typechecked and built |
+| Link check | `lycheeverse/lychee-action` over `build/**/*.html` with an absolute `--root-dir` |
+| Dependency scan | `trivy` filesystem scan, `scanners: vuln`, `severity: HIGH,CRITICAL`, **`exit-code: 1`** — findings fail the build |
+| Container scan | `trivy` image scan of `renvor-site:ci`, `scanners: vuln,secret`, `severity: HIGH,CRITICAL`, **`exit-code: 1`**, `ignore-unfixed: false` |
+
+**Beyond the requirement**, and recorded because it is real work: the container job smoke-tests
+the image under production constraints — `--read-only`, `--cap-drop ALL`,
+`--security-opt no-new-privileges`, `--user 65532:65532` — asserting `/health` 200, `/` 200,
+and a missing path **404**; and the pipeline emits **two SBOMs**, a dependency SBOM and a
+**runtime SBOM generated from the image** with `syft` pinned to `v1.51.0`, both SPDX-JSON,
+uploaded with explicit retention and `if-no-files-found: error` so a missing artifact fails
+rather than passing quietly.
+
+**Third-party action pinning — 9 of 9.** Every `uses:` resolves to a full 40-character commit
+SHA with a trailing version comment: `actions/cache`, `actions/checkout`,
+`actions/download-artifact`, `actions/setup-node`, `actions/upload-artifact`,
+`anchore/sbom-action`, `aquasecurity/trivy-action`, `lycheeverse/lychee-action`,
+`pnpm/action-setup`. Verified mechanically by extracting every `uses:` value and testing the
+post-`@` component for length 40.
+
+### 3aw.3 Protection on `main`, read back from GitHub 2026-08-15
+
+| Control | Observed |
+|---|---|
+| Pull request required | **yes** (0 approvals — the W-001 single-maintainer gap, unchanged) |
+| Required status checks | **5** — `build`, `accessibility`, `links`, `dependencies`, `container` |
+| Strict (branch must be up to date) | **true** |
+| Administrator bypass | **none** — `enforce_admins: true` |
+| Conversation resolution | **required** |
+| Force pushes | **blocked** |
+| Deletions | **blocked** |
+
+**This is the exact gap T113 was opened to close.** On 2026-08-13 the same endpoints reported
+`protected: false`, zero branch-protection rules, and a direct push to `main` that had
+succeeded.
+
+### 3aw.4 The task's exclusions held
+
+T113 excluded image publication, environments, credentials, deployment, server access, and DNS
+changes. Verified 2026-08-15:
+
+- `landing-ci.yml` declares **one** top-level `permissions: contents: read` and **no job-level
+  override anywhere in the file**; there is no `docker login`, no `docker/login-action`, no
+  `ghcr.io` reference, no `push: true`, and no `packages: write`. The `container` job builds
+  `renvor-site:ci` **locally** and never authenticates to a registry.
+- `renvor-rs/renvor-site` has **0 GitHub environments**, **0 releases**, **0 tags**.
+- **No site is deployed.** Measured the same day, `renvor.dev`, `docs.renvor.dev`, and
+  `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, with HTTPS
+  failing validation against a public trust store because Traefik serves its default
+  self-signed certificate.
+
+### 3aw.5 Observed gaps, recorded rather than glossed
+
+**Neither was required by T113**, and neither blocks its closure — both are recorded because
+the framework repository holds itself to them and the divergence should be a decision rather
+than an accident:
+
+| Gap on `renvor-rs/renvor-site` | Framework repository |
+|---|---|
+| `required_signatures` — **false** | enforced |
+| `required_linear_history` — **false** | enforced |
+
+Tracked in §6 (known limitations) with an owner and a target phase.
+
+### Boundary
+
+`T113 is complete. It proves the landing repository's own CI and branch protection, and nothing else. It does NOT prove deployment readiness and it deploys nothing — T102, T106, T108, and T111 remain open, and no Renvor site is deployed. This section records read-only observations of GitHub and of three public hostnames; no repository, workflow, protection setting, server, DNS record, registry, environment, or credential was created, modified, or deleted.`
+
 ## 6. Known limitations
 
 Populated by T083. Each requires a named owner and a target phase.
@@ -3474,15 +3611,68 @@ Seeded 2026-08-11 from the T016–T022 name verification. T083 consolidates and 
 | R-3 | `renover` clearance is **bounded, not exhaustive** — no global executable-name registry exists; non-Debian distributions, BSD ports, Windows package managers, and privately distributed binaries were not checked | Ahmed Anbar | Ongoing |
 | R-4 | **No trademark or common-law search** was performed for the product name `Renvor`; `contracts/public-identity.md` names one as that row's verification method | Ahmed Anbar | Before first public announcement |
 | R-5 | `renvor.dev` is in its registry **Add Grace Period** and expires **2027-08-11**; renewal is an operational obligation | Ahmed Anbar | T084 recurring obligations |
-| — | Local `stable` toolchain stale at 1.94.0 (see §8) | Ahmed Anbar | Separate diagnosis |
+| ~~R-6~~ | ~~Local `stable` toolchain stale at 1.94.0 (see §8)~~ | Ahmed Anbar | **Resolved 2026-08-11** — §3p; `rustc +stable` is 1.97.1 |
+
+**Finalised 2026-08-15 (T083).** The rows below were added on that date. Each carries a named
+owner and a target phase, and **none is closed by being written down**.
+
+| ID | Limitation | Owner | Target phase |
+|---|---|---|---|
+| R-7 | **MSRV 1.94.0 has never been validated against real persistence dependencies.** FR-061 requires revalidation before Phase 006, because Phase 001's only crate has **zero dependencies**, so the floor is currently proven against nothing that could raise it | Ahmed Anbar | **Before Phase 006** — registered in §7 |
+| R-8 | **`renvor-rs/renvor-site` does not require signed commits or linear history** (`required_signatures: false`, `required_linear_history: false`, observed 2026-08-15), while the framework repository enforces both. T113 did not require either, so this is a divergence rather than a failure — but it is a divergence in the repository that will serve the public landing page | Ahmed Anbar | Phase 012, with the landing deployment; earlier if a second contributor joins |
+| R-9 | **`renvor-rs/renvor-infra` has no CI and therefore no required status checks.** Its ruleset requires pull requests, signed commits, and linear history with zero bypass actors, but **nothing is verified** on the way in. A manifest could be merged unreviewed by machine | Ahmed Anbar | The phase that adds the first manifest — protection without verification must not outlive the repository's emptiness |
+| R-10 | **`renvor-rs/renvor-docs` is commit-empty, unprotected, and has secret scanning and push protection disabled.** There is no `main` branch to protect. The controls must exist **before** its first commit, not after | Ahmed Anbar | Phase 012, before the documentation migration permitted by T108 |
+| R-11 | **The T095–T097 landing-approval anchors cannot be recomputed.** §3aq records a source-set SHA-256 and a build-output SHA-256 but **not the method that produced them** — no file set, no ordering, no statement of whether filenames are included. The approval is therefore not mechanically re-attachable to any later commit, and the site has since advanced to `d3575e5e…`. A hash that cannot be reproduced verifies nothing | Ahmed Anbar | Phase 012 — re-approve against a reproducible anchor before the landing deploys, and record the recipe with it |
+| R-12 | **GHCR cannot be independently enumerated with the credentials in use.** The available token lacks `read:packages`, and anonymous GHCR returns HTTP 403 for absent and private packages alike. "No image has been published" therefore rests on the absence of any publishing workflow or run, **not** on a registry listing | Ahmed Anbar | The phase performing the first image publication |
+| R-13 | **The release signing key pair is stored in a directory synchronised to a third-party file-sync service.** Its blast radius extends beyond this machine to that account and every device syncing it. **No key was read, moved, rotated, copied, or deleted** in recording this | Ahmed Anbar | Registered in §7 as a security action; before the first signed release |
+| R-14 | **Absolute local filesystem paths remain published in §3af**, disclosing a working-directory layout and a macOS account name. They are retained because §3af.3a's finding **is** the before-and-after comparison of two absolute paths; redacting them would delete the evidence. Signing-key and backup paths elsewhere were withheld on 2026-08-15 | Ahmed Anbar | Open question for the maintainer — no phase assigned |
+| R-15 | **Phase 001's evidence rests on a single-maintainer, non-independent review.** W-002 covers decision records; the phase-level requirements and security review required by `PLAN.md` §6.1 step 10 has no independent human reviewer. Advisory AI review is **not** a substitute and is never described as one | Ahmed Anbar | When a qualified independent reviewer becomes available — see T088 and the waiver ledger |
 
 ## 7. Recurring obligations
 
-Populated by T084.
+**Populated 2026-08-15 (T084).** Every row carries an owner, a first due date, what triggers
+it early, and the condition under which it is removed. **An obligation with no removal
+condition is a permanent obligation and says so.** Dates are absolute; a condition may
+accompany a date, and the obligation fires at whichever arrives first.
 
-| Obligation | Owner | First due |
-|---|---|---|
-| *(not yet populated)* | | |
+**Nothing in this register is discharged by appearing in it.**
+
+### 7.1 Waiver expiries
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **W-001 expires** — the single-maintainer approval gap (spec FR-027; a pull request must carry an approving review from someone other than its author) | Ahmed Anbar | **2027-02-11** | **Immediately** when a second maintainer with merge rights joins | Add the second maintainer, enable the required-approving-review setting, **re-review every change merged under the waiver**, close W-001 |
+| **W-002 expires** — the decision-record independent-review gap (spec FR-013) | Ahmed Anbar | **2027-02-11** | **Immediately** when a qualified independent reviewer becomes available | Raise the review requirement to a genuinely independent reviewer, **re-review every ADR accepted under the waiver**, close W-002 |
+
+> **An expired-but-open waiver is a release blocker.** A waiver reaching its date without its
+> condition being met is **not** automatically renewed; it must be re-justified and re-dated,
+> or the underlying rule complied with.
+
+### 7.2 Toolchain and dependency obligations
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Quarterly MSRV policy review** (FR-060) — confirm 1.94.0 is still the correct floor and that it reads identically in every location that states it | Ahmed Anbar | **2026-11-11** *(first quarter after the 2026-08-11 policy)* | A dependency raising its own MSRV above the floor | **Permanent** — the policy is a standing commitment, not a task |
+| **Revalidate MSRV 1.94.0 against real persistence dependencies before Phase 006** (FR-061; analyze finding G6; limitation R-7) | Ahmed Anbar | **Before Phase 006 begins** | Adding any dependency with a declared `rust-version` | Discharged once revalidation is recorded with the dependency set it was run against |
+| **Reassess `image-size` — `GHSA-w3rx-r6r6-pgpr`, `GHSA-5p2g-fcmc-qvqq`** (both High, CVSS 7.5; no fixed version exists and upstream is archived). **T108** | Ahmed Anbar | **2026-09-11** | Docusaurus shipping a maintained replacement or a fixed release | Removed when a fixed or replaced dependency lands, **or** when the documentation toolchain no longer reaches the package |
+| **Reassess `GHSA-w5hq-g745-h8pq`** (moderate, `uuid` < 11.1.1, reached only through `sockjs` ← `webpack-dev-server`). **T109** | Ahmed Anbar | **2026-09-11** | `sockjs` shipping a fix, **or** the dev server entering a deployed path | Removed when `sockjs` updates its `uuid` constraint, or when the dev-server path is eliminated. **The 2026-09-11 reassessment has NOT occurred and must not be recorded as done** |
+| **Advisory triage windows** (`governance/dependency-advisory-policy.md`) — Critical or known-exploited **24 h**, High **48 h**, Medium **5 days**, Low **10 days**, from confirmed detection | Ahmed Anbar | **On every detection** | — | **Permanent** |
+
+### 7.3 Evidence and release obligations
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Evidence retention** (`governance/evidence-retention-policy.md`) — CI artifacts **90 days**; per-release evidence until the later of **seven years** after publication or **three years** after that release's supported lifetime ends; identity and provenance metadata for the **lifetime of the project** | Ahmed Anbar | **At first publication** | — | **Permanent** |
+| **`renvor.dev` domain renewal** — registered in the Add Grace Period, expires **2027-08-11** (limitation R-5) | Ahmed Anbar | **2027-08-11**, acted on well before | Registrar notice | **Permanent** while the project uses the domain |
+| **Package-name watch** — `renvor` and `renvor-cli` are verified but **unreserved**; a third party may claim either before first publication (limitation R-1, FR-049 forbids placeholder crates) | Ahmed Anbar | **Continuous until first publication** | Any observed registration of either name | Discharged at first crates.io publication |
+
+### 7.4 Security actions
+
+| Obligation | Owner | First due | Early trigger | Removal condition |
+|---|---|---|---|---|
+| **Harden signing-key storage** — the release signing key pair is stored in a directory synchronised to a third-party file-sync service, widening its blast radius to that account and every device syncing it (limitation R-13). **Recorded 2026-08-15 as a future security action.** No key was read, moved, rotated, copied, or deleted in recording it, and none is proposed here | Ahmed Anbar | **Before the first signed release** | Any suspected compromise of the sync account or a syncing device | Discharged when the key is held in storage that is not synchronised to a third-party service, **or** when the maintainer records a dated decision accepting the risk with its reasoning |
+| **Controls before `renvor-docs` receives its first commit** — branch protection, required checks, secret scanning, and push protection must exist **before** content, not after (limitation R-10) | Ahmed Anbar | **Before the first commit to `renvor-rs/renvor-docs`** | Any attempt to migrate documentation | Discharged when the controls are configured and read back |
+| **Required checks for `renvor-rs/renvor-infra`** — its ruleset requires pull requests and signed commits but verifies nothing, because it has no CI (limitation R-9) | Ahmed Anbar | **Before the first manifest is merged** | Any pull request adding a manifest | Discharged when CI exists and its checks are required |
 
 ## 8. Open blockers
 
@@ -3494,18 +3684,18 @@ The phase remains open while any row here is present.
 | ~~T041 cannot reach exit 0~~ | ~~Phase closure~~ | Maintainer | 2026-08-11 | **resolved** — task order corrected, both toolchains exit 0, §3q/§3r |
 | ~~T052 delivery test not confirmed~~ | ~~T052~~ | Maintainer | 2026-08-11 | **resolved** — maintainer attestation of arrival, §3t. Note: only delivery was tested; SPF/DKIM/DMARC and external-sender deliverability are **not** claimed |
 | ~~T043 literal form unmet~~ | ~~T043~~ | Maintainer | 2026-08-11 | **resolved** — step 10 reports a clean tree, §3r |
-| **All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted | T026, T039, T040 acceptance | Maintainer | 2026-08-11 | **open** |
-| Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated | Release-control assurance | Maintainer | 2026-08-11 | open |
+| ~~**All Phase 001 decision records remain `proposed`**: W-002 compensating control 3 ("all required CI and security checks passing") cannot be met until T057–T059 create the workflows and they run. ADR-0001, ADR-0002, ADR-0003 are written and reviewed but not accepted~~ | ~~T026, T039, T040 acceptance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — the workflows exist and run, so W-002 control 3 is met: `main` requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with `enforce_admins: true`. **5 of 6 records are `accepted`** — ADR-0001 through ADR-0005, each with reviewer `Ahmed Anbar — self-review under W-002` and a review date. **ADR-0006 alone remains `proposed`**, blocked on **T106**, which is a different blocker and is listed separately |
+| ~~Organization **admin role for `AhmedAnbar` on `renvor-rs` is attested, not verified** — not publicly readable unauthenticated~~ | ~~Release-control assurance~~ | Maintainer | 2026-08-11 | **resolved 2026-08-15** — verified read-only against the API: `orgs/renvor-rs/memberships/AhmedAnbar` returns `role: admin`, `state: active`, and `orgs/renvor-rs/members?role=admin` returns exactly `["AhmedAnbar"]`, so the account is an org owner and the **sole** one. **Method limit, stated:** this is GitHub's authoritative record read as that account; it is not a third-party attestation, and the single-owner fact is itself a concentration risk rather than a control |
 | ~~T012 prune not authorised~~ | ~~T013, T014, T015~~ | Maintainer | 2026-08-11 | resolved — §3e |
 | ~~`refs/codex/*` ref exposing excluded paths~~ | ~~Mirror-push safety~~ | Maintainer | 2026-08-11 | **resolved** — the exposing ref is gone; a later benign ref (0 excluded paths, 0 unique blobs) was deleted by exact name 2026-08-12. **Recurring**: session tooling recreates these refs, so re-check before any push |
-| **V7 landing page fails the release-honesty gate** — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | T095–T097; any public landing deployment | Maintainer | 2026-08-11 | **open — copy corrected 2026-08-12 (§3ai.7), awaiting maintainer review of the rendered page.** Not closed by the party that did the work |
-| **`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli` | Public accuracy of the framework README | Maintainer | 2026-08-12 | **corrected 2026-08-12** — §3ai.4. Uncommitted |
-| **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **open** — policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made** |
+| ~~**V7 landing page fails the release-honesty gate**~~ — present-tense claims for unbuilt capabilities, `renover` commands for an unpublished crate, zero development-status disclosure, and three dead CTA targets | ~~T095–T097~~; **any public landing deployment** | Maintainer | 2026-08-11 | **resolved as to the review itself, 2026-08-12** — the maintainer inspected the **rendered production build** and approved it; T095–T097 are complete (§3aq). **Residual, carried to limitation R-11 rather than closed silently:** §3aq anchored that approval to a source-set SHA-256 and a build-output SHA-256 but **never recorded how they were computed**, so the approval cannot be mechanically re-attached to the site's current `main` (`d3575e5e…`), which has advanced since. **The drift check could not be performed**, and no claim is made that it was. Re-approval against a reproducible anchor is required before the landing deploys |
+| ~~**`framework/README.md` claimed the `renvor` crate was published** — the registry index returns HTTP 404 for `renvor` and `renvor-cli`~~ | ~~Public accuracy of the framework README~~ | Maintainer | 2026-08-12 | **resolved — corrected 2026-08-12 (§3ai.4) and committed.** Verified 2026-08-15: the correction is on `main`, the working tree is clean for that file, and `README.md` now opens with "nothing is published. Neither `renvor` nor `renvor-cli` exists on crates.io". Re-checked the registry the same day: **HTTP 404** for `renvor`, `renvor-cli`, and `renover` |
+| **No `CAA` record on `renvor.dev`** — nothing constrains which CA may issue for the domain, and ADR-0006 D5 requires one | **T111**; certificate-issuance control | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to the future deployment workflow.** Policy decided and exact records drafted (§3an); **the DNS change is not authorised and was not made**, and no DNS record was created, modified, or deleted. Blocked until cert-manager HTTP-01 issuance is proven **and** Ahmed Anbar separately authorises the exact writes. **Transferring it does not close it** |
 | ~~Step 9 link check fails on transport faults, not broken links~~ — HTTP 503 on one attempt, `HTTP/2 protocol error` on the next, while a concurrent job on the same commit reported `0 Errors` | ~~**T112**; pull request #11 required checks~~ | Maintainer | 2026-08-12 | **resolved 2026-08-12** — per-host concurrency 1 and a 250 ms interval for `github.com`, serialised matrix, run-scoped `GITHUB_TOKEN`, and **429 removed from `accept`**. Not weakened: no host excluded, no link rewritten, retries still bounded, fabricated URLs still fail with exit 2. §3ar |
 | ~~Website-code licence and brand-asset usage terms undecided~~ | ~~T098~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — option B: code `MIT OR Apache-2.0`, brand assets all rights reserved under `BRAND-POLICY.md`. File set validated, §3ak |
 | ~~Container registry undecided~~ | ~~T099~~ | Maintainer | 2026-08-11 | **resolved 2026-08-12** — GHCR; `GITHUB_TOKEN` publishing, public image, no pull secret, digest-pinned. §3al. **Deployment still blocked** |
-| **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** (0 container definitions, 0 SBOMs) | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **open** — verify when the image and SBOM are first produced, §3am |
-| **5 open npm advisories in `docs/package-lock.json`** — 3 High (2 with no upstream fix), 2 Medium. Detected 2026-08-11T23:39:22Z, within triage windows as of 2026-08-12. Documentation site only; the published crate has zero dependencies and is unaffected. Full clause-5 advisory records still outstanding | Documentation site; any future release while open | Maintainer | 2026-08-12 | **open — see §3z.10** |
+| **`image-size` exception has two unverifiable controls** — absence from the production runtime container and from the runtime SBOM cannot be checked because **neither artifact exists** for the documentation site | **T108**; public documentation deployment | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15 to Phase 012 (documentation deployment).** Verify when that image and SBOM are first produced, §3am. The Phase 001 fail-closed image-input guard stays in force. **The two High advisories remain unfixed, unsuppressed, and not waived.** *(Note: `renvor-site` now produces both a container and two SBOMs, but that is the **landing** pipeline; T108 concerns the **documentation** runtime, which still has neither.)* **Transferring it does not close it** |
+| **Open npm advisories in the documentation dependency tree** — originally 5 (3 High, 2 Medium) detected 2026-08-11T23:39:22Z; **2 closed, 3 remain** per §3aa. Documentation site only; the published crate has **zero dependencies** and is unaffected | Documentation site; any future release while open | Maintainer | 2026-08-12 | **OPEN — TRANSFERRED 2026-08-15.** The two High `image-size` advisories ride with **T108** to Phase 012; the moderate `uuid` advisory rides with **T109** into the recurring-obligations register (§7.2), reassessment **2026-09-11, not yet performed**. Full clause-5 advisory records are still outstanding. See §3z.10 and §3aa. **Transferring them does not close them** |
 | **No backup tooling or cluster snapshots on the production VPS** — all state for five production namespaces in one SQLite file. Pre-existing, affects unrelated workloads, outside Renvor's remit | Server reliability | Maintainer | 2026-08-11 | **open — recorded, not owned** |
 | ~~Local `stable` toolchain stale at 1.94.0~~ | ~~two-toolchain verification~~ | Maintainer | 2026-08-11 | **resolved** — diagnosed and repaired, §3p. `rustc +stable` is now 1.97.1 |
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |

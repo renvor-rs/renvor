@@ -387,7 +387,7 @@ was measured**; and the **separate cutover approval was never granted**, because
 was cancelled.
 
 On **2026-08-15 the maintainer intentionally deleted** the local Phase 3 and Phase 4 GitLab
-backup and evidence directory `/Users/ahmedanbar/Backups`. **None of those local backup
+backup and evidence directory — **the maintainer's local backup directory** *(absolute path withheld 2026-08-15)*. **None of those local backup
 artifacts is preserved.** This statement is scoped to that directory alone and makes no claim
 about any unrelated backup held elsewhere.
 
