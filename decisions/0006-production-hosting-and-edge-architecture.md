@@ -255,8 +255,13 @@ already running on this host, and it is rejected on two grounds recorded in full
   what the source does, and it would still hold if a repository became private again.)*
 - Consequently **the k3s host needs no `imagePullSecret`**, and no registry credential is
   stored in the cluster at all.
-- The image contains only the built static site — HTML, CSS, JS already served publicly at
-  `renvor.dev`. **Making it public discloses nothing that visiting the site would not.**
+- The image **will contain** only the built static site — HTML, CSS, JS **intended to be**
+  served publicly at `renvor.dev`. **Once that site is deployed**, making the image public
+  will disclose nothing that visiting the site would not. *(Corrected 2026-08-15 — this read
+  "already served publicly at `renvor.dev`" and "visiting the site", both present tense.
+  **No Renvor site is deployed**: `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each
+  return no HTTP response. The argument is sound as a property of the design and unsound as
+  an observation, so it is stated as the former.)*
 - The trade is accepted knowingly: image *contents* and pull *counts* become public, and the
   image cannot be used as a private distribution channel. Both are acceptable for a static
   marketing and documentation site, and neither would be acceptable for an image carrying
@@ -378,13 +383,21 @@ Consequences:
 > text shows no change within it. **Read every statement below as describing 2026-08-14, not
 > today.**
 >
-> **Two statements below are known to be false today, and are corrected here rather than
-> inside the preserved text:**
+> **Statements below that are false today are corrected here rather than inside the preserved
+> text. The list is illustrative, not exhaustive** — every statement in this decision describes
+> 2026-08-14, and any of them may have been overtaken:
 >
+> - "*T113 and T114 stay open*" — **T114 was cancelled on 2026-08-15, not passed.** T113
+>   remains open. This is the statement a reader is most likely to act on.
+> - "*Infrastructure configuration moves to a private, self-hosted GitLab instance*", and the
+>   table row "*`renvor-infra` | Private self-hosted GitLab | Private*" — **the move never
+>   happened.** Per the T114 cancellation record, the cutover was abandoned before it ran.
+>   *(Scope: this rests on the project's own dated record, not on a fresh inspection — the
+>   GitLab instance was deliberately not accessed. No claim is made about its contents.)*
 > - "*Infrastructure repository is not yet canonical … GitLab is not canonical for
 >   infrastructure until T114 passes*" — true on 2026-08-14. **Superseded 2026-08-15 by
->   D13**: `renvor-rs/renvor-infra` is public on GitHub and canonical there, GitLab is
->   canonical for nothing, and **T114 was cancelled rather than passed**.
+>   D13**: `renvor-rs/renvor-infra` is public on GitHub and canonical there, and GitLab is
+>   canonical for nothing.
 > - "*Branch protection, required checks, and pull-request review stay on GitHub*" — this
 >   described where those controls live, not that every repository had them. It did not then
 >   and does not now. See D13 and `PLAN.md` §26.1 for the observed per-repository state.
@@ -451,7 +464,7 @@ GitLab is no longer part of the Renvor source-control topology.
 | `renvor-rs/renvor` | GitHub | Public | **Yes** | Framework source, releases, governance |
 | `renvor-rs/renvor-site` | GitHub | Public | **Yes** | Landing source, review, CI |
 | `renvor-rs/renvor-docs` | GitHub | Public | **Yes** | **Commit-empty**, unchanged — still gated on its licence decision and T108 |
-| `renvor-rs/renvor-infra` | GitHub | **Public** *(changed 2026-08-15)* | **Yes** | Kubernetes deployment configuration and public operational documentation, at signed commit `aa52237f4af421e089c31cfe306faa5db7c25e08` |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(changed 2026-08-15)* | **Yes** | **Reserved for** Kubernetes deployment configuration and public operational documentation. **Currently a `README.md`, a `.gitignore`, and the brand mark — three files, no manifest**, at signed commit `aa52237f4af421e089c31cfe306faa5db7c25e08` |
 
 **GitHub is the source, review, and future CI surface for all four.** No Renvor process reads
 from, writes to, or authenticates against a GitLab instance.
@@ -513,19 +526,20 @@ was made by this record. Every deployment gate that was open before it remains o
 
 #### D13 alternatives considered
 
-Three topologies were genuinely available for `renvor-infra`. They are compared on the axes
-that actually differ between them — the failure domain of the history, what the repository
-discloses, what it costs to operate, and what recovery obligation it creates. **Axes on which
-all three are identical are named as such rather than used as false differentiators**: none of
-them changes the registry decision (D7/T099 stand under all three), none of them deploys
-anything, and none of them alters T102, T106, T108, T111, or T113.
+**Four** topologies were genuinely available for `renvor-infra` — three active choices and the
+option of doing nothing. They are compared on the axes that actually differ between them — the
+failure domain of the history, what the repository discloses, what it costs to operate, and
+what recovery obligation it creates. **Axes on which all four are identical are named as such
+rather than used as false differentiators**: none of them changes the registry decision
+(D7/T099 stand under all four), none of them deploys anything, and none of them alters T102,
+T106, T108, T111, or T113.
 
 | Option | What it gives | What it costs | Verdict |
 |---|---|---|---|
 | **A — Public GitHub** *(chosen)* | Git history lives outside the VPS's failure domain by construction, so no backup-and-restore gate is needed to make infrastructure history survivable. One host, one account model, one protection mechanism. Secret scanning and push protection apply. Review is legible to anyone, which matters for a project whose governance claims to be auditable. | **Infrastructure configuration becomes world-readable.** This is the real price, and it is the reason for the pre-publication minimisation recorded above. GitHub is a third party in the blast radius. The repository is a fourth surface to protect, and it currently has no CI and therefore no required checks. | **Chosen.** The disclosure cost is bounded and was reduced deliberately; the recovery benefit is structural rather than procedural. |
-| **B — Private GitHub** | Same single-host operating model and the same failure-domain separation as A, without world-readable manifests. Strictly closer to A than to C. | Free private repositories do not get the full protection feature set that this project relies on elsewhere — the ruleset and required-check tooling the other repositories use was **only observable and configurable on this account for public repositories**, which is exactly how T113's protection gap was originally discovered on a then-private `renvor-site`. Buying it would mean a paid plan, which is out of scope. It also keeps the review surface closed, which weakens the auditability claim the governance record makes. | **Rejected**, and it is the closest alternative. If disclosure ever proves to cost more than expected, this is the option to revisit — the migration back is a visibility toggle, not a re-hosting. |
+| **B — Private GitHub** | Same single-host operating model and the same failure-domain separation as A, without world-readable infrastructure configuration. Strictly closer to A than to C. | Free private repositories do not get the full protection feature set that this project relies on elsewhere — the ruleset and required-check tooling the other repositories use was **only observable and configurable on this account for public repositories**, which is exactly how T113's protection gap was originally discovered on a then-private `renvor-site`. Buying it would mean a paid plan, which is out of scope. It also keeps the review surface closed, which weakens the auditability claim the governance record makes. | **Rejected**, and it is the closest alternative. If disclosure ever proves to cost more than expected, this is the option to revisit — the migration back is a visibility toggle, not a re-hosting. |
 | **C — Private self-hosted GitLab** *(the D12 status quo)* | Nothing leaves the maintainer's control. Infrastructure that describes a live system is not handed to a third party. This reasoning was correct on 2026-08-14 and is not repudiated. | **Puts the history of the system on the machine the history describes** — the exact failure mode D9 warns about, and the reason T114 existed. Making it safe required an encrypted off-VPS backup with a *proven* restore, matching refs and hashes, measured RPO/RTO, and a separate approval. **That proof was attempted and never completed.** It also doubles the account, access, and backup surface, and instance administrators inherently retain access. | **Rejected.** Not because the reasoning was wrong, but because the obligation it created was not met and the alternative removes the obligation instead of discharging it. |
-| **D — Keep `renvor-infra` unpublished entirely** | Zero disclosure, zero new surface. | The manifests still have to live somewhere to be reviewed, and "on one laptop" is a worse failure domain than either A or C. It defers the decision without answering it. | **Rejected as a non-answer**, recorded because doing nothing was genuinely available. |
+| **D — Keep `renvor-infra` unpublished entirely** | Zero disclosure, zero new surface. | The configuration still has to live somewhere to be reviewed, and "on one laptop" is a worse failure domain than either A or C. It defers the decision without answering it. | **Rejected as a non-answer**, recorded because doing nothing was genuinely available. |
 
 **Why A over B specifically.** The two differ only in disclosure. The decisive fact is that
 the protection controls this project depends on — rulesets, required signatures, enforced
@@ -533,6 +547,18 @@ linear history, secret scanning with push protection — are available on public
 the current plan and were verified active on `renvor-infra` after publication. Choosing B
 would have traded a *verified* protection posture for an *unverifiable* one, in exchange for
 hiding configuration that had already been minimised of every operationally sensitive value.
+
+**This reverses an accepted record, and that is stated rather than glossed.** **ADR-0005**
+concluded that "`renvor-infra` has the **strongest case for remaining private permanently**",
+and it is still `accepted`. D13 reverses precisely that conclusion. ADR-0005's reasoning was
+that deployment configuration "describes the attack surface of a live server" — a map of
+ingress hostnames, namespace layout, and image references. **That reasoning is not repudiated;
+it is answered on the facts.** The repository contains no such map: it holds a `README.md`, a
+`.gitignore`, and the brand mark, and the README was minimised of every operationally
+sensitive value before publication. **If and when real manifests are added, this trade must be
+re-examined rather than assumed to carry over** — a repository of three descriptive files and a
+repository of live ingress and namespace definitions are not the same disclosure. ADR-0005 is
+marked partially superseded on visibility only; its four-repository separation stands.
 
 **What the chosen option does not solve.** A does not preserve GitLab metadata, does not give
 `renvor-infra` CI or required checks, does not deploy anything, and does not create any backup
@@ -544,7 +570,7 @@ Consequences:
 |---|---|
 | One host, one visibility model | Account, access, and availability concerns exist in one place rather than two. The two-host operating cost D12 accepted is removed |
 | Infrastructure configuration is world-readable | This is the substantive trade. It is accepted deliberately: the repository is minimised for public release, carries no manifest yet, and is governed by the no-plaintext-secret rule and an enforced `.gitignore`. **Content minimisation is not a claim that previously published framework history became secret** |
-| Failure-domain separation for Git content | Repository content now exists on GitHub and in local working copies, which do not share the VPS's failure domain — the concern D9 and T114 were written about, resolved by not putting infrastructure history on the VPS in the first place |
+| Failure-domain separation for Git content | Repository content now exists on GitHub and in local working copies, which do not share the VPS's failure domain — the concern D9 and T114 were written about, **avoided** by not putting infrastructure history on the VPS in the first place. *("avoided", not "resolved", corrected 2026-08-15: two copies in two failure domains is **separation, not a backup**. There is no tested restore, no retention policy, and no recovery owner, and the GitHub copy sits in the same single account as everything else. The concern is sidestepped architecturally; it is not discharged by evidence)* |
 | GitLab metadata is not preserved anywhere | Local clones plus GitHub protect **Git repository content only**. They do not preserve GitLab issues, variables, users, logs, packages, registry content, or any other GitLab-specific metadata. No claim is made that they do |
 | The infrastructure repository is still empty of manifests | Publishing it does not deploy anything and does not close any deployment gate. T102, T106, T108, T111, and T113 are untouched |
 | Status | **Not complete.** This record stays `proposed` pending T106; Phase 001 is not complete; no Renvor 1.0 claim is made or implied |

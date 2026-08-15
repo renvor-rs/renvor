@@ -14,13 +14,15 @@ accurate when written and is superseded too.)*
 **Owner**: Ahmed Anbar
 
 > **How to read this document.** **§6 is the only section that states current state.**
-> **Sections 1–5 are dated history** and are retained unedited as the record of what was
-> planned, verified, and decided at the time. Where §1–5 describe the repositories as private
-> or as unbuilt, read them as describing 2026-08-11 to 2026-08-14; **no Renvor repository is
-> private** and all four exist. Nothing in §1–5 has been rewritten to match today.
+> **Sections 1–5 are dated history** and are retained **unrewritten, apart from supersession
+> banners added at section heads**, as the record of what was planned, verified, and decided at
+> the time. Where §1–5 describe the repositories as private or as unbuilt, read them as
+> describing 2026-08-11 to 2026-08-14; **no Renvor repository is private** and all four exist.
+> No sentence inside §1–5 has been altered to match today.
 
 This document defines what must be true before each site is deployed, and defined what must
-be true before each repository was created. Every item is a precondition, not a description of
+be true before each repository was created. **Every item in §1–5 is a precondition, not a
+description of existing state**; §6 is the exception and is deliberately a description of
 existing state. **ADR-0006 is still `proposed` pending T106**, so nothing here may be cited as
 a settled constraint on that record's authority.
 
@@ -272,11 +274,15 @@ in — are untouched by where the manifests are stored.
 > this heading and this banner were added, and no word inside the section, its table, or its
 > subsections was edited or annotated. **§6 states what is current.**
 >
-> **The statement below that is false today, corrected here rather than inside the preserved
-> text:** the table row "`renvor-infra` | **Private self-hosted GitLab** | Private |
-> Destination only — **not canonical until T114**" was true on 2026-08-14. **Superseded
-> 2026-08-15**: `renvor-rs/renvor-infra` is public on GitHub and canonical there, and **T114
-> was cancelled rather than passed** — see §6.2.
+> **Statements below that are false today are corrected here rather than inside the preserved
+> text. The list is illustrative, not exhaustive** — read every statement in §5 as describing
+> 2026-08-14:
+>
+> - the table row "`renvor-infra` | **Private self-hosted GitLab** | Private | Destination
+>   only — **not canonical until T114**" was true on 2026-08-14. **Superseded 2026-08-15**:
+>   `renvor-rs/renvor-infra` is public on GitHub and canonical there.
+> - "*T102, T106, T108, T111, T113, and T114 all remain open*" — **T114 was cancelled on
+>   2026-08-15, not passed.** The other five remain open. See §6.2.
 
 Sections 1–4 above were written when all four repositories were planned as private GitHub
 repositories. That model is superseded. **The sections above are retained as the dated record

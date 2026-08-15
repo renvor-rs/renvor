@@ -6,8 +6,38 @@
 | **State** | `accepted` |
 | **Reviewer** | `Ahmed Anbar — self-review under W-002` |
 | **Review date** | 2026-08-12 |
-| **Superseded by** | — |
+| **Superseded by** | **ADR-0006 D13** *(2026-08-15)* — **repository visibility only.** Everything else in this record still stands |
 | **Owner** | Ahmed Anbar |
+
+> ## Partial supersession 2026-08-15 — the visibility model changed; the separation did not
+>
+> **This record remains `accepted` and its central decision is unchanged**: the framework, the
+> landing page, the documentation site, and the deployment configuration live in **four
+> separate repositories**. Every one of the four forces in Context still holds, and the
+> repository-boundary reasoning is why the split survives the change.
+>
+> **What is superseded is the visibility column and the sentences that depend on it.** ADR-0006
+> **D12** (2026-08-14) first replaced this model, and **D13** (2026-08-15) replaced D12. **All
+> four repositories are now public on GitHub and canonical there. No Renvor repository is
+> private.**
+>
+> **Read the following as describing 2026-08-12, not today. They are preserved unedited:**
+>
+> - the title, "*…three **private** website and deployment repositories*";
+> - the Decision table's `Visibility` column marking `renvor-site`, `renvor-docs`, and
+>   `renvor-infra` **Private**;
+> - "***Private source, public sites.** All deployed properties are publicly reachable. Only
+>   the source of the three website and deployment repositories is restricted.*" — **both
+>   halves are false today.** No repository source is restricted, and **no Renvor property is
+>   deployed at all**: `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each return no
+>   HTTP response. That sentence is the origin of a claim corrected across `PLAN.md`,
+>   ADR-0006, and the evidence ledger on 2026-08-15;
+> - "*`renvor-infra` has the strongest case for remaining private permanently*" — **reversed by
+>   D13**, which weighed public GitHub, private GitHub, and private self-hosted GitLab and
+>   chose public. D13's alternatives review is where that reversal is argued.
+>
+> **ADR-0006 is itself still `proposed` pending T106**, so this banner records an observed live
+> fact and the maintainer's direction, not a newly accepted normative rule.
 
 ## Context
 

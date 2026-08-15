@@ -1530,13 +1530,16 @@ Four repositories, all public on GitHub, all canonical there:
 | Repository | Host | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|---|
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets served at `renvor.dev` | Framework source, documentation content, cluster credentials |
-| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | The production documentation site served at `docs.renvor.dev` | Framework source copied by hand, cluster credentials |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **to be served** at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | **Will be** the production documentation site at `docs.renvor.dev`; **commit-empty today**, so it is a reserved destination, not yet a source of truth | Framework source copied by hand, cluster credentials |
 | `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation | Application source, plaintext secrets of any kind |
 
-**GitHub is the source, review, and CI surface for all four repositories.** **No Renvor
-process reads from, writes to, or depends on a GitLab instance** for source control, CI,
-registry, deployment, or disaster recovery.
+**GitHub is the source, review, and future CI surface for all four repositories.** *("future"
+added 2026-08-15 — `renvor-docs` and `renvor-infra` have zero workflows and zero runs, so
+GitHub is not yet a CI surface for them. This now matches ADR-0006 D13 and
+`governance/phase-001-evidence.md` §3av, which both already read "future CI surface".)* **No
+Renvor process reads from, writes to, or depends on a GitLab instance** for source control,
+CI, registry, deployment, or disaster recovery.
 
 **Protection and required checks are a requirement on each repository, not a description of
 all four.** *(Corrected 2026-08-15 — this previously asserted that branch protection, required
@@ -1662,9 +1665,14 @@ decision itself is unchanged)*
   scoped to the run and revoked when it ends;
 - the **deployment image is publicly pullable**, so the cluster stores **no
   `imagePullSecret` and no registry credential at all**. Package visibility is independent of
-  repository visibility, so the source stays private. The image contains only the built
-  static site, which is already served publicly — publishing it discloses nothing a visitor
-  could not already see;
+  repository visibility. *(Corrected 2026-08-15 — this continued "so the source stays private.
+  The image contains only the built static site, which is already served publicly". **Both
+  clauses were false**: no Renvor repository is private under ADR-0006 D13, and **no Renvor
+  site is served at all** — `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each return
+  no HTTP response.)* The image **will contain** only the built static site, intended to be
+  served publicly at `renvor.dev`; **once that site is deployed**, publishing the image will
+  disclose nothing a visitor could not already see. **That is a property of the design, not an
+  observation** — nothing is deployed today;
 - images are referenced **by immutable digest** in deployment manifests, never by a mutable
   tag such as `latest`;
 - images carry a signature, an SBOM, and build provenance;
@@ -1718,10 +1726,12 @@ records the exact tag or digest it built from, so any published page can be trac
 framework revision it describes.
 
 **Rust API documentation and crate metadata remain docs.rs- and crates.io-compatible.** The
-private documentation site is an addition, never a replacement, and never a prerequisite for
-publishing a crate.
+separate documentation site is an addition, never a replacement, and never a prerequisite for
+publishing a crate. *(Corrected 2026-08-15 — this read "The private documentation site". Wrong
+twice: `renvor-rs/renvor-docs` is public, and **no documentation site exists** — the
+repository is commit-empty.)*
 
-### 26.8 How private website repositories consume the public framework
+### 26.8 How the website repositories consume the public framework
 
 The website repositories consume the framework only through **published, versioned
 artifacts**: a release tag, a published crate, or a release asset addressed by digest.
