@@ -3640,13 +3640,26 @@ changes. Verified 2026-08-15:
 ### 3aw.5 Observed gaps, recorded rather than glossed
 
 **Neither was required by T113**, and neither blocks its closure — both are recorded because
-the framework repository holds itself to them and the divergence should be a decision rather
-than an accident:
+the divergence between the four repositories should be a decision rather than an accident:
 
-| Gap on `renvor-rs/renvor-site` | Framework repository |
-|---|---|
-| `required_signatures` — **false** | enforced |
-| `required_linear_history` — **false** | enforced |
+| Control | `renvor-rs/renvor-site` | `renvor-rs/renvor` (framework) | `renvor-rs/renvor-infra` |
+|---|---|---|---|
+| `required_signatures` | **false** | **false** | **enforced** (ruleset `20889836`) |
+| `required_linear_history` | **false** | **enforced** | **enforced** |
+
+> **Corrected 2026-08-15.** This table previously read "Gap on `renvor-site` / Framework
+> repository: enforced, enforced", asserting that the framework repository enforced **both**.
+> **It does not.** Read back from GitHub: `renvor-rs/renvor` has `required_signatures: false`
+> on both the protection object and the dedicated endpoint, and holds **0 rulesets**. The
+> claim was half false, and it erred in the direction that made the framework repository look
+> stronger — the failure mode this ledger is written to prevent.
+>
+> **The sharper finding:** `renvor-infra`, the least critical of the four, is the **only**
+> repository that enforces signed commits, because it was protected by a **ruleset** while the
+> other two use classic branch protection configured without that control. **Commits on
+> `renvor-rs/renvor` are signed in practice** — the five most recent on `main` all return
+> `verified: true, reason: valid` — but that is maintainer configuration, **not server-side
+> enforcement**, and an unsigned commit would not be rejected. Carried as limitation **R-16**.
 
 Tracked in §6 (known limitations) with an owner and a target phase.
 
@@ -3780,17 +3793,27 @@ rather than overwritten.
 
 **This is not "backups are weak". There is no backup of any kind, for anything.**
 
+> **What this section deliberately does not publish.** The ruling needs the *absence* of a
+> backup mechanism, because that is the fact it turns on. It does not need per-workload
+> volume names and sizes, or precise free capacity, so those are recorded in the inspection
+> and withheld here. **Minimisation was applied to `renvor-infra` before publication on the
+> same principle** (§3av); it is applied here for the same reason. **Several identifiers for
+> this host — its address, firewall state, open ports, and component versions — are already
+> published elsewhere in this repository and predate this section.** Bringing those to the
+> same standard is a separate, larger task and is recorded as limitation **R-17**, not
+> silently treated as handled by this note.
+
 ### 3ay.3 What is unprotected, and what is Renvor's
 
 | | |
 |---|---|
-| Unrelated stateful data | **5 PersistentVolumeClaims, 57 GiB** — `attaa` (postgres 20Gi, minio 20Gi, redis 5Gi, clamav 2Gi) and `codexhub` (postgres 10Gi). **0 StatefulSets** |
+| Unrelated stateful data | **5 PersistentVolumeClaims totalling roughly 57 GiB across two unrelated namespaces. 0 StatefulSets.** *(Per-workload names and volume sizes were recorded during the inspection and are deliberately **not** published here — they identify third parties' data without adding anything the ruling needs.)* |
 | Storage class | `local-path` — node-local, **no replication, no snapshot support** |
 | **Renvor's footprint** | **zero** — no `renvor*` namespace, 0 PVCs, 0 workloads, 0 ingresses. Renvor is genuinely stateless here because it is *absent* here |
 | Unrelated namespaces | `attaa`, `codexhub`, `portfolio`, `gitlab` (+ `cert-manager`, `default`, `kube-node-lease`, `kube-public`, `kube-system`) |
 | `gitlab` namespace | **two ClusterIP service shims only** — GitLab runs entirely **outside** Kubernetes |
-| Cluster-wide policy objects | **`ResourceQuota` 0 · `LimitRange` 0 · `NetworkPolicy` 0** |
-| Headroom | CPU **617m of 8000m (7%)**, memory **13.8 GiB of 31.3 GiB (43%)**, disk **318 G free of 387 G (18% used)**, **28 running pods of 110 allocatable** |
+| Cluster-wide policy objects | **None exist for Renvor to inherit.** A Renvor deployment must therefore **create its own** `ResourceQuota`, `LimitRange`, and `NetworkPolicy` rather than relying on cluster defaults, and **NetworkPolicy enforcement must be verified on the CNI in use** before it is relied upon |
+| Headroom | **Ample for two static-site namespaces** — CPU, memory, disk, and pod-slot utilisation were all measured well below capacity at the time of the ruling. *(Precise free-capacity figures are deliberately **not** published. On a host documented as having no `LimitRange` and no `ResourceQuota`, exact headroom tells an attacker how much to consume and tells this ruling nothing it does not already say.)* |
 
 ### 3ay.4 The ruling
 
@@ -3801,12 +3824,12 @@ rather than overwritten.
 > controls exist. A Renvor deployment must remain **additive, isolated, resource-bounded,
 > digest-addressed, and reversible without modifying unrelated workloads**.
 >
-> **Addition 1 — resource-bounding and isolation must be created, not inherited.** The cluster
-> contains **zero** `ResourceQuota`, **zero** `LimitRange`, and **zero** `NetworkPolicy`
-> objects. There is nothing to inherit and no neighbouring namespace modelling them. Renvor
-> must supply its own, and **NetworkPolicy enforcement must be verified on this CNI before it
-> is relied upon** — a NetworkPolicy that no controller enforces is decoration, and would make
-> the isolation claim false while looking satisfied.
+> **Addition 1 — resource-bounding and isolation must be created, not inherited.** **No
+> cluster-wide `ResourceQuota`, `LimitRange`, or `NetworkPolicy` exists for Renvor to inherit,
+> and no neighbouring namespace models them.** Renvor must supply its own, and **NetworkPolicy
+> enforcement must be verified on the CNI in use before it is relied upon** — a NetworkPolicy
+> that no controller enforces is decoration, and would make the isolation claim false while
+> looking satisfied.
 >
 > **Addition 2 — the absence is total, which is why the ruling is narrow.** There is no backup
 > of any kind, not merely no *cluster* backups. **Node loss is total loss** for all 57 GiB of
@@ -3981,7 +4004,9 @@ owner and a target phase, and **none is closed by being written down**.
 | ID | Limitation | Owner | Target phase |
 |---|---|---|---|
 | R-7 | **MSRV 1.94.0 has never been validated against real persistence dependencies.** FR-061 requires revalidation before Phase 006, because Phase 001's only crate has **zero dependencies**, so the floor is currently proven against nothing that could raise it | Ahmed Anbar | **Before Phase 006** — registered in §7 |
-| R-8 | **`renvor-rs/renvor-site` does not require signed commits or linear history** (`required_signatures: false`, `required_linear_history: false`, observed 2026-08-15), while the framework repository enforces both. T113 did not require either, so this is a divergence rather than a failure — but it is a divergence in the repository that will serve the public landing page | Ahmed Anbar | Phase 012, with the landing deployment; earlier if a second contributor joins |
+| R-8 | **`renvor-rs/renvor-site` does not require signed commits or linear history** (`required_signatures: false`, `required_linear_history: false`, observed 2026-08-15). T113 did not require either, so this is a divergence rather than a failure — but it is a divergence in the repository that will serve the public landing page | Ahmed Anbar | Phase 012, with the landing deployment; earlier if a second contributor joins |
+| R-17 | **The framework repository publishes operational detail about a live shared production host that its own minimisation standard says to remove.** §3av records that the `renvor-infra` README was minimised before publication by removing **the origin IPv4 address, component patch versions, authoritative nameserver names, and the unrelated-namespace inventory**. This repository publishes all four, in `decisions/0006` and in dated `phase-001-evidence` sections, alongside the host's firewall state and open ports. **Every one of those predates 2026-08-15 and none was introduced by the Phase 001 convergence change** — which is why it is recorded rather than fixed here: correcting it means editing accepted decision records and dated evidence across the repository, and that is its own reviewed change. **The affected stateful workloads belong to third parties**, so the maintainer should also consider whether their owners warrant notice. *(Raised 2026-08-15 by advisory security review.)* | Ahmed Anbar | **Before any deployment or further publication** — treat as blocking for both |
+| R-16 | **`renvor-rs/renvor` does not enforce signed commits.** `required_signatures` is **false** on the framework repository — the most security-critical of the four — while `renvor-infra`, the least critical, **does** enforce it via ruleset `20889836`. The cause is mechanism, not intent: the framework uses **classic branch protection** configured without that control, and holds **0 rulesets**. **Commits are signed in practice** (the five most recent on `main` all verify), so this is an **enforcement** gap, not a provenance gap — an unsigned commit would not be rejected. *(Found 2026-08-15 by advisory review, correcting an earlier claim in this ledger that the framework "enforces both".)* | Ahmed Anbar | Before the first signed release — registered in §7.4 |
 | R-9 | **`renvor-rs/renvor-infra` has no CI and therefore no required status checks.** Its ruleset requires pull requests, signed commits, and linear history with zero bypass actors, but **nothing is verified** on the way in. A manifest could be merged unreviewed by machine | Ahmed Anbar | The phase that adds the first manifest — protection without verification must not outlive the repository's emptiness |
 | R-10 | **`renvor-rs/renvor-docs` is commit-empty, unprotected, and has secret scanning and push protection disabled.** There is no `main` branch to protect. The controls must exist **before** its first commit, not after | Ahmed Anbar | Phase 012, before the documentation migration permitted by T108 |
 | R-11 | **The T095–T097 landing-approval anchors cannot be recomputed.** §3aq records a source-set SHA-256 and a build-output SHA-256 but **not the method that produced them** — no file set, no ordering, no statement of whether filenames are included. The approval is therefore not mechanically re-attachable to any later commit, and the site has since advanced to `d3575e5e…`. A hash that cannot be reproduced verifies nothing | Ahmed Anbar | Phase 012 — re-approve against a reproducible anchor before the landing deploys, and record the recipe with it |
@@ -4036,6 +4061,7 @@ accompany a date, and the obligation fires at whichever arrives first.
 |---|---|---|---|---|
 | **Harden signing-key storage** — the release signing key pair is stored in a directory synchronised to a third-party file-sync service, widening its blast radius to that account and every device syncing it (limitation R-13). **Recorded 2026-08-15 as a future security action.** No key was read, moved, rotated, copied, or deleted in recording it, and none is proposed here | Ahmed Anbar | **Before the first signed release** | Any suspected compromise of the sync account or a syncing device | Discharged when the key is held in storage that is not synchronised to a third-party service, **or** when the maintainer records a dated decision accepting the risk with its reasoning |
 | **Controls before `renvor-docs` receives its first commit** — branch protection, required checks, secret scanning, and push protection must exist **before** content, not after (limitation R-10) | Ahmed Anbar | **Before the first commit to `renvor-rs/renvor-docs`** | Any attempt to migrate documentation | Discharged when the controls are configured and read back |
+| **Enforce signed commits on `renvor-rs/renvor`** — the framework repository has `required_signatures: false` while `renvor-infra` enforces it (limitation **R-16**). Commits are signed in practice; enforcement is absent | Ahmed Anbar | **Before the first signed release** | Any second contributor gaining merge rights | Discharged when the framework repository rejects an unsigned commit server-side — by enabling the classic-protection setting or adopting a ruleset — verified by read-back |
 | **Required checks for `renvor-rs/renvor-infra`** — its ruleset requires pull requests and signed commits but verifies nothing, because it has no CI (limitation R-9) | Ahmed Anbar | **Before the first manifest is merged** | Any pull request adding a manifest | Discharged when CI exists and its checks are required |
 
 ## 8. Open blockers
