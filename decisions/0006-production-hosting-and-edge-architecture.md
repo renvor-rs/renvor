@@ -259,9 +259,12 @@ already running on this host, and it is rejected on two grounds recorded in full
   served publicly at `renvor.dev`. **Once that site is deployed**, making the image public
   will disclose nothing that visiting the site would not. *(Corrected 2026-08-15 — this read
   "already served publicly at `renvor.dev`" and "visiting the site", both present tense.
-  **No Renvor site is deployed**: `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each
-  return no HTTP response. The argument is sound as a property of the design and unsound as
-  an observation, so it is stated as the former.)*
+  **No Renvor site is deployed.** Measured 2026-08-15, all three hostnames resolve to the
+  shared origin and return **HTTP 404** over plain HTTP, and over HTTPS once validation is
+  bypassed; against a public trust store the handshake fails on Traefik's default self-signed
+  certificate — consistent with D11's note above. **Something answers; no Renvor content is
+  served.** The argument is sound as a property of the design and unsound as an observation,
+  so it is stated as the former.)*
 - The trade is accepted knowingly: image *contents* and pull *counts* become public, and the
   image cannot be used as a private distribution channel. Both are acceptable for a static
   marketing and documentation site, and neither would be acceptable for an image carrying
@@ -390,7 +393,8 @@ Consequences:
 > - "*T113 and T114 stay open*" — **T114 was cancelled on 2026-08-15, not passed.** T113
 >   remains open. This is the statement a reader is most likely to act on.
 > - "*Infrastructure configuration moves to a private, self-hosted GitLab instance*", and the
->   table row "*`renvor-infra` | Private self-hosted GitLab | Private*" — **the move never
+>   table row "*`renvor-infra` | **Private self-hosted GitLab** at `gitlab.ahmedanbar.dev` |
+>   **Private** | …*" — **the move never
 >   happened.** Per the T114 cancellation record, the cutover was abandoned before it ran.
 >   *(Scope: this rests on the project's own dated record, not on a fresh inspection — the
 >   GitLab instance was deliberately not accessed. No claim is made about its contents.)*

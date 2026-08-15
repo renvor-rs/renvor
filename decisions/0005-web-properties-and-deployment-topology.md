@@ -6,7 +6,7 @@
 | **State** | `accepted` |
 | **Reviewer** | `Ahmed Anbar — self-review under W-002` |
 | **Review date** | 2026-08-12 |
-| **Superseded by** | **ADR-0006 D13** *(2026-08-15)* — **repository visibility only.** Everything else in this record still stands |
+| **Superseded by** | **ADR-0006 D13** *(2026-08-15)* — **partial: repository visibility, plus one deployment-status sentence.** Everything else in this record still stands, and this record is **not** in state `superseded` |
 | **Owner** | Ahmed Anbar |
 
 > ## Partial supersession 2026-08-15 — the visibility model changed; the separation did not
@@ -29,9 +29,13 @@
 > - "***Private source, public sites.** All deployed properties are publicly reachable. Only
 >   the source of the three website and deployment repositories is restricted.*" — **both
 >   halves are false today.** No repository source is restricted, and **no Renvor property is
->   deployed at all**: `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each return no
->   HTTP response. That sentence is the origin of a claim corrected across `PLAN.md`,
->   ADR-0006, and the evidence ledger on 2026-08-15;
+>   deployed at all** — measured 2026-08-15, `renvor.dev`, `docs.renvor.dev`, and
+>   `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, while HTTPS
+>   fails validation against a public trust store because Traefik serves its default
+>   self-signed certificate. **Something answers; no Renvor content is served.** That sentence
+>   is the origin of a claim corrected in `PLAN.md` §26.1 and §26.4 and in ADR-0006 D7 and D13
+>   on 2026-08-15; the evidence ledger carries a global qualifier in its Status line, and
+>   **§3al still contains the uncorrected original wording**, annotated there;
 > - "*`renvor-infra` has the strongest case for remaining private permanently*" — **reversed by
 >   D13**, which weighed public GitHub, private GitHub, and private self-hosted GitLab and
 >   chose public. D13's alternatives review is where that reversal is argued.

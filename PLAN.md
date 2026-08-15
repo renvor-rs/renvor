@@ -1532,7 +1532,7 @@ Four repositories, all public on GitHub, all canonical there:
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
 | `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **to be served** at `renvor.dev` | Framework source, documentation content, cluster credentials |
 | `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | **Will be** the production documentation site at `docs.renvor.dev`; **commit-empty today**, so it is a reserved destination, not yet a source of truth | Framework source copied by hand, cluster credentials |
-| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation | Application source, plaintext secrets of any kind |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | **Will be** Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation; **today a `README.md`, a `.gitignore`, and the brand mark — no manifest** | Application source, plaintext secrets of any kind |
 
 **GitHub is the source, review, and future CI surface for all four repositories.** *("future"
 added 2026-08-15 — `renvor-docs` and `renvor-infra` have zero workflows and zero runs, so
@@ -1668,8 +1668,12 @@ decision itself is unchanged)*
   repository visibility. *(Corrected 2026-08-15 — this continued "so the source stays private.
   The image contains only the built static site, which is already served publicly". **Both
   clauses were false**: no Renvor repository is private under ADR-0006 D13, and **no Renvor
-  site is served at all** — `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each return
-  no HTTP response.)* The image **will contain** only the built static site, intended to be
+  site is served at all** — measured 2026-08-15, `renvor.dev`, `docs.renvor.dev`, and
+  `www.renvor.dev` each resolve to the shared origin and receive **HTTP 404**, over plain HTTP
+  or over HTTPS with certificate validation bypassed; against a public trust store the TLS
+  handshake fails, because Traefik serves its default self-signed certificate. **Something
+  answers; no Renvor content is served.**)* The image **will contain** only the built static
+  site, intended to be
   served publicly at `renvor.dev`; **once that site is deployed**, publishing the image will
   disclose nothing a visitor could not already see. **That is a property of the design, not an
   observation** — nothing is deployed today;

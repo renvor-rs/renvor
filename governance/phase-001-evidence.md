@@ -2701,6 +2701,25 @@ visibility is independent of repository visibility, so the sources stay private.
 carries only the built static site, already served publicly — publishing it discloses nothing
 a visitor could not already see.
 
+> **Correction appended 2026-08-15 — two clauses above are wrong, and one was wrong when
+> written.** The dated-evidence framing at the head of this ledger is not enough here, because
+> one of these was never true, not merely overtaken.
+>
+> - "*so the sources stay private*" — **stale.** True on 2026-08-12; **false since ADR-0006
+>   D13.** No Renvor repository is private. The load-bearing fact is the *independence* of
+>   package visibility from repository visibility, which is unaffected.
+> - "*already served publicly … nothing a visitor could not already see*" — **this was false
+>   on 2026-08-12 and is false now.** **No Renvor site has ever been deployed.** Measured
+>   2026-08-15, `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each resolve to the
+>   shared origin and return **HTTP 404**, with HTTPS failing validation against a public
+>   trust store because Traefik serves its default self-signed certificate. **Something
+>   answers; no Renvor content is served.** The argument holds as a property of the design
+>   once a site exists; it was never an observation.
+>
+> **The original wording above is left unedited** — this section is dated evidence, and the
+> error is part of what the record has to show. The same two clauses were corrected in place
+> in `PLAN.md` §26.4 and ADR-0006 D7, which are current-state documents rather than evidence.
+
 **The trade, stated so it is not inherited by accident**: image contents and pull counts
 become public, and the image cannot serve as a private distribution channel. Acceptable for a
 static site whose content is already public; **not** acceptable for an image carrying
