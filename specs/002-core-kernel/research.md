@@ -641,7 +641,7 @@ capability this phase does not use:
 | `petgraph` | **minimal** — `tarjan_scc` needs only the algo traits | `graphmap`, `stable_graph`, `matrix_graph`, `serde-1`, `rayon` |
 | `confique` | `toml` | `yaml`, `json5` — FR-015 prohibits both; excluding the features makes the prohibition **structural** |
 | `tracing-subscriber` | `fmt`, `env-filter` | `json`, `ansi` |
-| `secrecy` | default (`alloc`, `zeroize`) | `serde` — evaluated against FR-018 before enabling |
+| `secrecy` | **0 Cargo features enabled** — `default-features = false`, no `features` list. (`alloc` and `zeroize` are always-on crate capabilities, *not* opt-in feature flags; the wording here previously read "default (`alloc`, `zeroize`)", which a security review flagged as reading like a contradiction of the zero-features claim) | `serde` — its **only** optional feature, deliberately left off because C-C9 requires a secret to refuse serialisation. Verified in the live graph: `secrecy 0.10.3 :: (none)` |
 | `getrandom` | default | custom backends |
 
 ## 4. Design questions resolved without a package
