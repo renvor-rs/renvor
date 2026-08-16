@@ -440,16 +440,33 @@ rationale, not part of the condition"* — so the phase-number check extracts th
 themselves rather than scanning the whole requirement, which would have failed on text that is
 explicitly not part of the condition.
 
-### T106 — both toolchains, and what was **not** run
+### T106 — the complete sequence on **both** toolchains
 
-| Toolchain | What ran | Result |
-|---|---|---|
-| **1.94.0** (pinned, active) | full `cargo xtask verify`, all 11 steps | **11 of 11 passed** |
-| **1.97.1** (current stable) | `cargo test --workspace` | **262 passed, 0 failed** |
+| Toolchain | What ran | Result | Skipped |
+|---|---|---|---|
+| **1.94.0** (pinned) | full `cargo xtask verify` | **11 of 11 passed** | **0** |
+| **1.97.1** (current stable) | full `cargo xtask verify` | **11 of 11 passed** | **0** |
 
-**Counted and named, not inferred**: the pinned toolchain ran the complete 11-step sequence; current
-stable ran **only the test step**. The other ten were **not** run on stable and are **not** claimed.
-SC-013 asks for **0 silently skipped checks** — these are skipped, and they are named. Open item 14.
+SC-013 asks for **0** failing and **0** *silently* skipped checks. Both runs completed every step;
+nothing was skipped, so nothing needed naming.
+
+**The propagation was verified rather than assumed.** `rust-toolchain.toml` pins 1.94.0, and
+`xtask` spawns `cargo` as a child process — so a stable run could have silently fallen back to the
+pin and produced a result indistinguishable from the pinned one. Probed directly:
+
+```text
+$ rustup run stable bash -c 'echo $RUSTUP_TOOLCHAIN; cargo --version; rustc --version'
+stable-aarch64-apple-darwin
+cargo 1.97.1 (c980f4866 2026-06-30)
+rustc 1.97.1 (8bab26f4f 2026-07-14)
+```
+
+`RUSTUP_TOOLCHAIN` is set in the environment and takes precedence over `rust-toolchain.toml`, and
+it is inherited by children. The stable run was genuinely stable. Without this probe the second row
+of that table would have been an assumption wearing a result's clothes.
+
+**Three toolchain versions ahead of the floor and clippy is still clean** — no new lint in 1.95,
+1.96, or 1.97 fires on this code.
 
 ### T107 — quickstart gates
 
@@ -519,7 +536,7 @@ success for the wrong reason.
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
 | 12 | **SC-015 does not hold**: `Load` and `Validate` call author code synchronously with no deadline | `ApplicationBuilder::build` is not `async`. Bounding them needs `spawn_blocking` plus an async build, which changes the surface every US1 test uses | **Yes — this is an unmet success criterion**, not a nicety |
 | 13 | **C-L9's `Panic` behaviour is not injectable** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency | **Yes — SC-009 is met for phases, not for all three behaviours** |
-| 14 | **SC-013 is partially met**: current stable ran the **test step only**, not the other ten | Running the full sequence on a second toolchain needs a CI lane, not a local invocation. The ten unrun steps are named rather than inferred from a passing exit status | No — but the claim must stay "tests on both, sequence on one" |
+| ~~14~~ | ~~SC-013 partially met~~ | **CLOSED**: the full 11-step sequence ran on both 1.94.0 and 1.97.1, 0 skipped, with toolchain propagation verified by probe | — |
 
 ## Publication status
 
