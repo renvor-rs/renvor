@@ -559,9 +559,27 @@ Each of the sixteen gates has now been run individually. See
 | Gate | Status |
 |---|---|
 | **`001-T102`** | non-completed, untouched by Phase 002 |
-| **`001-T108`** | non-completed, untouched by Phase 002 |
-| **`001-T109`** | non-completed, untouched by Phase 002 |
+| **`001-T108`** | non-completed **in Phase 001's ledger**; its *subject matter* was resolved by Phase 002's **T151** — see the correction below |
+| **`001-T109`** | non-completed **in Phase 001's ledger**; its *subject matter* was resolved by Phase 002's **T151** — see the correction below |
 | **`001-T111`** | non-completed, untouched by Phase 002 |
+
+> **Corrected 2026-08-17 (T159, finding R4-5).** The two middle rows read "untouched by Phase 002"
+> until this correction, and that became false when **T151** landed. `001-T108` is
+> *"DOCUMENTATION DEPLOYMENT GATE — resolve `image-size`"* and `001-T109` is the `uuid` advisory
+> `GHSA-w5hq-g745-h8pq` — the exact three advisories T151 removed from the documentation site's
+> resolved dependency graph.
+>
+> T151 was directed by the maintainer because PLAN.md §17.3 forbids accepting a phase with an open
+> Critical or High finding and no waiver for one exists. That direction overrides Phase 002's
+> "out of scope" assumption; it does not make the assumption's original wording retroactively
+> correct, which is why this is a dated correction rather than a silent edit.
+>
+> **OPEN ITEM — Phase 001 bookkeeping.** `001-T108` and `001-T109` are now *satisfiable* and their
+> rows in `specs/001-governance-foundation/tasks.md`, together with Phase 001's §7.2
+> recurring-obligations register (which carries a **2026-09-11** reassessment for both), are stale.
+> They are **deliberately not edited here**: rewriting a closed phase's ledger from inside another
+> phase's pull request is how two evidence packs come to disagree about the same fact.
+> **Owner: Ahmed Anbar. Due with the next Phase 001 obligation review, 2026-09-11.**
 
 The `001-` prefix is mandatory: Phase 002 has its own T105, and an unprefixed "T105" in this record
 would read as this phase's rustdoc task.
@@ -1696,7 +1714,7 @@ pointing at real leak-on-failure diagnostics, which is the argument against ever
 
 ## Merge-blocking corrections (T143–T158)
 
-Phase 11 left PR #19 with ten green checks, **0** open CodeQL alerts, and **0** unresolved
+Phase 11 left PR #19 with **nine** passing checks and one skipped by design, **0** open CodeQL alerts, and **0** unresolved
 conversations. It was still not mergeable, and reviewing the *closure records* rather than the code
 is what showed why.
 
@@ -1842,7 +1860,7 @@ byte longer than the prefix, which keeps `starts_with` deciding on exactly the b
 
 | Proof | Result |
 |---|---|
-| 128 KB key vs 1.28 MB key, rendered | sizes differ by **≤ 4 bytes** |
+| 1.28 KB key vs 1.28 MB key, rendered | sizes differ by **≤ 4 bytes** |
 | 100 KB vs 1 MB key, through the real file → merge → error stack | differ by **≤ 8 bytes** |
 | 1 MB astral-plane key (4-byte characters) | bounded; byte length reported |
 | 500 KB environment variable name, through the real stack | bounded |
@@ -2096,6 +2114,74 @@ The constitution states that flaky tests are defects. This one is **recorded as 
 an owner** rather than claimed to be fixed: it was observed once, it has not been root-caused to a
 line, and asserting a fix that has not been demonstrated is the exact habit these four rounds
 exist to correct. It is **not** presented as resolved.
+
+### L — the W-005 delta reviews, round 4 (T155, T159)
+
+Two fresh clean-context reviews covering the entire Phase 12 corrective batch — the diff
+`2555c01..113cf8c` — one against requirements, one against security.
+
+**Both are NON-INDEPENDENT and ADVISORY.** They are AI agents working for the same maintainer.
+Nothing in this section may be described as an independent review.
+
+| Review | CRITICAL | MAJOR | MINOR | Total |
+|---|---|---|---|---|
+| Requirements delta (R4) | **1** | 7 | 7 | 15 |
+| Security delta (S4) | 0 | **2** | 5 | 7 |
+| **Round 4 total** | **1** | **9** | **12** | **22** |
+
+Running total across all four rounds: **104** findings, every one enumerated individually.
+
+**The round found a CRITICAL in the fix for a limitation this phase had just closed**, which is the
+most useful thing it could have done. It also produced the same finding twice, independently, from
+two reviewers with different checklists (R4-1 and S4-1) — the strongest corroboration available
+here, and worth more than either report alone.
+
+#### Round 4, requirements — all 15 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| **R4-1** | **CRITICAL** | T146 did not bound the diagnostic: `configuration()` bounded `key` and `layer` and left `constraint`, and the key travels in `constraint` via `serde`'s `unknown field` message under `deny_unknown_fields`. Measured after T146: a 1,000,000-byte key produced a **1,000,363-byte** message | **FIXED** (T159). `MAX_CONSTRAINT_BYTES = 512` and `bounded_constraint`, applied both inside `Constraint::from_decoder`'s permitted-prefix branch and at the `configuration()` chokepoint. Re-measured: **876 bytes**. Reproduced first, and the reproduction is now a permanent test using a `deny_unknown_fields` schema |
+| **R4-2** | MAJOR | The structural test meant to prevent R4-1 counted `bounded_identifier(&` occurrences, so it asserted the fix was *present* rather than that the property *held*, and its comment claimed both constructors bounded every `String` field | **FIXED** (T159). Replaced with `every_string_field_of_a_configuration_error_is_bounded`, which drives all three fields from a 1 MB hostile input and measures the result. The out-of-scope decision for the other seven `KernelError` variants is now stated explicitly rather than implied |
+| **R4-3** | MAJOR | `attribution::render` — the function the T146 evidence named as the motivating case — rendered the key with no bound. Measured: a 1,000,000-byte key produced a 1,000,179-byte report; `format!("{merged:?}")` produced 1,000,255 | **FIXED** (T159). `render` bounds the key; `Merged`'s `Debug` builds a bounded-key view for formatting while leaving the stored key intact, because the stored key is the entry's identity. Regression and positive-control tests added |
+| **R4-4** | MAJOR | Gate 12's `12f` and Control 5 run a child `sh` with a hand-written trap and never invoke `gate12_cleanup`, so a handler that had lost a path would leave them green — and three records described them as more than that | **FIXED** (T159). Control 6 plants all five paths the handler owns, calls `gate12_cleanup` directly, and requires all five gone. The three prose claims now say what is proven. 8 controls, passing in bash 3.2 and zsh |
+| **R4-5** | MAJOR | T151 acted on the subject matter of `001-T108` and `001-T109`, which `spec.md` twice declares out of scope | **ACCEPTED and CORRECTED** (T159). The finding is right: `001-T108` is literally *"resolve `image-size`"*. The work stands, because PLAN.md §17.3 admits no waiver and the maintainer directed it; the **record** was wrong. A dated correction is in `spec.md`, and this ledger's "untouched by Phase 002" row is corrected above. Phase 001's own ledger is **deliberately not edited from here** — recorded as an open item with an owner |
+| **R4-6** | MAJOR | T150 and T151 shipped with no evidence entry and unchecked task rows | **FIXED** (T159). Sections I and J above; both rows now closed with what was verified |
+| **R4-7** | MAJOR | `SUPPORT.md` cites the `platform` contexts as evidence, but they are not required status checks, so the rule it states cannot hold | **FIXED** (T159). `SUPPORT.md` now carries an enforcement table stating plainly that the four contexts are **not** required and that the macOS and Windows claims rest on review practice. Making them required is a repository-settings change, deliberately outside this batch |
+| **R4-8** | MAJOR | The vendored `image-size` replacement is custom infrastructure with no ADR, which FR-035 and principle III require | **FIXED** (T159). **ADR-0009**, `proposed`, recording all seven options considered, the measured cost of each, the capability loss, the ownership cost of the vendored export map, and the exit condition. Left `proposed`: W-004 does not reach it, exactly as it does not reach ADR-0008 |
+| **R4-9** | MINOR | The lossy environment path reports a byte count that is not the name's length | **FIXED** with S4-3 — bounding is now idempotent and always reports the **original** length |
+| **R4-10** | MINOR | Two requirement mis-citations in new records | **FIXED** (T159) |
+| **R4-11** | MINOR | "128 KB key vs 1.28 MB key" should be 1.28 KB vs 1.28 MB | **FIXED** (T159). The test uses `MAX_IDENTIFIER_BYTES * 10` = 1,280 bytes |
+| **R4-12** | MINOR | "ten green checks" was nine green and one skipped | **FIXED** (T159) |
+| **R4-13** | MINOR | `SUPPORT.md` said the non-Unicode environment-name path cannot exist on Windows; it can — a Windows name is WTF-8 and may hold unpaired surrogates | **FIXED** (T159). What is unix-gated is the *test*, not the code path, and the text now says so |
+| **R4-14** | MINOR | The vendored package's version reads as an upgrade rather than a removal | **ACCEPTED, recorded** in ADR-0009's consequences, with the `"resolved": "vendor/…"` line named as the tell. Not renamed: npm resolves the override by package name |
+| **R4-15** | MINOR | Stray backtick in a public doc comment | **FIXED** (T159) |
+
+#### Round 4, security — all 7 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| **S4-1** | MAJOR | Same defect as R4-1, found independently: `Constraint::Decoder` is unbounded and an attacker-chosen key sets the message size | **FIXED** — see R4-1. Two reviewers reaching it separately is why it is recorded twice rather than merged |
+| **S4-2** | MAJOR | T145 removed author code from two `Debug` impls and left it in the type most likely to be `{:?}`-formatted: a **derived** `Debug` over `BoxedCause` reaches the author's `Debug`. Reproduced — formatting a `KernelError::ProviderInit` with a panicking cause panicked, and one with a blocking cause never returned | **FIXED** (T159). `Debug` is hand-written for `KernelError` and `EntropyUnavailable`; the cause is omitted from formatting and stays reachable through `Error::source()`. The gate is widened to the **class** — any `#[derive(Debug)]` over a boxed author error — with three planted controls, plus runtime tests using panicking and never-returning causes. **This is the fourth time on this branch that a fix reached the files it was pointed at and not the property** |
+| **S4-3** | MINOR | `SourceLayer::file` bounds at construction and `bounded_label` bounds again at render, so an over-long path reported the length of the first truncation | **FIXED** (T159). `bounded_to` now counts its notice inside the ceiling, making it idempotent; asserted directly |
+| **S4-4** | MINOR | The Windows safety claim for the non-regular-file guard is unverified, and the Windows CI job runs none of the tests that would check it | **ACCEPTED and NARROWED** (T159). The claim is removed. The doc now states what is verified — the TOCTOU half, exercised on Windows in CI — and explicitly does **not** claim the open cannot block on a Windows named pipe. Recorded as an open item rather than argued either way |
+| **S4-5** | MINOR | This batch introduced the first **positional**-argument diagnostics into a credential-handling file, which the redaction gate could not see: `interpolations` required a non-empty name, so `{}` and `{:?}` produced nothing | **FIXED** (T159). A positional slot is now always an offence — a text scan cannot see which expression fills it, and deleting the identifier was a one-keystroke evasion of an allowlist built to fail closed. It caught two sites, both introduced by this batch. Three planted controls added |
+| **S4-6** | MINOR | The structural gate was named for a property it did not establish | **FIXED** with R4-2 |
+| **S4-7** | MINOR | The image-input guard's scan roots do not cover Docusaurus content roots that do not exist yet | **ACCEPTED, not changed.** The roots cover every directory that exists. Widening a scan to directories that do not exist would pass today for the same reason it passes now, and ADR-0009's exit condition already ties the guard, the override, and the vendored package together. Recorded as a known edge |
+
+#### What this round says about the three earlier ones
+
+Round 4 found a **CRITICAL inside a fix that closed a MAJOR from round 3**, and a MAJOR showing
+that the same round's `Debug` fix had reached two impls and missed a derive. Neither is a
+regression in the sense of breaking something that worked; both are the *same shape* the previous
+three rounds kept finding — **a fix applied to the instances someone pointed at, tested by a check
+that asserts the fix rather than the property**.
+
+That shape has now appeared four times. The countermeasure applied each time it appeared in this
+round was the same, and it is the only one that has held: replace the list with a **discovering
+gate**, and replace the "is the fix present?" assertion with a **measurement of the property**.
+`every_string_field_of_a_configuration_error_is_bounded` drives hostile input through the real
+constructor; `no_derived_debug_formats_a_boxed_author_error` scans the whole workspace for a
+shape rather than checking two known files.
 
 ## Publication status
 

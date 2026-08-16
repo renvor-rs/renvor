@@ -29,7 +29,7 @@ use core::fmt;
 
 use renvor_core::KernelError;
 use renvor_core::config_port::{Attribution, Presence, SourceLayer};
-use renvor_core::error::context::conflict;
+use renvor_core::error::context::{bounded_identifier, conflict};
 use toml::{Table, Value};
 
 /// One source, decoded and ready to merge.
@@ -86,10 +86,27 @@ pub struct Merged {
 /// Attribution is safe and is the useful half: which layer won for which key is exactly what a
 /// reader debugging configuration wants, and it never needed the value to learn it.
 impl fmt::Debug for Merged {
+    /// The attribution map is rendered with **bounded keys** (T159, finding R4-3).
+    ///
+    /// The map's values are `Attribution`s holding `SourceLayer`s, which T146 bounded. Its **keys**
+    /// are `String`s taken straight from the configuration, and formatting a `BTreeMap` renders
+    /// them through their own `Debug`. Measured before this fix: `format!("{merged:?}")` on a map
+    /// containing one 1,000,000-byte key produced a 1,000,255-byte rendering.
+    ///
+    /// A bounded copy is built for formatting rather than bounding the stored key, because the
+    /// stored key is the *identity* of the entry — two keys that truncate to the same text are
+    /// still different keys, and collapsing them would corrupt the map rather than merely
+    /// shortening a message.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bounded: BTreeMap<String, &Attribution> = self
+            .attribution
+            .iter()
+            .map(|(key, at)| (bounded_identifier(key), at))
+            .collect();
+
         f.debug_struct("Merged")
             .field("keys", &self.table.len())
-            .field("attribution", &self.attribution)
+            .field("attribution", &bounded)
             .finish_non_exhaustive()
     }
 }

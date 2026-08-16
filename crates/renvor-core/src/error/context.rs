@@ -56,15 +56,45 @@ use crate::error::KernelError;
 /// is 33) and short enough that a full page of them still fits in one screen.
 pub const MAX_IDENTIFIER_BYTES: usize = 128;
 
-/// The largest a **rendered** identifier can be, in bytes: the ceiling plus its truncation notice.
+/// The most of a constraint **message** that is reproduced in a diagnostic, in bytes.
 ///
-/// Exists so the bound can be asserted as one number rather than recomputed at each call site from
-/// the format string — which is the defect [`Constraint::TooDeep`] was added to prevent, one layer
-/// up. `[`bounded_identifier`] is tested against this constant, not against a literal.
+/// # Why this is separate from, and larger than, [`MAX_IDENTIFIER_BYTES`]
 ///
-/// The notice is `"… (truncated; N bytes in full)"`: 3 bytes for the ellipsis, 28 for the fixed
-/// text, and at most 20 digits for a `usize` written in decimal.
-pub const MAX_RENDERED_IDENTIFIER_BYTES: usize = MAX_IDENTIFIER_BYTES + 3 + 28 + 20;
+/// A constraint is a sentence, not a name. `"found string, expected a sequence of (u8, u8)"` is a
+/// legitimate message, and a schema with twenty fields produces a legitimate
+/// ``unknown field `x`, expected one of `a`, `b`, …`` that is longer still. Truncating those at 128
+/// bytes would damage messages that were never a problem, so the ceiling is stated once, here, at a
+/// size that fits a real decoder message and still cannot be set by an attacker.
+///
+/// # This constant exists because the first T146 fix was incomplete
+///
+/// Found by the round-four requirements delta review (R4-1, CRITICAL) and **reproduced through the
+/// public stack**: a 1,000,000-byte key produced a **1,000,363-byte** message *after* T146.
+///
+/// `configuration` bounded `key` and `layer` and left `constraint` alone, and `constraint` is where
+/// the key actually travelled. [`Constraint::from_decoder`]'s first rule forwards a decoder message
+/// verbatim when it starts with `missing field`, `unknown field`, or `duplicate key` — and two of
+/// those three **quote the key**. A `serde` schema using `deny_unknown_fields`, which is the
+/// fail-closed shape the constitution pushes an author toward, therefore wrote the whole key into
+/// the message through a field nobody had bounded.
+///
+/// The lesson is in the *test* that missed it: it counted `bounded_identifier` calls, so it
+/// asserted that the fix was present rather than that the property held. It has been replaced with
+/// an end-to-end reproduction.
+pub const MAX_CONSTRAINT_BYTES: usize = 512;
+
+/// The largest a **rendered** identifier can be, in bytes.
+///
+/// Equal to [`MAX_IDENTIFIER_BYTES`], because the truncation notice is counted **inside** the
+/// ceiling rather than added to it. That is what makes bounding idempotent — see `bounded_to`, and
+/// finding S4-3 for the misreported length that made idempotence necessary rather than tidy.
+///
+/// It remains a separate constant so call sites assert against a name rather than recomputing the
+/// relationship, which is the defect [`Constraint::TooDeep`] was added to prevent one layer up.
+pub const MAX_RENDERED_IDENTIFIER_BYTES: usize = MAX_IDENTIFIER_BYTES;
+
+/// The same, for a constraint message.
+pub const MAX_RENDERED_CONSTRAINT_BYTES: usize = MAX_CONSTRAINT_BYTES;
 
 /// Renders an identifier into a diagnostic, bounded by [`MAX_IDENTIFIER_BYTES`].
 ///
@@ -87,16 +117,52 @@ pub const MAX_RENDERED_IDENTIFIER_BYTES: usize = MAX_IDENTIFIER_BYTES + 3 + 28 +
 /// a key whose 128th byte is mid-character truncates a little earlier.
 #[must_use]
 pub fn bounded_identifier(raw: &str) -> String {
-    if raw.len() <= MAX_IDENTIFIER_BYTES {
+    bounded_to(raw, MAX_IDENTIFIER_BYTES)
+}
+
+/// Renders a constraint message into a diagnostic, bounded by [`MAX_CONSTRAINT_BYTES`].
+///
+/// Separate from [`bounded_identifier`] only in its ceiling. See [`MAX_CONSTRAINT_BYTES`] for why a
+/// message gets a larger one than a name, and for the CRITICAL finding that showed this function
+/// had to exist.
+#[must_use]
+pub fn bounded_constraint(raw: &str) -> String {
+    bounded_to(raw, MAX_CONSTRAINT_BYTES)
+}
+
+/// The shared implementation: truncate at `ceiling` bytes, on a character boundary, and say so.
+///
+/// One function rather than two near-copies, because two copies of a truncation rule are two places
+/// for the character-boundary walk to be got wrong.
+fn bounded_to(raw: &str, ceiling: usize) -> String {
+    if raw.len() <= ceiling {
         return raw.to_owned();
     }
 
-    let mut cut = MAX_IDENTIFIER_BYTES;
+    // The notice is counted INSIDE the ceiling, which is what makes this function idempotent:
+    // its output is always `<= ceiling`, so bounding an already-bounded string returns it
+    // unchanged.
+    //
+    // # Why idempotence is required rather than merely tidy (S4-3, R4-9)
+    //
+    // An identifier can pass through two bounds on one journey: `SourceLayer::file` bounds a path
+    // at construction, and `Display`/`Debug` bound it again on the way out. When the notice sat
+    // *outside* the ceiling, the first pass produced a ~180-byte string, the second pass saw
+    // something over the 128-byte ceiling and truncated it AGAIN — and reported "180 bytes in
+    // full", which is the length of the first truncation rather than of the original path.
+    //
+    // A length that is not the length of anything the reader has is worse than no length at all:
+    // it is a number that looks like evidence. Reserving room for the notice removes the second
+    // truncation entirely.
+    let notice = format!("… (truncated; {} bytes in full)", raw.len());
+    let room = ceiling.saturating_sub(notice.len());
+
+    let mut cut = room.min(raw.len());
     while cut > 0 && !raw.is_char_boundary(cut) {
         cut -= 1;
     }
 
-    format!("{}… (truncated; {} bytes in full)", &raw[..cut], raw.len())
+    format!("{}{notice}", &raw[..cut])
 }
 
 /// What was wrong with a configuration value, stated **without** the value.
@@ -217,7 +283,12 @@ impl Constraint {
             .iter()
             .any(|prefix| message.starts_with(prefix))
         {
-            return Self::Decoder(message.to_owned());
+            // BOUNDED (R4-1). Two of the three permitted prefixes — `unknown field` and
+            // `duplicate key` — quote the KEY, and a key is chosen by whoever wrote the
+            // configuration. Forwarding this branch verbatim is how a 1 MB key produced a 1 MB
+            // error message after T146 had supposedly bounded diagnostics: the `key` field was
+            // bounded and the key travelled in `constraint` instead.
+            return Self::Decoder(bounded_constraint(message));
         }
 
         let stripped = Self::WrongShape {
@@ -293,7 +364,11 @@ pub fn configuration(
 ) -> KernelError {
     KernelError::Configuration {
         key: bounded_identifier(&key.into()),
-        constraint: constraint.describe(),
+        // Bounded HERE as well as inside `Constraint::from_decoder`, and the redundancy is the
+        // point (R4-1). Bounding only at the constructor of the one variant that can carry a long
+        // string makes the guarantee depend on nobody adding a second such variant later; bounding
+        // at the chokepoint makes it a property of every `Configuration` error there will ever be.
+        constraint: bounded_constraint(&constraint.describe()),
         layer: bounded_identifier(&layer.into()),
         expected_type,
     }
@@ -334,10 +409,10 @@ pub fn conflict(
 #[cfg(test)]
 mod tests {
     use super::{
-        Constraint, MAX_IDENTIFIER_BYTES, MAX_RENDERED_IDENTIFIER_BYTES, bounded_identifier,
-        configuration, conflict,
+        Constraint, MAX_IDENTIFIER_BYTES, MAX_RENDERED_CONSTRAINT_BYTES,
+        MAX_RENDERED_IDENTIFIER_BYTES, bounded_identifier, configuration, conflict,
     };
-    use crate::error::ErrorCategory;
+    use crate::error::{ErrorCategory, KernelError};
 
     const CREDENTIAL: &str = "hunter2-do-not-print";
 
@@ -393,6 +468,32 @@ mod tests {
     }
 
     #[test]
+    fn bounding_is_idempotent_and_reports_the_original_length() {
+        // S4-3 / R4-9. An identifier can meet two bounds on one journey: `SourceLayer::file` bounds
+        // a path at construction, and `Display`/`Debug` bound it again on the way out. When the
+        // notice sat outside the ceiling, the second pass truncated the FIRST truncation and
+        // reported its length — a number that was the length of nothing the reader had.
+        let path = "x".repeat(200_000);
+
+        let once = bounded_identifier(&path);
+        let twice = bounded_identifier(&once);
+
+        assert_eq!(
+            once, twice,
+            "bounding twice is not the same as bounding once"
+        );
+        assert!(once.len() <= MAX_RENDERED_IDENTIFIER_BYTES);
+        assert!(
+            once.contains("200000"),
+            "the reported length must be the ORIGINAL length, not the first truncation's"
+        );
+        assert!(
+            !twice.contains(&format!("{} bytes", once.len())),
+            "the second pass reported its own input's length"
+        );
+    }
+
+    #[test]
     fn a_truncated_identifier_still_says_what_it_was() {
         let key = format!("{}.tail", "a".repeat(10_000));
         let rendered = bounded_identifier(&key);
@@ -441,8 +542,7 @@ mod tests {
         let rendered = error.to_string();
         assert!(
             rendered.len() < 1_024,
-            "a 10 MB key produced a {}-byte message",
-            rendered.len()
+            "a 10 MB key produced an over-long message"
         );
         assert_eq!(error.category(), ErrorCategory::Configuration);
     }
@@ -463,30 +563,109 @@ mod tests {
         let rendered = error.to_string();
         assert!(
             rendered.len() < 1_024,
-            "a conflict over 10 MB identifiers produced a {}-byte message",
-            rendered.len()
+            "a conflict over 10 MB identifiers produced an over-long message"
         );
         assert_eq!(error.category(), ErrorCategory::ConfigurationConflict);
     }
 
     #[test]
-    fn no_identifier_reaches_an_error_without_passing_through_the_bound() {
-        // Structural, like the `(String)` count below it. Both configuration variants are
-        // `#[non_exhaustive]`, so every crate outside `renvor-core` must come through one of the
-        // two constructors — and both constructors call `bounded_identifier` on every `String`
-        // field they set. Counting the calls keeps a future field from being added unbounded.
-        let source = include_str!("context.rs");
-        let production = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("split always yields one part");
+    fn every_string_field_of_a_configuration_error_is_bounded() {
+        // # This test replaces one that counted calls, and the difference is the whole lesson
+        //
+        // The previous version asserted `production.matches("bounded_identifier(&").count() == 5`.
+        // It passed. It was also useless, because it asserted that **the fix I wrote was present**
+        // rather than that **the property held** — and the property did not hold. `configuration`
+        // sets three `String` fields and the old test only ever knew about the two I had bounded.
+        // `constraint` carried the key straight through (R4-1, CRITICAL, reproduced end to end at
+        // 1,000,363 bytes).
+        //
+        // So this version drives every field from hostile input and measures the result. A field
+        // added later is covered the moment someone passes it something long, and a bound that is
+        // removed fails here regardless of how the source is spelled.
+        let giant = "k".repeat(1_000_000);
+        let decoder_message = format!("unknown field `{giant}`, expected one of `port`");
 
-        assert_eq!(
-            production.matches("bounded_identifier(&").count(),
-            5,
-            "a constructor gained or lost an identifier field without bounding it: `configuration` \
-             bounds 2 (key, layer) and `conflict` bounds 3 (key, both layers)"
+        let error = configuration(
+            giant.clone(),
+            giant.clone(),
+            "u16",
+            &Constraint::from_decoder(&decoder_message, "table"),
         );
+
+        let KernelError::Configuration {
+            key,
+            constraint,
+            layer,
+            ..
+        } = &error
+        else {
+            panic!("the constructor stopped producing a Configuration error");
+        };
+
+        assert!(key.len() <= MAX_RENDERED_IDENTIFIER_BYTES, "key unbounded");
+        assert!(
+            layer.len() <= MAX_RENDERED_IDENTIFIER_BYTES,
+            "layer unbounded"
+        );
+        assert!(
+            constraint.len() <= MAX_RENDERED_CONSTRAINT_BYTES,
+            "constraint unbounded — this is exactly R4-1"
+        );
+        assert!(
+            error.to_string().len() < 2_048,
+            "the rendered message is unbounded"
+        );
+
+        // POSITIVE CONTROL: the input really was enormous, so the bounds above removed something.
+        assert!(decoder_message.len() > 1_000_000);
+    }
+
+    #[test]
+    fn a_decoder_message_quoting_a_giant_key_is_bounded() {
+        // R4-1 at the unit level, on the branch that caused it. `unknown field` and `duplicate
+        // key` are on the permitted-prefix list *because* keys may be named — and both quote the
+        // key, so "permitted to name" had to stop meaning "permitted at any length".
+        // Identified by `index`, not by interpolating the prefix or the rendering. This file
+        // handles credentials, so `tests/diagnostics.rs` refuses any assertion diagnostic that
+        // interpolates — and it fired on the first draft of this very test, which is the gate
+        // doing exactly its job.
+        for (index, prefix) in ["unknown field", "duplicate key", "missing field"]
+            .into_iter()
+            .enumerate()
+        {
+            let giant = "k".repeat(500_000);
+            let raw = format!("{prefix} `{giant}`");
+            let described = Constraint::from_decoder(&raw, "table").describe();
+
+            assert!(
+                described.len() <= MAX_RENDERED_CONSTRAINT_BYTES,
+                "permitted-prefix branch {index} forwarded an over-long message"
+            );
+            // The prefix survives: the message still says WHICH kind of problem it was.
+            assert!(
+                described.starts_with(prefix),
+                "permitted-prefix branch {index} lost its prefix"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_decoder_message_is_not_truncated() {
+        // POSITIVE CONTROL for the two tests above. A ceiling that mangled real decoder messages
+        // would satisfy every size assertion and make every genuine schema error worse. A
+        // twenty-field `deny_unknown_fields` rejection is long, legitimate, and must survive.
+        let fields = (0..20)
+            .map(|n| format!("`field_{n}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let raw = format!("unknown field `typo`, expected one of {fields}");
+        assert!(
+            raw.len() > 200,
+            "the fixture is not long enough to be a test"
+        );
+
+        let described = Constraint::from_decoder(&raw, "table").describe();
+        assert_eq!(described, raw, "a legitimate decoder message was truncated");
     }
 
     #[test]

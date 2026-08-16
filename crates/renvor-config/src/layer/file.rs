@@ -212,10 +212,20 @@ impl FileLayer {
     ///
     /// # Everything else
     ///
-    /// Plain `File::open`. Windows has no FIFO reachable by an ordinary filesystem path in the way
-    /// this guards against, and `libc` does not define `O_NONBLOCK` there. The **TOCTOU** half of
-    /// the fix is platform-independent and still applies: the caller takes metadata from this
-    /// descriptor rather than re-resolving the path.
+    /// Plain `File::open`. `libc` does not define `O_NONBLOCK` on Windows, so there is no flag to
+    /// pass.
+    ///
+    /// **The TOCTOU half of the fix is platform-independent and does apply here**: the caller takes
+    /// metadata from this descriptor rather than re-resolving the path, and that is exercised by
+    /// the ordinary file-layer tests, which run on Windows in CI.
+    ///
+    /// **The non-blocking half is not claimed on Windows, and the limit is stated rather than
+    /// argued** (finding S4-4). A named pipe *can* be opened by path on Windows (`\\.\pipe\…`), and
+    /// whether `CreateFile` on one can block a configuration read here has **not been measured** —
+    /// the tests that would show it are `#[cfg(unix)]` because they need `mkfifo`. What can be said
+    /// is what the code does: the file type is taken from the open descriptor and anything that is
+    /// not a regular file is refused. What is *not* claimed is that the open itself cannot block on
+    /// a Windows named pipe. Recorded as an open item rather than asserted either way.
     #[cfg(unix)]
     fn open_without_blocking(&self) -> std::io::Result<std::fs::File> {
         use std::os::unix::fs::OpenOptionsExt as _;
@@ -383,6 +393,60 @@ mod tests {
             .with_max_bytes(1_000_000)
             .read()
             .expect("the same file is fine under a larger ceiling");
+    }
+
+    /// A file that exists but cannot be **opened** must fail — never be mistaken for absent.
+    ///
+    /// # Why this test exists (T143)
+    ///
+    /// The old code called `std::fs::metadata` first and `File::open` second. Moving the open to
+    /// the front changed which syscall reports a problem, and the two do not agree on every path.
+    /// Measured on this platform:
+    ///
+    /// | path | `open(O_RDONLY\|O_NONBLOCK)` | `stat` |
+    /// |---|---|---|
+    /// | unreadable regular file | **EACCES** | ok |
+    /// | fifo | ok | ok |
+    /// | directory | ok | ok |
+    /// | missing | ENOENT | ENOENT |
+    ///
+    /// The dangerous shape would be an error kind that `read` maps to `NotFound`, because that arm
+    /// makes an **optional** layer return `Ok(None)` — a file the operator can see, silently
+    /// contributing nothing. `EACCES` is not `NotFound`, so it takes the failure arm for both
+    /// constructors. This test pins that down so a future refactor of the error mapping cannot
+    /// quietly widen the absent case.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_file_fails_and_is_never_treated_as_absent() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let path = fixture("unreadable.toml", "port = 8080\n");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+            .expect("permissions are settable");
+
+        // POSITIVE CONTROL: the file really is unreadable. Running as root would defeat the
+        // chmod, and this check fails loudly rather than letting the assertions below pass for
+        // the wrong reason — a check that cannot run is a failure, never a skip.
+        let genuinely_unreadable = std::fs::File::open(&path).is_err();
+
+        let required = FileLayer::required(&path).read();
+        let optional = FileLayer::optional(&path).read();
+
+        // Restore before asserting, so a failure cannot leave an unreadable fixture behind.
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+
+        assert!(
+            genuinely_unreadable,
+            "the fixture is readable despite mode 000, so this test proves nothing (running as \
+             root?)"
+        );
+        assert!(required.is_err(), "a required unreadable file must fail");
+        assert!(
+            optional.is_err(),
+            "an OPTIONAL unreadable file must fail too: it exists, so it is not the absent case, \
+             and returning Ok(None) would make a permission problem look like a file nobody \
+             configured"
+        );
     }
 
     #[test]

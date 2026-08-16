@@ -18,15 +18,35 @@
 //! this module follows.
 
 use renvor_core::config_port::{Attribution, SourceLayer};
+use renvor_core::error::context::bounded_identifier;
 
 /// Renders the attribution map as one line per key, in key order.
 ///
 /// Keys and layers only. There is no value to omit, because the input carries none.
+///
+/// # Both halves of each line are bounded (T159)
+///
+/// The **layer** half was bounded by T146, through `SourceLayer::file`. The **key** half was not,
+/// and this function is the one whose entire job is producing the report the T146 evidence cited as
+/// the motivating case for bounding at all — so the gap sat exactly where the argument pointed.
+/// Found by the round-four requirements delta review (R4-3, MAJOR) and measured: a 1,000,000-byte
+/// key produced a 1,000,179-byte report, of which the 200 KB file path contributed about 179 bytes
+/// because *that* half had been fixed.
+///
+/// This path needs no `deny_unknown_fields` to reach: a key the schema ignores still merges, and
+/// still gets an attribution row. It is reachable in the default configuration.
 #[must_use]
 pub fn render(attribution: &[(String, Attribution)]) -> String {
     let mut lines: Vec<String> = attribution
         .iter()
-        .map(|(key, at)| format!("{key} <- {} ({:?})", at.layer.label(), at.presence))
+        .map(|(key, at)| {
+            format!(
+                "{} <- {} ({:?})",
+                bounded_identifier(key),
+                at.layer.label(),
+                at.presence
+            )
+        })
         .collect();
     lines.sort();
     lines.join("\n")
@@ -51,6 +71,49 @@ pub fn keys_won_by<'a>(
 mod tests {
     use super::{keys_won_by, render};
     use renvor_core::config_port::{Attribution, Presence, SourceLayer};
+
+    #[test]
+    fn a_gigantic_key_produces_a_bounded_report() {
+        // R4-3. The layer half of each line was bounded by T146; the key half was not, and this is
+        // the function the T146 evidence named as the reason the bound mattered. Measured before
+        // the fix: a 1,000,000-byte key produced a 1,000,179-byte report.
+        //
+        // Two sizes an order of magnitude apart, because the property is "does not grow with the
+        // input" rather than "is small".
+        let mut lengths = Vec::new();
+        for size in [100_000_usize, 1_000_000] {
+            let rows = vec![(
+                "k".repeat(size),
+                Attribution {
+                    layer: SourceLayer::file("x".repeat(200_000)),
+                    presence: Presence::Present,
+                },
+            )];
+            let rendered = render(&rows);
+            assert!(
+                rendered.len() < 2_048,
+                "an oversized key and layer produced an over-long report"
+            );
+            lengths.push(rendered.len());
+        }
+
+        assert!(
+            lengths[1].abs_diff(lengths[0]) <= 8,
+            "the report grew when the key grew 10-fold"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_report_is_unchanged() {
+        // POSITIVE CONTROL: bounding must not rewrite the reports anyone actually reads. Every key
+        // and layer here is short and must appear verbatim.
+        let rendered = render(&sample());
+        assert!(rendered.contains("server.port"), "{rendered}");
+        assert!(
+            !rendered.contains("truncated"),
+            "an ordinary report was truncated: {rendered}"
+        );
+    }
 
     fn sample() -> Vec<(String, Attribution)> {
         vec![

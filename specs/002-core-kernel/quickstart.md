@@ -358,6 +358,10 @@ GATE12_TRAP_PROBE_INT="crates/renvor/gate12-trap-probe-interrupt.txt"
 GATE12_BEFORE="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-before.XXXXXX")"
 GATE12_AFTER="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-after.XXXXXX")"
 EXAMPLE_LIST="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-list.XXXXXX")"
+# A copy of the BEFORE snapshot that survives a deliberate `gate12_cleanup` call. Control 6 invokes
+# the handler for real, which deletes the snapshots along with everything else — and re-taking the
+# snapshot afterwards would defeat 12e, because a fresh "before" always matches "after".
+GATE12_BEFORE_KEEP="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-keep.XXXXXX")"
 
 # A function, not three trap strings. bash 3.2 and zsh both accept a function name as a trap
 # handler, and one definition cannot drift from another the way three copies of an `rm` list can.
@@ -366,15 +370,23 @@ gate12_cleanup() {
         "$GATE12_TRAP_PROBE_FAIL" "$GATE12_TRAP_PROBE_INT" \
         "$GATE12_BEFORE" "$GATE12_AFTER" "$GATE12_AFTER.planted" "$EXAMPLE_LIST"
 }
+
+# Teardown is `gate12_cleanup` PLUS the keeper snapshot. They are separate because Control 6 calls
+# `gate12_cleanup` for real, and a handler that deleted its own keeper could not be tested that way.
+gate12_teardown() {
+  gate12_cleanup
+  rm -f "$GATE12_BEFORE_KEEP"
+}
 # EXIT covers a normal end and a `set -e` abort. INT and TERM are listed separately and re-exit,
 # because a signal handler that returns would otherwise let the script carry on past a Ctrl-C.
-trap gate12_cleanup EXIT
-trap 'gate12_cleanup; exit 130' INT
-trap 'gate12_cleanup; exit 143' TERM
+trap gate12_teardown EXIT
+trap 'gate12_teardown; exit 130' INT
+trap 'gate12_teardown; exit 143' TERM
 
 # The repository state BEFORE this gate runs. Several controls below deliberately create untracked
 # files inside the checkout; this snapshot is what proves they are gone again.
 git status --porcelain > "$GATE12_BEFORE"
+cp "$GATE12_BEFORE" "$GATE12_BEFORE_KEEP"
 echo "repository state captured before the gate: $(grep -c . "$GATE12_BEFORE" || true) entries"
 
 cargo test --workspace --doc
@@ -492,6 +504,49 @@ fi
 rm -f "$GATE12_TRAP_PROBE_FAIL"
 echo "control: without a trap the same probe IS left behind"
 
+# CONTROL 6: THIS GATE'S OWN HANDLER removes THIS GATE'S OWN probe list.
+#
+# 12f and Control 5 above run a child `sh` with a hand-written trap. They prove the *pattern* is
+# sound in both shells — and that is all they prove. They never invoke `gate12_cleanup`, and they
+# never name the paths it is responsible for, so a `gate12_cleanup` that had lost a path from its
+# `rm -f` list would leave all three of them green. Found by the round-four requirements delta
+# review (R4-4), which was right that three records described this as more than it was.
+#
+# So: plant EVERY path the handler is responsible for, call the handler, and require all of them to
+# be gone. This ties the control to the real function and to the real list.
+for probe in "$GATE12_CONTROL" "$GATE12_GLOBALS_PROBE" "$GATE12_LEFTOVER_PROBE" \
+             "$GATE12_TRAP_PROBE_FAIL" "$GATE12_TRAP_PROBE_INT"; do
+  : > "$probe"
+done
+# The temporary files are on the handler's list too, and it must not choke on re-creating them.
+planted=0
+for probe in "$GATE12_CONTROL" "$GATE12_GLOBALS_PROBE" "$GATE12_LEFTOVER_PROBE" \
+             "$GATE12_TRAP_PROBE_FAIL" "$GATE12_TRAP_PROBE_INT"; do
+  [ -e "$probe" ] && planted=$((planted + 1))
+done
+if [ "$planted" -ne 5 ]; then
+  echo "FAIL 12 control — only $planted of 5 probes were planted; the control cannot run"; exit 1
+fi
+
+gate12_cleanup
+
+survivors=""
+for probe in "$GATE12_CONTROL" "$GATE12_GLOBALS_PROBE" "$GATE12_LEFTOVER_PROBE" \
+             "$GATE12_TRAP_PROBE_FAIL" "$GATE12_TRAP_PROBE_INT"; do
+  [ -e "$probe" ] && survivors="$survivors $probe"
+done
+if [ -n "$survivors" ]; then
+  echo "FAIL 12 control — gate12_cleanup left:$survivors"; exit 1
+fi
+echo "control: gate12_cleanup removes all 5 of its own probe paths"
+
+# `gate12_cleanup` also deleted the state snapshots, which 12e still needs. Re-taking BEFORE is
+# wrong — the repository has not changed, but a fresh snapshot would hide it if it had. The
+# original is restored from the copy taken at the top instead.
+GATE12_BEFORE="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-before.XXXXXX")"
+GATE12_AFTER="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-after.XXXXXX")"
+cp "$GATE12_BEFORE_KEEP" "$GATE12_BEFORE"
+
 cargo test --workspace --all-targets
 
 # --- 12e: the gate left the repository exactly as it found it ---
@@ -542,9 +597,17 @@ trap around the *first* probe and then ran `trap - EXIT` while two more were sti
 so an interrupt or an early `set -e` exit after that point left a real file in the checkout — in
 the gate whose stated purpose includes leaving the repository as it found it. One trap is now
 installed before the first probe exists, names all five paths, and is never cleared. `12f` proves
-it fires on a **deliberate failure** and on a **SIGINT**, and a fourth control runs the identical
+it fires on a **deliberate failure** and on a **SIGINT**, and a further control runs the identical
 fragment *without* a trap and requires the file to survive — otherwise the first two would pass
 against a shell that deletes nothing.
+
+**`12f` proves the pattern; Control 6 proves the handler (T159).** The round-four requirements
+delta review (R4-4) was right that three records overstated what `12f` establishes: it runs a child
+`sh` with a hand-written trap, so it demonstrates that trapping works in both shells and **never
+invokes `gate12_cleanup` at all**. A handler that had lost a path from its `rm -f` list would leave
+`12f` green. Control 6 therefore plants **every one of the five paths the handler owns**, calls
+`gate12_cleanup` directly, and requires all five to be gone — tying the control to the real
+function and the real list rather than to a re-implementation of it.
 
 **Runs unchanged in bash 3.2 and in zsh**, and is verified in both. The two shells disagree about
 unquoted expansion in a way that decides this gate: bash word-splits `$EXAMPLES` into three names,
@@ -1130,7 +1193,7 @@ paragraph above says.
 | 9 | SC-019 | yes | `tests/run_id.rs` asserts distinctness across runs, so a constant identifier fails |
 | 10 | FR-029 | yes | install-after-build proves nothing was installed |
 | 11 | FR-038 | yes | fuzz/property corpus |
-| 12 | SC-013, SC-014 | yes | **7 controls**: discovery minimum, a failing example, a planted global, a planted leftover file, cleanup proven on a **failure** and on an **interruption**, and a no-trap probe proving those last two are not vacuous |
+| 12 | SC-013, SC-014 | yes | **8 controls**: discovery minimum, a failing example, a planted global, a planted leftover file, cleanup proven on a **failure** and on an **interruption**, a no-trap probe proving those two are not vacuous, and **`gate12_cleanup` invoked directly against all five of its own probe paths** |
 | 13 | SC-010 + crate DAG | yes | **5 controls, one per sub-check** |
 | 14 | SC-011, FR-034, ADR-0007 | yes | 14a `serde` returns 200 (non-200/404 is a FAIL); 14c plants a `docker/build-push-action` step |
 | 15 | **yes** — FR-040 | yes | **7 controls**: both sides read, a planted package, **two planted row defects (15d)**, and three planted narrative defects |

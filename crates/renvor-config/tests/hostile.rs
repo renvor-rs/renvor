@@ -716,3 +716,79 @@ fn replacing_the_path_between_check_and_open_cannot_block() {
 
     let _ = std::fs::remove_dir_all(&directory);
 }
+
+// ── R4-1: the diagnostic bound, on the schema shape the first fix missed ─────────────────────
+
+/// A schema that **denies unknown fields**, which `Settings` above deliberately does not.
+///
+/// That difference is the entire reason R4-1 escaped T146. Every bounded-diagnostic test written
+/// for T146 used a permissive schema, where an unknown key is silently ignored and never reaches a
+/// message at all. Under `deny_unknown_fields` — the fail-closed shape the constitution pushes an
+/// author toward — `serde` produces ``unknown field `<key>`, expected one of …``, and that message
+/// travelled into `KernelError::Configuration`'s `constraint` field, which the first fix left
+/// unbounded while carefully bounding `key` beside it.
+///
+/// Measured before the fix: a 1,000,000-byte key produced a **1,000,363-byte** message.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictSettings {
+    #[allow(dead_code)]
+    port: u16,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StrictPartialSettings {
+    port: Option<u16>,
+}
+
+impl ConfigSchema for StrictSettings {
+    type Partial = StrictPartialSettings;
+}
+
+#[test]
+fn a_rejected_unknown_key_produces_a_bounded_error() {
+    let mut lengths = Vec::new();
+    for size in [100_000_usize, 1_000_000] {
+        let key = "k".repeat(size);
+        let path = write(
+            &format!("strict-unknown-{size}.toml"),
+            &format!("port = 8080\n{key} = 1\n"),
+        );
+
+        let rendered = LayeredResolverBuilder::new()
+            .with_file(FileLayer::required(&path))
+            .build::<StrictSettings>()
+            .resolve()
+            .err()
+            .map(|error| error.to_string())
+            .expect("deny_unknown_fields must reject the extra key");
+
+        assert!(
+            rendered.len() < 2_048,
+            "a {size}-byte unknown key produced a {}-byte message",
+            rendered.len()
+        );
+        lengths.push(rendered.len());
+    }
+
+    // The property, not a magnitude: a ten-fold larger key must not make a larger message.
+    let growth = lengths[1].abs_diff(lengths[0]);
+    assert!(
+        growth <= 8,
+        "the message grew by {growth} bytes when the key grew 10-fold"
+    );
+}
+
+#[test]
+fn a_valid_document_still_resolves_under_the_strict_schema() {
+    // POSITIVE CONTROL. Without it, a `StrictSettings` that rejected *everything* would satisfy
+    // the test above perfectly while proving nothing about unknown keys specifically.
+    let path = write("strict-valid.toml", "port = 8080\n");
+    LayeredResolverBuilder::new()
+        .with_file(FileLayer::required(&path))
+        .build::<StrictSettings>()
+        .resolve()
+        .expect("a document matching the strict schema must resolve");
+}

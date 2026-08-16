@@ -578,6 +578,51 @@ fn reaches_into_the_formatted_object(body: &str) -> bool {
     body.contains("self.")
 }
 
+/// Types that hold a **boxed author error** and would reach its `Debug` through a derive.
+///
+/// # This is the second route, and the first version of this gate did not look at it
+///
+/// T145 closed `impl fmt::Debug for dyn …`. The round-four security review (S4-2, MAJOR) found the
+/// other way author code reaches `fmt::Debug`: `#[derive(Debug)]` on a struct or enum holding
+/// `Box<dyn Error + Send + Sync>`. The derive calls the boxed value's `Debug`, which is the
+/// author's.
+///
+/// It was reproduced, not argued: `format!("{error:?}")` on a `KernelError::ProviderInit` whose
+/// source had a panicking `Debug` panicked, and one whose source blocked never returned.
+///
+/// The gate is a *class* check rather than a list of the two types that had the defect, because
+/// "fix the files you were pointed at" is the failure mode this branch has now hit four times.
+fn derives_debug_over_a_boxed_author_error(text: &str) -> Vec<String> {
+    const BOXED: [&str; 2] = ["BoxedCause", "Box<dyn std::error::Error"];
+
+    let mut offenders = Vec::new();
+    // A declaration is `#[derive(...Debug...)]` followed by the type it applies to, and then the
+    // body. Scanning forward from each derive to the end of its item is enough: a boxed author
+    // error mentioned anywhere in that item is a field the derive will format.
+    for (index, _) in text.match_indices("#[derive(") {
+        let after = &text[index..];
+        let Some(close) = after.find(')') else {
+            continue;
+        };
+        if !after[..close].contains("Debug") {
+            continue;
+        }
+        // The item ends at the first line that closes it at column 0.
+        let body_end = after.find("\n}").map_or(after.len(), |end| end + 2);
+        let item = &after[..body_end];
+        if BOXED.iter().any(|needle| item.contains(needle)) {
+            let name = item
+                .lines()
+                .find(|line| line.contains("pub struct") || line.contains("pub enum"))
+                .unwrap_or("<unnamed item>")
+                .trim()
+                .to_owned();
+            offenders.push(name);
+        }
+    }
+    offenders
+}
+
 #[test]
 fn formatting_an_author_trait_object_never_calls_author_code() {
     // T145. **This is now a bound, not a stated limit.** It was a limit until this commit: both
@@ -655,6 +700,122 @@ fn formatting_an_author_trait_object_never_calls_author_code() {
         !reaches_into_the_formatted_object(&extracted[0]),
         "the detector flags a body that calls nothing, so it flags everything"
     );
+}
+
+#[test]
+fn no_derived_debug_formats_a_boxed_author_error() {
+    // T159 / S4-2, the SECOND route into author code from `fmt::Debug`. The gate above scans
+    // `impl fmt::Debug for dyn …`; this one scans derives over a boxed author error, which is how
+    // `KernelError::ProviderInit` and `EntropyUnavailable` were still reaching author code after
+    // T145 had "removed the unbounded formatting calls".
+    let sources = kernel_sources();
+
+    let mut offenders = Vec::new();
+    for (path, text) in &sources {
+        for item in derives_debug_over_a_boxed_author_error(text) {
+            offenders.push(format!("{path}: {item}"));
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "a derived `Debug` formats a boxed author error, which calls author code with no deadline \
+         and no way to report a fault: {offenders:?}. Hand-write `Debug` so the cause is omitted; \
+         it stays reachable through `Error::source()`"
+    );
+
+    // POSITIVE CONTROL: the detector detects. This is the exact shape that was in `error/mod.rs`
+    // until T159 — without this, deleting the function body would leave a permanently green gate.
+    let offending = "#[derive(Debug, thiserror::Error)]\npub enum KernelError {\n    ProviderInit {\n        provider: String,\n        source: BoxedCause,\n    },\n}\n";
+    assert_eq!(
+        derives_debug_over_a_boxed_author_error(offending).len(),
+        1,
+        "the detector passed the exact shape this gate exists to refuse"
+    );
+
+    // POSITIVE CONTROL 2: and it does not flag a derive with no boxed author error, nor a boxed
+    // author error without a `Debug` derive. Either false positive would make the check useless.
+    let clean_derive = "#[derive(Debug)]\npub struct Fine {\n    name: String,\n}\n";
+    assert!(
+        derives_debug_over_a_boxed_author_error(clean_derive).is_empty(),
+        "the detector flags an ordinary derive"
+    );
+    let hand_written = "#[derive(Clone)]\npub struct Held {\n    source: BoxedCause,\n}\n";
+    assert!(
+        derives_debug_over_a_boxed_author_error(hand_written).is_empty(),
+        "the detector flags a type that holds a cause but does not derive Debug"
+    );
+}
+
+/// A boxed author error whose `Debug` panics.
+struct PanickingCauseDebug;
+
+impl std::fmt::Debug for PanickingCauseDebug {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        panic!("formatting a kernel error called the author's Debug impl");
+    }
+}
+
+impl std::fmt::Display for PanickingCauseDebug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an author error")
+    }
+}
+
+impl std::error::Error for PanickingCauseDebug {}
+
+/// A boxed author error whose `Debug` never returns.
+struct BlockingCauseDebug;
+
+impl std::fmt::Debug for BlockingCauseDebug {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+}
+
+impl std::fmt::Display for BlockingCauseDebug {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an author error")
+    }
+}
+
+impl std::error::Error for BlockingCauseDebug {}
+
+#[test]
+fn formatting_a_kernel_error_never_calls_the_causes_debug() {
+    // The runtime half of S4-2, on the variant the reviewer reproduced it with. If the derive were
+    // back, this panics inside `format!` with the message from the cause.
+    let error = renvor_core::KernelError::ProviderInit {
+        provider: "billing".to_owned(),
+        source: Box::new(PanickingCauseDebug),
+    };
+
+    let rendered = format!("{error:?}");
+    assert_eq!(
+        rendered, "ProviderInit { provider: \"billing\", .. }",
+        "the rendering changed; the cause must stay omitted"
+    );
+
+    // And the cause is NOT lost — it is reachable where a caller asks for it explicitly.
+    assert!(
+        std::error::Error::source(&error).is_some(),
+        "omitting the cause from Debug must not remove it from the error chain"
+    );
+}
+
+#[test]
+fn formatting_a_kernel_error_whose_cause_blocks_still_returns() {
+    let rendered = format_within("kernel error", Duration::from_secs(10), || {
+        let error = renvor_core::KernelError::ProviderStop {
+            provider: "billing".to_owned(),
+            source: Box::new(BlockingCauseDebug),
+        };
+        format!("{error:?}")
+    });
+
+    assert_eq!(rendered, "ProviderStop { provider: \"billing\", .. }");
 }
 
 /// A provider whose every declaration accessor is hostile in the loudest possible way.

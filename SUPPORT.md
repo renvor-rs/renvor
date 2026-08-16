@@ -108,6 +108,24 @@ two required status contexts, and adding an `os` dimension to it would have rena
 to `verify (ubuntu-latest, 1.94.0)` and silently emptied the branch-protection rule, which
 matches contexts by name.
 
+### How strongly each platform claim is enforced
+
+| Platform | Runs on every pull request | **Required** by branch protection |
+|---|---|---|
+| Linux | yes | **yes** — `verify (1.94.0)`, `verify (stable)` |
+| macOS | yes | **no** |
+| Windows | yes | **no** |
+
+The four `platform (…)` contexts are **not** in `main`'s required-status-check list. They
+run on every pull request and their failure is visible, but branch protection would not
+block a merge on them alone — so the macOS and Windows claims rest on **review practice,
+not on an enforced gate**.
+
+This is stated rather than quietly assumed because the distinction is exactly the kind that
+decays: adding a job feels like adding a gate, and it is not one until the protection rule
+names it. Making them required is a repository-settings change, which is deliberately
+outside the change that added them.
+
 ### What "supported" does and does not mean here
 
 It means the tests above pass on that platform at the exact head being claimed. It does
@@ -116,9 +134,15 @@ also runs secret scanning, a link check, and a commit-history scan, which are pr
 the repository rather than of the platform, and running them three times would triple a
 link check against github.com to learn nothing.
 
-Unix-specific behaviour that cannot exist on Windows — the FIFO refusal, the
-non-Unicode environment-name path — is `#[cfg(unix)]`-gated and is therefore verified on
-Linux and macOS only. That is a property of the platform, not a gap in the matrix.
+Two behaviours are `#[cfg(unix)]`-gated and therefore verified on Linux and macOS only:
+the FIFO refusal, and the test that drives the non-Unicode environment-name path.
+
+The FIFO case genuinely cannot arise on Windows in this form. The **non-Unicode name**
+case can: a Windows environment name is WTF-8 and may contain unpaired surrogates, so
+`OsString::into_string` can fail there too. What is unix-gated is the *test*, which
+constructs the hostile name from raw bytes, not the code path. The bound itself is
+platform-independent, but saying so is a claim about reading rather than about
+measurement, and it is recorded as the narrower statement it is.
 
 ## Rules for raising the MSRV
 

@@ -212,10 +212,23 @@ fn interpolations(literal: &str) -> Vec<String> {
         let Some(end) = rest.find('}') else { break };
         let inner = &rest[..end];
         let name = inner.split(':').next().unwrap_or("");
-        if !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        if name.is_empty() {
+            // A POSITIONAL argument: `{}` or `{:?}`. Found by the round-four security delta review
+            // (S4-5), which noticed that this batch introduced the first ones into a
+            // credential-handling file and that the gate was blind to them.
+            //
+            // A positional slot consumes an expression from the argument list, and this gate reads
+            // *text*: it cannot see what that expression is, so it cannot tell `rendered.len()`
+            // from `rendered`. An allowlist that fails closed on a name it does not recognise must
+            // also fail closed on an argument it cannot name at all — otherwise the way to evade
+            // it is to delete the identifier, which is one keystroke.
+            //
+            // Reported under a name that can never appear in PERMITTED, so it is always an
+            // offence.
+            names.push("<positional argument>".to_owned());
+        } else if name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
             && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
         {
             names.push(name.to_owned());
@@ -278,6 +291,14 @@ fn the_check_detects_the_shapes_it_exists_to_prevent() {
         r#"assert!(x, "{debug_output}");"#,
         r#"panic!("leaked: {output}");"#,
         "assert!(\n    ok,\n    \"a value reached the error: {described}\"\n);",
+        // POSITIONAL arguments (S4-5). The gate was blind to these until T159: `interpolations`
+        // required a non-empty name, so `{}` and `{:?}` produced nothing and the whole diagnostic
+        // read as clean. A text scan cannot see which expression fills the slot, so it cannot tell
+        // a length from the rendering itself — and deleting the identifier was a one-keystroke
+        // evasion of an allowlist built to fail closed.
+        r#"assert!(ok, "the value was {}", rendered);"#,
+        r#"assert!(ok, "the value was {:?}", secret);"#,
+        r#"panic!("leaked: {}", output);"#,
     ];
     for source in offending {
         assert!(

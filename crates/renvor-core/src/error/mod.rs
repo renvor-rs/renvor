@@ -148,7 +148,8 @@ pub type BoxedCause = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// Constructed only through its variants, each of which names exactly what contract C-E1 requires
 /// it to name — and, by omission, nothing it must not. See the module documentation on why the
 /// absent fields are the load-bearing part.
-#[derive(Debug, thiserror::Error)]
+/// `Debug` is **hand-written below**, not derived. See the impl for why.
+#[derive(thiserror::Error)]
 #[non_exhaustive]
 pub enum KernelError {
     /// A configuration value is missing, ill-typed, out of range, or undecodable.
@@ -359,6 +360,156 @@ pub enum KernelError {
         /// What it was allowed to consume.
         allowed: u32,
     },
+}
+
+impl core::fmt::Debug for KernelError {
+    /// Hand-written so that **no variant formats an author's error**.
+    ///
+    /// # Why the derive had to go (T159)
+    ///
+    /// T145 removed author-code calls from `impl fmt::Debug for dyn Provider` and
+    /// `dyn ReadinessContributor`, and the gate it added scans for `impl fmt::Debug for dyn …`.
+    /// Author code reaches `fmt::Debug` by a **second route that gate did not look at**: a
+    /// *derived* `Debug` over a boxed author error. [`BoxedCause`] is
+    /// `Box<dyn std::error::Error + Send + Sync>` — an author trait object — and the derive called
+    /// its `Debug`.
+    ///
+    /// Found by the round-four security delta review (S4-2, MAJOR) and **reproduced**:
+    /// `format!("{error:?}")` on a `KernelError::ProviderInit` whose source had a panicking `Debug`
+    /// panicked, and one whose source blocked did not return.
+    ///
+    /// It matters more here than it did there, because **an error is the thing that gets
+    /// `{:?}`-formatted** — by `unwrap`, by `expect`, by `tracing`'s `?err` sigil, and by the Rust
+    /// runtime itself when `fn main() -> Result<_, E>` returns `Err`. A provider whose error's
+    /// `Debug` deadlocks would hang the process *at exit*, after rollback had already run, printing
+    /// nothing at all: the kernel would have contained the provider's panic and then hung printing
+    /// the provider's error.
+    ///
+    /// # The cause is not lost, only not formatted
+    ///
+    /// `#[source]` is untouched, so the cause is still reachable through
+    /// [`std::error::Error::source`] — where a caller asks for it explicitly and owns the risk of
+    /// formatting it. `Display` is unaffected: none of the `#[error(...)]` strings interpolate the
+    /// source, so no `Display` path reaches author code either.
+    ///
+    /// Every other variant is rendered exactly as the derive rendered it. Their fields are all
+    /// kernel-owned — `String`s, integers, and `&'static str`s — so there is nothing to withhold.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Configuration {
+                key,
+                constraint,
+                layer,
+                expected_type,
+            } => f
+                .debug_struct("Configuration")
+                .field("key", key)
+                .field("constraint", constraint)
+                .field("layer", layer)
+                .field("expected_type", expected_type)
+                .finish(),
+            Self::ConfigurationConflict {
+                key,
+                first_layer,
+                first_shape,
+                second_layer,
+                second_shape,
+            } => f
+                .debug_struct("ConfigurationConflict")
+                .field("key", key)
+                .field("first_layer", first_layer)
+                .field("first_shape", first_shape)
+                .field("second_layer", second_layer)
+                .field("second_shape", second_shape)
+                .finish(),
+            Self::StateDuplicate { type_name } => f
+                .debug_struct("StateDuplicate")
+                .field("type_name", type_name)
+                .finish(),
+            Self::StateMissing { type_name } => f
+                .debug_struct("StateMissing")
+                .field("type_name", type_name)
+                .finish(),
+            Self::DependencyCycle { providers } => f
+                .debug_struct("DependencyCycle")
+                .field("providers", providers)
+                .finish(),
+            Self::DependencyMissing {
+                dependent,
+                capability,
+            } => f
+                .debug_struct("DependencyMissing")
+                .field("dependent", dependent)
+                .field("capability", capability)
+                .finish(),
+            Self::CapabilityDuplicate {
+                capability,
+                first,
+                second,
+            } => f
+                .debug_struct("CapabilityDuplicate")
+                .field("capability", capability)
+                .field("first", first)
+                .field("second", second)
+                .finish(),
+            Self::LimitExceeded {
+                limit,
+                ceiling,
+                observed,
+            } => f
+                .debug_struct("LimitExceeded")
+                .field("limit", limit)
+                .field("ceiling", ceiling)
+                .field("observed", observed)
+                .finish(),
+
+            // THE TWO THAT CARRY AUTHOR CODE. `source` is deliberately absent, and
+            // `finish_non_exhaustive` renders `{ provider: "…", .. }` — Rust's conventional
+            // "there is more here that is not shown".
+            Self::ProviderInit { provider, .. } => f
+                .debug_struct("ProviderInit")
+                .field("provider", provider)
+                .finish_non_exhaustive(),
+            Self::ProviderStop { provider, .. } => f
+                .debug_struct("ProviderStop")
+                .field("provider", provider)
+                .finish_non_exhaustive(),
+
+            Self::Cancelled { phase } => f.debug_struct("Cancelled").field("phase", phase).finish(),
+            Self::DeadlineExceeded {
+                operation,
+                deadline_ms,
+            } => f
+                .debug_struct("DeadlineExceeded")
+                .field("operation", operation)
+                .field("deadline_ms", deadline_ms)
+                .finish(),
+            Self::ShuttingDown { operation } => f
+                .debug_struct("ShuttingDown")
+                .field("operation", operation)
+                .finish(),
+            Self::ResourceUnavailable {
+                resource,
+                operation,
+                cause,
+            } => f
+                .debug_struct("ResourceUnavailable")
+                .field("resource", resource)
+                .field("operation", operation)
+                .field("cause", cause)
+                .finish(),
+            Self::Internal {
+                axis,
+                observed,
+                allowed,
+            } => f
+                .debug_struct("Internal")
+                .field("axis", axis)
+                .field("observed", observed)
+                .field("allowed", allowed)
+                .finish(),
+        }
+    }
 }
 
 impl KernelError {

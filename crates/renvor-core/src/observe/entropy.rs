@@ -38,9 +38,27 @@ use core::fmt;
 /// Deliberately opaque about the underlying cause in its `Display`: the operating system's error
 /// text for a CSPRNG failure is not actionable for an application author, and reproducing it
 /// verbatim invites treating this as a recoverable condition. It is not.
-#[derive(Debug)]
 pub struct EntropyUnavailable {
     source: Box<dyn std::error::Error + Send + Sync + 'static>,
+}
+
+impl fmt::Debug for EntropyUnavailable {
+    /// Hand-written, for the same reason [`crate::error::KernelError`]'s is (T159, finding S4-2).
+    ///
+    /// The field is a **boxed author error**, and a derived `Debug` calls its `Debug` — author code,
+    /// on a formatting path that has no deadline, no `catch_unwind` whose verdict could be
+    /// reported, and no channel for a failure except the output being produced.
+    ///
+    /// This type is doubly exposed to it: [`EntropySource`] is a public fallible trait, so the
+    /// boxed error is supplied by an implementor outside this module, and an entropy failure is
+    /// exactly the kind of error a caller reaches for `{:?}` on.
+    ///
+    /// The cause remains available through [`std::error::Error::source`], where a caller asks for
+    /// it explicitly. `Display` was already deliberately opaque about the cause, so no `Display`
+    /// path reaches author code either.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EntropyUnavailable").finish_non_exhaustive()
+    }
 }
 
 impl EntropyUnavailable {
