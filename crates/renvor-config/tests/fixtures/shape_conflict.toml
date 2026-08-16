@@ -1,0 +1,5 @@
+# `server` is a TABLE in base.toml. Here it is a SCALAR.
+#
+# Obligation 7 requires this to FAIL at Validate, naming BOTH layers — not to be coerced,
+# and not resolved by last-wins.
+server = "not-a-table"

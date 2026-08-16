@@ -1,0 +1,14 @@
+# Higher-precedence file. Sets ONE key inside [server] and replaces both arrays.
+#
+# Obligation 2 requires `server.host` and `server.timeout_ms` to survive from base.toml.
+# Obligation 3 requires `tags` to become exactly ["z"] — not ["a","b","c","z"].
+#
+# Bare keys sit before the first table header; see the note in base.toml.
+port = 9090
+tags = ["z"]
+
+[server]
+threads = 16
+
+[limits]
+retries = [9]

@@ -232,6 +232,55 @@ none of them:
   schema export for a phase whose scope is one typed config. It is the **first candidate to
   re-examine** if the fallback triggers, before writing the adapter.
 
+#### D6 outcome — the gate RAN, and `confique` FAILED it: 4 of 8
+
+Recorded 2026-08-16 by the task that ran the gate. Evidence is
+`crates/renvor-config/tests/proof_gate.rs` (10 tests, all passing) plus the behavioural probe
+`crates/renvor-config/examples/env_probe.rs`. Per C-C7 the gate is **all-eight-or-fallback**, so
+the `serde` + `toml` partial-layer adapter is **triggered**.
+
+| # | Obligation | Met | Evidence |
+|---|---|---|---|
+| 1 | precedence `defaults < earlier TOML < later TOML < env` | **no** | confique gives the **earlier** source higher priority — the inverse. Recoverable by reversing the caller's argument order, and a second test records that it is |
+| 2 | per-key nested-table merge, siblings survive | **yes** | `server.host` and `server.timeout_ms` both survive an override that sets only `server.threads` |
+| 3 | wholesale array replacement, 0 concatenations | **yes** | `["a","b","c"]` + `["z"]` → exactly `["z"]` |
+| 4 | source attribution for every resolved key | **no** | **decisive, and not recoverable** — see below |
+| 5 | invalid **non-empty** env value fails | **yes** | observed error names field, variable, value, and expected type |
+| 6 | invalid **empty** env value fails | **no** | observed: `THREADS=""` silently became the default `7` |
+| 7 | shape conflict fails naming **both** layers | **no** | it fails — good — but names only the file being parsed |
+| 8 | 0 JSON/YAML features resolved | **yes** | structural: `default-features = false`, `features = ["toml"]` |
+
+**Obligation 4 is why the adapter is written rather than the crate patched around.** confique's
+only combining primitive is `Layer::with_fallback`, documented as *"basically like
+`Option::or`"*. `Option::or` returns a **value** and retains nothing about which side supplied
+it. There is no hook, no richer return type, and no opt-in — the provenance is destroyed at the
+point of merge, so FR-016 cannot be satisfied by any amount of wrapping.
+
+Obligations 1, 6, and 7 would each have been survivable alone. 1 is an argument order. 6 is
+recoverable if Renvor reads and decodes the environment itself. 7 is a diagnostic-quality gap.
+**4 is not survivable**, and it alone decides the gate.
+
+**A third finding the obligations did not anticipate.** confique reads the environment only for
+fields carrying `#[config(env = "…")]`. That makes the environment a **per-field opt-in
+annotation**, not an orderable layer with a precedence position — which contract **C-C4**
+requires it to be. Recorded because it independently rules the crate out, and because a future
+reader comparing the two designs should know the mismatch is structural rather than incidental.
+
+**Two defects in the gate itself, found while running it**, recorded because a gate that is never
+wrong about itself has not been exercised:
+
+1. The verdict test initially asserted `5 met + 4 unmet == 8` and **failed on its own
+   arithmetic**. Four obligations are unmet, so four are met.
+2. Obligation 3's first version asserted `retries.len() == 1` against a probe whose **default was
+   also length 1**, and the fixture key had been appended after a `[limits]` header, so TOML
+   scoped it as `limits.retries`. The assertion passed while reading nothing. Rewritten to assert
+   **content** — `["z"]` — which distinguishes replacement from concatenation *and* from the
+   default leaking through, and it failed immediately, exposing the scoping bug.
+
+**`confique` is therefore not adopted.** It stays a `[dev-dependencies]` entry solely so this
+gate remains reproducible; it never enters the production graph. Deleting it would delete the
+evidence.
+
 ### D7 — TOML parsing and typed decoding: `toml` + `serde`
 
 - **Decision**: `toml` for parsing, `serde` for the decode step; no second format.
