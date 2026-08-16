@@ -21,7 +21,7 @@ section. It is not amended by practice, precedent, or convenience.
 | Registry bootstrap owner | **Ahmed Anbar** | Accountable for the first manual registry publication and the least-scope token lifecycle |
 
 **Renvor currently has one maintainer.** Every role above is held by the same person.
-This concentration is the root cause of both active waivers, and it is stated plainly
+This concentration is the root cause of **every** active waiver, and it is stated plainly
 rather than distributed across four rows to look larger than it is.
 
 ## Decision records
@@ -116,9 +116,21 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Three** waivers are currently active: **W-001** (approval gap), **W-003** (the Phase 001 independent requirements-and-security-review gap, granted 2026-08-15 at T088 — see `governance/waivers.md`), and **W-002** (decision-record
-review gap). Both expire **2027-02-11** or when a second maintainer joins, whichever comes
-first.
+**Five** waivers are currently active, all traceable to the same single-maintainer gap. Each
+covers one rule, at one level, in one phase — and none is extended to another by
+reinterpretation:
+
+| ID | Gap | Level | Phase | Expiry |
+|---|---|---|---|---|
+| **W-001** | no second person can approve a pull request | repository approval | all | **2027-02-11** |
+| **W-002** | no independent reviewer for a decision record | decision record | Phase 001 | **2027-02-11** |
+| **W-003** | no independent requirements-and-security review | phase level | Phase 001 | **2027-02-11** |
+| **W-004** | no independent reviewer for **ADR-0007** | decision record | Phase 002 | **2027-02-16** |
+| **W-005** | no independent requirements-and-security review | phase level | Phase 002 | **2027-02-16** |
+
+Each expires on the date shown **or** immediately when a qualified second person becomes
+available — whichever comes first. Full text, compensating controls, and scope limits are in
+[`governance/waivers.md`](governance/waivers.md).
 
 ## Changes to the default branch
 
