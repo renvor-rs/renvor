@@ -206,10 +206,10 @@ fn verify() -> i32 {
 
     // ---- Step 7: architecture invariants ----
     //
-    // Three claims the plan makes that are otherwise only assertions in prose. Each is checked
-    // against the RESOLVED graph or the actual document text, and each carries a positive control
-    // — a query that must find what the first query must not, so a check that silently stopped
-    // working is caught rather than reported as a pass.
+    // Five claims the project makes that are otherwise only assertions in prose. Each is checked
+    // against the RESOLVED graph, a real compile, the actual manifests, or the actual document
+    // text — and each carries a positive control: a query that must find what the first query must
+    // not, so a check that silently stopped working is caught rather than reported as a pass.
     if !architecture_invariants(&root) {
         return EXIT_STEP_FAILED;
     }
@@ -465,10 +465,11 @@ fn workspace_root() -> std::path::PathBuf {
         .to_path_buf()
 }
 
-/// Step 7: the crate DAG, the facade's feature isolation, and the SC-022 wording agreement.
+/// Step 7: the crate DAG, the facade's feature isolation, that the lean facade **compiles**, that
+/// no publishable package carries an unresolvable dependency, and the SC-022 wording agreement.
 ///
-/// Kept in one step because the three share a shape: **a claim, and a control that proves the
-/// check can fail**. Splitting them would triple the progress output without adding information.
+/// Kept in one step because all five share a shape: **a claim, and a control that proves the check
+/// can fail**. Splitting them would multiply the progress output without adding information.
 fn architecture_invariants(root: &std::path::Path) -> bool {
     if !crate_dag_holds(root) {
         return false;

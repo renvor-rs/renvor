@@ -669,7 +669,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 9 | An author writes a **second, all-optional struct** per schema | Decode-per-source needs an all-optional decode target and Renvor has no derive macro. A proc-macro of its own is custom infrastructure under FR-035 needing its own accepted record | No |
 | 10 | `expected_type` is reported **inside the constraint text**, not as its own field, for file and environment layers | `KernelError::Configuration::expected_type` is `&'static str` so it cannot carry a value (C-E3); the adapter has no schema description to read a per-key type from. All three facts C-C3 requires are in the message | No |
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
-| ~~12~~ | ~~SC-015 does not hold~~ | **CLOSED**: both bounded by a worker thread and `recv_timeout`; the enumeration is corrected from three waits to five, with a counting test so a sixth cannot escape it | — |
+| ~~12~~ | ~~SC-015 does not hold~~ | **CLOSED**: both bounded by a worker thread and `recv_timeout`. The enumeration went from three to five here, and **from five to eight at T116** when `Register`, `Ready`, and entropy were found unbounded too — the counting test is what forced the second correction | — |
 | ~~13~~ | ~~`Panic` not injectable for providers~~ | **CLOSED**: contained by polling the already-boxed provider future inside `catch_unwind` — 0 new packages, 0 `unsafe`. SC-009 met in full | — |
 | 15 | A configuration source that never returns **leaks its worker thread** | No Rust API can interrupt a blocked thread. The kernel's *wait* is bounded, which is what FR-025 requires; the thread is not, and cannot be | No — but an application that hits it repeatedly will accumulate threads |
 | ~~14~~ | ~~SC-013 partially met~~ | **CLOSED**: the full 11-step sequence ran on both 1.94.0 and 1.97.1, 0 skipped, with toolchain propagation verified by probe | — |
@@ -753,6 +753,38 @@ and none is omitted.**
 
 **16 of 16 pass. 0 skipped. 0 inconclusive.** Gate 14b's GitHub-releases half was verified with an
 authenticated `gh`, not recorded as an unverified gap.
+
+## T127 — final repository-local `speckit-analyze`
+
+Run on **2026-08-16** against the finished artifacts and the implementation, after the T111–T126
+corrections. Cross-artifact consistency was checked mechanically where a claim is a number or a
+fixed string, and by reading where it is not.
+
+### Findings
+
+| ID | Category | Severity | Location | Finding | Disposition |
+|---|---|---|---|---|---|
+| A1 | Inconsistency | **MEDIUM** | `tasks.md` §Four gates | Recorded **55** external packages and "43 of 55 arrived transitively" | **RESOLVED.** Corrected to 48 and 38 of 48, with the superseded figure named and dated |
+| A2 | Inconsistency | **MEDIUM** | `error/mod.rs` module doc | Said "fourteen categories" after `ResourceUnavailable` made fifteen | **RESOLVED.** Corrected. The `ALL` length assertion had already failed and been updated; the prose had not |
+| A3 | Inconsistency | **MEDIUM** | `xtask/src/main.rs` step 7 | Two comments said "three claims" / "the three share a shape" after the step grew to **five** sub-checks | **RESOLVED.** Both corrected |
+| A4 | Inconsistency | **MEDIUM** | `phase-002-evidence.md` open item 12 | Said the wait enumeration "is corrected from three waits to five" — true when written, superseded at T116 by eight | **RESOLVED.** Now records both corrections and which check forced the second |
+| A5 | Staleness | **LOW** | `decisions/0007-*.md` dispositions S-4 and the consequences paragraph | Cite "all 55 external packages" | **DISPOSITIONED — left as written**, with a dated note added. A decision record is an account of what was decided on what evidence at a date; rewriting its figures would destroy exactly the property that makes it evidence. The note points at the live inventory |
+| A6 | Ambiguity | **LOW** | `spec.md` SC-009 | "**7 of 7** phases injectable, **100%** covered by a test" does not state on its face that C-L9's three behaviours multiply it to 21 | **DISPOSITIONED — no change to the specification.** The text is not wrong: C-L9 supplies the behaviours and SC-009 supplies the coverage requirement, and *100% of those injections* is what makes 21 the correct reading. The ambiguity was in the **implementation**, which honoured 11 of 21, and that is fixed at T116. Amending settled specification text to describe the fix would be rewriting the requirement to match the code |
+
+### Coverage
+
+| Check | Result |
+|---|---|
+| FR-001…FR-044 each mapped to implementation and tests | **44 of 44**, 0 empty cells |
+| SC-001…SC-022 each mapped to evidence | **22 of 22**, 0 empty cells |
+| Tasks with no mapped requirement | **0** |
+| Requirements with no task | **0** |
+| Resolver work-budget figures agreeing across artifacts | **yes** — `2048 / 16384 / 18432` (allowances) and `2048 / 8192 / 10240` (observed) are the only two triples that appear, and never mixed |
+| Configuration proof gate and its fallback represented consistently | **yes** — failed 4 of 8 in every artifact, fallback triggered in every artifact, `renvor-config` in ADR-0007 scope in every artifact |
+| ADR-0007 sequenced as a blocking human gate that neither W-002 nor W-003 authorises | **yes**, and W-004 is now named as the authority that does |
+| Constitution conflicts | **0** |
+
+**0 CRITICAL. 0 HIGH. 4 MEDIUM, all resolved. 2 LOW, both dispositioned explicitly.**
 
 ## Complete requirement evidence map (T129)
 

@@ -290,6 +290,8 @@ different facts, and only one of them is true here.
 | S-3 | Security | MINOR | Nothing asks whether a **type name** can disclose, including `type_name` rendering const-generic parameters verbatim | **FIXED.** Added as an accepted risk, with the `Rate<500>` edge named explicitly. "Type names are safe" had been assumed, not reasoned |
 | S-4 | Security | MINOR | Retaining `confique-macro` is priced as **build time**, but a proc macro is **build-time code execution** on every contributor and CI machine | **FIXED.** Consequences now names the real risk category and the control that covers it — `cargo deny check advisories` runs unconditionally and covers dev-only entries, currently 0 open advisories across all 55 external packages |
 
+> **Dated-figure note, added 2026-08-16 (T127).** Two dispositions above cite *"all 55 external packages"*. That was the resolved count when this record was accepted. Deleting the `confique` tree — a consequence of the configuration gate failing — removed seven packages, and the current figure is **48**. The dispositions are left as written, because a decision record is a dated account of what was decided on what evidence, not a live dashboard. The authoritative current inventory is [`governance/phase-002-dependency-inventory.md`](../governance/phase-002-dependency-inventory.md).
+
 **Verified rather than accepted on assertion:** A-1's line counts, the existence and trait coverage
 of `petgraph::csr::Csr`, its sorted-insertion and silent-dedup behaviour, and A-3's research §3
 rows were each checked against the files and petgraph's published source before being

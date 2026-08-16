@@ -1,4 +1,4 @@
-//! The kernel error taxonomy: fourteen categories, each matchable without reading message text.
+//! The kernel error taxonomy: fifteen categories, each matchable without reading message text.
 //!
 //! # Why a category is a separate type
 //!
