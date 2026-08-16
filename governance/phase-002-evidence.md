@@ -1054,7 +1054,36 @@ that gap. A reader who needs FR-035 satisfied without a waiver should treat it a
 strategy, which is the default and is what CI runs. Under `panic = "abort"` it does not hold and
 cannot — see open item 16.
 
-## T131 — final verification, on the clean tree
+## T131 (re-run) — verification after the W-005 re-review fixes
+
+Run against commit **`2c6e7dc`**, the head that closes the verification re-review's findings.
+Working tree empty before and after; `HEAD` identical before and after.
+
+| Check | Toolchain | Result |
+|---|---|---|
+| `cargo xtask verify` | 1.94.0 (pinned) | **11 of 11**, exit 0 |
+| `cargo xtask verify` | 1.97.1 (current stable) | **11 of 11**, exit 0 |
+| Workspace tests, **`--test-threads=1`** | 1.94.0 | 27 targets, 0 failing |
+| `HEAD` / tree, before and after | — | `2c6e7dc` / empty, both times |
+
+**`--test-threads=1` is recorded deliberately.** The readiness-ceiling regression was invisible to
+every parallel invocation and reproducible only single-threaded, and neither CI nor `cargo xtask
+verify` pins the thread count. A suite that passes only under parallelism passes on scheduling
+luck; this run is what says it does not.
+
+### Pull request #19, final check results at `2c6e7dc`
+
+| Check | Required? | Result |
+|---|---|---|
+| `verify (1.94.0)`, `verify (stable)`, `security`, `docs` | **yes** | **all pass** |
+| `dependency-review`, `package and verify without publishing`, `Analyze (actions)`, `Analyze (rust)` | no | pass |
+| `attest rehearsal artifacts` | no | skipping — `workflow_dispatch` only |
+| `CodeQL` | no | **fail — 9 alerts, unchanged** |
+
+The CodeQL count held at exactly **9**, in the same two files, across three heads. The redaction
+work in `2c6e7dc` neither added nor closed any: it touched different files. See open item 22.
+
+## T131 — verification on the clean tree, before the re-review fixes
 
 Run on **2026-08-16** against commit **`4d8711c`**, with the working tree empty before and after —
 both recorded in the run's own log, because a verification run that edits the tree it is verifying
