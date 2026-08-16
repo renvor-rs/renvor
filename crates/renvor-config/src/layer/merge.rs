@@ -29,6 +29,7 @@ use core::fmt;
 
 use renvor_core::KernelError;
 use renvor_core::config_port::{Attribution, Presence, SourceLayer};
+use renvor_core::error::context::conflict;
 use toml::{Table, Value};
 
 /// One source, decoded and ready to merge.
@@ -137,13 +138,13 @@ fn overlay(
         let shape = shape_of(value);
         if let Some((first_layer, first_shape)) = shapes.get(&path) {
             if *first_shape != shape {
-                return Err(KernelError::ConfigurationConflict {
-                    key: path,
-                    first_layer: first_layer.label().to_owned(),
+                return Err(conflict(
+                    path,
+                    first_layer.label(),
                     first_shape,
-                    second_layer: layer.label().to_owned(),
-                    second_shape: shape,
-                });
+                    layer.label(),
+                    shape,
+                ));
             }
         } else {
             shapes.insert(path.clone(), (layer.clone(), shape));
@@ -159,13 +160,13 @@ fn overlay(
                 let Some(existing) = slot.as_table_mut() else {
                     // Unreachable: the shape check above already refused a table-over-non-table.
                     // Reported rather than asserted (SC-004 permits 0 panics).
-                    return Err(KernelError::ConfigurationConflict {
-                        key: path,
-                        first_layer: "an earlier layer".to_owned(),
-                        first_shape: shape_of(slot),
-                        second_layer: layer.label().to_owned(),
-                        second_shape: "table",
-                    });
+                    return Err(conflict(
+                        path,
+                        "an earlier layer",
+                        shape_of(slot),
+                        layer.label(),
+                        "table",
+                    ));
                 };
                 overlay(existing, inner, layer, &path, attribution, shapes)?;
             }
@@ -233,7 +234,7 @@ mod tests {
         let source = match name {
             "defaults" => SourceLayer::Defaults,
             "environment" => SourceLayer::Environment,
-            other => SourceLayer::File(other.to_owned()),
+            other => SourceLayer::file(other),
         };
         DecodedLayer::new(source, text.parse::<Table>().expect("valid TOML fixture"))
     }

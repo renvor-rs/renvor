@@ -194,6 +194,7 @@ dependencies = [
 name = "renvor-config"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "renvor-core",
  "secrecy",
  "serde",

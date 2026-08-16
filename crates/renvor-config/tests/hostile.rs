@@ -68,6 +68,168 @@ fn load(path: &std::path::Path) -> bool {
         .is_ok()
 }
 
+/// Loads a file and returns the rendered error, failing if it somehow succeeded.
+fn load_error(path: &std::path::Path) -> String {
+    LayeredResolverBuilder::new()
+        .with_file(FileLayer::required(path))
+        .build::<Settings>()
+        .resolve()
+        .err()
+        .map(|error| error.to_string())
+        .expect("a hostile document must not resolve")
+}
+
+// ── Bounded diagnostics (T146) ──────────────────────────────────────────────────────────────
+
+/// Resolves two files whose shapes disagree at `key`, returning the rendered conflict.
+///
+/// The conflict path rather than the decode path, and the reason is worth recording: a giant
+/// **unknown** key never reaches a diagnostic at all. `PartialSettings` does not deny unknown
+/// fields, so `<giant> = 1` is silently ignored and the resolver fails with `missing field
+/// "port"` — a message naming a four-character key. The first version of this test asserted
+/// against that message and would have "proved" the bound while never exercising it.
+///
+/// A shape conflict is different: `merge.rs` compares the shape of **every** key across layers
+/// before the schema is consulted, so an unknown key that is an integer in one file and a string
+/// in another is named in full.
+fn conflict_error(label: &str, key: &str) -> String {
+    let first = write(&format!("{label}-first.toml"), &format!("{key} = 1\n"));
+    let second = write(&format!("{label}-second.toml"), &format!("{key} = \"x\"\n"));
+
+    LayeredResolverBuilder::new()
+        .with_file(FileLayer::required(&first))
+        .with_file(FileLayer::required(&second))
+        .build::<Settings>()
+        .resolve()
+        .err()
+        .map(|error| error.to_string())
+        .expect("two layers disagreeing about a key's shape must fail")
+}
+
+#[test]
+fn a_gigantic_key_produces_a_bounded_error_through_the_real_stack() {
+    // T146, measured end to end rather than at the constructor. Before this commit a 9,999,999
+    // byte key produced a 10,000,269 byte message — the key, verbatim, wrapped in a sentence.
+    //
+    // Two sizes an order of magnitude apart, because the property is not "small" but "does not
+    // grow with the input". One size alone cannot tell a bound from a coincidence.
+    let mut lengths = Vec::new();
+    for size in [100_000_usize, 1_000_000] {
+        let rendered = conflict_error(&format!("giant-key-{size}"), &"k".repeat(size));
+
+        assert!(
+            rendered.len() < 2_048,
+            "a {size}-byte key produced a {}-byte message",
+            rendered.len()
+        );
+        assert!(
+            rendered.contains("truncated"),
+            "the message does not say it was truncated: {rendered}"
+        );
+        lengths.push(rendered.len());
+    }
+
+    let growth = lengths[1].abs_diff(lengths[0]);
+    assert!(
+        growth <= 8,
+        "the message grew by {growth} bytes when the key grew 10-fold, so it is not bounded"
+    );
+}
+
+#[test]
+fn a_gigantic_astral_key_does_not_amplify_through_the_real_stack() {
+    // A TOML key may contain any Unicode, and a key made of 4-byte characters is the file-layer
+    // analogue of the environment layer's 3x lossy expansion: its byte length is four times its
+    // character count, so a ceiling expressed in characters would be wrong by 4x here. The bound
+    // is stated in bytes for exactly this reason.
+    let key = "𝄞".repeat(250_000); // 1,000,000 bytes; 250,000 characters
+    assert_eq!(key.len(), 1_000_000);
+
+    let rendered = conflict_error("giant-astral", &format!("\"{key}\""));
+
+    assert!(
+        rendered.len() < 2_048,
+        "a 1 MB astral-plane key produced a {}-byte message",
+        rendered.len()
+    );
+    assert!(
+        rendered.contains("1000000"),
+        "the original byte length is missing: {rendered}"
+    );
+}
+
+#[test]
+fn a_gigantic_environment_variable_name_produces_a_bounded_error() {
+    // The `configuration` constructor, through the real stack, on the layer where an operator is
+    // most likely to be handed a name by somebody else. `with_environment_map` supplies the
+    // variables directly because `std::env::set_var` is `unsafe` in edition 2024 and this
+    // workspace forbids `unsafe`.
+    //
+    // The value is deliberately undecodable so the failure names the KEY: a variable that decodes
+    // cleanly produces no diagnostic to measure.
+    let mut variables = BTreeMap::new();
+    variables.insert(
+        format!("RENVOR_PORT{}", "X".repeat(500_000)),
+        "1".to_owned(),
+    );
+    variables.insert("RENVOR_PORT".to_owned(), "not-a-number".to_owned());
+
+    let rendered = LayeredResolverBuilder::new()
+        .with_environment_map("RENVOR_", variables)
+        .build::<Settings>()
+        .resolve()
+        .err()
+        .map(|error| error.to_string())
+        .expect("an undecodable port must fail");
+
+    assert!(
+        rendered.len() < 2_048,
+        "a 500 KB variable name produced a {}-byte message",
+        rendered.len()
+    );
+}
+
+#[test]
+fn an_ordinary_key_is_still_named_in_full() {
+    // POSITIVE CONTROL for both tests above, and the one that matters most in practice. A bound
+    // that truncated ordinary keys would satisfy every size assertion here and make every real
+    // diagnostic useless.
+    let path = write("ordinary-key.toml", "port = \"not-a-number\"\n");
+    let rendered = load_error(&path);
+
+    assert!(
+        rendered.contains("port"),
+        "the key is not named: {rendered}"
+    );
+    assert!(
+        !rendered.contains("truncated"),
+        "an ordinary key was truncated: {rendered}"
+    );
+}
+
+#[test]
+fn a_gigantic_file_path_produces_a_bounded_error() {
+    // Source attribution, not the key. The layer label is a *path*, chosen by whoever launched the
+    // process, and it reaches every diagnostic and every attribution row. The file need not exist
+    // — a required file that is missing names the path, which is the shortest route to the label.
+    let long = "d".repeat(200_000);
+    let path = scratch().join(format!("{long}.toml"));
+
+    let rendered = LayeredResolverBuilder::new()
+        .with_file(FileLayer::required(&path))
+        .build::<Settings>()
+        .resolve()
+        .err()
+        .map(|error| error.to_string())
+        .expect("a missing required file must fail");
+
+    assert!(
+        rendered.len() < 2_048,
+        "a 200 KB path produced a {}-byte message",
+        rendered.len()
+    );
+}
+
 // ── Hand-picked hostile examples (T072) ─────────────────────────────────────────────────────
 
 #[test]
@@ -434,5 +596,123 @@ fn a_fifo_is_refused_by_type_before_any_read_can_block() {
     // blocked on `open` for a reader that never came cannot be woken.
     drop(slow_writer);
     drop(flooding_writer);
+    let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// The measured check-then-open race (T143), run against the fix.
+///
+/// # What this reproduces
+///
+/// Until T143, `FileLayer::read()` called `std::fs::metadata(path)` and then, separately,
+/// `std::fs::File::open(path)`. Two independent resolutions of one name. An attacker who can write
+/// the containing directory swaps a regular file for a FIFO between them: `metadata` reports a
+/// regular file, the type check passes, and `open` then blocks for ever on the FIFO that arrived
+/// in its place. The race was won in **101 attempts, 1,517 ms** against the old code, and it was
+/// reachable on the public `FileLayer::read()`, which no outer deadline covers.
+///
+/// The path is a **symlink** and the attacker re-points it with `rename`, which is atomic. That is
+/// a cleaner reproduction than deleting and recreating a file: there is no instant at which the
+/// path is absent, so a failure here is the race and not a missing file.
+#[cfg(unix)]
+#[test]
+fn replacing_the_path_between_check_and_open_cannot_block() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, mpsc};
+
+    const ATTEMPTS: usize = 400;
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let directory = std::env::temp_dir().join(format!("renvor-toctou-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).expect("a temporary directory");
+
+    let regular = directory.join("regular.toml");
+    std::fs::write(&regular, "port = 8080\n").expect("a regular file");
+
+    let fifo = directory.join("pipe.fifo");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false),
+        "mkfifo(1) is POSIX and required on this platform"
+    );
+
+    let target = directory.join("target.toml");
+    std::os::unix::fs::symlink(&regular, &target).expect("the target symlink");
+
+    let stop = Arc::new(AtomicBool::new(false));
+
+    // The attacker. Flips `target` between the regular file and the FIFO as fast as it can.
+    let swapper = std::thread::spawn({
+        let directory = directory.clone();
+        let regular = regular.clone();
+        let fifo = fifo.clone();
+        let target = target.clone();
+        let stop = Arc::clone(&stop);
+        move || {
+            let staging = directory.join("staging.link");
+            let mut point_at_fifo = true;
+            while !stop.load(Ordering::Relaxed) {
+                let _ = std::fs::remove_file(&staging);
+                let destination = if point_at_fifo { &fifo } else { &regular };
+                if std::os::unix::fs::symlink(destination, &staging).is_ok() {
+                    // `rename` over an existing path is atomic: the victim always sees one or the
+                    // other, never neither.
+                    let _ = std::fs::rename(&staging, &target);
+                }
+                point_at_fifo = !point_at_fifo;
+            }
+        }
+    });
+
+    // The victim, on a worker so that a block shows up as a timeout rather than as a test that
+    // never finishes. It is not joined on the timeout path: a thread blocked in `open` cannot be
+    // interrupted by any Rust API, and joining would reproduce the hang inside the harness.
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn({
+        let target = target.clone();
+        move || {
+            let (mut parsed, mut refused) = (0_usize, 0_usize);
+            for _ in 0..ATTEMPTS {
+                // Only that it RETURNS matters here. `Ok` means the call caught the regular file,
+                // `Err` means it caught the FIFO and refused it by type; both are bounded.
+                match FileLayer::required(&target).with_max_bytes(4096).read() {
+                    Ok(_) => parsed += 1,
+                    Err(_) => refused += 1,
+                }
+            }
+            let _ = sender.send((parsed, refused));
+        }
+    });
+
+    let outcome = receiver.recv_timeout(TIMEOUT);
+    stop.store(true, Ordering::Relaxed);
+    let _ = swapper.join();
+
+    let (parsed, refused) = match outcome {
+        Ok(counts) => counts,
+        Err(_) => panic!(
+            "read() did not return within {TIMEOUT:?} while the path was being swapped — the \
+             check-then-open race is back, and a direct FileLayer::read() caller can be blocked \
+             for ever by a FIFO substituted after the type check"
+        ),
+    };
+
+    // POSITIVE CONTROL: the race was actually exercised. If the swapper never won, every attempt
+    // would land on the regular file and this test would "pass" having reproduced nothing at all
+    // — which is precisely how the original defect survived a green suite.
+    assert_eq!(
+        parsed + refused,
+        ATTEMPTS,
+        "the victim did not complete every attempt"
+    );
+    assert!(
+        parsed > 0 && refused > 0,
+        "the swap never took effect: {parsed} attempts saw a regular file and {refused} saw the \
+         fifo, so this run did not reproduce the race it exists to test"
+    );
+
     let _ = std::fs::remove_dir_all(&directory);
 }

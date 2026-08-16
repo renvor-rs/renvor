@@ -21,8 +21,8 @@ reproduce the design document's blind spots.
 | External packages in the lockfile graph | **48** (was 55; see the revision below) |
 | — reachable over **normal** edges (what a consumer resolves) | **45** |
 | — **dev-only** (test machinery; never in a consumer's graph) | **3** |
-| Directly chosen, declared in a workspace manifest | **10** |
-| Arrived **transitively** (declared in no workspace manifest) | **38** |
+| Directly chosen, declared in a workspace manifest | **11** |
+| Arrived **transitively** (declared in no workspace manifest) | **37** |
 | Never **individually evaluated** by research §3 | **37** |
 | Packages with **no declared licence** | **0** |
 | Packages whose MSRV exceeds **1.94.0** | **0** |
@@ -74,6 +74,48 @@ nobody reviews.
 rows, minus the 11 of research §3's 12 candidates that are still in the graph. That is the normal
 condition of any Rust project and is precisely what FR-040 exists to surface, so it is recorded as
 a measured fact rather than framed as a problem discovered.
+
+## T143 — FR-040 evaluation: `libc` promoted from transitive to direct
+
+FR-035 requires a recorded evaluation for **every selected external dependency**, covering version,
+licence, maintenance status, MSRV compatibility, advisories, and feature cost. `libc` was already
+in the graph and already inventoried; T143 made it a *chosen* dependency of `renvor-config`, so it
+now needs an evaluation rather than only a row.
+
+| Field | Finding |
+|---|---|
+| Version requirement | `0.2.189`, a compatible requirement — not an exact pin (SUPPORT.md's rule for library crates) |
+| Resolved | `0.2.189` — **the same version already in the lockfile** |
+| Licence | `MIT OR Apache-2.0`; both branches on `deny.toml`'s allow list |
+| MSRV | **1.65**, comfortably under the 1.94.0 floor |
+| Maintenance | `rust-lang/libc`, maintained by the Rust project's libs team |
+| Advisories | none open; `cargo deny check advisories` passes |
+| Feature cost | `default-features = false`. Nothing is enabled beyond the constant used |
+| **New packages added to the resolved graph** | **0** |
+
+### Why the resolved set did not change
+
+`libc` was already reachable as `renvor-core → getrandom 0.4.3 → libc 0.2.189`. Declaring it in
+`renvor-config` promotes a node that was already present; it adds none. Measured rather than
+assumed: the lockfile held **48** external packages before this change and holds **48** after, and
+the entire `Cargo.lock` diff is one line adding `libc` to `renvor-config`'s dependency list.
+
+### What was considered instead
+
+| Option | New packages | `unsafe` in Renvor | Verdict |
+|---|---|---|---|
+| **`libc` + `std`'s `OpenOptionsExt::custom_flags`** | **0** | **none** | **chosen** |
+| `rustix` (`fs` feature) | 3 — `bitflags`, `errno`, `linux-raw-sys` | none | rejected: three new packages, three more licences to clear, and three more FR-040 rows, to obtain a constant `libc` already exposes and which `std` already knows how to apply |
+| `nix` | several | none | rejected: a much larger surface for one flag |
+| Hand-rolled `open(2)` via FFI | 0 | **required** | rejected outright: the workspace declares `unsafe_code = "forbid"` |
+
+Only the **integer constant** `O_NONBLOCK` is taken from `libc`. The open itself goes through
+`std::fs::OpenOptions`, so no `unsafe` block and no FFI call appears anywhere in Renvor's source.
+
+The dependency is target-gated under `[target.'cfg(unix)'.dependencies]`: `O_NONBLOCK` is a POSIX
+flag and `libc` does not define it on Windows. The **TOCTOU** half of the fix — taking metadata
+from the open descriptor instead of re-resolving the pathname — is platform-independent and applies
+on every platform.
 
 ## T031 — `cargo deny check licenses advisories bans sources`
 
@@ -177,7 +219,7 @@ resolves from what only the test suite does.
 | `hashbrown` | 0.17.1 | MIT OR Apache-2.0 | 1.85.0 | transitive | production |
 | `indexmap` | 2.14.0 | Apache-2.0 OR MIT | 1.85 | transitive | production |
 | `lazy_static` | 1.5.0 | MIT OR Apache-2.0 | (unstated) | transitive | production |
-| `libc` | 0.2.189 | MIT OR Apache-2.0 | 1.65 | transitive | production |
+| `libc` | 0.2.189 | MIT OR Apache-2.0 | 1.65 | **direct** (was transitive; promoted at T143) | production |
 | `matchers` | 0.2.0 | MIT | (unstated) | transitive | production |
 | `memchr` | 2.8.3 | Unlicense OR MIT | 1.61 | transitive | **dev-only** |
 | `once_cell` | 1.21.4 | MIT OR Apache-2.0 | 1.65 | transitive | production |

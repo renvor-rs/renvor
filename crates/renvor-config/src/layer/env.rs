@@ -35,7 +35,7 @@ use std::collections::BTreeMap;
 
 use renvor_core::KernelError;
 use renvor_core::config_port::SourceLayer;
-use renvor_core::error::context::{Constraint, configuration};
+use renvor_core::error::context::{Constraint, MAX_IDENTIFIER_BYTES, configuration};
 use serde::de::DeserializeOwned;
 use toml::{Table, Value};
 
@@ -70,6 +70,33 @@ pub const NESTING_SEPARATOR: &str = "__";
 /// levels, and an order of magnitude under the measured threshold. Recorded as an open item with
 /// the phase's other chosen bounds.
 pub const MAX_KEY_DEPTH: usize = 32;
+
+/// Renders the front of a possibly-unrepresentable variable name, bounding the allocation.
+///
+/// # Why a window, and why this is a separate function
+///
+/// `String::from_utf8_lossy` replaces every invalid byte with U+FFFD, which is **three** bytes in
+/// UTF-8. Rendering a whole name therefore costs up to three times its length, and the length is
+/// chosen by whoever set the variable: an unrepresentable 10 MB name allocated 30 MB before
+/// anything bounded it. Measured at exactly 3.00x (T146).
+///
+/// Taking a window off the front first caps that at `3 * window` regardless of the input, and
+/// [`renvor_core::error::context::bounded_identifier`] then trims the result to the ceiling when it
+/// reaches the diagnostic.
+///
+/// The window is at least one byte longer than `prefix`, which is what keeps the caller's
+/// `starts_with` decision unchanged: if the leading `prefix.len()` source bytes *are* the prefix
+/// they are ASCII and render to themselves, and if they are not, no expansion of a later byte can
+/// make them match.
+///
+/// It is a free function, and not inlined into the loop, because the process environment cannot be
+/// written from a test — `std::env::set_var` is `unsafe` in edition 2024 and this workspace
+/// declares `unsafe_code = "forbid"`. A pure function over bytes is reachable by a test that
+/// constructs the hostile name directly, which is the only way this branch gets covered at all.
+fn lossy_identifier_window(bytes: &[u8], prefix: &str) -> String {
+    let window = MAX_IDENTIFIER_BYTES.max(prefix.len()).saturating_add(1);
+    String::from_utf8_lossy(&bytes[..bytes.len().min(window)]).into_owned()
+}
 
 /// Reads the process environment into a prefixed map, refusing rather than panicking.
 ///
@@ -107,7 +134,7 @@ pub fn read_process_environment(prefix: &str) -> Result<BTreeMap<String, String>
         let name = match name.into_string() {
             Ok(name) => name,
             Err(raw) => {
-                let lossy = raw.to_string_lossy().into_owned();
+                let lossy = lossy_identifier_window(raw.as_encoded_bytes(), prefix);
                 if lossy.starts_with(prefix) {
                     return Err(configuration(
                         lossy,
@@ -257,10 +284,90 @@ fn graft(table: &mut Table, name: String, value: Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_KEY_DEPTH, NESTING_SEPARATOR, read_environment};
+    use super::{
+        MAX_IDENTIFIER_BYTES, MAX_KEY_DEPTH, NESTING_SEPARATOR, lossy_identifier_window,
+        read_environment,
+    };
     use renvor_core::ErrorCategory;
     use serde::Deserialize;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn an_unrepresentable_name_does_not_amplify_by_its_own_length() {
+        // T146. The measured defect: `to_string_lossy` expands each invalid byte to a three-byte
+        // U+FFFD, so rendering the whole name cost 3x its length — and the length is set by
+        // whoever exported the variable.
+        //
+        // 0x80 is a continuation byte with no lead, so every one of them is invalid and the old
+        // path expanded every one. This is the worst case, not a sample of it.
+        let hostile: Vec<u8> = std::iter::repeat_n(0x80_u8, 3_000_000).collect();
+        let rendered = lossy_identifier_window(&hostile, "RENVOR_");
+
+        assert!(
+            rendered.len() <= (MAX_IDENTIFIER_BYTES + 8) * 3,
+            "a 3 MB unrepresentable name rendered to {} bytes",
+            rendered.len()
+        );
+
+        // POSITIVE CONTROL: the input really is unrepresentable and really would have amplified.
+        // Without this the assertion above would also hold for an input that needed no expansion.
+        assert_eq!(
+            String::from_utf8_lossy(&hostile).len(),
+            hostile.len() * 3,
+            "the fixture is not actually amplifying, so the bound above proves nothing"
+        );
+    }
+
+    #[test]
+    fn the_window_still_decides_prefix_membership_the_same_way() {
+        // The window must not change *which* variables are considered ours, only how much of a
+        // name is rendered. Both directions, because a window that matched everything would pass
+        // the first case alone.
+        let ours = [b"RENVOR_PORT".to_vec(), {
+            let mut name = b"RENVOR_".to_vec();
+            name.extend(std::iter::repeat_n(0x80_u8, 500_000));
+            name
+        }];
+        for name in &ours {
+            assert!(
+                lossy_identifier_window(name, "RENVOR_").starts_with("RENVOR_"),
+                "a prefixed variable stopped being recognised as ours"
+            );
+        }
+
+        let theirs = [
+            b"PATH".to_vec(),
+            b"RENVO".to_vec(),
+            // An invalid byte *inside* the prefix region: not ours, before or after T146.
+            {
+                let mut name = b"RENVOR".to_vec();
+                name.push(0x80);
+                name.extend_from_slice(b"_PORT");
+                name
+            },
+        ];
+        for name in &theirs {
+            assert!(
+                !lossy_identifier_window(name, "RENVOR_").starts_with("RENVOR_"),
+                "an unrelated variable was pulled into the check"
+            );
+        }
+    }
+
+    #[test]
+    fn a_prefix_longer_than_the_ceiling_still_decides_correctly() {
+        // The window is `max(ceiling, prefix.len()) + 1`, and that `max` is load-bearing: a fixed
+        // 128-byte window would truncate a longer prefix mid-comparison and silently stop matching
+        // anything at all.
+        let prefix = "P".repeat(MAX_IDENTIFIER_BYTES * 3);
+        let mut name = prefix.clone().into_bytes();
+        name.extend_from_slice(b"PORT");
+
+        assert!(
+            lossy_identifier_window(&name, &prefix).starts_with(&prefix),
+            "a prefix longer than the ceiling stopped matching its own variable"
+        );
+    }
 
     /// The partial forms exist to be **decoded into**, never read from: proving a source fits the
     /// schema is their whole job. `dead_code` fires because nothing reads the fields back, which is

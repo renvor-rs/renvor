@@ -38,7 +38,7 @@ use core::fmt;
 ///
 /// Exactly three kinds exist (C-C1). The absence of JSON and YAML is structural — there is no
 /// variant to select, so a prohibition nobody can violate by writing code.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SourceLayer {
     /// The schema's built-in defaults. Lowest precedence.
     Defaults,
@@ -52,7 +52,24 @@ pub enum SourceLayer {
 }
 
 impl SourceLayer {
+    /// Names a file layer, bounding the label at construction.
+    ///
+    /// Preferred over building [`Self::File`] directly. A file layer's label is a **path**, and a
+    /// path is chosen by whoever launched the process — so it is exactly the sort of identifier
+    /// T146 bounds. Constructing the variant directly is still possible (it is a tuple variant, and
+    /// making it `#[non_exhaustive]` would force every consumer to match it as `File(..)` for no
+    /// safety this constructor does not already provide), so [`fmt::Display`] and [`fmt::Debug`]
+    /// bound it again on the way out.
+    #[must_use]
+    pub fn file(name: impl AsRef<str>) -> Self {
+        Self::File(crate::error::context::bounded_identifier(name.as_ref()))
+    }
+
     /// The stable label used in diagnostics and attribution reports.
+    ///
+    /// Returns the label as stored. For a layer built through [`Self::file`] that is already
+    /// bounded; for one built by a caller from the tuple variant it may not be, which is why the
+    /// rendering impls below bound rather than trusting this.
     #[must_use]
     pub fn label(&self) -> &str {
         match self {
@@ -61,11 +78,34 @@ impl SourceLayer {
             Self::Environment => "environment",
         }
     }
+
+    /// The label as it appears in a diagnostic, bounded by
+    /// [`crate::error::context::MAX_IDENTIFIER_BYTES`].
+    #[must_use]
+    pub fn bounded_label(&self) -> String {
+        crate::error::context::bounded_identifier(self.label())
+    }
 }
 
 impl fmt::Display for SourceLayer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.label())
+        f.write_str(&self.bounded_label())
+    }
+}
+
+impl fmt::Debug for SourceLayer {
+    /// Hand-written rather than derived, so the `File` payload is bounded here too.
+    ///
+    /// The derive rendered the whole label. `Debug` is not a lesser path than `Display` for this:
+    /// an attribution report is a struct of `SourceLayer`s and is overwhelmingly more likely to be
+    /// logged with `{:?}` than formatted field by field, so leaving the derive in place would have
+    /// bounded the rarely-used path and left the common one open.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Defaults => f.write_str("Defaults"),
+            Self::Environment => f.write_str("Environment"),
+            Self::File(_) => f.debug_tuple("File").field(&self.bounded_label()).finish(),
+        }
     }
 }
 

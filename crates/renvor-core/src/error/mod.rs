@@ -179,6 +179,13 @@ pub enum KernelError {
     /// The same key has incompatible structural shapes in two layers.
     ///
     /// Names **both** layers. Naming one leaves the author bisecting.
+    ///
+    /// `#[non_exhaustive]` for the same reason [`Self::Configuration`] is, and it was added later
+    /// than it should have been (T146). This variant carries **three** identifiers an author does
+    /// not necessarily control — a key and two layer names — and `renvor-config` was building it
+    /// with a struct literal, so nothing was in a position to bound their length. Adapters now
+    /// come through [`context::conflict`], which bounds all three.
+    #[non_exhaustive]
     #[error(
         "configuration key `{key}` has conflicting shapes: `{first_layer}` supplies {first_shape}, `{second_layer}` supplies {second_shape}"
     )]

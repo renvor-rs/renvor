@@ -62,6 +62,29 @@ secrecy = { version = "0.10.3", default-features = false }
 # requirement here could drift from the one `secrecy` resolves.
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
+# `O_NONBLOCK` only — one integer constant, used with `std`'s own
+# `OpenOptionsExt::custom_flags` so no `unsafe` and no FFI call appears in Renvor's source
+# (this workspace declares `unsafe_code = "forbid"`).
+#
+# # Why this adds nothing to the resolved graph
+#
+# `libc` was ALREADY resolved before this line existed, arriving transitively as
+# `renvor-core -> getrandom 0.4.3 -> libc 0.2.189`. Declaring it directly promotes an existing
+# node; it does not add one. The alternative considered was `rustix`, which offers a safe
+# `open`/`fstat` pair but brings `bitflags`, `errno`, and `linux-raw-sys` with it — three new
+# packages, three new licences to clear, and three more things to inventory under FR-040, to
+# obtain a constant `libc` already exposes.
+#
+# # Why it is target-gated
+#
+# `O_NONBLOCK` is a POSIX flag. Windows has no FIFO opened by ordinary path in this sense, and
+# `libc` does not define the constant there, so a bare dependency would fail to compile. The
+# TOCTOU half of T143's fix — taking metadata from the OPEN DESCRIPTOR rather than re-resolving
+# the pathname — is platform-independent and applies on Windows too; only the non-blocking open
+# is unix-specific.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.189", default-features = false }
+
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
 

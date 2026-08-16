@@ -80,7 +80,9 @@ impl FileLayer {
     /// files and FR-016 has to say which one won.
     #[must_use]
     pub fn source_layer(&self) -> SourceLayer {
-        SourceLayer::File(self.path.display().to_string())
+        // `SourceLayer::file` rather than the variant: a path is chosen by whoever launched the
+        // process, and this label reaches every diagnostic and every attribution row (T146).
+        SourceLayer::file(self.path.display().to_string())
     }
 
     /// Reads and parses the file.
@@ -93,8 +95,21 @@ impl FileLayer {
     /// - [`KernelError::Configuration`] naming the file when a **required** file is missing, when
     ///   it exceeds its byte ceiling, or when it is not valid TOML.
     pub fn read(&self) -> Result<Option<Table>, KernelError> {
-        let metadata = match std::fs::metadata(&self.path) {
-            Ok(metadata) => metadata,
+        // ONE pathname resolution, for the whole of this function.
+        //
+        // T143. The previous revision called `std::fs::metadata(&self.path)` here and
+        // `std::fs::File::open(&self.path)` later, in `read_bounded`. That is two independent
+        // resolutions of the same name, and an attacker who can write the containing directory
+        // can replace the file between them: `metadata` sees a regular file, the type check
+        // passes, and `open` then blocks for ever on the FIFO that arrived in its place. The race
+        // was **measured** — won in 101 attempts, 1,517 ms — and it was reachable on the public
+        // `FileLayer::read()`, which no outer deadline covers.
+        //
+        // The fix is structural rather than a narrower window: open once, ask the DESCRIPTOR what
+        // it is, and read from that same descriptor. There is no second lookup for a substitution
+        // to win, so the race does not become unlikely — it stops existing.
+        let file = match self.open_without_blocking() {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if self.required {
                     return Err(self.failure(&Constraint::Rule("the file does not exist")));
@@ -104,28 +119,32 @@ impl FileLayer {
             Err(_) => return Err(self.failure(&Constraint::Rule("the file could not be read"))),
         };
 
+        // `File::metadata` is `fstat` on the open descriptor — it does not touch the pathname
+        // again. That is the property this whole restructure exists to obtain.
+        let Ok(metadata) = file.metadata() else {
+            return Err(self.failure(&Constraint::Rule("the file could not be read")));
+        };
+
         // W-005 security re-review SV-N2. The byte ceiling below and the `take` in `read_bounded`
         // bound how many BYTES are read. Neither bounds how long the read WAITS, and finding 4.1's
         // fix left two variants that wait for ever — both reproduced, both still blocked when the
         // reviewer killed them at 35 seconds of wall clock:
         //
-        //   * **no writer.** `File::open` on a FIFO blocks until a writer appears. The open never
-        //     returns, so nothing downstream of it can bound anything.
+        //   * **no writer.** Opening a FIFO for reading blocks until a writer appears. The open
+        //     never returns, so nothing downstream of it can bound anything.
         //   * **slow writer.** A writer that sends six bytes and holds the descriptor open leaves
         //     `read_to_end` waiting for an EOF that never arrives. `take` caps bytes, not waiting.
         //
-        // The refusal is placed HERE, on the metadata already read above, because `metadata` is a
-        // `stat` and does not open the path — so it returns immediately on a FIFO and this check
-        // happens *before* the blocking open. A configuration source is a regular file; a pipe, a
-        // socket, or a character device arriving here is a misconfiguration or an attack, and
-        // neither has earned an unbounded wait.
+        // A configuration source is a regular file; a pipe, a socket, or a character device
+        // arriving here is a misconfiguration or an attack, and neither has earned an unbounded
+        // wait.
         //
-        // RESIDUAL, stated rather than implied: this is check-then-open, so an attacker who can
-        // replace the path between the `stat` and the `open` can still present a FIFO and block
-        // us. Closing that needs `O_NONBLOCK` at open time, which means a direct `libc` dependency
-        // and a new row in the FR-040 inventory — a scope change this phase does not take. Named
-        // open item 24. Under `ApplicationBuilder::build` even the residual is contained:
-        // `source.load()` runs inside `bounded_call`, so it is reported as a timeout.
+        // THE RESIDUAL IS CLOSED (T143). This check used to run on a `stat` of the pathname,
+        // before a separate `open` of the same name — check-then-open, with a winnable race
+        // between the two. It now runs on `fstat` of a descriptor that is already open, obtained
+        // with `O_NONBLOCK` so that opening a FIFO cannot block even when the file type is not yet
+        // known. Nothing is re-resolved, so there is no window to lose.
+        //
         // The message states the RULE, not a causal claim about the particular path. An earlier
         // wording said the path "can block a read indefinitely", which is true of a FIFO and false
         // of `/dev/null` — and a diagnostic that explains a refusal with a reason that does not
@@ -159,7 +178,11 @@ impl FileLayer {
         // So the read is bounded too, by construction rather than by a second check: `take` stops
         // at the ceiling, and one extra byte is allowed through solely to tell "exactly at the
         // ceiling" apart from "truncated here".
-        let text = self.read_bounded()?;
+        //
+        // The descriptor is MOVED in, not reopened from the path. That is the other half of
+        // T143's fix: a `read_bounded` that opened the file itself would reintroduce the second
+        // resolution this function just eliminated.
+        let text = self.read_bounded(file)?;
 
         // A parse error's message describes syntax and position, but a `toml` error also renders
         // the offending line. The message is therefore dropped rather than forwarded — the file
@@ -169,16 +192,57 @@ impl FileLayer {
             .map_err(|_| self.failure(&Constraint::Rule("the file is not valid TOML")))
     }
 
-    /// Reads at most [`Self::max_bytes`] bytes, refusing anything longer.
+    /// Opens the path for reading **without ever blocking on the open itself**.
+    ///
+    /// # Unix
+    ///
+    /// `O_NONBLOCK` is the whole point. Opening a FIFO for reading normally blocks until a writer
+    /// appears — POSIX makes that the defined behaviour — so a type check placed after the open
+    /// never runs, and a type check placed before it is checking a *name* rather than the thing
+    /// that will be read. With `O_NONBLOCK` the open returns immediately even with no writer
+    /// present, which is what allows the type to be established from the descriptor.
+    ///
+    /// The flag is set through `std`'s own `OpenOptionsExt::custom_flags`, so the only thing taken
+    /// from `libc` is the integer constant. No `unsafe` block and no FFI call appears in Renvor's
+    /// source; this workspace declares `unsafe_code = "forbid"` and that is not relaxed here.
+    ///
+    /// The flag is **not** cleared afterwards, and does not need to be: POSIX specifies that
+    /// `O_NONBLOCK` has no effect on `read` for a regular file, which is the only kind of file
+    /// that gets past the type check.
+    ///
+    /// # Everything else
+    ///
+    /// Plain `File::open`. Windows has no FIFO reachable by an ordinary filesystem path in the way
+    /// this guards against, and `libc` does not define `O_NONBLOCK` there. The **TOCTOU** half of
+    /// the fix is platform-independent and still applies: the caller takes metadata from this
+    /// descriptor rather than re-resolving the path.
+    #[cfg(unix)]
+    fn open_without_blocking(&self) -> std::io::Result<std::fs::File> {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&self.path)
+    }
+
+    #[cfg(not(unix))]
+    fn open_without_blocking(&self) -> std::io::Result<std::fs::File> {
+        std::fs::File::open(&self.path)
+    }
+
+    /// Reads at most [`Self::max_bytes`] bytes from an **already-open** descriptor.
     ///
     /// Bounded by `Read::take` rather than by a size check, so it holds for a file that grows
     /// during the read and for one whose reported length was never true — a FIFO or a `/proc`
     /// entry reports zero and then yields indefinitely.
-    fn read_bounded(&self) -> Result<String, KernelError> {
+    ///
+    /// Takes the `File` by value rather than reopening `self.path`. Reopening is what made the
+    /// type check decorative before T143.
+    fn read_bounded(&self, file: std::fs::File) -> Result<String, KernelError> {
         use std::io::Read as _;
 
         let unreadable = || self.failure(&Constraint::Rule("the file could not be read"));
-        let file = std::fs::File::open(&self.path).map_err(|_| unreadable())?;
 
         // One byte past the ceiling: enough to detect an overrun, never enough to be one.
         let mut buffer = Vec::new();

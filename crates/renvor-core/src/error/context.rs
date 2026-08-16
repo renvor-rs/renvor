@@ -31,6 +31,74 @@
 
 use crate::error::KernelError;
 
+/// The most of an identifier that is reproduced in a diagnostic, in bytes.
+///
+/// **Renvor's number, not the specification's.** C-E3 requires the value to be absent; nothing
+/// requires a *length* bound, and that omission is what this constant closes.
+///
+/// # An identifier is safe to name and unsafe to name without limit
+///
+/// A configuration key is not a secret — C-E3 permits emitting it, and an error that will not say
+/// *which* key was wrong is not actionable. Its **volume** is a separate question, and it was
+/// unbounded until T146. Measured on the real stack before the fix:
+///
+/// ```text
+/// a 9,999,999-byte TOML key      -> a 10,000,269-byte error message
+/// a non-Unicode variable name    -> 3.00x amplification through the lossy rendering
+/// ```
+///
+/// Both numbers are attacker-chosen. A configuration file and an environment variable are the two
+/// inputs an operator most often lets someone else supply, and an error that scales with them
+/// turns one bad key into a log line nothing will read, a terminal nothing can scroll, and — where
+/// the diagnostic is retained — a stored object sized by whoever wrote the key.
+///
+/// 128 bytes is far longer than any hand-written dotted key (`server.tls.certificate_chain_path`
+/// is 33) and short enough that a full page of them still fits in one screen.
+pub const MAX_IDENTIFIER_BYTES: usize = 128;
+
+/// The largest a **rendered** identifier can be, in bytes: the ceiling plus its truncation notice.
+///
+/// Exists so the bound can be asserted as one number rather than recomputed at each call site from
+/// the format string — which is the defect [`Constraint::TooDeep`] was added to prevent, one layer
+/// up. `[`bounded_identifier`] is tested against this constant, not against a literal.
+///
+/// The notice is `"… (truncated; N bytes in full)"`: 3 bytes for the ellipsis, 28 for the fixed
+/// text, and at most 20 digits for a `usize` written in decimal.
+pub const MAX_RENDERED_IDENTIFIER_BYTES: usize = MAX_IDENTIFIER_BYTES + 3 + 28 + 20;
+
+/// Renders an identifier into a diagnostic, bounded by [`MAX_IDENTIFIER_BYTES`].
+///
+/// Returns `raw` unchanged when it already fits — the overwhelmingly common case, and one that
+/// must not gain a suffix, because an error reading ``key `port` (truncated; 4 bytes in full)``
+/// would be worse than the problem this solves.
+///
+/// # The original length is reported, and that is deliberate
+///
+/// Truncating silently would make two different 10 MB keys produce byte-identical errors, so an
+/// operator could not tell "my key is too long" from "my key is wrong". The **length** is a shape
+/// fact about the identifier, not a fragment of it, and this file's whole argument is that shapes
+/// are safe to report where values are not.
+///
+/// # Truncation lands on a character boundary
+///
+/// `&raw[..n]` panics when `n` splits a multi-byte character, and a diagnostic path that panics on
+/// hostile input is worse than the unbounded message it replaced — SC-004 allows **0** panics. The
+/// cut walks back to a boundary, so a key made entirely of 4-byte characters truncates at 128 and
+/// a key whose 128th byte is mid-character truncates a little earlier.
+#[must_use]
+pub fn bounded_identifier(raw: &str) -> String {
+    if raw.len() <= MAX_IDENTIFIER_BYTES {
+        return raw.to_owned();
+    }
+
+    let mut cut = MAX_IDENTIFIER_BYTES;
+    while cut > 0 && !raw.is_char_boundary(cut) {
+        cut -= 1;
+    }
+
+    format!("{}… (truncated; {} bytes in full)", &raw[..cut], raw.len())
+}
+
 /// What was wrong with a configuration value, stated **without** the value.
 ///
 /// Every variant describes a shape, a bound, or a fixed rule. None can hold the offending value,
@@ -211,7 +279,11 @@ impl Constraint {
 /// Builds a [`KernelError::Configuration`] from parts that cannot carry a value.
 ///
 /// The **only** way for a crate outside `renvor-core` to construct that variant, because the
-/// variant is `#[non_exhaustive]`.
+/// variant is `#[non_exhaustive]`. That chokepoint is what makes the bound below unavoidable
+/// rather than a convention every adapter has to remember.
+///
+/// Both identifiers are passed through [`bounded_identifier`], so a key or a layer name chosen by
+/// whoever wrote the configuration cannot set the size of the resulting message.
 #[must_use]
 pub fn configuration(
     key: impl Into<String>,
@@ -220,19 +292,202 @@ pub fn configuration(
     constraint: &Constraint,
 ) -> KernelError {
     KernelError::Configuration {
-        key: key.into(),
+        key: bounded_identifier(&key.into()),
         constraint: constraint.describe(),
-        layer: layer.into(),
+        layer: bounded_identifier(&layer.into()),
         expected_type,
+    }
+}
+
+/// Builds a [`KernelError::ConfigurationConflict`] with every identifier bounded.
+///
+/// The **only** way for a crate outside `renvor-core` to construct that variant, for the same
+/// reason [`configuration`] is: the variant is `#[non_exhaustive]`.
+///
+/// # This variant was unmediated until T146
+///
+/// `Configuration` has been `#[non_exhaustive]` since T080, so every adapter had to come through
+/// [`configuration`]. `ConfigurationConflict` was not, and `renvor-config` built it with a struct
+/// literal — so it carried three attacker-influenced identifiers (`key`, and **both** layer names)
+/// with no constructor in a position to bound any of them. Two variants describing the same
+/// subject should not have had two different construction rules; they now have one.
+///
+/// The two shapes are `&'static str` for the same reason a [`Constraint`] mostly is: a shape is
+/// what may be reported, and a static cannot be built from a runtime value.
+#[must_use]
+pub fn conflict(
+    key: impl Into<String>,
+    first_layer: impl Into<String>,
+    first_shape: &'static str,
+    second_layer: impl Into<String>,
+    second_shape: &'static str,
+) -> KernelError {
+    KernelError::ConfigurationConflict {
+        key: bounded_identifier(&key.into()),
+        first_layer: bounded_identifier(&first_layer.into()),
+        first_shape,
+        second_layer: bounded_identifier(&second_layer.into()),
+        second_shape,
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Constraint, configuration};
+    use super::{
+        Constraint, MAX_IDENTIFIER_BYTES, MAX_RENDERED_IDENTIFIER_BYTES, bounded_identifier,
+        configuration, conflict,
+    };
     use crate::error::ErrorCategory;
 
     const CREDENTIAL: &str = "hunter2-do-not-print";
+
+    #[test]
+    fn an_ordinary_identifier_is_returned_untouched() {
+        // POSITIVE CONTROL for every bound below. A ceiling that rewrote ordinary keys would pass
+        // the size assertions perfectly and make every real diagnostic worse — which is the
+        // failure mode that matters, since almost every key is ordinary.
+        for key in [
+            "port",
+            "server.tls.certificate_chain_path",
+            "database.pool.max_connections",
+            "ключ.с.юникодом",
+        ] {
+            assert_eq!(
+                bounded_identifier(key),
+                key,
+                "an identifier well inside the ceiling was rewritten"
+            );
+            assert!(
+                !bounded_identifier(key).contains("truncated"),
+                "an ordinary identifier gained a truncation notice"
+            );
+        }
+    }
+
+    #[test]
+    fn the_rendered_size_does_not_grow_with_the_input() {
+        // T146, the property the whole constant exists for. Two inputs three orders of magnitude
+        // apart must render to the *same* size, or the bound is a suggestion.
+        let short = "k".repeat(MAX_IDENTIFIER_BYTES * 10);
+        let long = "k".repeat(MAX_IDENTIFIER_BYTES * 10_000);
+
+        let rendered_short = bounded_identifier(&short);
+        let rendered_long = bounded_identifier(&long);
+
+        assert!(rendered_short.len() <= MAX_RENDERED_IDENTIFIER_BYTES);
+        assert!(rendered_long.len() <= MAX_RENDERED_IDENTIFIER_BYTES);
+
+        // The only difference permitted is the decimal length of the reported byte count.
+        //
+        // A fixed message, not an interpolated one. This file handles credentials, and
+        // `tests/diagnostics.rs` refuses any assertion diagnostic that interpolates — the byte
+        // count would be safe here, but a per-case exemption is how the class of defect that gate
+        // exists to prevent gets reintroduced. It fired on this very line and was right to.
+        assert!(
+            rendered_long.len().abs_diff(rendered_short.len()) <= 4,
+            "the rendering grew when the input grew 1000-fold, so it is not bounded"
+        );
+
+        // POSITIVE CONTROL: the inputs really were enormous and really did differ.
+        assert!(long.len() > 1_000_000 && long.len() > short.len() * 100);
+    }
+
+    #[test]
+    fn a_truncated_identifier_still_says_what_it_was() {
+        let key = format!("{}.tail", "a".repeat(10_000));
+        let rendered = bounded_identifier(&key);
+
+        assert!(
+            rendered.starts_with("aaaa"),
+            "the beginning of the key was discarded, so it names nothing"
+        );
+        assert!(
+            rendered.contains("10005"),
+            "the original length is missing, so two different long keys look identical"
+        );
+    }
+
+    #[test]
+    fn truncation_never_splits_a_character() {
+        // `&raw[..n]` panics when `n` lands mid-character, and SC-004 allows 0 panics on hostile
+        // input. Every offset in the boundary region is exercised by shifting an ASCII run against
+        // a multi-byte tail, so some iteration must land the cut inside a character.
+        for pad in 0..8 {
+            let key = format!(
+                "{}{}",
+                "a".repeat(MAX_IDENTIFIER_BYTES - pad),
+                "é€𝄞".repeat(64)
+            );
+            let rendered = bounded_identifier(&key);
+            assert!(rendered.len() <= MAX_RENDERED_IDENTIFIER_BYTES);
+        }
+
+        // And a key made entirely of 4-byte characters, where every boundary but one is invalid.
+        let key = "𝄞".repeat(1_000);
+        assert!(bounded_identifier(&key).len() <= MAX_RENDERED_IDENTIFIER_BYTES);
+    }
+
+    #[test]
+    fn a_configuration_error_is_bounded_in_both_identifiers() {
+        // The chokepoint, exercised as an adapter would reach it: a hostile key AND a hostile
+        // layer name, since bounding one and forgetting the other is the obvious partial fix.
+        let error = configuration(
+            "k".repeat(9_999_999),
+            "l".repeat(9_999_999),
+            "u16",
+            &Constraint::Missing,
+        );
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.len() < 1_024,
+            "a 10 MB key produced a {}-byte message",
+            rendered.len()
+        );
+        assert_eq!(error.category(), ErrorCategory::Configuration);
+    }
+
+    #[test]
+    fn a_conflict_error_is_bounded_in_all_three_identifiers() {
+        // The variant that had no constructor until T146, so nothing was in a position to bound
+        // it. All three identifiers are hostile here: bounding the key and forwarding the layers
+        // would still let an attacker set the message size.
+        let error = conflict(
+            "k".repeat(9_999_999),
+            "first".repeat(2_000_000),
+            "table",
+            "second".repeat(2_000_000),
+            "string",
+        );
+
+        let rendered = error.to_string();
+        assert!(
+            rendered.len() < 1_024,
+            "a conflict over 10 MB identifiers produced a {}-byte message",
+            rendered.len()
+        );
+        assert_eq!(error.category(), ErrorCategory::ConfigurationConflict);
+    }
+
+    #[test]
+    fn no_identifier_reaches_an_error_without_passing_through_the_bound() {
+        // Structural, like the `(String)` count below it. Both configuration variants are
+        // `#[non_exhaustive]`, so every crate outside `renvor-core` must come through one of the
+        // two constructors — and both constructors call `bounded_identifier` on every `String`
+        // field they set. Counting the calls keeps a future field from being added unbounded.
+        let source = include_str!("context.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("split always yields one part");
+
+        assert_eq!(
+            production.matches("bounded_identifier(&").count(),
+            5,
+            "a constructor gained or lost an identifier field without bounding it: `configuration` \
+             bounds 2 (key, layer) and `conflict` bounds 3 (key, both layers)"
+        );
+    }
 
     #[test]
     fn a_decoder_message_quoting_a_value_is_stripped_of_it() {
