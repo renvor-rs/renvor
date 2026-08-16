@@ -37,8 +37,14 @@ description: "Phase 002 task list — transport-independent core kernel"
 
 ## Path Conventions
 
-Rust library workspace (ADR-0002). Crates live at `crates/<name>/`, examples at `examples/`,
-governance records at `governance/`, decision records at `decisions/`.
+Rust library workspace (ADR-0002). Crates live at `crates/<name>/`, **examples at
+`crates/renvor/examples/`** as Cargo example targets of the facade, governance records at
+`governance/`, decision records at `decisions/`.
+
+> **Corrected 2026-08-16 (T123).** This line said "examples at `examples/`", and quickstart Gate 12
+> was written against it while the examples were written as facade targets. The gate globbed a
+> directory that contains no `.rs` file, iterated zero times, and reported a pass. The convention
+> and the gate now both name the real location.
 
 ---
 

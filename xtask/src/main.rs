@@ -489,7 +489,8 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, facade isolation, lean compile, and instability wording all hold, each with a control",
+        "crate DAG, facade isolation, lean compile, publishable dependencies, and instability \
+         wording all hold, each with a control",
     );
     true
 }
