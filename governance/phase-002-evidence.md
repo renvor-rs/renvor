@@ -772,31 +772,40 @@ guarded **separately**, so only a contributor whose *name* panics degrades to a 
 T107 record of "all gates pass" reflected gates that were run in an earlier form, or in the case of
 Gate 12 a gate that passed by executing nothing. The full sixteen-gate result is recorded below.
 
-### T125 — every quickstart gate, run individually
+### T125 / T140 — every quickstart gate, run individually
 
-Run one at a time on 2026-08-16 against the corrected tree. **No gate is collapsed into another,
-and none is omitted.**
+Run one at a time on 2026-08-16 against the final tree, each in its own shell process with the
+Setup preamble prepended exactly as a reader would paste it. **No gate is collapsed into another,
+and none is omitted.** Individual processes are the point: a concatenated script lets one gate's
+`set -e` abort the rest and reports a partial run as a clean one.
 
-| Gate | Criterion | Result | Note |
-|---|---|---|---|
-| 0 | Workspace builds, format, lint | **PASS** | |
-| 1 | Dependency policy (SC-012, SC-017) | **PASS** | includes the empty allow-list control |
-| 2 | Lifecycle order and rollback (SC-001, SC-002) | **PASS** | |
-| 3 | Configuration proof gate, 8 obligations (SC-020) | **PASS** | runs against the Renvor adapter, not the rejected candidate |
-| 4 | Secrets and opaque state (SC-007, SC-016) | **PASS** | |
-| 5 | Provider graph ceilings and work budget (SC-005, SC-021) | **PASS** | includes the 1024-node chain |
-| 6 | Drain, including the zero budget (SC-006) | **PASS** | |
-| 7 | Health and readiness disagree (SC-008) | **PASS** | |
-| 8 | Failure injection at every phase (SC-009) | **PASS** | now all **21** combinations |
-| 9 | Run identifier opacity (SC-019) | **PASS** | |
-| 10 | Tracing ownership (FR-029) | **PASS** | |
-| 11 | Hostile configuration input (FR-038) | **PASS** | hand-written generator; see open item 8 |
-| 12 | Examples and documentation (SC-013, SC-014) | **PASS** | **would have passed vacuously before T123** — 3 examples discovered and run, control fires |
-| 13 | Scope discipline and crate DAG (SC-010) | **PASS** | **would have FAILED before T125** — 13f counted test functions |
-| 14 | Publication and governance (SC-011, FR-034, ADR-0007) | **PASS** | **14d would have FAILED before T124** — status pattern never matched |
-| 15 | Resolved-dependency inventory (FR-040) | **PASS** | **compared nothing before T122** — now 48 = 48, both directions |
+> **Re-run and re-recorded at T140** (RV-N19: the previous table predated the gate rewrites it was
+> cited as evidence for). The re-run added the **tests executed** column, and that column is what
+> found C3 above — four of these gates were passing on **zero** tests, which no exit status could
+> have shown.
 
-**16 of 16 pass. 0 skipped. 0 inconclusive.** Gate 14b's GitHub-releases half was verified with an
+| Gate | Criterion | Result | Tests run | Note |
+|---|---|---|---|---|
+| 0 | Workspace builds, format, lint | **PASS** | — | |
+| 1 | Dependency policy (SC-012, SC-017) | **PASS** | — | includes the empty allow-list control |
+| 2 | Lifecycle order and rollback (SC-001, SC-002) | **PASS** | **47** | was 31; `tests/lifecycle.rs` and `lifecycle_edges.rs` were being skipped |
+| 3 | Configuration proof gate, 8 obligations (SC-020) | **PASS** | **19** | **was 0** — the filter matched nothing |
+| 4 | Secrets and opaque state (SC-007, SC-016) | **PASS** | **18** | **was 0** |
+| 5 | Provider graph ceilings and work budget (SC-005, SC-021) | **PASS** | **7** | **was 0**; includes the 1024-node chain |
+| 6 | Drain, including the zero budget (SC-006) | **PASS** | **20** | was 9 |
+| 7 | Health and readiness disagree (SC-008) | **PASS** | **15** | was 6 |
+| 8 | Failure injection at every phase (SC-009) | **PASS** | **13** | was 2 — all **21** combinations are in `tests/injection.rs`, which the gate never ran |
+| 9 | Run identifier opacity (SC-019) | **PASS** | **12** | was 6 |
+| 10 | Tracing ownership (FR-029) | **PASS** | **3** | was 2; the install-after-build proof itself was skipped |
+| 11 | Hostile configuration input (FR-038) | **PASS** | **8** | **was 0**; hand-written generator, see open item 8 |
+| 12 | Examples and documentation (SC-013, SC-014) | **PASS** | — | 3 examples run individually, **4 controls fire**, repository state byte-identical before and after. Run under **bash 3.2 and zsh** |
+| 13 | Scope discipline and crate DAG (SC-010) | **PASS** | — | **would have FAILED before T125** — 13f counted test functions |
+| 14 | Publication and governance (SC-011, FR-034, ADR-0007) | **PASS** | — | **14d would have FAILED before T124** — status pattern never matched |
+| 15 | Resolved-dependency inventory (FR-040) | **PASS** | — | **compared nothing before T122**, and read no prose before T134 — now 48 = 48 both directions, with the narrative checked and three planted controls |
+
+**16 of 16 pass. 0 skipped. 0 inconclusive. 162 tests executed across gates 2–11**, against 62
+before, four of which contributed nothing. Repository entries before and after the full run were
+identical and no probe file survived. Gate 14b's GitHub-releases half was verified with an
 authenticated `gh`, not recorded as an unverified gap.
 
 ## T127 — final repository-local `speckit-analyze`
@@ -1450,6 +1459,46 @@ The strip makes the gate **stricter**, not laxer, in both directions: a bounding
 appears only in a comment no longer satisfies the check either. A real call survives, because a
 real call is not preceded on its line by `//`. Both probes were removed and the tree verified
 clean afterwards.
+
+### C3 — ten gates were selecting tests with a filter that could not match them (T140)
+
+Found by re-running all sixteen gates individually and **counting what each one executed**, rather
+than reading their exit statuses. Four gates ran **zero tests** and reported a pass.
+
+Every affected gate selected tests with a `<file>::` filter. That is a **module path**, and an
+integration test in `tests/<file>.rs` compiles to its **own binary** whose test names carry no
+module prefix. `libtest` exits 0 when a filter matches nothing, so a gate that selected no test at
+all was byte-for-byte indistinguishable from one where everything passed.
+
+| Gate | Criterion | Filter | Ran before | Runs now | What was being skipped |
+|---|---|---|---|---|---|
+| 2 | SC-001, SC-002 | `lifecycle::` | 31 | **47** | `tests/lifecycle.rs`, `tests/lifecycle_edges.rs` — the rollback-order assertions the gate is named for |
+| 3 | SC-020 | `layering::` | **0** | **19** | the entire 8-obligation proof gate |
+| 4 | SC-007, SC-016 | `redaction::` | **0** | **18** | every redaction test in both crates |
+| 5 | SC-005, SC-021 | `provider::graph::` | **0** | **7** | the ceiling and work-budget counters |
+| 6 | SC-006 | `drain::` | 9 | **20** | `tests/drain.rs`, including the zero-budget case |
+| 7 | SC-008 | `health::` | 6 | **15** | `tests/health.rs`, the disagreement proof |
+| 8 | **SC-009** | `injection::` | 2 | **13** | **`tests/injection.rs` — all 21 phase-and-behaviour combinations** |
+| 9 | SC-019 | `observe::run_id::` | 6 | **12** | `tests/run_id.rs` |
+| 10 | FR-029 | `observe::bootstrap::` | 2 | **3** | `tests/observe_bootstrap.rs`, the install-after-build proof itself |
+| 11 | FR-038 | `hostile::` | **0** | **8** | every hostile-input test |
+
+**Gate 8 is the one that matters most.** SC-009 is the 21-combination requirement, its assertions
+are in `crates/renvor-testkit/tests/injection.rs`, and the gate cited as its evidence ran four
+harness unit tests instead. The tests themselves were correct and were passing in
+`cargo test --workspace` the whole time — what was false was the *gate's* claim to have run them.
+
+The fix is not just corrected selectors. A `run_tests_expecting <minimum>` helper in the shared
+Setup preamble now counts what libtest reports and fails below the minimum, so a selector that
+stops matching is a failure rather than a silent pass. Mutation-tested:
+
+| Form | On a filter matching nothing |
+|---|---|
+| `cargo test -p renvor-config this_matches_nothing::` | `test result: ok`, **exit 0** |
+| `run_tests_expecting 8 -p renvor-config this_matches_nothing::` | `tests executed: 0 (minimum 8)`, **exit 1** |
+
+Gates 2–11 now execute **162** tests between them, against **62** before — of which four gates
+contributed nothing at all.
 
 ### D — the dependency inventory disagreed with its own table (T134)
 

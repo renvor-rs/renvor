@@ -330,10 +330,10 @@ that has not been integrated, with the corrections below outstanding.
 
 ### C. Verification and evidence integrity
 
-- [ ] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
-- [ ] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
+- [x] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control — **closed at T134**, which corrected the three prose totals the T122 fix left at 55 and added Gate 15's narrative check with three planted controls
+- [x] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable — **closed at T138**, which made the gate run in zsh as well as bash, added a repository-state control, and corrected the historical claim in all five places it appeared
 - [x] T124 Update quickstart Gate 14 for the merged **W-004** authority — its four controls and three preconditions — and remove the obsolete "separately proposed waiver" text
-- [ ] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
+- [x] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing any range and without omitting any gate — **re-run at T140 against the final gate scripts**, adding a *tests executed* column that found ten gates selecting tests with a `<file>::` module filter that integration binaries cannot match; four were running **zero** tests and reporting a pass, including SC-009's
 
 ### D. W-005 and phase closure
 
@@ -345,7 +345,7 @@ that has not been integrated, with the corrections below outstanding.
 
 ### E. Final validation and pull request
 
-- [ ] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
+- [x] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work — **closed at T140**, re-run against the final head
 - [ ] T132 Push the exact final commit to `refs/heads/feat/phase-002-core-kernel` with a non-force refspec and open one non-draft pull request into `main`, stating scope, validation, waiver status, and named limitations. **Stop before merging** — **REOPENED 2026-08-16.** The pull request is open at #19 and its base is unchanged; what is not final is its **head** and its **body**, both of which are superseded by Phase 11
 
 ---
@@ -380,7 +380,7 @@ where it was true of three.
 
 ### C. Final validation and closure
 
-- [ ] T140 Re-run the complete matrix on a clean tree at the final head: `cargo xtask verify` 11/11 on **1.94.0** and on **1.97.1**, `cargo test --workspace -- --test-threads=1`, the no-default-features all-target check on both toolchains, `cargo deny`'s four checks, `actionlint -no-color`, and quickstart gates **0–15 individually** — with Gate 12 additionally run under **both** shells — re-recording T125's table against the gate scripts as they now stand
+- [x] T140 Re-run the complete matrix on a clean tree at the final head: `cargo xtask verify` 11/11 on **1.94.0** and on **1.97.1**, `cargo test --workspace -- --test-threads=1`, the no-default-features all-target check on both toolchains, `cargo deny`'s four checks, `actionlint -no-color`, and quickstart gates **0–15 individually** — with Gate 12 additionally run under **both** shells — re-recording T125's table against the gate scripts as they now stand. Correct every gate that selects tests by module path, and add a `run_tests_expecting` guard to the shared Setup preamble so a selection that matches nothing **fails** — mutation-tested against a filter that matches nothing, which the old form reported as a pass
 - [ ] T141 Wait for every check on the exact new head; dismiss **only** CodeQL alerts #1, #2, and #3 as `false positive`, individually and with a stated reason, after verifying that #4–#9 are gone, that no new alert exists, and that #1–#3 still point at the redacting implementation; resolve the nine review threads; and update PR #19's body to the verified final state. **Stop before merging**
 
 ---

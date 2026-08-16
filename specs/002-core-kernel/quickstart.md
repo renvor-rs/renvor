@@ -35,6 +35,33 @@ UA='renvor-verification (https://github.com/renvor-rs/renvor)'
 # Every crate name this phase introduces or touches:
 PHASE_CRATES=(renvor renvor-core renvor-config renvor-testkit)
 rustc --version   # expect 1.94.0 — pinned by rust-toolchain.toml
+
+# Runs `cargo test` and FAILS if it executed fewer than `minimum` tests.
+#
+# ADDED 2026-08-16 (T140), because four gates were passing on zero tests.
+#
+# **libtest exits 0 when a filter matches nothing.** A `cargo test <filter>` that selects no test
+# at all is byte-for-byte indistinguishable from one where every selected test passed — same exit
+# status, same cheerful `test result: ok`. Gates 3, 4, 5, and 11 each filtered on `<file>::`,
+# which is a module path; an integration test in `tests/<file>.rs` is its **own binary** and its
+# test names carry no such prefix. All four selected **0** tests and reported a pass, every time
+# anyone ran them, for the whole life of this document.
+#
+# The minimum is the count those targets hold today, so this also fails if a test is deleted —
+# which is the other way a suite quietly shrinks.
+run_tests_expecting() {
+  minimum=$1; shift
+  log=$(mktemp "${TMPDIR:-/tmp}/renvor-gate-tests.XXXXXX")
+  cargo test "$@" 2>&1 | tee "$log"
+  ran=$(awk '/^test result:/ { for (i=1;i<=NF;i++) if ($i=="passed;") total += $(i-1) }
+             END { print total+0 }' "$log")
+  rm -f "$log"
+  echo "  tests executed: $ran (minimum $minimum)"
+  if [ "$ran" -lt "$minimum" ]; then
+    echo "FAIL — the selection ran $ran tests; libtest exits 0 when it matches none"
+    return 1
+  fi
+}
 ```
 
 Each gate below assumes this preamble. Gates that are a **single pass/fail unit** repeat
@@ -98,7 +125,11 @@ outside crates.io, or any advisory affects a resolved version.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core lifecycle:: -- --nocapture
+# The `lifecycle::` filter reaches the LIB's unit tests only. `tests/lifecycle.rs` and
+# `tests/lifecycle_edges.rs` are separate binaries whose test names carry no module prefix, so the
+# filter skipped all 16 of them — including the rollback-order assertions this gate is named for.
+run_tests_expecting 31 -p renvor-core --lib lifecycle:: -- --nocapture
+run_tests_expecting 16 -p renvor-core --test lifecycle --test lifecycle_edges -- --nocapture
 ```
 
 **Pass**: the observed sequence is exactly `Load → Validate → Register → Boot → Ready → Drain →
@@ -115,7 +146,9 @@ made to differ and this gate proved nothing.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-config layering:: -- --nocapture
+# `layering::` matched NOTHING: `tests/layering.rs` is its own binary and its test names carry no
+# module prefix. The gate ran 0 tests and passed. Selected by TARGET now, and the count is checked.
+run_tests_expecting 19 -p renvor-config --test layering --test proof_gate -- --nocapture
 ```
 
 **Pass requires all eight** ([configuration-contract.md](./contracts/configuration-contract.md) C-C7):
@@ -141,8 +174,10 @@ cargo test -p renvor-config layering:: -- --nocapture
 
 ```bash
 set -euo pipefail
-# Package selectors first, then exactly ONE test filter.
-cargo test -p renvor-core -p renvor-config redaction:: -- --nocapture
+# `redaction::` matched NOTHING — see the Setup note. Both `tests/redaction.rs` binaries are named
+# explicitly, and the `Secret<T>` unit tests are selected separately because they live in the lib.
+run_tests_expecting 13 -p renvor-core -p renvor-config --test redaction -- --nocapture
+run_tests_expecting 5 -p renvor-config --lib secret:: -- --nocapture
 ```
 
 > *Revision 1 wrote `cargo test -p renvor-core redaction:: -p renvor-config redaction::`, which is
@@ -168,7 +203,8 @@ fields, span fields, and serialization.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core provider::graph:: -- --nocapture
+# `provider::graph::` matched NOTHING: these tests are in `tests/provider_graph.rs`, a binary.
+run_tests_expecting 7 -p renvor-core --test provider_graph -- --nocapture
 ```
 
 | Case | Expected |
@@ -192,7 +228,9 @@ not of the machine.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core drain:: -- --nocapture
+# Lib unit tests, then `tests/drain.rs` — 11 tests the module filter could not reach.
+run_tests_expecting 9 -p renvor-core --lib drain:: -- --nocapture
+run_tests_expecting 11 -p renvor-core --test drain -- --nocapture
 ```
 
 **Pass**: an over-budget drain reports **incomplete** in **100%** of runs, **0** report clean; a
@@ -205,7 +243,9 @@ paused clock (FR-031), so this gate consumes no real elapsed time.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core health:: -- --nocapture
+# Lib unit tests, then `tests/health.rs` — 9 tests the module filter could not reach.
+run_tests_expecting 6 -p renvor-core --lib health:: -- --nocapture
+run_tests_expecting 9 -p renvor-core --test health -- --nocapture
 ```
 
 **Pass**: at least **1** asserted state where liveness reports alive while readiness reports
@@ -218,7 +258,11 @@ not-ready — including `Drain` — plus a failing contributor that is individua
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-testkit injection:: -- --nocapture
+# THE 21 COMBINATIONS LIVE IN `tests/injection.rs`, and `injection::` never reached them. This
+# gate is SC-009's evidence and it was running 2 harness unit tests instead of the 9 integration
+# tests that assert the matrix. Selected by target now, and the count is checked.
+run_tests_expecting 4 -p renvor-testkit --lib -- --nocapture
+run_tests_expecting 9 -p renvor-testkit --test injection -- --nocapture
 ```
 
 **Pass**: **7 of 7** lifecycle phases accept an injected failure, each covered by a test, each
@@ -230,7 +274,9 @@ producing a deterministic failure and an assertable rollback.
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core observe::run_id:: -- --nocapture
+# Lib unit tests, then `tests/run_id.rs` — 6 tests the module filter could not reach.
+run_tests_expecting 6 -p renvor-core --lib observe::run_id:: -- --nocapture
+run_tests_expecting 6 -p renvor-core --test run_id -- --nocapture
 ```
 
 **Gating assertions only**: **exactly 1** generation site; with fixed entropy the identifier is a
@@ -247,7 +293,10 @@ gates depend on it. It is probabilistic and can fail on a correct implementation
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-core observe::bootstrap:: -- --nocapture
+# Lib unit tests, then `tests/observe_bootstrap.rs` — the install-after-build proof itself, which
+# the module filter never ran.
+run_tests_expecting 2 -p renvor-core --lib observe::bootstrap:: -- --nocapture
+run_tests_expecting 1 -p renvor-core --test observe_bootstrap -- --nocapture
 ```
 
 **Pass**:
@@ -265,7 +314,8 @@ cargo test -p renvor-core observe::bootstrap:: -- --nocapture
 
 ```bash
 set -euo pipefail
-cargo test -p renvor-config hostile:: -- --nocapture
+# `hostile::` matched NOTHING: these tests are in `tests/hostile.rs`, a binary.
+run_tests_expecting 8 -p renvor-config --test hostile -- --nocapture
 ```
 
 **Pass**: malformed, truncated, and unexpectedly large TOML each produce a **bounded, actionable**
