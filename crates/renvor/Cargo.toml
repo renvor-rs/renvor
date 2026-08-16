@@ -48,6 +48,15 @@ include = [
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-config = { path = "../renvor-config", version = "0.0.0", optional = true }
 
+# Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
+# dependency EDGE and no new package — checked against the lockfile rather than assumed.
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
+
+# The configuration example declares a schema, which needs the derive. Already in the graph
+# through `renvor-config`; this adds an edge, not a package.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
 [features]
 # `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
 # isolation is opt-in via `default-features = false`. Stated plainly because the reverse is

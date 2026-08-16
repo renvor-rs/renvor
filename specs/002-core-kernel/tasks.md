@@ -260,13 +260,13 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 > "ordinary language constructs". The divergence is deliberate — the specification is kept
 > technology-agnostic — and the two impose the same obligation.
 
-- [ ] T089 [US6] Implement `FailureInjectionPoint` with `Fail`, `Panic`, and `Hang` behaviours in `crates/renvor-testkit/src/injection.rs`
-- [ ] T090 [US6] Implement injection hooks for **all 7** lifecycle phases in `crates/renvor-testkit/src/harness.rs` (FR-030)
-- [ ] T091 [US6] Implement time control in `crates/renvor-testkit/src/clock.rs` over `tokio::time::pause`/`advance` so deadlines and drain budgets run with 0 real elapsed time (FR-031)
-- [ ] T092 [P] [US6] Write injection coverage tests in `crates/renvor-testkit/tests/injection.rs` asserting 7 of 7 phases are covered (SC-009)
-- [ ] T093 [P] [US6] Write `examples/minimal.rs` — a working application with no global mutable state, no transport, no port, and no database (SC-014)
-- [ ] T094 [P] [US6] Write `examples/providers.rs` demonstrating dependency ordering and rollback, using ordinary language constructs only
-- [ ] T095 [P] [US6] Write `examples/configuration.rs` demonstrating layered configuration and a redacted secret
+- [x] T089 [US6] Implement `FailureInjectionPoint` with `Fail`, `Panic`, and `Hang` behaviours in `crates/renvor-testkit/src/injection.rs`
+- [x] T090 [US6] Implement injection hooks for **all 7** lifecycle phases in `crates/renvor-testkit/src/harness.rs` (FR-030)
+- [x] T091 [US6] Implement time control in `crates/renvor-testkit/src/clock.rs` over `tokio::time::pause`/`advance` so deadlines and drain budgets run with 0 real elapsed time (FR-031)
+- [x] T092 [P] [US6] Write injection coverage tests in `crates/renvor-testkit/tests/injection.rs` asserting 7 of 7 phases are covered (SC-009)
+- [x] T093 [P] [US6] Write `examples/minimal.rs` — a working application with no global mutable state, no transport, no port, and no database (SC-014)
+- [x] T094 [P] [US6] Write `examples/providers.rs` demonstrating dependency ordering and rollback, using ordinary language constructs only
+- [x] T095 [P] [US6] Write `examples/configuration.rs` demonstrating layered configuration and a redacted secret
 
 **Checkpoint**: the kernel is exercisable end to end without any transport.
 

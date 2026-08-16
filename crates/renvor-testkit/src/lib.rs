@@ -11,3 +11,11 @@
 //! # Stability
 //!
 //! **This surface is explicitly unstable.** See the `renvor` facade documentation.
+
+pub mod clock;
+pub mod harness;
+pub mod injection;
+
+pub use clock::TestClock;
+pub use harness::{Harness, HarnessRun, Outcome};
+pub use injection::{Behaviour, FailureInjectionPoint};

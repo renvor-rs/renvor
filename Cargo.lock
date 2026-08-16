@@ -186,6 +186,8 @@ version = "0.0.0"
 dependencies = [
  "renvor-config",
  "renvor-core",
+ "serde",
+ "tokio",
 ]
 
 [[package]]

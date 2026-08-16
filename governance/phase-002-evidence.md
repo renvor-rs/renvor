@@ -341,6 +341,51 @@ responses and folding them would make a defect indistinguishable from a working 
 `catch_unwind` requires no `unsafe`, which mattered: this workspace declares
 `unsafe_code = "forbid"`, so an approach needing it would not have been available.
 
+## User Story 6 — the harness, and two gaps it found in the kernel
+
+**Status**: T089–T095 complete. Workspace tests **240 → 250**, all passing, plus three runnable
+examples.
+
+SC-009 asks for failure injectable at **7 of 7** phases. That holds, and the coverage test takes
+its phase list from `LifecyclePhase::ALL` so an eighth phase fails the file rather than quietly
+going uncovered. Each phase's *characteristic* failure is asserted, because coverage without
+outcomes would pass on a harness that injected nothing.
+
+Building it surfaced **two gaps in the kernel**, and neither is worked around:
+
+### Gap 1 — `Load` and `Validate` are unbounded kernel-owned paths
+
+Both call author-supplied code **synchronously**, and `ApplicationBuilder::build` is not `async`,
+so there is no deadline around either. A configuration source reading a hung network mount blocks
+the process indefinitely.
+
+**This corrects a claim made earlier this phase.** `tests/deadlines.rs` enumerates "three
+kernel-owned waits" and bounds each; it missed these two because it searched for `.await`, and a
+synchronous call that never returns is not an await. That test is correct about what it checked and
+**incomplete about the set it claimed to close**. SC-015's "0 unbounded waits" therefore does **not**
+hold today. Open item 12.
+
+### Gap 2 — a panicking provider is not contained
+
+C-L9 requires `Panic` injectable at every phase. The kernel does not contain a panicking provider:
+catching a panic across an `await` needs either a `'static` future — ruled out because
+`InitContext` borrows the state map — or `futures::FutureExt::catch_unwind`, a new dependency in a
+phase whose inventory is a recorded gate. Readiness contributors **are** contained, because they
+are synchronous and `catch_unwind` suffices there.
+
+`Harness::run` **refuses** a `Panic` point at `Boot` or `Stop` with a diagnostic naming the gap and
+pointing at this file. A test asserts that refusal, so **closing the gap fails the test** and forces
+whoever closes it to update the claim. Open item 13.
+
+### A third thing, smaller
+
+`tokio::time::pause` panics **both ways** — outside a `current_thread` runtime, and when the clock
+is *already* paused, with the message `time is already frozen`. Since `start_paused = true` is the
+idiom used throughout this workspace, a clock helper that called `pause` itself panicked in the
+common case. Measured, not assumed: the first version of `TestClock` did exactly that and its own
+tests failed. `TestClock::new` now attaches to an already-paused clock and `TestClock::pausing`
+covers the other case.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -356,6 +401,8 @@ responses and folding them would make a defect indistinguishable from a working 
 | 9 | An author writes a **second, all-optional struct** per schema | Decode-per-source needs an all-optional decode target and Renvor has no derive macro. A proc-macro of its own is custom infrastructure under FR-035 needing its own accepted record | No |
 | 10 | `expected_type` is reported **inside the constraint text**, not as its own field, for file and environment layers | `KernelError::Configuration::expected_type` is `&'static str` so it cannot carry a value (C-E3); the adapter has no schema description to read a per-key type from. All three facts C-C3 requires are in the message | No |
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
+| 12 | **SC-015 does not hold**: `Load` and `Validate` call author code synchronously with no deadline | `ApplicationBuilder::build` is not `async`. Bounding them needs `spawn_blocking` plus an async build, which changes the surface every US1 test uses | **Yes — this is an unmet success criterion**, not a nicety |
+| 13 | **C-L9's `Panic` behaviour is not injectable** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency | **Yes — SC-009 is met for phases, not for all three behaviours** |
 
 ## Publication status
 
