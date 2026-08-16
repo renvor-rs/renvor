@@ -269,13 +269,49 @@ error; **0** panics, **0** unbounded memory or time. Per principle IX this bound
 ```bash
 set -euo pipefail
 cargo test --workspace --doc
-for f in examples/*.rs; do cargo run --example "$(basename "$f" .rs)"; done
+
+# Examples live in the FACADE crate, not at the repository root, and they are run as
+# `-p renvor` targets. The earlier form of this gate globbed `examples/*.rs` from the root —
+# a directory that does not exist — so the loop body never executed once and the gate
+# reported a pass having run nothing.
+# No `mapfile`: it is a bash 4 builtin, and macOS ships bash 3.2. A gate the maintainer
+# cannot run locally is a gate only CI ever runs. Word-splitting is safe here because a
+# Rust example's file stem is an identifier and cannot contain whitespace.
+EXAMPLE_DIR=crates/renvor/examples
+EXAMPLES=$(find "$EXAMPLE_DIR" -maxdepth 1 -name '*.rs' -exec basename {} .rs \; | sort)
+COUNT=$(printf '%s\n' "$EXAMPLES" | grep -c .)
+
+# CONTROL 1: discovery found the examples. A glob that matches nothing must not pass.
+if [ "$COUNT" -lt 3 ]; then
+  echo "FAIL 12 — discovery found $COUNT example(s) in $EXAMPLE_DIR"; exit 1
+fi
+echo "discovered $COUNT examples: $(printf '%s ' $EXAMPLES)"
+
+for name in $EXAMPLES; do
+  echo "--- running example: $name"
+  cargo run --quiet -p renvor --example "$name"
+done
+
+# CONTROL 2: the gate fails when an example is not runnable. Plants an example that exits
+# non-zero, confirms the runner reports it, and removes it. Without this, a `cargo run` whose
+# failure was being swallowed would look identical to a clean pass.
+CONTROL="$EXAMPLE_DIR/gate12-control.rs"
+trap 'rm -f "$CONTROL"' EXIT
+printf 'fn main() { std::process::exit(1); }\n' > "$CONTROL"
+if cargo run --quiet -p renvor --example gate12-control; then
+  echo "FAIL 12 control — an example that exits non-zero was reported as a pass"; exit 1
+fi
+rm -f "$CONTROL"; trap - EXIT
+echo "control: a failing example is detected"
+
 cargo test --workspace --all-targets
 echo "GATE 12 PASS"
 ```
 
-**Pass**: every example compiles, runs, and uses **no global mutable state**; **0** examples require
-a transport, a port, or a database. CI runs the same sequence on both `1.94.0` and current stable.
+**Pass**: **every** example is discovered, compiles, and runs to a zero exit; the discovery finds at
+least three; and an example that cannot run **fails the gate** — proven, not assumed. **0** examples
+require a transport, a port, or a database. CI runs the same sequence on both `1.94.0` and current
+stable.
 
 ---
 
@@ -326,11 +362,26 @@ cargo tree --workspace --prefix none --edges normal | grep -Eiq '(^| )toml' \
 echo "13e PASS (control fired)"
 
 # --- 13f: the facade re-exports and does not implement (ADR-0002) ---
-IMPL_COUNT=$(grep -cE '^\s*(pub )?(fn|impl|struct|enum) ' crates/renvor/src/lib.rs || true)
+#
+# The test module is EXCLUDED. The earlier form of this check scanned the whole file and
+# counted the facade's own unit tests as implementation items — five of them — so it reported
+# a violation that did not exist. A facade with tests is not a facade with an implementation,
+# and a gate that cannot tell them apart is a gate that gets ignored.
+FACADE_PROD=$(sed -n '1,/^#\[cfg(test)\]/p' crates/renvor/src/lib.rs | sed '$d')
+IMPL_COUNT=$(printf '%s\n' "$FACADE_PROD" | grep -cE '^[[:space:]]*(pub )?(fn|impl|struct|enum) ' || true)
 test "$IMPL_COUNT" -eq 0 || { echo "FAIL 13f — facade contains $IMPL_COUNT implementation items"; exit 1; }
-grep -qE '^\s*pub use ' crates/renvor/src/lib.rs \
+
+# CONTROL 1: the facade really does re-export things, so the zero above means "re-exports only"
+# rather than "the file is empty".
+printf '%s\n' "$FACADE_PROD" | grep -qE '^[[:space:]]*pub use ' \
   || { echo "CONTROL FAILED — facade has no re-exports at all; 13f proves nothing"; exit 1; }
-echo "13f PASS (control fired)"
+
+# CONTROL 2: the pattern can still match. Run against the WHOLE file it must find the test
+# functions — otherwise the zero above is a broken regex rather than a clean facade.
+WHOLE_COUNT=$(grep -cE '^[[:space:]]*(pub )?(fn|impl|struct|enum) ' crates/renvor/src/lib.rs || true)
+test "$WHOLE_COUNT" -gt 0 \
+  || { echo "CONTROL FAILED — the item pattern matches nothing anywhere; 13f proves nothing"; exit 1; }
+echo "13f PASS (both controls fired; production items=0, whole-file items=$WHOLE_COUNT)"
 echo "GATE 13 PASS"
 ```
 
@@ -409,24 +460,82 @@ grep -rlE 'ghcr\.io|docker/build-push-action' .github/workflows/ && \
 
 ### 14d — ADR-0007 governance gate
 
+**The authority is `W-004`, granted and merged on 2026-08-16.** This gate previously described the
+authority as *"a separately proposed and separately approved waiver"* — future tense, from before
+W-004 existed. It exists, it is `active` in `governance/waivers.md`, and it is scoped to
+**ADR-0007 and nothing else**. What remains checkable is whether its **four counted controls** and
+**three restated preconditions** are actually on the record.
+
 ```bash
 set -euo pipefail
-ADR=decisions/0007-*.md
-if compgen -G "$ADR" > /dev/null; then
-  grep -qiE '^\s*status:\s*accepted' $ADR \
-    && grep -qiE 'reviewer' $ADR \
-    || { echo "FAIL — ADR-0007 is not accepted with a recorded reviewer"; exit 1; }
-  grep -qiE 'W-002|W-003' $ADR && echo "REVIEW REQUIRED — ADR-0007 cites a Phase 001 waiver; neither covers a Phase 002 ADR"
-  echo "14d: ADR-0007 present and accepted"
-else
-  echo "14d: ADR-0007 ABSENT — custom infrastructure MUST NOT merge (FR-035)"
+ADR=$(ls decisions/0007-*.md 2>/dev/null | head -1)
+test -n "$ADR" || { echo "14d FAIL — ADR-0007 ABSENT; custom infrastructure MUST NOT merge (FR-035)"; exit 1; }
+
+# The waiver must exist and be active. An accepted ADR with no live authority behind it is
+# the failure this check exists for.
+grep -q '| \*\*W-004\*\* |' governance/waivers.md \
+  || { echo "14d FAIL — W-004 is not recorded in the waiver ledger"; exit 1; }
+grep -qE '\*\*W-004\*\*.*\| `active` \|' governance/waivers.md \
+  || { echo "14d FAIL — W-004 is not active"; exit 1; }
+
+# The decision-record template renders state as a TABLE ROW, not as front matter. The earlier
+# form of this check looked for `status: accepted` at the start of a line, which this record has
+# never contained — so the gate would have reported ADR-0007 as unaccepted while it was accepted,
+# in the fail-CLOSED direction, which is why nobody noticed until the pattern was run.
+grep -qiE '^\| \*\*State\*\* \| `accepted` \|' "$ADR" \
+  || { echo "14d FAIL — ADR-0007 is not accepted"; exit 1; }
+
+# The reviewer field must say what is true. W-004's grant fixes this string exactly, so that
+# no reader can mistake a self-review for an independent one.
+grep -qF 'Ahmed Anbar — self-review under W-004' "$ADR" \
+  || { echo "14d FAIL — ADR-0007's reviewer field is not the exact string W-004 requires"; exit 1; }
+
+# The FOUR counted controls, each of which must be visible in the record.
+for control in \
+  'proof gate' \
+  'NON-INDEPENDENT' \
+  'ADVISORY' \
+  'disposition'
+do
+  grep -qiF "$control" "$ADR" \
+    || { echo "14d FAIL — ADR-0007 does not record W-004 control evidence for: $control"; exit 1; }
+done
+
+# The advisory reviews must have produced a RESULT. Silence is recorded as not performed.
+grep -qiE 'no findings|finding' "$ADR" \
+  || { echo "14d FAIL — no advisory review result recorded; silence is NOT PERFORMED"; exit 1; }
+
+# A Phase 001 waiver must not be cited as the authority for a Phase 002 record.
+if grep -qE 'W-002|W-003' "$ADR"; then
+  grep -qE 'W-002|W-003' "$ADR" | head -1
+  echo "14d NOTE — ADR-0007 mentions a Phase 001 waiver; confirm it is cited as NOT applicable"
 fi
+
+# The record must STATE the truth, not merely avoid claiming otherwise. W-004's grant requires
+# this sentence, because a reader who finds no claim of independence may infer it from silence.
+grep -qiF 'No independent human review of ADR-0007 has occurred' "$ADR" \
+  || { echo "14d FAIL — the record does not state that no independent review occurred"; exit 1; }
+
+# POSITIVE CONTROL: these greps can return false. Without it, a `grep` that matched everything
+# would satisfy every check above — including, note, the check immediately above, whose subject
+# string is a SUBSTRING of the honest denial: searching for "independent human review of ADR-0007
+# has occurred" finds a match inside "**No** independent human review of ADR-0007 has occurred".
+# That is why the check is written as the affirmative sentence rather than as its absence.
+grep -qiF 'this record was independently reviewed and approved' "$ADR" \
+  && { echo "14d CONTROL FAILED — grep matched text that is not in the record"; exit 1; }
+echo "14d PASS — ADR-0007 accepted under W-004, with its four counted controls on the record"
 ```
 
-**This gate cannot be discharged by any automated check.** It requires a **qualified independent
-human review**, or a **separately proposed and separately approved waiver** with all seven
-mandatory fields. **W-002 covers Phase 001 decision records; W-003 covers Phase 001's phase-level
-review. Neither authorises accepting a Phase 002 ADR.**
+**No automated check can discharge the underlying requirement.** It needs a **qualified independent
+human review**, which has **not occurred**. W-004 waives *who reviews*; it waives nothing about
+*what must be true*. Its three restated preconditions — the alternatives-and-consequences analysis,
+the package-first evaluation of every custom primitive, and the unconditional CI, dependency,
+licence, advisory, secret-scanning, and code-quality gates — are **required by FR-035, constitution
+principle III, and the workflow independently of this waiver**, and are deliberately **not counted**
+as compensating controls. They must all hold; none of them is what the waiver buys.
+
+**W-002 covers Phase 001 decision records; W-003 covers Phase 001's phase-level review. Neither
+authorises accepting a Phase 002 ADR — W-004 does, and only for ADR-0007.**
 
 ---
 
@@ -438,18 +547,70 @@ licence or a live advisory just as easily.
 
 ```bash
 set -euo pipefail
-cargo tree --workspace --edges normal --prefix none | awk '{print $1, $2}' | sort -u > /tmp/renvor-deps.txt
-echo "resolved packages: $(wc -l < /tmp/renvor-deps.txt)"
-cargo deny check licenses advisories bans sources        # against the ACTUAL lockfile
+INVENTORY=governance/phase-002-dependency-inventory.md
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+
+# --- 15a: what the graph ACTUALLY resolves, workspace members excluded ---
+cargo metadata --locked --format-version 1 > "$WORK/meta.json"
+python3 - "$WORK" <<'PY'
+import json, sys, os
+work = sys.argv[1]
+meta = json.load(open(os.path.join(work, "meta.json")))
+members = set(meta["workspace_members"])
+local = {p["name"] for p in meta["packages"] if p["id"] in members}
+rows = sorted(f'{p["name"]} {p["version"]}'
+              for p in meta["packages"] if p["name"] not in local)
+open(os.path.join(work, "resolved.txt"), "w").write("\n".join(rows) + "\n")
+PY
+
+# --- 15b: what the inventory DOCUMENTS, read from its resolved-set table only ---
+awk '/^## T030\/T033/{inside=1; next} inside && /^## /{inside=0} inside' "$INVENTORY" \
+  | sed -n 's/^| `\([^`]*\)` | \([0-9][^ |]*\) |.*/\1 \2/p' | sort -u > "$WORK/documented.txt"
+
+RESOLVED=$(wc -l < "$WORK/resolved.txt")
+DOCUMENTED=$(wc -l < "$WORK/documented.txt")
+echo "resolved: $RESOLVED    documented: $DOCUMENTED"
+
+# CONTROL 1: both sides were actually read. Two empty files compare equal, and a gate that
+# passes by reading nothing is the failure mode this gate exists to prevent.
+if [ "$RESOLVED" -lt 40 ] || [ "$DOCUMENTED" -lt 40 ]; then
+  echo "FAIL 15 — one side was not read (resolved=$RESOLVED documented=$DOCUMENTED)"; exit 1
+fi
+
+# --- 15c: the comparison itself, in BOTH directions ---
+if ! diff -u "$WORK/documented.txt" "$WORK/resolved.txt"; then
+  echo "FAIL 15 — the documented inventory and the resolved graph disagree."
+  echo "  lines marked '-' are documented but NOT resolved (stale rows)."
+  echo "  lines marked '+' are resolved but NOT documented (unevaluated packages)."
+  exit 1
+fi
+
+# CONTROL 2: the comparison can fail. Plants one package that is not in the graph and
+# confirms the diff rejects it — so a passing comparison means agreement rather than a
+# comparison that silently stopped working.
+{ echo 'not-a-real-package 9.9.9'; cat "$WORK/documented.txt"; } > "$WORK/tampered.txt"
+if diff -q "$WORK/tampered.txt" "$WORK/resolved.txt" > /dev/null; then
+  echo "FAIL 15 control — a planted package was not detected"; exit 1
+fi
+echo "control: the inventory comparison detects a package the graph does not contain"
+
+# --- 15d: policy and supporting evidence against the real lockfile ---
+cargo deny check licenses advisories bans sources
 cargo tree --workspace --duplicates || true              # duplicate-version findings, recorded
-cargo tree --workspace --edges features --prefix none > /tmp/renvor-features.txt
+cargo tree --workspace --edges features --prefix none > "$WORK/features.txt"
 echo "GATE 15 PASS"
 ```
 
-**Pass**: every resolved package — **transitive included** — has a recorded version, licence, MSRV
-compatibility, and advisory status; `cargo deny` is clean against the real lockfile; enabled
-features and duplicate versions are recorded. **The gate FAILS if any resolved package lacks the
-evidence FR-040 requires**, including one that appeared only transitively.
+**Pass**: the documented inventory and the resolved graph are **identical, in both directions** —
+no stale row, no unevaluated package — and every documented package carries a version, licence,
+MSRV, and origin; `cargo deny` is clean against the real lockfile; enabled features and duplicate
+versions are recorded.
+
+**This gate previously compared nothing.** It counted resolved packages, printed the count, and ran
+`cargo deny`; the inventory document was never opened. A row for a package that had left the graph,
+or a package that had entered it undocumented, passed unnoticed — and both had happened. The
+comparison, and the control proving the comparison can fail, are what make the pass mean what the
+paragraph above says.
 
 ---
 

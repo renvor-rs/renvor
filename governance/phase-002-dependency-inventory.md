@@ -21,8 +21,8 @@ reproduce the design document's blind spots.
 | External packages in the lockfile graph | **48** (was 55; see the revision below) |
 | — reachable over **normal** edges (what a consumer resolves) | **45** |
 | — **dev-only** (test machinery; never in a consumer's graph) | **3** |
-| Directly chosen in research §3 | **11** |
-| Arrived **transitively**, evaluated by nobody until now | **37** |
+| Directly chosen, declared in a workspace manifest | **10** |
+| Arrived **transitively**, evaluated by nobody until the inventory | **38** |
 | Packages with **no declared licence** | **0** |
 | Packages whose MSRV exceeds **1.94.0** | **0** |
 | `cargo deny check licenses advisories bans sources` | **all four pass** |
@@ -130,7 +130,11 @@ zero from a search that works, and only the second is evidence.
 | Package | Versions | Path |
 |---|---|---|
 | `hashbrown` | 0.15.5, 0.17.1 | `petgraph` pulls 0.15.5 directly; `petgraph` → `indexmap` pulls 0.17.1 |
-| `syn` | 2.0.119, 3.0.3 | `tracing-attributes` and `confique-macro` pin 2.x; `serde_derive`, `thiserror-impl`, `tokio-macros` use 3.x |
+| `syn` | 2.0.119, 3.0.3 | `tracing-attributes` pins 2.x; `serde_derive`, `thiserror-impl`, `tokio-macros` use 3.x |
+
+`confique-macro` was named here as a second cause of the `syn` duplication. It left the graph with
+the rest of the `confique` tree; `tracing-attributes` is now the sole reason 2.x is still resolved,
+verified with `cargo tree -i syn@2.0.119`.
 
 Both are **build-time or internal** duplications that `cargo deny`'s `bans` check accepts. Neither
 duplicates a type that crosses Renvor's public surface, so neither can produce the "two versions of
@@ -150,8 +154,6 @@ resolves from what only the test suite does.
 | `aho-corasick` | 1.1.5 | Unlicense OR MIT | 1.60.0 | transitive | **dev-only** |
 | `bytes` | 1.12.1 | MIT | 1.57 | transitive | production |
 | `cfg-if` | 1.0.4 | MIT OR Apache-2.0 | 1.32 | transitive | production |
-| `confique` | 0.4.0 | MIT OR Apache-2.0 | 1.68.2 | direct | **dev-only** |
-| `confique-macro` | 0.0.13 | MIT OR Apache-2.0 | (unstated) | transitive | **dev-only** |
 | `equivalent` | 1.0.2 | Apache-2.0 OR MIT | 1.6 | transitive | production |
 | `fixedbitset` | 0.5.7 | MIT OR Apache-2.0 | 1.56 | transitive | production |
 | `foldhash` | 0.1.5 | Zlib | 1.60 | transitive | production |
@@ -160,7 +162,6 @@ resolves from what only the test suite does.
 | `getrandom` | 0.4.3 | MIT OR Apache-2.0 | 1.85 | direct | production |
 | `hashbrown` | 0.15.5 | MIT OR Apache-2.0 | 1.65.0 | transitive | production |
 | `hashbrown` | 0.17.1 | MIT OR Apache-2.0 | 1.85.0 | transitive | production |
-| `heck` | 0.5.0 | MIT OR Apache-2.0 | 1.56 | transitive | **dev-only** |
 | `indexmap` | 2.14.0 | Apache-2.0 OR MIT | 1.85 | transitive | production |
 | `lazy_static` | 1.5.0 | MIT OR Apache-2.0 | (unstated) | transitive | production |
 | `libc` | 0.2.189 | MIT OR Apache-2.0 | 1.65 | transitive | production |
@@ -188,25 +189,27 @@ resolves from what only the test suite does.
 | `tokio` | 1.53.1 | MIT | 1.71 | direct | production |
 | `tokio-macros` | 2.7.2 | MIT | 1.71 | transitive | production |
 | `tokio-util` | 0.7.19 | MIT | 1.71 | direct | production |
-| `toml` | 0.9.12+spec-1.1.0 | MIT OR Apache-2.0 | 1.76 | direct | **dev-only** |
 | `toml` | 1.1.4+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | direct | production |
-| `toml_datetime` | 0.7.5+spec-1.1.0 | MIT OR Apache-2.0 | 1.76 | transitive | **dev-only** |
 | `toml_datetime` | 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | transitive | production |
 | `toml_parser` | 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | transitive | production |
-| `toml_writer` | 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | 1.85 | transitive | **dev-only** |
 | `tracing` | 0.1.44 | MIT | 1.65.0 | direct | production |
 | `tracing-attributes` | 0.1.31 | MIT | 1.65.0 | transitive | production |
 | `tracing-core` | 0.1.36 | MIT | 1.65.0 | transitive | production |
 | `tracing-subscriber` | 0.3.23 | MIT | 1.65.0 | direct | production |
 | `unicode-ident` | 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | 1.71 | transitive | production |
-| `winnow` | 0.7.15 | MIT | 1.65.0 | transitive | **dev-only** |
 | `winnow` | 1.0.4 | MIT | 1.65.0 | transitive | production |
 | `zeroize` | 1.9.0 | Apache-2.0 OR MIT | 1.85 | transitive | production |
-`(unstated)` MSRV appears for `confique-macro`, `lazy_static`, and `matchers`. All three are
-**dev-only**, none states a `rust-version`, and all three compile on 1.94.0 — verified by the fact
-that the test suite builds and runs on the pinned toolchain. An unstated MSRV is not a violation;
-it is an absence of a promise, and the absence is recorded here rather than papered over with an
-inferred number.
+`(unstated)` MSRV appears for exactly **two** packages: `lazy_static` and `matchers`. Both arrive
+transitively through `tracing-subscriber`, and both are therefore **production**, not dev-only.
+Neither states a `rust-version`; both compile on 1.94.0, verified by the workspace building and
+testing on the pinned toolchain. An unstated MSRV is not a violation — it is an absence of a
+promise, and the absence is recorded here rather than papered over with an inferred number.
+
+> **Corrected 2026-08-16 (T122).** This paragraph previously named **three** packages, including
+> `confique-macro`, and stated that *"all three are dev-only"*. `confique-macro` had already been
+> deleted from the graph, and `lazy_static` and `matchers` were never dev-only — they reach a
+> consumer through `tracing-subscriber`. The sentence understated the production surface by two
+> packages, in the direction that makes an inventory look safer than it is.
 
 ## T033 — Did the direct-candidate evaluation predict the transitive graph?
 

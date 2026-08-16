@@ -1,7 +1,25 @@
 # Phase 002 — Evidence Ledger
 
-**Feature**: [`specs/002-core-kernel`](../specs/002-core-kernel/spec.md) | **Status**: in progress
+**Feature**: [`specs/002-core-kernel`](../specs/002-core-kernel/spec.md)
 **Toolchain**: 1.94.0 | **Source of truth**: the live workspace and the tracked `Cargo.lock`
+
+## Status
+
+**Implementation is complete, conditional on integration into `main`.** Every task T001–T132 has
+been executed and verified on the branch `feat/phase-002-core-kernel`.
+
+Three things this ledger is **not** claiming, stated here so no reader has to infer them:
+
+1. **The branch is not integrated.** It is unmerged. Nothing in this document should be read as a
+   statement about `main`.
+2. **No independent review has occurred.** Phase 002 closes under **W-005**, which waives *who
+   reviews* and waives nothing about *what must be true*. Every review recorded here is
+   **NON-INDEPENDENT and ADVISORY**, and saying otherwise anywhere would be false.
+3. **Nothing is published.** 0 crates, 0 tags, 0 releases.
+
+A pre-shipping audit on **2026-08-16** found defects that the 11-step verification sequence does
+not cover. They are recorded in [Pre-shipping corrections](#pre-shipping-corrections-t111t132)
+below, and T001–T110 must be read as *complete-as-specified*, not as *audited-and-shipped*.
 
 This ledger records what was **executed and observed**, not what was intended. Where something was
 not done, it says so; where something failed, it says that too. A ledger that only records
@@ -14,7 +32,7 @@ successes is a marketing document.
 | Configuration compatibility proof (8 obligations) | T014–T020 | **FAILED — 4 of 8 met.** Obligations 1, 4, 6, 7 unmet; obligation 4 unrecoverable. `serde` + `toml` fallback **triggered** | `crates/renvor-config/tests/proof_gate.rs` (10 tests), `examples/env_probe.rs`, research §D6 |
 | Provider-resolver feasibility and counters | T021–T025 | **PASSED — 8 of 8 met.** Counters exactly 2048 / 8192 / 10240 against allowances 2048 / 16384 / 18432. Iterative-SCC fallback **not** triggered | `crates/renvor-core/tests/resolver_proof.rs` (13 tests), research §D8 |
 | ADR-0007 governance gate | T026–T029 | **PASSED — accepted under W-004** after 8 advisory findings, all dispositioned. Two changed the record | `decisions/0007-phase-002-custom-kernel-primitives.md` |
-| Complete resolved transitive dependency inventory | T030–T034 | **PASSED.** 55 external packages; 0 without a licence, 0 over MSRV, `cargo deny` clean on all four checks | `governance/phase-002-dependency-inventory.md` |
+| Complete resolved transitive dependency inventory | T030–T034, T122 | **PASSED.** **48** external packages (45 production, 3 dev-only); 0 without a licence, 0 over MSRV, `cargo deny` clean on all four checks. *55 was the pre-`confique` figure and is corrected here* | `governance/phase-002-dependency-inventory.md` |
 
 **The two proof gates disagreed, and that is them working.** One failed on evidence the research had
 predicted; the other passed and reversed a prior decision to build. Only the failing one
@@ -470,12 +488,21 @@ of that table would have been an assumption wearing a result's clothes.
 
 ### T107 — quickstart gates
 
-| Gate | Result |
-|---|---|
-| 0–5 (workspace, format, lint, test, docs, deny) | covered by `xtask verify` steps 1–6, all passed |
-| 13 (crate DAG and facade isolation) | **now automated** as verify step 7, with controls |
-| 14 (publication status) | passed — see T110 below |
-| 15 (working-tree cleanliness) | verify step 11, passes once work is committed |
+**Superseded by T125.** The table that stood here was wrong in three ways, and each was in the
+direction that made coverage look better than it was:
+
+1. It **collapsed gates 0–5** into "covered by `xtask verify` steps 1–6". The verification sequence
+   and the quickstart gates are different checks with different assertions — Gate 3 runs the
+   eight-obligation configuration proof and Gate 5 runs the 1024-node chain, neither of which any
+   `xtask` step performs.
+2. It **omitted gates 6 through 12 entirely** — drain, health, failure injection, run-identifier
+   opacity, tracing ownership, hostile input, and examples. Seven gates, not recorded at all.
+3. It **labelled Gate 15 "working-tree cleanliness"**, which is verification *step* 11. Gate 15 is
+   the resolved-dependency inventory. The row therefore recorded a pass for a check that was never
+   run, under the name of a different one.
+
+Each of the sixteen gates has now been run individually. See
+[T125 — every quickstart gate, run individually](#t125--every-quickstart-gate-run-individually).
 
 ### T108 — scope and authorization
 
@@ -635,8 +662,8 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 2 | **ADR-0008** remains `proposed` | W-004 covers ADR-0007 alone and confers no authority here. FR-035 does not require acceptance for a packaging decision | No |
 | 3 | Independent re-review of ADR-0007 when W-004 closes | No qualified independent reviewer is available (research §D11 criteria 1, 2, 4) | Blocks W-004 closure |
 | 4 | **W-005** — Phase 002 independent requirements-and-security review | Same staffing gap, phase level | Blocks public release |
-| 5 | `ConfigSource::load` and `validate` return `Result<(), KernelError>` and carry **no value type** | US1 needs the *phase behaviour on failure*; typed decoding is `ConfigResolver`, implemented at T071. A placeholder value type now would be a shape nobody measured | Closes with US3 |
-| 6 | The facade's `config` re-export is currently **vacuous** — `renvor-config` exports no items yet | The gate is structurally correct and will carry real items from T071; today it gates an empty module | No |
+| ~~5~~ | ~~`ConfigSource::load` and `validate` carry no value type~~ | **CLOSED 2026-08-16 (T126).** It was written to close with US3, and US3 shipped: typed decoding lives in `ConfigResolver`, and `SchemaSource` bridges it to the lifecycle by resolving during `load` and holding the value for a `ConfigHandle`. The port carries no value type *by design*, not pending a decision — the kernel never sees the author's schema, which is what keeps `renvor-core` free of a parser | — |
+| ~~6~~ | ~~The facade's `config` re-export is **vacuous**~~ | **CLOSED 2026-08-16 (T126).** It was written when `renvor-config` was a documentation-only stub. The crate now exports `ConfigSchema`, `LayeredResolver`, `LayeredResolverBuilder`, `FileLayer`, `MAX_FILE_BYTES`, `SchemaSource`, `ConfigHandle`, `Secret`, `REDACTED`, `NESTING_SEPARATOR`, `DecodedLayer`, and `Merged`. The feature gate is load-bearing: `--no-default-features` resolves no parser, derive macro, or secret crate, asserted in both directions by `xtask` step 7 | — |
 | 7 | `DEFAULT_PROVIDER_DEADLINE` is **30 s by Renvor's choice, not by specification** | FR-025 and C-L7 require the bound; no artifact names a value. Chosen to match the drain default as a symmetry, not from measurement | No — but a phase that measures real provider start-up times should revisit it |
 | 8 | The TOML boundary's generated-input testing is a **hand-written deterministic generator**, not a coverage-guided fuzzer | `cargo-fuzz` needs nightly against a fixed 1.94.0 floor; `proptest`/`arbitrary` are new packages in a recorded-gate inventory. Explores far less of the space | No — but a phase with a nightly CI lane should add real fuzzing |
 | 9 | An author writes a **second, all-optional struct** per schema | Decode-per-source needs an all-optional decode target and Renvor has no derive macro. A proc-macro of its own is custom infrastructure under FR-035 needing its own accepted record | No |
@@ -646,6 +673,182 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | ~~13~~ | ~~`Panic` not injectable for providers~~ | **CLOSED**: contained by polling the already-boxed provider future inside `catch_unwind` — 0 new packages, 0 `unsafe`. SC-009 met in full | — |
 | 15 | A configuration source that never returns **leaks its worker thread** | No Rust API can interrupt a blocked thread. The kernel's *wait* is bounded, which is what FR-025 requires; the thread is not, and cannot be | No — but an application that hits it repeatedly will accumulate threads |
 | ~~14~~ | ~~SC-013 partially met~~ | **CLOSED**: the full 11-step sequence ran on both 1.94.0 and 1.97.1, 0 skipped, with toolchain propagation verified by probe | — |
+| 16 | `catch_unwind` contains only **unwinding** panics; under `panic = "abort"` there is **no** provider or contributor panic containment | A property of the panic strategy, not of Renvor. Nothing in the language can catch an abort. Renvor sets no `panic` profile, so the default `unwind` applies unless a consumer changes it. Also outside reach: a double panic, `process::abort`, and a stack overflow | No — but a consumer who sets `panic = "abort"` loses C-L9's `Panic` guarantee and must be told so |
+| 17 | `DEFAULT_READINESS_DEADLINE` is **5 s by Renvor's choice, not by specification** | Same shape as items 7 and 11. FR-025 requires the bound; no artifact names a value. Chosen to sit under a typical container probe interval, so a hung contributor reports as hung rather than as a probe that never answered | No — a phase that measures real probe intervals should revisit it |
+| 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
+| 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded; the thread is not | No — but a permanently-hung contributor accumulates one thread per probe |
+
+## Pre-shipping corrections (T111–T132)
+
+A **read-only pre-shipping audit** on 2026-08-16, run against the finished tree at `ef76f4e`, found
+defects that T001–T110 and the 11-step verification sequence had not caught. Every one is recorded
+here with what it was, why the existing checks missed it, and what now catches it.
+
+**The pattern across all of them is the same**: a check that looked right and never executed the
+thing it claimed to check. That is the class of defect worth naming, because each individual
+instance reads as an oversight and the class reads as a method problem.
+
+### A — runtime and compile correctness
+
+| # | Defect | Why nothing caught it | Now caught by |
+|---|---|---|---|
+| T111 | `cargo check -p renvor --no-default-features --all-targets` **failed to compile**: the `configuration` example uses `renvor::config` with no `required-features` declaration | Step 7 asked `cargo tree` whether the lean graph resolved the config crates. **Resolving a graph is not compiling against it.** The tree query was green throughout | `lean_facade_compiles` in step 7, with a control that must **fail**: the example must not build without the feature, or the gate guards nothing |
+| T112 | `std::env::vars()` **panics** on the first non-Unicode entry — including one set by an unrelated program. Measured: exit 101 | Every environment test supplied a `BTreeMap` through `with_environment_map`, because `set_var` is `unsafe` and the workspace forbids it. **Nothing ever read the real environment** | `read_process_environment` over `vars_os`, and `tests/environment_bytes.rs`, which re-executes the test binary with real non-Unicode variables attached |
+| T113 | `std::thread::spawn` **panics** when the OS refuses a thread — in a module that deliberately leaks one thread per hung source | Thread exhaustion is a *consequence of this module's own design*, and nothing tested it because nothing could: making the OS refuse needs `libc` and an `unsafe` `setrlimit` | `Builder::spawn`, `KernelError::ResourceUnavailable`, and a spawner **seam** so the refusal path is reachable from a test |
+| T115 | The wait-inventory gate read **three hardcoded files** and searched for `.await` | It had already closed the wrong set once, for the same reason, and the fix kept the shape that caused it. **The shape of the search decided the shape of the answer**, twice | A gate that **discovers** every file under `src/` and flags any reaching author code without a bound. Mutation-tested: a planted unbounded file fails it |
+| T116 | **10 of C-L9's 21 combinations did not execute.** `Load`, `Validate`, `Register`, `Ready`, and `Drain` each accepted a `Behaviour` and ignored it | `every_combination()` returned 21 points and the tests asserted each *fired*. A phase that fails identically for all three behaviours fires every time | All 21 execute and are asserted for the outcome that behaviour produces at that phase. Writing them **found two more unbounded callbacks** |
+| T116 | `Provider::dependencies`, `ReadinessContributor::readiness`, and `EntropySource::fill` were **unbounded** | They are accessors. "Looks like a field read" is not a bound, and the inventory had never been asked to include them | All three bounded. The kernel-owned callback inventory moves from **five to eight** |
+| T117 | C-L9's `Panic` guarantee was stated unconditionally | `catch_unwind` was described by what it does, not by what it cannot do | Documented in `provider/contain.rs`, `health/contributor.rs`, and open item 16 |
+
+**One diagnostic regression was introduced and corrected during T116.** Moving
+`ReadinessContributor::name` inside the panic guard meant a contributor that panicked in
+`readiness` — the likely case — lost its name to a registration position. The two calls are now
+guarded **separately**, so only a contributor whose *name* panics degrades to a position.
+
+### B — release and package contracts
+
+| # | Defect | Why nothing caught it | Now caught by |
+|---|---|---|---|
+| T118 | `package-metadata.md` and `RELEASING.md` prohibited **any** path dependency. FR-040 prohibits a **path-only** one. Read literally, they made this workspace unpublishable by rule while it was publishable in fact | Three documents stated the rule and **nothing executed it** | `publishable_dependencies_are_resolvable` in step 7, plus seven unit tests covering the permitted form, both prohibited forms, the unreadable sub-table shape, the `publish = false` exemption, and a scan that reads nothing |
+| T119 | `RELEASING.md` listed `renvor` alone at position 1, "declares no dependencies at all" | True in Phase 001. Phase 002 gave the facade dependencies and added three publishable crates; the table was never revisited | Corrected to `renvor-core` → {`renvor-config`, `renvor-testkit`} → `renvor`, with the stale claim quoted and dated |
+| T120 | `release-dry-run.yml` claimed every artifact lands outside the checkout. `cargo package` writes to `target/`, **inside** it. The cleanliness assertion used `git status`, which consults `.gitignore` and is **structurally incapable** of seeing the files this job produces | The assertion always passed, and always would have | `CARGO_TARGET_DIR` outside the checkout; a `find`-based file-listing diff that ignores `.gitignore` entirely; and a **positive control that plants a file in `target/` and requires the detector to see it** |
+| T121 | `README.md`, `SUPPORT.md`, `SECURITY.md`, `CONTRIBUTING.md`, both crate READMEs, the facade's `description`, and four documentation-site pages all still said Renvor "ships no runtime capability" and exposes "three constants" | Nothing checks prose against the code | Rewritten to describe the kernel honestly **and** to state the limit that matters: there is no transport, so nothing can be served |
+
+### C — verification and evidence integrity
+
+| # | Defect | Why nothing caught it | Now caught by |
+|---|---|---|---|
+| T122 | The inventory's resolved-set table still carried the deleted `confique` tree; the direct/transitive split read 11/37 against a live 10/38; and the MSRV note named three dev-only packages when two remain and **both are production** | The summary counts were corrected when `confique` was deleted. The 54-row table beneath them was not | The table regenerated from `cargo metadata --locked`; **Gate 15 now compares the document against the live graph in both directions**, with a control that plants a package the graph does not contain |
+| T123 | Gate 12 globbed `examples/*.rs` from the repository root — **a directory that does not exist** — and ran zero examples | `for f in <no matches>` executes the body zero times and exits 0. The gate printed `GATE 12 PASS` having run nothing | Discovery under `crates/renvor/examples`, a minimum count, and a control that plants a failing example and requires the gate to reject it |
+| T124 | Gate 14d described the ADR-0007 authority as *"a separately proposed and separately approved waiver"* — future tense, written before W-004 existed — and matched status with `^status: accepted`, which the decision-record template **has never produced** | The gate had not been run against the record since the record was accepted | Rewritten for the merged W-004: ledger presence, `active` status, the exact reviewer string, all four counted controls, a recorded advisory result, and the honest denial of independence |
+| T125 | Gate 13f counted the facade's **own unit tests** as implementation items and reported 5 | `^\s*(pub )?(fn\|impl\|struct\|enum)` matches an indented `fn` inside `#[cfg(test)] mod tests` | The test module excluded, with **two** controls: the facade must re-export something, and the pattern must still match the test functions when run against the whole file |
+
+**Gates 13, 14, and 15 would each have failed if run on 2026-08-16 before these corrections.** The
+T107 record of "all gates pass" reflected gates that were run in an earlier form, or in the case of
+Gate 12 a gate that passed by executing nothing. The full sixteen-gate result is recorded below.
+
+### T125 — every quickstart gate, run individually
+
+Run one at a time on 2026-08-16 against the corrected tree. **No gate is collapsed into another,
+and none is omitted.**
+
+| Gate | Criterion | Result | Note |
+|---|---|---|---|
+| 0 | Workspace builds, format, lint | **PASS** | |
+| 1 | Dependency policy (SC-012, SC-017) | **PASS** | includes the empty allow-list control |
+| 2 | Lifecycle order and rollback (SC-001, SC-002) | **PASS** | |
+| 3 | Configuration proof gate, 8 obligations (SC-020) | **PASS** | runs against the Renvor adapter, not the rejected candidate |
+| 4 | Secrets and opaque state (SC-007, SC-016) | **PASS** | |
+| 5 | Provider graph ceilings and work budget (SC-005, SC-021) | **PASS** | includes the 1024-node chain |
+| 6 | Drain, including the zero budget (SC-006) | **PASS** | |
+| 7 | Health and readiness disagree (SC-008) | **PASS** | |
+| 8 | Failure injection at every phase (SC-009) | **PASS** | now all **21** combinations |
+| 9 | Run identifier opacity (SC-019) | **PASS** | |
+| 10 | Tracing ownership (FR-029) | **PASS** | |
+| 11 | Hostile configuration input (FR-038) | **PASS** | hand-written generator; see open item 8 |
+| 12 | Examples and documentation (SC-013, SC-014) | **PASS** | **would have passed vacuously before T123** — 3 examples discovered and run, control fires |
+| 13 | Scope discipline and crate DAG (SC-010) | **PASS** | **would have FAILED before T125** — 13f counted test functions |
+| 14 | Publication and governance (SC-011, FR-034, ADR-0007) | **PASS** | **14d would have FAILED before T124** — status pattern never matched |
+| 15 | Resolved-dependency inventory (FR-040) | **PASS** | **compared nothing before T122** — now 48 = 48, both directions |
+
+**16 of 16 pass. 0 skipped. 0 inconclusive.** Gate 14b's GitHub-releases half was verified with an
+authenticated `gh`, not recorded as an unverified gap.
+
+## Complete requirement evidence map (T129)
+
+**Exactly FR-001…FR-044 and SC-001…SC-022.** Every requirement in the specification has a row.
+A row with no concrete artifact would be visibly unmet; there are none, and the point of writing
+all 66 out is that an absence would show as an empty cell rather than as a requirement nobody
+looked for.
+
+Two rows carry a qualifier rather than a plain **MET**, and both are stated in the row itself
+rather than in a footnote.
+
+### Functional requirements
+
+| # | Requirement | Implementation | Tests and evidence | Status |
+|---|---|---|---|---|
+| **FR-001** | Seven phases, order enforced | `lifecycle/phase.rs` `LifecyclePhase::ALL`; `PhaseCursor::advance` has no target argument, so a backwards transition is **unrepresentable** | `tests/lifecycle.rs`, `tests/lifecycle_edges.rs` | **MET** |
+| **FR-002** | Phase sequence inspectable without instrumenting internals | `ApplicationBuilder::phase_log` → `PhaseLog::entries`, taken **before** `build` | `tests/lifecycle.rs`; every `HarnessRun.phases` | **MET** |
+| **FR-003** | Required configuration and dependencies validated before Ready | `Load`/`Validate`/`Register` all run inside `build`, which returns before `boot` exists | `tests/lifecycle.rs`, `renvor-config/tests/layering.rs` | **MET** |
+| **FR-004** | Boot failure rolls back in exact reverse **actual** initialisation order | `lifecycle/rollback.rs`; `InitialisedProvider` records actual order, not declared | `tests/lifecycle.rs` order-divergence control | **MET** |
+| **FR-005** | A rollback failure does not abort the remaining rollback | `roll_back` collects and never returns early (C-L4) | `tests/lifecycle_edges.rs`, `tests/deadlines.rs` | **MET** |
+| **FR-006** | Shutdown rejects new work, drains within a bound, stops in reverse | `lifecycle/drain.rs` `WorkGate`; `Application::shutdown` | `tests/drain.rs` | **MET** |
+| **FR-007** | An incomplete drain is reported as incomplete with the outstanding count | `DrainOutcome::Incomplete { outstanding }` — no third "probably clean" variant exists | `tests/drain.rs` | **MET** |
+| **FR-008** | Repeated shutdown is safe and never stops a provider twice | `WorkGate::close` reports whether *it* closed the gate, inside one `send_if_modified` | `tests/drain.rs`, `tests/lifecycle_edges.rs` | **MET** |
+| **FR-009** | Shutdown before Ready still rolls back in reverse order | Shared `roll_back` path; no separate pre-Ready branch | `tests/lifecycle_edges.rs` | **MET** |
+| **FR-010** | Typed application state retrievable by type | `state/mod.rs` `TypedStateMap` | `state` unit tests | **MET** |
+| **FR-011** | Duplicate state registration errors, naming the type | `KernelError::StateDuplicate { type_name }` | `state` unit tests | **MET** |
+| **FR-012** | Providers declare dependencies; initialised in dependency order | `provider/mod.rs` `resolve_tracking`; edges directed dependent → dependency | `tests/provider_graph.rs` | **MET** |
+| **FR-013** | Cycles detected before Boot, naming **every** provider | `tarjan_scc`; `KernelError::DependencyCycle { providers }` | `tests/provider_graph.rs` | **MET** |
+| **FR-014** | Missing dependency detected before Boot, naming both endpoints | `KernelError::DependencyMissing { dependent, capability }` | `tests/provider_graph.rs` | **MET** |
+| **FR-015** | Typed, layered configuration over exactly three source kinds | `renvor-config` `layer/{env,file}.rs`, `resolver.rs` | `renvor-config/tests/layering.rs` | **MET** |
+| **FR-016** | Errors identify key, constraint, and source layer | `error/context.rs` `configuration()` | `renvor-config/tests/layering.rs`, `error` unit tests | **MET** |
+| **FR-017** | Invalid configuration prevents Boot; nothing starts | Structural: `build` returns before `boot` exists | `tests/lifecycle.rs` | **MET** |
+| **FR-018** | Secret fields redacted in **every** kernel output form | `secret/mod.rs` `Secret<T>`, `REDACTED`; no `Deref`, no `Into` | `renvor-config/tests/redaction.rs`, `tests/redaction.rs` | **MET** |
+| **FR-019** | Errors expose an inspectable category | `ErrorCategory`, 15 variants, total `category()` match | `error` unit tests | **MET** |
+| **FR-020** | Causal chain preserved | `#[source] BoxedCause` on `ProviderInit`/`ProviderStop` | `tests/lifecycle_edges.rs` downcast to `Panicked` | **MET** |
+| **FR-021** | No error path emits a secret | `Constraint` cannot hold a value; `Configuration` is `#[non_exhaustive]` so no outside crate can bypass it | `error/context.rs` tests, `tests/redaction.rs` | **MET** |
+| **FR-022** | No silent fallbacks | Every refusal returns an error; the env layer's two-candidate decode offers the **same value** to the **same type** | `tests/no_silent_fallback.rs` | **MET** |
+| **FR-023** | Cancellation propagates to running work | `cancel/mod.rs` `CancelScope`, `ProviderScope` | `cancel` unit tests | **MET** |
+| **FR-024** | Cancellation leaves no provider half-initialised | Rollback runs on every Boot failure path, cancellation included | `tests/lifecycle_edges.rs` | **MET** |
+| **FR-025** | Deadlines explicit and bounded; **0** unbounded kernel-owned waits | **Eight** bounded callbacks — entropy, source name, load, validate, Register declarations, provider init, provider stop, readiness | `tests/deadlines.rs`, including the discovery gate (T115) | **MET** |
+| **FR-026** | Health and readiness independently queryable, able to disagree | `health/mod.rs`; readiness reads no liveness value | `tests/health.rs`, both directions | **MET** |
+| **FR-027** | Drain makes readiness not-ready while liveness stays alive | `HealthState::begin_draining` touches only the drain flag | `tests/health.rs` | **MET** |
+| **FR-028** | A failing readiness contributor is individually identifiable | `ContributorVerdict { name, readiness, fault }`; `ContributorFault` distinguishes panicked from timed out from not-asked | `tests/health.rs`, `renvor-testkit/tests/injection.rs` | **MET** |
+| **FR-029** | Tracing init explicit, repeat-safe, installs nothing implicitly | `observe/bootstrap.rs` `try_init_global` → `AlreadyInstalled` | `tests/observe_bootstrap.rs`, install-after-build control | **MET** |
+| **FR-030** | Failure injection at each named phase | `renvor-testkit` `Harness`, `FailureInjectionPoint` | `renvor-testkit/tests/injection.rs` | **MET** |
+| **FR-031** | Deadline and drain behaviour without real elapsed time | `TestClock`; `#[tokio::test(start_paused = true)]` | `tests/deadlines.rs` — two one-hour deadlines in < 1 s | **MET** |
+| **FR-032** | Examples compile, run, no hidden global mutable state | `crates/renvor/examples/{minimal,providers,configuration}.rs` | quickstart Gate 12, with a control | **MET** |
+| **FR-033** | No HTTP, GraphQL, persistence, auth, CLI, generation, or frontend | `tokio` features are `rt`, `time`, `sync`, `macros` only | `xtask` step 7 `crate_dag_holds`; quickstart Gate 13a | **MET** |
+| **FR-034** | No crate, package, image, release, or tag published | 0 published; `publish = true` states a crate *may* be, not that it was | quickstart Gate 14a–14c; sparse-index 404 × 4 with a 200 control | **MET** |
+| **FR-035** | Custom infrastructure justified by an accepted ADR | ADR-0007, accepted under W-004 | quickstart Gate 14d; `decisions/0007-*.md` | **MET — under waiver** |
+| **FR-036** | Public surface declared explicitly unstable | SC-022 sentence, byte-identical in three normative locations | `xtask` step 7 `instability_wording_agrees` | **MET** |
+| **FR-037** | Two classes of sensitive data, both non-emitting | `Secret<T>` (a); `TypedStateMap` emits type names only (b) | `tests/redaction.rs` | **MET** |
+| **FR-038** | Hostile configuration fails closed | `MAX_FILE_BYTES`; `locate_failure` bisection; non-Unicode environment refusal | `renvor-config/tests/hostile.rs`, `tests/environment_bytes.rs` | **MET** |
+| **FR-039** | Concrete numeric ceilings | 1024 providers, 8192 edges, 2048/16384/18432 work units | `tests/provider_graph.rs`, `resolver_proof.rs` | **MET** |
+| **FR-040** | Every external dependency recorded with full evidence | `governance/phase-002-dependency-inventory.md`, 48 packages | quickstart Gate 15 — document compared to live graph, both directions | **MET** |
+| **FR-041** | Authorization impact is none | No user, role, permission, token, or session type exists | T108 record above | **MET** |
+| **FR-042** | Drain budget author-overridable, documented default 30 s | `DEFAULT_DRAIN_BUDGET`; `with_drain_budget` | `tests/drain.rs` | **MET** |
+| **FR-043** | One span per lifecycle phase, carrying the run identifier | `observe/spans.rs` `phase_span(phase, run_id)` | `tests/observe_bootstrap.rs`, recording subscriber | **MET** |
+| **FR-044** | Configuration resolves as two distinct steps | `decode_source` per layer, then `merge_layers` | `renvor-config/tests/proof_gate.rs` obligations 7a/7b | **MET** |
+
+### Success criteria
+
+| # | Criterion | Evidence | Status |
+|---|---|---|---|
+| **SC-001** | Lifecycle order asserted by a test | `tests/lifecycle.rs` | **MET** |
+| **SC-002** | Reverse shutdown order at position *n* of *k* | `tests/lifecycle.rs`, with an order-divergence control | **MET** |
+| **SC-003** | **0** failing configurations start anything | `tests/lifecycle.rs`; structural — `build` precedes `boot` | **MET** |
+| **SC-004** | Distinct named errors; **0** panics in ordinary use | `state` tests; `provider/mod.rs` `id_at` degrades rather than panicking | **MET** |
+| **SC-005** | Cycles and missing dependencies caught before Boot; 0 reach Boot | `tests/provider_graph.rs` | **MET** |
+| **SC-006** | Over-budget drain incomplete in 100% of runs, 0 reported clean | `tests/drain.rs`; zero budget has **no** fast path | **MET** |
+| **SC-007** | **0** secret-marked values in any output form | `tests/redaction.rs`, `renvor-config/tests/redaction.rs` | **MET** |
+| **SC-008** | Health and readiness disagree in ≥ 1 asserted state | `tests/health.rs` — asserted in **both** directions | **MET** |
+| **SC-009** | 7 of 7 phases injectable, 100% covered | `renvor-testkit/tests/injection.rs` — all **21** combinations execute and are attributed | **MET** |
+| **SC-010** | **0** capabilities outside declared scope | `xtask` step 7; quickstart Gate 13, 5 sub-checks each with a control | **MET** |
+| **SC-011** | **0** crates, images, releases, or tags published | quickstart Gate 14; non-200/404 treated as FAIL | **MET** |
+| **SC-012** | 100% of selected packages carry a recorded evaluation | `research.md` §3; `governance/phase-002-dependency-inventory.md` | **MET** |
+| **SC-013** | Full sequence, 0 failing and 0 silently skipped, on both toolchains | T106 and T131 records; 11/11 on 1.94.0 and on stable | **MET** |
+| **SC-014** | Every example compiles, runs, no global mutable state | quickstart Gate 12, with a failing-example control | **MET** |
+| **SC-015** | **0** unbounded waits in kernel-owned paths | `tests/deadlines.rs`; discovery gate mutation-tested (T115) | **MET** |
+| **SC-016** | **0** registered-state contents in any output | `tests/redaction.rs` — an unmarked credential-bearing value | **MET** |
+| **SC-017** | 100% of dependencies carry version, licence, MSRV, advisory status | `governance/phase-002-dependency-inventory.md`; Gate 15 comparison | **MET** |
+| **SC-018** | 7 of 7 phases emit a span; 100% carry the run identifier | `tests/observe_bootstrap.rs`, `tests/run_id.rs` | **MET** |
+| **SC-019** | Opacity by construction and a deterministic accessor | `OsEntropy` has **no fields** and `new()` takes **0** inputs | **MET** |
+| **SC-020** | Decoding and precedence asserted separately and end to end | `renvor-config/tests/proof_gate.rs` (8 obligations), `layering.rs` | **MET** |
+| **SC-021** | Every graph bound asserted numerically, size and work separately | `ResolutionReport`; `tests/resolver_proof.rs` — 2048 / 8192 / 10240 | **MET** |
+| **SC-022** | Closure stated as event plus accepted superseding record | `xtask` step 7 — 3 byte-identical copies, 0 phase numbers in the clause | **MET** |
+
+**Counts**: 44 functional requirements, 44 rows. 22 success criteria, 22 rows. **0 empty cells.**
+
+**FR-035 is MET under a waiver, not unconditionally.** ADR-0007 is accepted; the independent review
+its acceptance would otherwise require has **not** occurred, and W-004 is the recorded authority for
+that gap. A reader who needs FR-035 satisfied without a waiver should treat it as open.
+
+**SC-009's `Panic` behaviour is bounded by the panic strategy.** It holds wherever unwinding is the
+strategy, which is the default and is what CI runs. Under `panic = "abort"` it does not hold and
+cannot — see open item 16.
 
 ## Publication status
 

@@ -314,21 +314,21 @@ that has not been integrated, with the corrections below outstanding.
 
 ### B. Release and package contracts
 
-- [ ] T118 Reconcile the dependency rule across `specs/001-governance-foundation/spec.md`, `contracts/package-metadata.md`, and `RELEASING.md`: `{ path, version }` is permitted for publishable intra-workspace dependencies; **path-only** and **git** dependencies remain prohibited. Add an executable manifest check
-- [ ] T119 Correct `RELEASING.md`'s publication order to `renvor-core` → `renvor-config` and `renvor-testkit` → `renvor`, with `xtask` never published, and remove the stale one-package / no-dependency statement
-- [ ] T120 Fix `release-dry-run.yml`'s false "everything outside the checkout" claim: direct package and dry-run output to a target directory outside the checkout, collect archives from there, and replace the `git status`-only cleanliness control with one that can detect ignored generated files
-- [ ] T121 Sweep `README.md`, `SUPPORT.md`, `SECURITY.md`, `CONTRIBUTING.md`, `crates/renvor/README.md`, `crates/renvor/Cargo.toml`, and the documentation site for stale Phase 001 "version metadata only" claims
+- [x] T118 Reconcile the dependency rule across `specs/001-governance-foundation/spec.md`, `contracts/package-metadata.md`, and `RELEASING.md`: `{ path, version }` is permitted for publishable intra-workspace dependencies; **path-only** and **git** dependencies remain prohibited. Add an executable manifest check
+- [x] T119 Correct `RELEASING.md`'s publication order to `renvor-core` → `renvor-config` and `renvor-testkit` → `renvor`, with `xtask` never published, and remove the stale one-package / no-dependency statement
+- [x] T120 Fix `release-dry-run.yml`'s false "everything outside the checkout" claim: direct package and dry-run output to a target directory outside the checkout, collect archives from there, and replace the `git status`-only cleanliness control with one that can detect ignored generated files
+- [x] T121 Sweep `README.md`, `SUPPORT.md`, `SECURITY.md`, `CONTRIBUTING.md`, `crates/renvor/README.md`, `crates/renvor/Cargo.toml`, and the documentation site for stale Phase 001 "version metadata only" claims
 
 ### C. Verification and evidence integrity
 
-- [ ] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
-- [ ] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
-- [ ] T124 Update quickstart Gate 14 for the merged **W-004** authority — its four controls and three preconditions — and remove the obsolete "separately proposed waiver" text
-- [ ] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
+- [x] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
+- [x] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
+- [x] T124 Update quickstart Gate 14 for the merged **W-004** authority — its four controls and three preconditions — and remove the obsolete "separately proposed waiver" text
+- [x] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
 
 ### D. W-005 and phase closure
 
-- [ ] T126 Correct the stale open items: the config facade re-export is no longer vacuous, and the `ConfigSource` item is superseded by US3
+- [x] T126 Correct the stale open items: the config facade re-export is no longer vacuous, and the `ConfigSource` item is superseded by US3
 - [ ] T127 Run the repository-local `speckit-analyze` against the finished artifacts and implementation; resolve every CRITICAL, HIGH, and MEDIUM finding and disposition every LOW one
 - [ ] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually
 - [ ] T129 Add a complete evidence map covering exactly **FR-001…FR-044** and **SC-001…SC-022**, each row naming concrete implementation, tests, and evidence, or visibly unmet
