@@ -1,0 +1,54 @@
+# Failure injection and deterministic time control for testing Renvor applications
+# (spec FR-030, FR-031).
+#
+# `publish = true` is REQUIRED here, not merely permitted. Plan DAG property 4 has authors add
+# this crate under `[dev-dependencies]` — that is the only way FR-030's harness reaches a user's
+# tests without reaching their binaries. A `publish = false` crate cannot be depended on at all,
+# so marking it unpublishable would make the harness undeliverable.
+#
+# Nothing in `renvor`, `renvor-core`, or `renvor-config` depends on this crate. That direction is
+# what keeps `test-util` out of every production graph, and it is asserted at T101.
+
+[package]
+name = "renvor-testkit"
+description = "Test harness for Renvor applications: lifecycle failure injection at every phase, and deterministic time control without real elapsed time."
+documentation = "https://docs.rs/renvor-testkit"
+readme = "README.md"
+keywords = ["renvor", "testing", "harness"]
+categories = ["development-tools::testing"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `test-util` is a NORMAL dependency here and only here. This crate is itself a testing tool, so
+# time control is its product rather than a test convenience — an author consumes it under
+# `[dev-dependencies]`, which is what keeps it out of production binaries (FR-031).
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
+
+# Capturing subscriber for assertions about emitted records. `json` and `ansi` are excluded.
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter"] }
+
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true

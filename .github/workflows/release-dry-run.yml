@@ -42,10 +42,27 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # The single publishable package. `xtask` declares `publish = false` and is deliberately
-  # not packaged here: `cargo package --workspace` would include it, which would make the
-  # rehearsal describe a file set that will never be published.
-  CRATE: renvor
+  # The publishable set, in PUBLICATION ORDER — dependencies before dependents.
+  #
+  # Phase 001 had exactly one publishable package and rehearsed it with `-p renvor`. Phase 002
+  # gives the facade its first dependencies, and that single-crate form then becomes IMPOSSIBLE,
+  # not merely suboptimal: `cargo publish -p renvor --dry-run` fails with "no matching package
+  # named `renvor-core` found, location searched: crates.io index", because the dependency does
+  # not exist on the registry yet. Marking the dependencies publishable does NOT fix it — the
+  # failure is about registry presence, not about the `publish` flag.
+  #
+  # `cargo publish --dry-run --workspace` DOES work: cargo stages the workspace members into a
+  # temporary registry and verifies the whole chain. It requires every member in the chain to be
+  # publishable, which is why renvor-core, renvor-config, and renvor-testkit are `publish = true`.
+  #
+  # `xtask` declares `publish = false` and is excluded automatically by the workspace commands —
+  # verified: the dry run uploads 4 crates, not 5.
+  #
+  # See specs/002-core-kernel/research.md D13 for the four-case experiment, and proposed ADR-0008.
+  CRATES: "renvor-core renvor-config renvor-testkit renvor"
+  # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
+  # consumer, because it is the package users actually depend on.
+  FACADE: renvor
 
 jobs:
   rehearse:
@@ -87,15 +104,46 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$REHEARSAL_DIR"
-          cargo package -p "$CRATE" --list | tee "${REHEARSAL_DIR}/${CRATE}-package-list.txt"
+          for crate in $CRATES; do
+            cargo package -p "$crate" --list \
+              | tee "${REHEARSAL_DIR}/${crate}-package-list.txt"
+          done
 
-      - name: Build the package archive
-        run: cargo package -p "$CRATE"
+      # POSITIVE CONTROL. `xtask` is `publish = false`, so the workspace commands must exclude
+      # it. Asserting that the file-set listing produced exactly one file per publishable crate
+      # and NONE for xtask turns "we think it is excluded" into a checked fact — and would catch
+      # a future manifest edit that made the verification runner shippable.
+      - name: Assert the publishable set is exactly the intended crates
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' $CRATES | sort | tr '\n' ' ')
+          actual=$(cargo metadata --locked --format-version 1 \
+            | python3 -c 'import json,sys; m=json.load(sys.stdin); ids=set(m["workspace_members"]);
+          print(" ".join(sorted(p["name"] for p in m["packages"]
+                if p["id"] in ids and p.get("publish") != [])))' )
+          actual="${actual} "
+          echo "expected: ${expected}"
+          echo "actual:   ${actual}"
+          if [ "$expected" != "$actual" ]; then
+            echo "publishable set changed — update CRATES or the manifest that changed" >&2
+            exit 1
+          fi
+          if printf '%s' "$actual" | grep -qw xtask; then
+            echo "xtask became publishable; it is internal tooling and must not ship" >&2
+            exit 1
+          fi
+          echo "publishable set matches, and xtask is excluded"
 
-      # The full publish verification path with the upload removed. Everything the
-      # registry would reject locally is rejected here instead.
+      - name: Build the package archives
+        run: cargo package --workspace
+
+      # The full publish verification path with the upload removed. Everything the registry
+      # would reject locally is rejected here instead.
+      #
+      # `--workspace`, never `-p renvor`: the facade depends on crates that are not on the
+      # registry, so the single-crate form cannot resolve them. See the CRATES comment above.
       - name: Publish dry run
-        run: cargo publish -p "$CRATE" --dry-run
+        run: cargo publish --dry-run --workspace
 
       # cargo-cyclonedx writes a BOM adjacent to EVERY Cargo.toml in the workspace, not
       # only the one named by --manifest-path. It therefore also emits one beside
@@ -105,13 +153,13 @@ jobs:
         run: |
           set -euo pipefail
           cargo cyclonedx \
-            --manifest-path "crates/${CRATE}/Cargo.toml" \
+            --manifest-path "crates/${FACADE}/Cargo.toml" \
             --format json \
             --spec-version 1.5 \
             --all \
-            --override-filename "${CRATE}-sbom"
-          mv "crates/${CRATE}/${CRATE}-sbom.json" "${REHEARSAL_DIR}/"
-          find . -name "${CRATE}-sbom.json" -delete
+            --override-filename "${FACADE}-sbom"
+          mv "crates/${FACADE}/${FACADE}-sbom.json" "${REHEARSAL_DIR}/"
+          find . -name "${FACADE}-sbom.json" -delete
 
       # An SBOM nobody parses is a file, not evidence. This catches a silent tool change
       # that starts emitting a different format or spec version.
@@ -120,13 +168,13 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os
-          path = os.path.join(os.environ["REHEARSAL_DIR"], os.environ["CRATE"] + "-sbom.json")
+          path = os.path.join(os.environ["REHEARSAL_DIR"], os.environ["FACADE"] + "-sbom.json")
           with open(path, encoding="utf-8") as handle:
               bom = json.load(handle)
           assert bom["bomFormat"] == "CycloneDX", bom.get("bomFormat")
           assert bom["specVersion"] == "1.5", bom["specVersion"]
           subject = bom.get("metadata", {}).get("component", {})
-          assert subject.get("name") == os.environ["CRATE"], subject.get("name")
+          assert subject.get("name") == os.environ["FACADE"], subject.get("name")
           print("bomFormat", bom["bomFormat"], "specVersion", bom["specVersion"])
           print("subject", subject.get("name"), subject.get("version"))
           print("components", len(bom.get("components", [])))

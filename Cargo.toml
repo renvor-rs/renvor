@@ -9,7 +9,13 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/renvor", "xtask"]
+members = [
+    "crates/renvor",
+    "crates/renvor-core",
+    "crates/renvor-config",
+    "crates/renvor-testkit",
+    "xtask",
+]
 
 # The single authoritative declaration of edition and MSRV (spec FR-016, FR-017).
 # Members inherit with `edition.workspace = true` / `rust-version.workspace = true`

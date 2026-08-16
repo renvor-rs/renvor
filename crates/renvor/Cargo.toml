@@ -32,9 +32,29 @@ include = [
     "LICENSE-APACHE",
 ]
 
-# No dependencies. A publishable package may not carry a git or path dependency
-# (FR-040); declaring none is the strongest form of compliance.
+# The facade gains its first dependencies in Phase 002. The previous comment here read "No
+# dependencies … declaring none is the strongest form of compliance" — true for Phase 001, and
+# no longer true.
+#
+# Phase 001 FR-040 forbids a package intended for publication from depending on a **path-only**
+# dependency. `{ path, version }` is not path-only: cargo rewrites it to the version requirement
+# at publish time and drops the path. Both keys are therefore mandatory, and omitting `version`
+# would breach FR-040 rather than merely inconvenience the release.
+#
+# `renvor-config` is OPTIONAL and gated behind the default-on `config` feature. That is the
+# mechanism by which a consumer can take the core-only path and resolve none of the parser,
+# derive, or secret crates — asserted with a positive control at T102, in both directions.
 [dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+renvor-config = { path = "../renvor-config", version = "0.0.0", optional = true }
+
+[features]
+# `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
+# isolation is opt-in via `default-features = false`. Stated plainly because the reverse is
+# easy to assume: this feature does not make the default build lean, it makes the lean build
+# reachable.
+default = ["config"]
+config = ["dep:renvor-config"]
 
 [lints]
 workspace = true

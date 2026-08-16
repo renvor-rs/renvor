@@ -1,0 +1,73 @@
+# Typed, layered configuration (spec FR-015…FR-018, FR-038, FR-044) and the Renvor secret
+# boundary type (FR-037a).
+#
+# This crate exists so that `renvor-core` does not have to carry a parser, a derive macro, or a
+# secret type. A consumer taking `renvor-core` directly — or `renvor` with
+# `default-features = false` — resolves none of them. That claim is asserted at T101/T102 with a
+# positive control, because an isolation claim nobody tested is an isolation hope.
+#
+# `publish = true`: see the note in crates/renvor-core/Cargo.toml and research D13.
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-config"
+description = "Typed, layered configuration and secret redaction for the Renvor framework: built-in defaults, TOML files, and environment variables with source attribution."
+documentation = "https://docs.rs/renvor-config"
+readme = "README.md"
+keywords = ["renvor", "configuration", "toml"]
+categories = ["config"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# Typed decoding (research D7). `derive` is required for the schema declarations FR-015 implies.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+# The ONLY document format this phase accepts. FR-015 permits exactly three source kinds, and
+# TOML is the only file format among them.
+toml = { version = "1.1.4", default-features = false, features = ["parse", "serde"] }
+
+# Access control and zeroization only. Renvor owns the OUTPUT contract — `Display`, error
+# messages, error context, tracing fields, and serialization — because this crate supplies none
+# of them and implements no `Display` at all (research D2, contract C-C9).
+#
+# Its ONLY optional feature is `serde`, and it is deliberately NOT enabled: contract C-C9 requires
+# serialization of a secret to be refused, so opting into the crate's serialization support would
+# work directly against the requirement. Verified against the resolver, which reports
+# "available features: serde" and nothing else.
+secrecy = { version = "0.10.3", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
+
+# `confique` is ON PROBATION (research D6) and is a DEV-dependency deliberately, not a normal one.
+#
+# The eight-obligation proof gate must be able to exercise it, which requires it on the graph —
+# but obligations 4 and 6 carry known negative primary-source evidence, so it may well not survive
+# the gate. Keeping it dev-only means the *production* dependency graph never carries a crate that
+# has not yet passed. It is promoted to `[dependencies]` only if the gate passes; if the gate
+# fails, it is deleted rather than demoted, and the recorded serde+toml fallback is implemented.
+#
+# `toml` only. `yaml` and `json5` are excluded so FR-015's three-source-kind limit is STRUCTURAL —
+# a prohibition that cannot be violated by writing code beats one that can.
+confique = { version = "0.4.0", default-features = false, features = ["toml"] }
+
+[lints]
+workspace = true
