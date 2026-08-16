@@ -18,10 +18,10 @@
 //! explicit that the kernel **must not assume opaque state is safe to print merely because it was
 //! not marked secret** — an author may register a credential without marking anything.
 //!
-//! So [`StateEntry`] stores the value as `Box<dyn Any + Send + Sync>`, which has **no `Debug`
-//! bound at all**. The kernel therefore *cannot* print a stored value: it is not a rule that
-//! could be broken by a future `{:?}`, it is an absent trait. The hand-written [`fmt::Debug`] impl
-//! on [`TypedStateMap`] emits type names only, and a test asserts a registered credential's
+//! So the private `StateEntry` stores the value as `Box<dyn Any + Send + Sync>`, which has **no
+//! `Debug` bound at all**. The kernel therefore *cannot* print a stored value: it is not a rule
+//! that could be broken by a future `{:?}`, it is an absent trait. The hand-written [`fmt::Debug`]
+//! impl on [`TypedStateMap`] emits type names only, and a test asserts a registered credential's
 //! contents appear in **0** of the map's output forms.
 //!
 //! # Errors, never panics
