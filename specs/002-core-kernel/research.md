@@ -232,6 +232,57 @@ none of them:
   schema export for a phase whose scope is one typed config. It is the **first candidate to
   re-examine** if the fallback triggers, before writing the adapter.
 
+#### D6 re-examination — `schematic` 0.19.7, read before the adapter was written
+
+The fallback clause above pre-commits to one thing before any adapter is written: *"`schematic`
+0.19.7 … is the **first candidate to re-examine** if the fallback triggers, before writing the
+adapter."* This section is that re-examination, performed on **2026-08-16** by reading the crate's
+own source in the registry cache — not its README.
+
+**Facts** (`cargo info schematic`, then `~/.cargo/registry/src/.../schematic-0.19.7/src/`):
+
+| Property | Observed |
+|---|---|
+| Licence | MIT — inside the allowed set |
+| MSRV | 1.85.0 — under Renvor's 1.94.0 floor |
+| Default features | `config`, `env`, `extends`, `validate`; `toml` is **not** default |
+| Mandatory transitive cost of `config` | `serde_path_to_error`, `starbase_styles`, `schematic_macros` |
+| `url` feature | pulls **`reqwest`** — off by default, and must stay off |
+
+**Where it beats `confique`, on evidence:**
+
+- **Obligation 1 (precedence).** `PartialConfig::finalize` applies *defaults first, then the merged
+  partial, then environment values last* (`src/config/configs.rs:36-41`), and `merge_layers`
+  folds layers in declaration order so a later source wins (`src/config/loader.rs:261-266`). That
+  is exactly C-C4's order. **`confique` has this inverted.**
+- **Obligation 4 (attribution).** `ConfigLoadResult` returns `layers: Vec<Layer<T>>`, each carrying
+  `partial` **and** `source` (`src/config/layer.rs`). Per-key provenance is not supplied, but it is
+  **reconstructible** — a seam `confique`'s `with_fallback` destroys inside the merge.
+- **Obligation 6 (empty environment values).** `env::ignore_empty` is an **opt-in helper**, not the
+  default path. `confique`'s "empty means unset" is built into the crate.
+
+**Why it is still rejected — two reasons, both structural:**
+
+1. **Environment is a per-field annotation, not a layer.** Values are read only for settings marked
+   `#[setting(env = "…")]` (`PartialConfig::env_values` doc, `src/config/configs.rs:23-29`).
+   Contract **C-C4** requires the opposite in as many words: *"Environment is a **layer with a
+   precedence position**, not a per-field opt-in annotation."* A field nobody remembered to
+   annotate is silently unreachable from the environment.
+2. **The environment layer is outside the returned layer set.** `env_values` is applied inside
+   `finalize`, after `merge_layers`, so the environment never appears in `ConfigLoadResult.layers`.
+   Attribution for environment-won keys would have to be reconstructed by a **second, independent**
+   path — which is the parallel-bookkeeping problem ADR-0007 rejects elsewhere.
+
+Two further costs, recorded but not decisive: `config` mandates `starbase_styles`, a
+**terminal-styling** crate, inside a library whose output contract C-C9 says Renvor owns; and
+`env::parse_bool` maps every unrecognised string — including `banana` — to `false`, which is a
+silent fallback if an author reaches for it.
+
+**Outcome**: rejected, and the recorded `serde` + `toml` partial-layer adapter proceeds. The
+rejection is now evidence-based rather than an impression, and the finding that `schematic`'s
+precedence order is *correct* is recorded because it contradicts nothing here but does correct the
+impression that every candidate got ordering wrong.
+
 #### D6 outcome — the gate RAN, and `confique` FAILED it: 4 of 8
 
 Recorded 2026-08-16 by the task that ran the gate. Evidence is

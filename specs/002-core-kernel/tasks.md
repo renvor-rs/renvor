@@ -199,16 +199,16 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 **⚠️ Blocked by T020.** If the proof gate passed, T071 wraps the candidate crate. If **any** obligation failed, this phase implements the recorded `serde` + `toml` partial-layer fallback instead — which is custom infrastructure under FR-035 and is **therefore additionally blocked by T029**. The branch taken is decided at T020 and nowhere else; it is not rediscovered here.
 
-- [ ] T065 [P] [US3] Write the precedence and merge tests in `crates/renvor-config/tests/layering.rs` covering all four merge behaviours and the 7 acceptance scenarios of User Story 3 (SC-020), **reusing the fixtures from T015** rather than adding a second fixture set
-- [ ] T066 [US3] Implement per-source decoding in `crates/renvor-config/src/layer/decode.rs` — every source decoded against the declared schema **before** any merging (FR-015, FR-044)
-- [ ] T067 [US3] Implement the ordered merge in `crates/renvor-config/src/layer/merge.rs`: tables merge per key, arrays replace wholesale, incompatible structural shapes fail naming **both** layers (FR-044)
-- [ ] T068 [US3] Implement source attribution in `crates/renvor-config/src/layer/attribution.rs` producing the winning `SourceLayer` for **every** resolved key (FR-016)
-- [ ] T069 [US3] Implement the environment layer in `crates/renvor-config/src/layer/env.rs` as an orderable layer at highest precedence, failing on any undecodable value **including the empty string**, with 0 unset-reinterpretation (FR-022) (FR-015)
-- [ ] T070 [US3] Implement the TOML file layer in `crates/renvor-config/src/layer/file.rs` preserving spans so errors can name the key (FR-015)
-- [ ] T071 [US3] Implement `ConfigResolver` for the typed resolver in `crates/renvor-config/src/resolver.rs`, satisfying the core port from T040, on whichever of the two branches T020 selected
-- [ ] T072 [P] [US3] Write hostile-input tests in `crates/renvor-config/tests/hostile.rs` for malformed, truncated, and oversized TOML with 0 panics and bounded memory (FR-038)
-- [ ] T073 [P] [US3] Add property or fuzz testing of the TOML boundary in `crates/renvor-config/fuzz/` or via a property-test harness, per constitution principle IX
-- [ ] T074 [US3] Wire configuration into Load and Validate in `crates/renvor-core/src/lifecycle/application.rs` so invalid configuration prevents Boot with 0 providers started (SC-003) (FR-003, FR-017)
+- [x] T065 [P] [US3] Write the precedence and merge tests in `crates/renvor-config/tests/layering.rs` covering all four merge behaviours and the 7 acceptance scenarios of User Story 3 (SC-020), **reusing the fixtures from T015** rather than adding a second fixture set
+- [x] T066 [US3] Implement per-source decoding in `crates/renvor-config/src/layer/decode.rs` — every source decoded against the declared schema **before** any merging (FR-015, FR-044)
+- [x] T067 [US3] Implement the ordered merge in `crates/renvor-config/src/layer/merge.rs`: tables merge per key, arrays replace wholesale, incompatible structural shapes fail naming **both** layers (FR-044)
+- [x] T068 [US3] Implement source attribution in `crates/renvor-config/src/layer/attribution.rs` producing the winning `SourceLayer` for **every** resolved key (FR-016)
+- [x] T069 [US3] Implement the environment layer in `crates/renvor-config/src/layer/env.rs` as an orderable layer at highest precedence, failing on any undecodable value **including the empty string**, with 0 unset-reinterpretation (FR-022) (FR-015)
+- [x] T070 [US3] Implement the TOML file layer in `crates/renvor-config/src/layer/file.rs` preserving spans so errors can name the key (FR-015)
+- [x] T071 [US3] Implement `ConfigResolver` for the typed resolver in `crates/renvor-config/src/resolver.rs`, satisfying the core port from T040, on whichever of the two branches T020 selected
+- [x] T072 [P] [US3] Write hostile-input tests in `crates/renvor-config/tests/hostile.rs` for malformed, truncated, and oversized TOML with 0 panics and bounded memory (FR-038)
+- [x] T073 [P] [US3] Add property or fuzz testing of the TOML boundary in `crates/renvor-config/fuzz/` or via a property-test harness, per constitution principle IX
+- [x] T074 [US3] Wire configuration into Load and Validate in `crates/renvor-core/src/lifecycle/application.rs` so invalid configuration prevents Boot with 0 providers started (SC-003) (FR-003, FR-017)
 
 **Checkpoint**: configuration is typed, layered, attributed, and fails closed.
 

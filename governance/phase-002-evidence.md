@@ -177,17 +177,94 @@ consumes `self`, so a failed or interrupted boot returns no application. The int
 back inside `boot` and is proven in `tests/lifecycle_edges.rs`; the never-booted case shuts down with
 0 providers stopped and a phase record that does **not** claim it passed through `Boot` and `Ready`.
 
+## User Story 3 — the adapter, and the gate that now points at it
+
+**Status**: T065–T074 complete. Workspace tests **148 → 207**, all passing.
+
+### Open item 1 is closed
+
+The eight-obligation gate no longer exercises `confique`, the crate the project had already
+rejected. `crates/renvor-config/tests/proof_gate.rs` runs the same obligations, against the same
+T015 fixtures, against **the Renvor adapter** — and passes. Obligations 4, 6, and 7 are now
+*demonstrated* rather than *designed for*.
+
+`confique` and its child-process probe were **deleted**, as its manifest comment pre-committed:
+*"if the gate fails, it is deleted rather than demoted."* Seven dev-only packages left the resolved
+graph with it, including two duplicate major versions of `toml` and `winnow`. The inventory is
+revised to **48** external packages.
+
+### The pre-committed re-examination was performed
+
+Research §D6's fallback clause named `schematic` 0.19.7 as *"the first candidate to re-examine if
+the fallback triggers, **before writing the adapter**"*. It was re-examined by reading the crate's
+source, and the result **corrects part of the earlier record**:
+
+- `schematic`'s precedence order is **right** — defaults, then merged layers, then environment —
+  where `confique`'s is inverted. The impression that every candidate got ordering wrong was wrong.
+- Its `ConfigLoadResult` exposes per-layer partials **with their sources**, a seam attribution
+  could be rebuilt from. `confique` has no such seam.
+
+It is still rejected, on a clause neither earlier evaluation had tested it against: **C-C4 requires
+the environment to be a layer with a precedence position, not a per-field opt-in annotation**, and
+`schematic` reads environment values only for settings marked `#[setting(env = "…")]`. A field
+nobody remembered to annotate is silently unreachable from the environment. Full record in
+research §D6.
+
+### What running the gate against the adapter revealed
+
+**Obligation 7 could not pass as written, and the reason is a feature.** The `shape_conflict.toml`
+fixture makes `server` a table in one file and a scalar in another. Against the adapter that never
+reaches the merge: decode-per-source rejects the scalar in step 1, because it does not fit the
+declared type. The obligation asks for a diagnostic naming **both** layers; what arrives names the
+key, **the one layer at fault**, and the expected type.
+
+That is stricter, not weaker — the author is told which file is wrong rather than that two files
+differ. The obligation is therefore proven along **both** reachable paths:
+
+| Path | When it fires | What it names |
+|---|---|---|
+| **7a** — per-source decode | the key is in the declared schema | key, the offending layer, expected type |
+| **7b** — merge conflict | the schema does not constrain the key | key and **both** layers, with both shapes |
+
+7b is what "naming both layers" actually applies to, and it is where the merge-level check earns
+its place. This split was found by running the gate, not by reading the contract.
+
+### Three more things the implementation surfaced
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | `ConfigSource::layer()` assumed every `Load` participant maps to **one** layer. The first real implementation spans defaults, two files, and the environment | The method is now `name()`. A method that would have had to lie is worse than one that returns less |
+| 2 | Deriving `Debug` on `SchemaSource` would have **printed the resolved configuration** — precisely what holds credentials. The compiler asked for `T: Debug` | Hand-written `Debug` emitting the name and a resolved/not flag. The right answer was not to add the bound but to stop printing the value, asserted with a positive control |
+| 3 | `serde` gives no key path when deserializing a `toml::Table`; the usual fix is another dependency | The whole-source decode is tried first, and **only on failure** does a bisection narrow to the smallest failing sub-tree, producing a dotted path. Cost is paid once, on a path already returning an error |
+
+### Property testing without a new dependency
+
+`cargo-fuzz` needs nightly, which the fixed 1.94.0 floor rules out, and `proptest`/`arbitrary`
+would each be a new package in a recorded-gate inventory. The generator in
+`crates/renvor-config/tests/hostile.rs` is `SplitMix64` written out — eleven lines, **no**
+dependency, fixed seed, no clock — so a failing case is reproducible by index on any machine.
+
+**The trade is real and recorded**: this explores far less of the input space than a
+coverage-guided fuzzer would. It is entered as open item 8 rather than presented as equivalent.
+
+The generator carries its own positive control: it must produce **some** documents the stack
+accepts and **not all** of them, or one of the two paths it claims to exercise is untested.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
 |---|---|---|---|
-| 1 | **T065** — re-point the eight-obligation gate at the Renvor adapter | The adapter is unimplemented. Its compliance with obligations 4, 6, and 7 is **designed for, not demonstrated** | Blocks the Phase 5 checkpoint, not ADR-0007's acceptance |
+| 1 | ~~**T065** — re-point the eight-obligation gate at the Renvor adapter~~ | **CLOSED 2026-08-16.** The gate runs against the adapter and passes; obligations 4, 6, and 7 are demonstrated | — |
 | 2 | **ADR-0008** remains `proposed` | W-004 covers ADR-0007 alone and confers no authority here. FR-035 does not require acceptance for a packaging decision | No |
 | 3 | Independent re-review of ADR-0007 when W-004 closes | No qualified independent reviewer is available (research §D11 criteria 1, 2, 4) | Blocks W-004 closure |
 | 4 | **W-005** — Phase 002 independent requirements-and-security review | Same staffing gap, phase level | Blocks public release |
 | 5 | `ConfigSource::load` and `validate` return `Result<(), KernelError>` and carry **no value type** | US1 needs the *phase behaviour on failure*; typed decoding is `ConfigResolver`, implemented at T071. A placeholder value type now would be a shape nobody measured | Closes with US3 |
 | 6 | The facade's `config` re-export is currently **vacuous** — `renvor-config` exports no items yet | The gate is structurally correct and will carry real items from T071; today it gates an empty module | No |
 | 7 | `DEFAULT_PROVIDER_DEADLINE` is **30 s by Renvor's choice, not by specification** | FR-025 and C-L7 require the bound; no artifact names a value. Chosen to match the drain default as a symmetry, not from measurement | No — but a phase that measures real provider start-up times should revisit it |
+| 8 | The TOML boundary's generated-input testing is a **hand-written deterministic generator**, not a coverage-guided fuzzer | `cargo-fuzz` needs nightly against a fixed 1.94.0 floor; `proptest`/`arbitrary` are new packages in a recorded-gate inventory. Explores far less of the space | No — but a phase with a nightly CI lane should add real fuzzing |
+| 9 | An author writes a **second, all-optional struct** per schema | Decode-per-source needs an all-optional decode target and Renvor has no derive macro. A proc-macro of its own is custom infrastructure under FR-035 needing its own accepted record | No |
+| 10 | `expected_type` is reported **inside the constraint text**, not as its own field, for file and environment layers | `KernelError::Configuration::expected_type` is `&'static str` so it cannot carry a value (C-E3); the adapter has no schema description to read a per-key type from. All three facts C-C3 requires are in the message | No |
+| 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
 
 ## Publication status
 

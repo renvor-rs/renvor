@@ -18,16 +18,47 @@ reproduce the design document's blind spots.
 | Measure | Count |
 |---|---|
 | Workspace members | **5** (`renvor`, `renvor-core`, `renvor-config`, `renvor-testkit`, `xtask`) |
-| External packages in the lockfile graph | **55** |
+| External packages in the lockfile graph | **48** (was 55; see the revision below) |
 | — reachable over **normal** edges (what a consumer resolves) | **45** |
-| — **dev-only** (test and proof-gate machinery; never in a consumer's graph) | **10** |
-| Directly chosen in research §3 | **12** |
-| Arrived **transitively**, evaluated by nobody until now | **43** |
+| — **dev-only** (test machinery; never in a consumer's graph) | **3** |
+| Directly chosen in research §3 | **11** |
+| Arrived **transitively**, evaluated by nobody until now | **37** |
 | Packages with **no declared licence** | **0** |
 | Packages whose MSRV exceeds **1.94.0** | **0** |
 | `cargo deny check licenses advisories bans sources` | **all four pass** |
 
-**43 of 55 external packages entered the graph without an individual evaluation.** That is the
+## Revision — 2026-08-16, after the configuration proof gate failed
+
+`confique` was a **dev-dependency on probation**, and its own manifest comment pre-committed the
+consequence: *"if the gate fails, it is deleted rather than demoted."* The gate failed 4 of 8, so
+it was deleted along with the child-process probe that existed only to observe its environment
+behaviour.
+
+**Seven packages left the resolved graph**, all of them dev-only and all of them reachable solely
+through `confique`:
+
+| Package | Why it was there |
+|---|---|
+| `confique` | the candidate under probation |
+| `confique-macro` | its derive macro — **build-time code execution**, recorded as a disclosure surface in ADR-0007 |
+| `heck` | case conversion, used by the macro |
+| `toml` 0.8 | a **second** TOML version alongside the 1.1 the adapter uses |
+| `toml_datetime` 0.6 | with it |
+| `toml_writer` | with it |
+| `winnow` 0.6 | with it |
+
+**Two duplicate major versions disappeared with it.** The graph carried `toml` at both 0.8 and
+1.1, and `winnow` at both 0.6 and 0.7, purely because the probationary crate pinned older ones.
+Nothing was added to replace them: the adapter is built on `serde` and `toml`, both of which were
+already direct dependencies before the gate ran.
+
+`cargo deny` now reports `license-not-encountered` for **ISC** — an allowance in `deny.toml` that
+no package matches any more. It is a warning rather than a failure, and the allowance is left in
+place rather than trimmed to match today's graph: a licence policy that is narrowed every time a
+dependency leaves has to be widened again every time one arrives, and each widening is a decision
+nobody reviews.
+
+**37 of 48 external packages entered the graph without an individual evaluation.** That is the
 normal condition of any Rust project and is precisely what FR-040 exists to surface, so it is
 recorded as a measured fact rather than framed as a problem discovered.
 
