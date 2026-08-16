@@ -178,14 +178,14 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 **Independent Test**: Start an application with a task that outlives the drain budget; confirm the deadline is enforced, the forced stop is reported as such, and providers still stop in reverse order.
 
-- [ ] T057 [P] [US2] Write drain tests in `crates/renvor-core/tests/drain.rs` for clean drain, over-budget drain, and **zero** budget with work in flight, asserting 0 clean reports for the latter two (SC-006) (FR-007)
-- [ ] T058 [P] [US2] Write the double-shutdown and shutdown-before-Ready tests in `crates/renvor-core/tests/drain.rs` (FR-008, FR-009)
-- [ ] T059 [US2] Implement `DrainOutcome` with `Clean` and `Incomplete { outstanding }` in `crates/renvor-core/src/lifecycle/drain.rs` (FR-007)
-- [ ] T060 [US2] Implement the drain budget in `crates/renvor-core/src/lifecycle/drain.rs` with a documented 30 s default, author override, and **zero meaning stop immediately** while still reporting outstanding work on the same code path as a timeout (FR-042)
-- [ ] T061 [US2] Implement new-work rejection after shutdown begins in `crates/renvor-core/src/lifecycle/drain.rs`, returning `ShuttingDown` rather than silently dropping or accepting (FR-006)
-- [ ] T062 [US2] Implement idempotent shutdown in `crates/renvor-core/src/lifecycle/application.rs` so `Stop` runs at most once per provider under concurrent requests (FR-008)
-- [ ] T063 [US2] Implement Stop-failure aggregation in `crates/renvor-core/src/lifecycle/rollback.rs` so the first failure never masks the rest (FR-005)
-- [ ] T064 [P] [US2] Assert 0 unbounded waits in kernel-owned paths in `crates/renvor-core/tests/deadlines.rs` (SC-015) (FR-025)
+- [x] T057 [P] [US2] Write drain tests in `crates/renvor-core/tests/drain.rs` for clean drain, over-budget drain, and **zero** budget with work in flight, asserting 0 clean reports for the latter two (SC-006) (FR-007)
+- [x] T058 [P] [US2] Write the double-shutdown and shutdown-before-Ready tests in `crates/renvor-core/tests/drain.rs` (FR-008, FR-009)
+- [x] T059 [US2] Implement `DrainOutcome` with `Clean` and `Incomplete { outstanding }` in `crates/renvor-core/src/lifecycle/drain.rs` (FR-007)
+- [x] T060 [US2] Implement the drain budget in `crates/renvor-core/src/lifecycle/drain.rs` with a documented 30 s default, author override, and **zero meaning stop immediately** while still reporting outstanding work on the same code path as a timeout (FR-042)
+- [x] T061 [US2] Implement new-work rejection after shutdown begins in `crates/renvor-core/src/lifecycle/drain.rs`, returning `ShuttingDown` rather than silently dropping or accepting (FR-006)
+- [x] T062 [US2] Implement idempotent shutdown in `crates/renvor-core/src/lifecycle/application.rs` so `Stop` runs at most once per provider under concurrent requests (FR-008)
+- [x] T063 [US2] Implement Stop-failure aggregation in `crates/renvor-core/src/lifecycle/rollback.rs` so the first failure never masks the rest (FR-005)
+- [x] T064 [P] [US2] Assert 0 unbounded waits in kernel-owned paths in `crates/renvor-core/tests/deadlines.rs` (SC-015) (FR-025)
 
 **Checkpoint**: shutdown is bounded, honest, and reverse-ordered.
 

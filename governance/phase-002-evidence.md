@@ -123,6 +123,60 @@ A 3-provider / 3-edge graph consumes **exactly** 6 provider examinations, 3 edge
 measured at 2048 / 8192 / 10240. The integration test asserts **equalities, not bounds**: a
 loosened `<=` would keep passing if the traversal started doing twice the work.
 
+## User Story 2 — the requirement that could not be met by writing a test
+
+**Status**: T057–T064 complete. Workspace tests **122 → 148**, all passing.
+
+**T064 asks for an assertion that was false when it was written.** SC-015 requires **0** unbounded
+waits in kernel-owned paths, and the kernel had **two**: a provider that never returned from
+`initialise` hung `Boot` for ever, and one that never returned from `stop` hung shutdown. Neither
+was reachable through any existing test, because every test provider answered.
+
+Cancellation does not close this. A [`CancelScope`] asks a provider to stop; honouring it is the
+provider's choice, and C-L9's `Hang` behaviour exists precisely to model a provider that does not.
+So `Boot` and rollback now bound each provider call with `tokio::time::timeout`, and a breach is
+reported as `DeadlineExceeded` rather than as a provider failure — **not answering and refusing are
+different faults, and they lead to different investigations**.
+
+### The bound's value is Renvor's choice, and is recorded as such
+
+FR-042 fixes **30 seconds** for the *drain* budget. It says nothing about per-provider waits. FR-025
+and C-L7 require the bound to exist but name no number, so one had to be chosen:
+`DEFAULT_PROVIDER_DEADLINE` matches the drain default as a deliberate symmetry, **not** as a
+measured figure, and is author-overridable. The constant's own documentation says so, rather than
+letting a reader assume the specification supplied it. Carried as open item 7.
+
+### What the deadline tests prove, and what they cannot
+
+A test cannot enumerate every future the kernel might await. It can close the set. The kernel awaits
+foreign code in exactly **three** places — provider initialise, provider stop, and the drain — and
+`tests/deadlines.rs` bounds each with a behaviour test **and** reads the kernel's own source to fail
+if either provider call loses its `timeout` wrapper.
+
+That source check earns its place because of an asymmetry: **a behaviour test for a removed bound
+does not fail — it hangs**, and a hung test on CI reads as a slow machine rather than as a defect.
+
+### Zero-budget drain has no fast path
+
+FR-042 requires a zero budget with work in flight to report that work as outstanding *exactly as a
+timed-out drain would*. `WorkGate::drain` therefore has **no** `if budget.is_zero()` branch — zero
+flows through the same `timeout` as the 30-second default. The one early return is "there is nothing
+to wait for", which is true at every budget. A dedicated zero branch would have been the obvious
+implementation and one edit away from returning `Clean` for the exact case the requirement exists to
+prevent.
+
+Both directions are asserted: zero **with** work reports `Incomplete`, zero **without** work reports
+`Clean`. The second is the control — without it, an implementation that always reported `Incomplete`
+for a zero budget would pass.
+
+### FR-009 is satisfied more strongly than it asks
+
+FR-009 requires shutdown before `Ready` to roll back whatever was initialised. In this design an
+application that is *initialised but not `Ready`* **cannot be observed at all**: `Application::boot`
+consumes `self`, so a failed or interrupted boot returns no application. The interrupted case rolls
+back inside `boot` and is proven in `tests/lifecycle_edges.rs`; the never-booted case shuts down with
+0 providers stopped and a phase record that does **not** claim it passed through `Boot` and `Ready`.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -133,6 +187,7 @@ loosened `<=` would keep passing if the traversal started doing twice the work.
 | 4 | **W-005** — Phase 002 independent requirements-and-security review | Same staffing gap, phase level | Blocks public release |
 | 5 | `ConfigSource::load` and `validate` return `Result<(), KernelError>` and carry **no value type** | US1 needs the *phase behaviour on failure*; typed decoding is `ConfigResolver`, implemented at T071. A placeholder value type now would be a shape nobody measured | Closes with US3 |
 | 6 | The facade's `config` re-export is currently **vacuous** — `renvor-config` exports no items yet | The gate is structurally correct and will carry real items from T071; today it gates an empty module | No |
+| 7 | `DEFAULT_PROVIDER_DEADLINE` is **30 s by Renvor's choice, not by specification** | FR-025 and C-L7 require the bound; no artifact names a value. Chosen to match the drain default as a symmetry, not from measurement | No — but a phase that measures real provider start-up times should revisit it |
 
 ## Publication status
 
