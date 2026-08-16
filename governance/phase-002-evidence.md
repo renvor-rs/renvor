@@ -688,6 +688,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 17 | `DEFAULT_READINESS_DEADLINE` is **5 s by Renvor's choice, not by specification** | Same shape as items 7 and 11. FR-025 requires the bound; no artifact names a value. Chosen to sit under a typical container probe interval, so a hung contributor reports as hung rather than as a probe that never answered | No — a phase that measures real probe intervals should revisit it |
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
 | 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
+| 22 | **9 open CodeQL `rust/cleartext-logging` alerts** on PR #19 | All nine are false positives on the code that demonstrates and tests redaction — verified by running the example and observing **0** occurrences of the credential. Resolving the alert status needs a repository security-settings change, which this workflow is not authorized to make | **No** — CodeQL is not a required check, and all four required checks pass. But the PR shows a red check until a maintainer dismisses the alerts |
 | 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
 | 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
 
@@ -1007,6 +1008,76 @@ prospective claim the W-005 review caught at Q6-1.
 | **0** releases | `gh release list` empty, with an authenticated `gh` |
 | **Phase 003 not begun** | `specs/` contains `001-governance-foundation` and `002-core-kernel` only; 0 branches naming 003 |
 | Commit signatures | Every commit authored in this branch verifies `G`. The one `E` is GitHub's own web-flow merge commit for PR #18, whose key is not in the local keyring |
+
+## T132 — pull request #19, and the one check that failed
+
+Opened **2026-08-16** into `main` at `19605e9`, head `2cd0530`, non-draft, mergeable.
+112 changed files, +24,949 / −117.
+
+### Check results
+
+| Check | Required? | Result |
+|---|---|---|
+| `verify (1.94.0)` | **yes** | pass |
+| `verify (stable)` | **yes** | pass |
+| `security` | **yes** | pass |
+| `docs` | **yes** | pass |
+| `dependency-review` | no | pass |
+| `package and verify without publishing` (release-dry-run) | no | pass |
+| `Analyze (actions)` | no | pass |
+| `Analyze (rust)` | no | pass |
+| `attest rehearsal artifacts` | no | **skipping** — `workflow_dispatch` only, by design |
+| `CodeQL` | no | **FAIL — 9 high alerts** |
+
+**All four required checks pass.**
+
+### The release-dry-run rewrite is verified in CI, not only locally
+
+T120's new control printed `detector fires on an ignored generated file that git cannot see`: the
+planted file in `target/` was caught by the `find`-based diff **and** confirmed invisible to
+`git status`. That is the defect T120 fixed, demonstrated on the platform that matters.
+`CARGO_TARGET_DIR` resolved outside the checkout, five crates packaged, and
+`aborting upload due to dry run` appeared **four** times — four crates staged, **0 published**.
+
+### CodeQL: 9 high `rust/cleartext-logging` alerts, all false positives
+
+| Location | What CodeQL saw |
+|---|---|
+| `crates/renvor/examples/configuration.rs:99–102` (4) | a value named `password` flowing into `println!` |
+| `crates/renvor-config/src/secret/mod.rs:155–157, 179, 183` (5) | a secret flowing into `format!`, inside `#[cfg(test)]` |
+
+**Measured, not argued.** Running the flagged example produces:
+
+```text
+  Display  : [redacted]
+  Debug    : Secret { key: "password", value: "[redacted]" }
+  in a msg : the password is [redacted]
+  expose() : 7 characters
+```
+
+The credential appears **0** times in the example's output. Line 102 prints the value's *length*,
+never the value, and line 104 asserts the absence. The five in `secret/mod.rs` are the tests that
+**prove** redaction — including line 183, the positive control that formats the raw test constant
+deliberately, to show the search string is findable when present.
+
+**CodeQL is right about the dataflow and wrong about the consequence.** A value derived from a
+field named `password` does reach `println!`; it passes through `Secret<T>`'s redacting `Display`
+on the way, and CodeQL does not model that a `Display` impl can sanitise. The alerts land on the
+code whose entire purpose is to demonstrate the opposite of what they allege.
+
+### Why this is reported rather than resolved
+
+No fix is available inside this workflow's authorization:
+
+| Option | Why not |
+|---|---|
+| Dismiss the alerts as false positives | A repository **security-settings** change, which the maintainer's authorization for this workflow explicitly excludes |
+| Add a CodeQL config file excluding tests and examples | CodeQL runs here via **default setup**, which honours no in-repository config. Switching to advanced setup is a settings change, and excluding tests and examples wholesale would weaken the scan for everything else |
+| Restructure the example so no raw `String` exists | Would need `Deserialize` for `Secret<T>`, which the crate does **not** implement — deliberately, since `Serialize` is forbidden by C-C9. Adding it is new public API and belongs in its own decision, not in a check-fixing commit |
+| Delete or weaken the demonstrations | The example and those five tests are the evidence for **FR-018, FR-021, SC-007, and SC-016**. Removing them to satisfy a static analyser would trade real evidence for a green square |
+
+**Recorded as open item 22.** The redaction requirements remain evidenced by tests that pass; what
+is unresolved is the *alert status*, not the *behaviour*.
 
 ## Publication status
 
