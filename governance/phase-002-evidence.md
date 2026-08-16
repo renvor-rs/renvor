@@ -85,6 +85,44 @@ is worth keeping:
   reporting as a channel, type names as metadata (including const generics rendered verbatim), and
   `confique-macro` as build-time code execution rather than build time.
 
+## User Story 1 — what implementing it changed
+
+**Status**: T042–T056 complete. Workspace tests **72 → 122**, all passing. `cargo xtask verify`
+**9 of 10** before commit; step 10 is the working-tree cleanliness check, which passes once the
+work is committed.
+
+### Three defects found by writing the code, not by reading it
+
+| # | Defect | How it surfaced | Fix |
+|---|---|---|---|
+| 1 | `EntropySource` is a **public, fallible trait that nobody outside its module could implement** — `EntropyUnavailable` had a private field and no constructor | Writing a test double that reports entropy failure. `FixedEntropy` cycles its bytes and always succeeds, so it cannot play that part | `EntropyUnavailable::new` made public. The fallible half of the trait — the half C-E4 is about — is now exercisable |
+| 2 | `CancelScope` required `&'static str` names | Provider names are registration-time runtime values, so no provider could have a named scope | Names are `Arc<str>`; cheap to clone, and a scope is cloned once per child |
+| 3 | The facade's own "no implementation" scan was substring-based and **missed indented declarations** | Its **positive control failed** — the scan could not find the declarations in its own test module | Rewritten line-oriented. The weaker version would have passed while checking nothing nested |
+
+Defect 3 is the one worth keeping: a check written to prove an absence was itself unable to detect
+a presence, and only the control said so.
+
+### Two decisions taken on measured evidence
+
+**`ErrorCategory::CapabilityDuplicate` — the taxonomy grew from 13 to 14 rows.** Two providers
+offering the same `CapabilityId` is reachable, and no earlier artifact covered it. Picking a winner
+is a silent fallback (FR-022), panicking breaks SC-004, `DependencyMissing` would print a false
+statement, and `Internal` would blame Renvor for an author's mistake. Recorded as
+`contracts/error-taxonomy.md` **revision 1.1.0** with the rejected alternatives.
+
+**`BuildError` has two variants rather than widening `Internal`.** An operating system refusing to
+supply random bytes is an environment failure, not a Renvor defect. Reporting it as `Internal`
+would have been the smaller diff and would have told authors their framework was broken when their
+sandbox was. `BuildError::category()` returns `None` for that variant on purpose, and a test
+asserts a kernel failure *does* return one so the `None` discriminates.
+
+### Measured, not asserted
+
+A 3-provider / 3-edge graph consumes **exactly** 6 provider examinations, 3 edge examinations, and
+9 work units — 2 per provider and 1 per edge, the same constants the maximum-size proof gate
+measured at 2048 / 8192 / 10240. The integration test asserts **equalities, not bounds**: a
+loosened `<=` would keep passing if the traversal started doing twice the work.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -93,6 +131,8 @@ is worth keeping:
 | 2 | **ADR-0008** remains `proposed` | W-004 covers ADR-0007 alone and confers no authority here. FR-035 does not require acceptance for a packaging decision | No |
 | 3 | Independent re-review of ADR-0007 when W-004 closes | No qualified independent reviewer is available (research §D11 criteria 1, 2, 4) | Blocks W-004 closure |
 | 4 | **W-005** — Phase 002 independent requirements-and-security review | Same staffing gap, phase level | Blocks public release |
+| 5 | `ConfigSource::load` and `validate` return `Result<(), KernelError>` and carry **no value type** | US1 needs the *phase behaviour on failure*; typed decoding is `ConfigResolver`, implemented at T071. A placeholder value type now would be a shape nobody measured | Closes with US3 |
+| 6 | The facade's `config` re-export is currently **vacuous** — `renvor-config` exports no items yet | The gate is structurally correct and will carry real items from T071; today it gates an empty module | No |
 
 ## Publication status
 

@@ -152,21 +152,21 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 **⚠️ Reaches its checkpoint only after T029.** T041 is blocked by the ADR-0007 outcome and T054 builds on T041, so the MVP increment terminates at the governance gate. This is stated here rather than left to be discovered.
 
-- [ ] T042 [P] [US1] Write the lifecycle-order test in `crates/renvor-core/tests/lifecycle.rs` asserting the sequence `Load → Validate → Register → Boot → Ready` with 0 deviating runs (SC-001) (FR-001, FR-002)
-- [ ] T043 [P] [US1] Write the rollback-order test in `crates/renvor-core/tests/lifecycle.rs` asserting reverse **actual initialisation** order, plus the negative control that asserting against registration order fails on a reordering graph (SC-002) (FR-004)
-- [ ] T044 [P] [US1] Write the cycle and missing-dependency tests in `crates/renvor-core/tests/provider_graph.rs` asserting every provider in the cycle is named and 0 cases reach Boot (SC-005) (FR-013, FR-014)
-- [ ] T045 [P] [US1] Write the silent-fallback prohibition test in `crates/renvor-core/tests/no_silent_fallback.rs` (FR-022): a required capability that is unavailable **fails the operation** — 0 runs boot a degraded application, 0 substitute a default for a missing required provider, and 0 downgrade a hard failure to a warning; include a positive control that a deliberately degrading provider **is** detected. The configuration-layer instance of FR-022 is proven separately at T018 obligation 6 and T069
-- [ ] T046 [US1] Implement `Application` and its phase machine in `crates/renvor-core/src/lifecycle/application.rs`, recording the realised initialisation order (FR-001, FR-002)
-- [ ] T047 [US1] Implement `ApplicationBuilder` in `crates/renvor-core/src/lifecycle/builder.rs` accepting ordered config resolvers, providers, and an entropy source
-- [ ] T048 [US1] Implement `Provider`, `CapabilityId`, and `ProviderRegistry` in `crates/renvor-core/src/provider/registry.rs` with declared dependencies (FR-012)
-- [ ] T049 [US1] Implement the declared-size ceilings in `crates/renvor-core/src/provider/registry.rs` — reject at Register on declared counts alone, naming ceiling and observed count (FR-039a) (SC-021)
-- [ ] T050 [US1] Wire the instrumented resolver from T021 into Register in `crates/renvor-core/src/provider/mod.rs`, producing `InitialisationOrder` and `ResolutionReport` (FR-012, SC-021)
-- [ ] T051 [US1] Implement `Internal` budget-exhaustion reporting in `crates/renvor-core/src/provider/graph.rs`, distinct from every author-facing diagnostic (FR-039c)
-- [ ] T052 [US1] Implement Boot-failure rollback in `crates/renvor-core/src/lifecycle/rollback.rs`, replaying realised order backwards and reporting the originating failure
-- [ ] T053 [US1] Implement rollback-during-rollback handling in `crates/renvor-core/src/lifecycle/rollback.rs` so every rollback failure is reported alongside the original (FR-005)
-- [ ] T054 [US1] Add the duplicate-registration and missing-state error paths in `crates/renvor-core/src/state/mod.rs` with 0 panics in ordinary use (SC-004) — **depends on T041, therefore on T029** (FR-010, FR-011)
-- [ ] T055 [P] [US1] Write the edge-case tests in `crates/renvor-core/tests/lifecycle_edges.rs` for cancellation during Boot and duplicate state registration (FR-024)
-- [ ] T056 [US1] Re-export the US1 surface deliberately narrowly from `crates/renvor/src/lib.rs` using `pub use` only, with 0 implementation items, gating every `renvor-config` re-export behind `#[cfg(feature = "config")]` (ADR-0002) — **depends on T006 for the dependency declarations**
+- [x] T042 [P] [US1] Write the lifecycle-order test in `crates/renvor-core/tests/lifecycle.rs` asserting the sequence `Load → Validate → Register → Boot → Ready` with 0 deviating runs (SC-001) (FR-001, FR-002)
+- [x] T043 [P] [US1] Write the rollback-order test in `crates/renvor-core/tests/lifecycle.rs` asserting reverse **actual initialisation** order, plus the negative control that asserting against registration order fails on a reordering graph (SC-002) (FR-004)
+- [x] T044 [P] [US1] Write the cycle and missing-dependency tests in `crates/renvor-core/tests/provider_graph.rs` asserting every provider in the cycle is named and 0 cases reach Boot (SC-005) (FR-013, FR-014)
+- [x] T045 [P] [US1] Write the silent-fallback prohibition test in `crates/renvor-core/tests/no_silent_fallback.rs` (FR-022): a required capability that is unavailable **fails the operation** — 0 runs boot a degraded application, 0 substitute a default for a missing required provider, and 0 downgrade a hard failure to a warning; include a positive control that a deliberately degrading provider **is** detected. The configuration-layer instance of FR-022 is proven separately at T018 obligation 6 and T069
+- [x] T046 [US1] Implement `Application` and its phase machine in `crates/renvor-core/src/lifecycle/application.rs`, recording the realised initialisation order (FR-001, FR-002)
+- [x] T047 [US1] Implement `ApplicationBuilder` in `crates/renvor-core/src/lifecycle/builder.rs` accepting ordered config resolvers, providers, and an entropy source
+- [x] T048 [US1] Implement `Provider`, `CapabilityId`, and `ProviderRegistry` in `crates/renvor-core/src/provider/registry.rs` with declared dependencies (FR-012)
+- [x] T049 [US1] Implement the declared-size ceilings in `crates/renvor-core/src/provider/registry.rs` — reject at Register on declared counts alone, naming ceiling and observed count (FR-039a) (SC-021)
+- [x] T050 [US1] Wire the instrumented resolver from T021 into Register in `crates/renvor-core/src/provider/mod.rs`, producing `InitialisationOrder` and `ResolutionReport` (FR-012, SC-021)
+- [x] T051 [US1] Implement `Internal` budget-exhaustion reporting in `crates/renvor-core/src/provider/graph.rs`, distinct from every author-facing diagnostic (FR-039c)
+- [x] T052 [US1] Implement Boot-failure rollback in `crates/renvor-core/src/lifecycle/rollback.rs`, replaying realised order backwards and reporting the originating failure
+- [x] T053 [US1] Implement rollback-during-rollback handling in `crates/renvor-core/src/lifecycle/rollback.rs` so every rollback failure is reported alongside the original (FR-005)
+- [x] T054 [US1] Add the duplicate-registration and missing-state error paths in `crates/renvor-core/src/state/mod.rs` with 0 panics in ordinary use (SC-004) — **depends on T041, therefore on T029** (FR-010, FR-011)
+- [x] T055 [P] [US1] Write the edge-case tests in `crates/renvor-core/tests/lifecycle_edges.rs` for cancellation during Boot and duplicate state registration (FR-024)
+- [x] T056 [US1] Re-export the US1 surface deliberately narrowly from `crates/renvor/src/lib.rs` using `pub use` only, with 0 implementation items, gating every `renvor-config` re-export behind `#[cfg(feature = "config")]` (ADR-0002) — **depends on T006 for the dependency declarations**
 
 **Checkpoint**: an application starts deterministically or refuses with a reason — MVP is deliverable, once T029 clears.
 

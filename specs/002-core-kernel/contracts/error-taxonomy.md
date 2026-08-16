@@ -1,6 +1,6 @@
 ---
 description: "Phase 002 contract — kernel error categories, causal chaining, and redaction guarantees"
-version: "1.0.0"
+version: "1.1.0"
 status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise"
 ---
 
@@ -26,6 +26,7 @@ a message string is not an API; it is a defect waiting for a rewording.
 | `StateMissing` | an unregistered type is retrieved | the type |
 | `DependencyCycle` | providers form a cycle | **every** provider in the cycle |
 | `DependencyMissing` | a declared dependency is unprovided | dependent **and** missing capability |
+| `CapabilityDuplicate` | two providers offer the same capability | the capability **and both** providers |
 | `LimitExceeded` | provider or edge ceiling breached at Register | the ceiling **and** the observed count |
 | `ProviderInit` | a provider fails during Boot | the failing provider |
 | `ProviderStop` | a provider fails during Stop or rollback | the failing provider; never masks siblings |
@@ -33,6 +34,28 @@ a message string is not an API; it is a defect waiting for a rewording.
 | `DeadlineExceeded` | a bounded wait elapsed | the deadline and the operation |
 | `ShuttingDown` | work submitted after shutdown began | the rejected operation |
 | `Internal` | **resolution work budget exhausted** — a defect in the kernel | the counters observed |
+
+### Revision 1.1.0 — `CapabilityDuplicate` added
+
+Added on **2026-08-16**, during T048, on implementation evidence rather than review opinion.
+
+Building `ProviderRegistry` surfaced a case no earlier artifact covered: **two providers offering
+the same `CapabilityId`**. A dependency on that capability has no single answer, and every way of
+not saying so was already prohibited by something the project had agreed:
+
+| Alternative | Why it was rejected |
+|---|---|
+| Pick a winner (first or last registration) | A **silent fallback** — FR-022 and C-E4 |
+| Panic | SC-004 requires **0** panics in ordinary use |
+| Report it as `DependencyMissing` | The diagnostic would be **false**: the capability *is* provided, twice |
+| Report it as `Internal` | It is an author mistake, not a Renvor defect, and `Internal` says the opposite |
+
+The category count in this contract therefore moves from **13 to 14**. The `ErrorCategory::ALL`
+array and its length assertion moved with it, so a future edit that adds a category without
+updating this contract still fails loudly.
+
+**`Internal` was not widened to absorb it.** That would have been the smaller change and the worse
+diagnostic — see the note below on why that category means exactly one thing.
 
 **`Internal` is deliberately distinct.** FR-039(c) forbids reporting a cycle by exhausting the
 work budget, so budget exhaustion **MUST NOT** be representable as any author-facing category. If
