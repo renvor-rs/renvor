@@ -491,50 +491,132 @@ fn no_call_into_author_code_is_left_bare() {
     }
 }
 
-/// `Debug` implementations the kernel provides that call author code, and why each is unbounded.
+/// Every `impl fmt::Debug` on an author-implemented trait object in the kernel.
 ///
 /// Found by the W-005 requirements review (Q4-1, Q4-2, Q4-3), which is worth recording: the
 /// discovery gate above scans for *handles and invocations* and both of these are invocations, so
 /// it saw them — and then the `BOUNDED_BY_ANCESTOR` entry for each file waved them through on the
 /// strength of a **lifecycle** ancestor that has nothing to do with formatting. The exemption was
 /// real; the reason attached to it was about a different call.
-const FORMATTING_CALLS_AUTHOR_CODE: &[(&str, &str)] = &[
+///
+/// # This list used to record a defect. It now records a closure.
+///
+/// Until T145 this constant was named `FORMATTING_CALLS_AUTHOR_CODE` and its second column named
+/// the author methods each impl invoked — `name()` for the contributor, `id()`/`provides()`/
+/// `dependencies()` for the provider. The test below asserted that the set had not *grown*, and
+/// documented the unbounded call as a permanent limitation.
+///
+/// That was the wrong gate. A limitation that contradicts FR-025 is not something to enumerate
+/// accurately; it is something to remove. Both impls now render from **static** text and call no
+/// author method at all, so the list below is a list of impls to keep honest rather than a list of
+/// known holes.
+const DEBUG_IMPLS_ON_AUTHOR_TRAITS: &[(&str, &str)] = &[
     (
         "renvor-core/health/contributor.rs",
-        "impl fmt::Debug for dyn ReadinessContributor calls `name()`",
+        "impl fmt::Debug for dyn ReadinessContributor",
     ),
     (
         "renvor-core/provider/registry.rs",
-        "impl fmt::Debug for dyn Provider calls `id()`, `provides()`, and `dependencies()`",
+        "impl fmt::Debug for dyn Provider",
     ),
 ];
 
+/// The text of every `impl fmt::Debug for dyn ...` block in `text`, brace-matched.
+///
+/// A pure function taking the source, so the controls below can feed it synthetic input and prove
+/// the detector detects. A gate that only ever runs against a passing tree cannot distinguish
+/// "nothing is wrong" from "nothing is being checked" — this file has been caught by that twice.
+fn debug_impl_bodies(text: &str) -> Vec<String> {
+    const MARKER: &str = "impl fmt::Debug for dyn ";
+
+    let mut bodies = Vec::new();
+    let mut rest = text;
+
+    while let Some(start) = rest.find(MARKER) {
+        let after = &rest[start..];
+        let Some(open) = after.find('{') else { break };
+
+        let mut depth = 0usize;
+        let mut end = None;
+        for (offset, character) in after[open..].char_indices() {
+            match character {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = Some(open + offset + 1);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        match end {
+            Some(end) => {
+                bodies.push(after[..end].to_owned());
+                rest = &after[end..];
+            }
+            // An unbalanced block cannot be judged, so it is reported rather than skipped.
+            None => {
+                bodies.push(after.to_owned());
+                break;
+            }
+        }
+    }
+
+    bodies
+}
+
+/// Whether a `Debug` impl body reaches through `self` into the object it is formatting.
+///
+/// `self.` rather than a list of method names, deliberately. A denylist of "the methods we know
+/// are author code" fails open the moment a trait gains a method; every field of a trait object is
+/// behind a trait method, so **any** dereference of `self` in this position is author code. The
+/// signature `fn fmt(&self, ...)` contains `&self,` and not `self.`, so it does not match.
+fn reaches_into_the_formatted_object(body: &str) -> bool {
+    body.contains("self.")
+}
+
 #[test]
-fn formatting_reaches_author_code_unbounded_and_that_is_named_rather_than_hidden() {
-    // T128/Q4-1. **This is a stated limit, not a bound.** Formatting a provider or a contributor
-    // calls author code with no deadline, so an author whose `name()` blocks will hang whatever
-    // formatted it.
+fn formatting_an_author_trait_object_never_calls_author_code() {
+    // T145. **This is now a bound, not a stated limit.** It was a limit until this commit: both
+    // impls called author methods with no deadline, so an author whose `name()` blocked hung
+    // whatever formatted it — and a readiness probe is externally driven, so "whatever formatted
+    // it" was reachable by anyone who could call the probe.
     //
-    // It is not bounded, and bounding it would be worse than the disease: a `Debug` impl that
-    // spawned a thread per field would make every log line a scheduling event, and `fmt::Debug`
-    // has no way to report a deadline failure except by writing one into the output it is
-    // producing.
+    // Bounding the call was considered and rejected: a `Debug` impl that spawned a thread per
+    // field would make every formatted provider a scheduling event, and `fmt::Debug` has no way
+    // to report a deadline failure except by writing one into the output it is producing, so a
+    // log line would silently become a timeout report.
     //
-    // What matters is that the claim "the set is eight" is now stated with its exclusion named,
-    // rather than being true only because nobody looked at `Debug`. **No lifecycle phase formats
-    // an author's provider or contributor** — the kernel's own diagnostics carry names and
-    // positions it already holds — so no bounded path is compromised by this.
+    // What is done instead is to call nothing. `&self` is all these methods receive and every
+    // fact about it is behind a trait method, so both render static text. Identity is unaffected:
+    // it comes from `ResolutionReport`, `InitialisationOrder`, and `ReadinessReport`, which hold
+    // names Renvor captured itself inside already-bounded calls.
     let sources = kernel_sources();
 
     let mut found = Vec::new();
+    let mut offenders = Vec::new();
     for (path, text) in &sources {
-        if text.contains("impl fmt::Debug for dyn ") {
+        for body in debug_impl_bodies(text) {
             found.push(path.clone());
+            if reaches_into_the_formatted_object(&body) {
+                offenders.push(path.clone());
+            }
         }
     }
     found.sort();
+    offenders.sort();
 
-    let mut expected: Vec<String> = FORMATTING_CALLS_AUTHOR_CODE
+    assert!(
+        offenders.is_empty(),
+        "a `Debug` impl on an author-implemented trait reads through `self`, which calls author \
+         code with no deadline and no way to report a fault: {offenders:?}. Render static text \
+         instead, and take identity from the report Renvor already holds"
+    );
+
+    let mut expected: Vec<String> = DEBUG_IMPLS_ON_AUTHOR_TRAITS
         .iter()
         .map(|(path, _)| (*path).to_owned())
         .collect();
@@ -542,17 +624,220 @@ fn formatting_reaches_author_code_unbounded_and_that_is_named_rather_than_hidden
 
     assert_eq!(
         found, expected,
-        "a `Debug` impl on an author-implemented trait appeared or moved. Each one calls author \
-         code with no deadline; add it to FORMATTING_CALLS_AUTHOR_CODE with the methods it calls, \
-         or remove the impl. Do not leave it unrecorded — the eight-callback inventory is only \
-         complete if this exclusion is explicit"
+        "a `Debug` impl on an author-implemented trait appeared or moved. Add it to \
+         DEBUG_IMPLS_ON_AUTHOR_TRAITS, and make sure it calls no author method"
     );
 
-    // POSITIVE CONTROL: the search finds something. An empty match would make the equality above
-    // hold against an empty expectation and record an exclusion list nobody verified.
+    // POSITIVE CONTROL 1: the search finds something. An empty match would make the equality above
+    // hold against an empty expectation and the emptiness assertion hold vacuously.
     assert!(
         !found.is_empty(),
         "the `impl fmt::Debug for dyn` search matched nothing; it is not reading the crate"
+    );
+
+    // POSITIVE CONTROL 2: the detector detects. Feeding it the exact shape this gate exists to
+    // catch — the code that was here until T145 — must produce a body and must flag it. Without
+    // this, deleting the body of `reaches_into_the_formatted_object` would leave a green gate.
+    let offending = "impl fmt::Debug for dyn Provider {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.debug_struct(\"Provider\").field(\"id\", &self.id()).finish()\n    }\n}\n";
+    let extracted = debug_impl_bodies(offending);
+    assert_eq!(extracted.len(), 1, "the extractor missed a whole impl");
+    assert!(
+        reaches_into_the_formatted_object(&extracted[0]),
+        "the detector passed the exact body this gate exists to refuse"
+    );
+
+    // POSITIVE CONTROL 3: and it does not flag the clean shape, so control 2 is not passing
+    // because the detector says yes to everything.
+    let clean = "impl fmt::Debug for dyn Provider {\n    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {\n        f.debug_struct(\"Provider\").finish_non_exhaustive()\n    }\n}\n";
+    let extracted = debug_impl_bodies(clean);
+    assert_eq!(extracted.len(), 1, "the extractor missed a whole impl");
+    assert!(
+        !reaches_into_the_formatted_object(&extracted[0]),
+        "the detector flags a body that calls nothing, so it flags everything"
+    );
+}
+
+/// A provider whose every declaration accessor is hostile in the loudest possible way.
+///
+/// Panicking rather than returning a marker value on purpose: a marker could be printed and the
+/// test would then have to prove a *string* was absent, which is a weaker claim than proving the
+/// call never happened. A panic makes the call itself the failure.
+struct PanickingDeclarations;
+
+impl renvor_core::Provider for PanickingDeclarations {
+    fn id(&self) -> &renvor_core::ProviderId {
+        panic!("formatting called `Provider::id`");
+    }
+
+    fn provides(&self) -> &[renvor_core::CapabilityId] {
+        panic!("formatting called `Provider::provides`");
+    }
+
+    fn dependencies(&self) -> &[renvor_core::CapabilityId] {
+        panic!("formatting called `Provider::dependencies`");
+    }
+
+    fn initialise<'a>(
+        &'a self,
+        _: &'a mut renvor_core::InitContext<'_>,
+    ) -> renvor_core::provider::ProviderFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// A provider whose accessors never return at all.
+///
+/// The case a panic cannot stand in for: a panicking method still *returns control*, so a test
+/// that only used `PanickingDeclarations` would prove formatting does not observe author output
+/// while leaving "formatting can hang" untested. These diverge instead.
+struct BlockingDeclarations;
+
+impl renvor_core::Provider for BlockingDeclarations {
+    fn id(&self) -> &renvor_core::ProviderId {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+
+    fn provides(&self) -> &[renvor_core::CapabilityId] {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+
+    fn dependencies(&self) -> &[renvor_core::CapabilityId] {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+
+    fn initialise<'a>(
+        &'a self,
+        _: &'a mut renvor_core::InitContext<'_>,
+    ) -> renvor_core::provider::ProviderFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// A contributor whose `name()` panics.
+struct PanickingName;
+
+impl renvor_core::ReadinessContributor for PanickingName {
+    fn name(&self) -> &str {
+        panic!("formatting called `ReadinessContributor::name`");
+    }
+
+    fn readiness(&self) -> renvor_core::Readiness {
+        panic!("formatting called `ReadinessContributor::readiness`");
+    }
+}
+
+/// A contributor whose `name()` never returns.
+struct BlockingName;
+
+impl renvor_core::ReadinessContributor for BlockingName {
+    fn name(&self) -> &str {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+
+    fn readiness(&self) -> renvor_core::Readiness {
+        loop {
+            std::thread::sleep(Duration::from_secs(3600));
+        }
+    }
+}
+
+/// Formats `value` on a worker thread and fails if it has not finished within `limit`.
+///
+/// The blocking half of this proof cannot be written as a direct call: if formatting *did* reach
+/// author code the test would hang rather than fail, and a hanging test is a test that reports
+/// nothing. The work is moved to a thread that is allowed to leak — it is parked in a `sleep` and
+/// no Rust API interrupts a blocked thread, which is the same permanent-leak limitation the kernel
+/// states elsewhere and does not pretend to have solved here.
+fn format_within(
+    label: &'static str,
+    limit: Duration,
+    render: impl FnOnce() -> String + Send + 'static,
+) -> String {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(render());
+    });
+
+    receiver.recv_timeout(limit).unwrap_or_else(|_| {
+        panic!(
+            "formatting a {label} did not finish within {limit:?}, so it waited on author code \
+             (FR-025, C-L7)"
+        )
+    })
+}
+
+#[test]
+fn formatting_a_provider_never_calls_its_declaration_accessors() {
+    // T145, the runtime half. The static gate above proves the *source* contains no `self.`; this
+    // proves the *behaviour*, so a future refactor that reintroduced the call through a helper
+    // (and so evaded a text search) still fails.
+    //
+    // If `Debug` reached `id()`, this panics inside `format!` and the test fails with the message
+    // from the accessor — naming which call was made.
+    let provider: Box<dyn renvor_core::Provider> = Box::new(PanickingDeclarations);
+    let rendered = format!("{provider:?}");
+
+    assert_eq!(
+        rendered, "Provider { .. }",
+        "the rendering changed; it must stay derived from static text"
+    );
+}
+
+#[test]
+fn formatting_a_provider_whose_accessors_block_still_returns() {
+    let rendered = format_within("provider", Duration::from_secs(10), || {
+        let provider: Box<dyn renvor_core::Provider> = Box::new(BlockingDeclarations);
+        format!("{provider:?}")
+    });
+
+    assert_eq!(rendered, "Provider { .. }");
+}
+
+#[test]
+fn formatting_a_contributor_never_calls_its_name() {
+    let contributor: std::sync::Arc<dyn renvor_core::ReadinessContributor> =
+        std::sync::Arc::new(PanickingName);
+    let rendered = format!("{contributor:?}");
+
+    assert_eq!(
+        rendered, "ReadinessContributor { .. }",
+        "the rendering changed; it must stay derived from static text"
+    );
+}
+
+#[test]
+fn formatting_a_contributor_whose_name_blocks_still_returns() {
+    let rendered = format_within("contributor", Duration::from_secs(10), || {
+        let contributor: std::sync::Arc<dyn renvor_core::ReadinessContributor> =
+            std::sync::Arc::new(BlockingName);
+        format!("{contributor:?}")
+    });
+
+    assert_eq!(rendered, "ReadinessContributor { .. }");
+}
+
+#[test]
+fn the_blocking_fixtures_really_do_block() {
+    // POSITIVE CONTROL for the two timeout tests. If `BlockingDeclarations::id` returned promptly
+    // — because a future edit replaced the `loop` with a stub — those tests would pass while
+    // proving nothing at all. Calling the accessor directly on a worker must NOT finish.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let provider = BlockingDeclarations;
+        let _ = sender.send(renvor_core::Provider::id(&provider).as_str().to_owned());
+    });
+
+    assert!(
+        receiver.recv_timeout(Duration::from_secs(2)).is_err(),
+        "the blocking fixture returned, so the tests above are not proving formatting avoids it"
     );
 }
 

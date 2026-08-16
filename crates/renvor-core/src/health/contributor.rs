@@ -17,8 +17,10 @@
 //! `unsafe_code = "forbid"`, so an approach requiring it would not have been available.
 //!
 //! It also only catches panics that **unwind**. Under `panic = "abort"` there is nothing to catch
-//! and a broken contributor ends the process — see [`crate::provider::contain`] for the full
-//! statement of that limit, which applies identically here.
+//! and a broken contributor would end the process — which is why `panic = "abort"` is
+//! **unsupported** and refused at compile time in this crate's root (T147). See
+//! [`crate::provider::contain`] for the full statement of the ruling, which applies identically
+//! here.
 
 use core::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -43,10 +45,23 @@ pub trait ReadinessContributor: Send + Sync {
 }
 
 impl fmt::Debug for dyn ReadinessContributor {
+    /// Renders **without calling a single author method**.
+    ///
+    /// This impl used to call `name()`. That is author code, and formatting is the one path in the
+    /// kernel that cannot bound it — no deadline, no `catch_unwind` whose verdict could be
+    /// reported, and no channel for a failure except the output being produced. A contributor
+    /// whose `name()` blocked would hang whatever formatted it, and a readiness probe is driven
+    /// from outside, so "whatever formatted it" is reachable by anyone who can call the probe.
+    ///
+    /// See [`crate::provider::registry`]'s `impl fmt::Debug for dyn Provider` for the full
+    /// reasoning; it is identical, and both were found together by the W-005 requirements review.
+    ///
+    /// The name is still reported — from [`crate::health::ReadinessReport`], which holds the names
+    /// Renvor captured when it asked each contributor **inside** a bounded call. That is a cached
+    /// Renvor-owned fact; this is a trait object with nothing but author methods on it.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ReadinessContributor")
-            .field("name", &self.name())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

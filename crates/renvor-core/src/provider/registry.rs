@@ -279,12 +279,34 @@ pub trait Provider: Send + Sync {
 }
 
 impl fmt::Debug for dyn Provider {
+    /// Renders **without calling a single author method**.
+    ///
+    /// # Why this prints nothing about the provider
+    ///
+    /// This impl used to call `id()`, `provides()`, and `dependencies()`. Every one of those is
+    /// author code, and `fmt::Debug` is the one place in the kernel that cannot bound it: it has
+    /// no deadline, no `catch_unwind` that could report a fault, and no way to signal a failure
+    /// except by writing into the output it is producing. A provider whose `id()` blocked would
+    /// hang whatever formatted it — including a log line on a shutdown path, which is precisely
+    /// when an operator most needs output.
+    ///
+    /// Bounding it was considered and rejected. A `Debug` impl that spawned a thread per field
+    /// would make every formatted provider a scheduling event, and the deadline it enforced could
+    /// only ever be reported *inside* the debug text, so a log line would silently become a
+    /// timeout report.
+    ///
+    /// The remaining option is the one taken here: **do not call author code at all.** `&self` is
+    /// the only thing this method receives, and every fact about it is behind a trait method, so
+    /// there is nothing safe left to print. `finish_non_exhaustive` renders `Provider { .. }`,
+    /// which is Rust's conventional "there is more here that is not shown".
+    ///
+    /// Identity is not lost, only relocated. Renvor already holds every provider's name in records
+    /// it built itself — [`ResolutionReport`], [`InitialisationOrder`], and the `ProviderId` values
+    /// inside them — and those print the name from Renvor's own memory rather than by asking the
+    /// author for it again. A caller who wants to see which provider this is should format the
+    /// registry's report, not the trait object.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Provider")
-            .field("id", &self.id())
-            .field("provides", &self.provides())
-            .field("dependencies", &self.dependencies())
-            .finish()
+        f.debug_struct("Provider").finish_non_exhaustive()
     }
 }
 
