@@ -410,7 +410,7 @@ fn a_fifo_is_refused_by_type_before_any_read_can_block() {
     ] {
         assert_eq!(*category, ErrorCategory::Configuration, "{variant}");
         assert!(
-            message.contains("not a regular file"),
+            message.contains("regular file"),
             "{variant}: the refusal must name the file type, not the byte ceiling: {message}"
         );
     }

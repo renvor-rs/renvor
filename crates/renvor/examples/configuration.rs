@@ -106,7 +106,18 @@ features = []
     // it was one. Neither the value nor anything derived from it is printed here.
     println!("  expose() : access is explicit; the value is not printed");
 
-    assert!(!format!("{password}{password:?}").contains("hunter2"));
+    // W-005 security delta finding S1-2. A **bare** `assert!` panics with its own expression
+    // source text, and that text contained the credential literal — so on any redaction
+    // regression this line printed `hunter2` to stderr, through a channel entirely separate from
+    // the deliberate prints above. Supplying a message replaces the expression in the panic. The
+    // needle is assembled from halves as well, so that the ASSERTION no longer carries it even
+    // if the message is ever removed — the environment map above still declares it, because that
+    // is the input under test.
+    let needle = format!("{}{}", "hunt", "er2");
+    assert!(
+        !format!("{password}{password:?}").contains(&needle),
+        "a rendering of the secret contained the credential"
+    );
 
     std::fs::remove_file(&path)?;
     Ok(())

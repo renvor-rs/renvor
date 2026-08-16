@@ -303,7 +303,15 @@ fn kernel_sources() -> Vec<(String, String)> {
                 //
                 // Stripping makes the gate stricter, not laxer, in both directions: a bounding
                 // construct that appears only in a comment no longer satisfies the check either.
-                // A real call survives, because a real call is not preceded on its line by `//`.
+                //
+                // TWO LIMITS, stated rather than implied (W-005 delta D7-5). This is a `split_once`
+                // on `//`, not a comment parser. It truncates a line at any `//`, including one
+                // inside a string literal — `let base = "https://x"; provider.stop().await;` loses
+                // its call. One production line is truncated today, `observe/spans.rs:163`, with no
+                // live effect. And `/* … */` is not stripped at all, so the false positive this
+                // fixed reproduces verbatim in block-comment form. Both fail in the STRICTER
+                // direction for bounding constructs and the LAXER direction for author calls, so
+                // neither is safe to forget; a real parser is the fix if either ever bites.
                 let production = production
                     .lines()
                     .map(|line| line.split_once("//").map_or(line, |(code, _)| code))

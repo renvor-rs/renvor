@@ -97,11 +97,11 @@ fn a_secret_appears_in_zero_output_forms() {
     for (name, rendered) in every_output_form(&secret) {
         assert!(
             !rendered.contains(CREDENTIAL),
-            "the credential reached the `{name}` path: {rendered}"
+            "the credential reached the `{name}` path"
         );
         assert!(
             rendered.contains(REDACTED),
-            "the `{name}` path must render the placeholder: {rendered}"
+            "the `{name}` path did not render the placeholder"
         );
     }
 }
@@ -149,7 +149,7 @@ fn a_secret_cannot_enter_an_error_message_or_its_context() {
     }
     assert!(
         !chain.contains(CREDENTIAL),
-        "the credential reached the causal chain: {chain}"
+        "the credential reached the causal chain"
     );
 }
 
@@ -172,7 +172,7 @@ fn a_secret_has_no_serialization_path_at_all() {
         .expect("the manifest declares secrecy");
     assert!(
         !secrecy_line.contains("serde"),
-        "the crate's opt-in serde feature was enabled: {secrecy_line}"
+        "the crate's opt-in serde feature was enabled in the manifest"
     );
 }
 
@@ -193,12 +193,9 @@ fn a_decoder_message_quoting_the_credential_never_reaches_an_error() {
     let rendered = error.to_string();
     assert!(
         !rendered.contains(CREDENTIAL),
-        "the decoder message carried the credential into the error: {rendered}"
+        "the decoder message carried the credential into the error"
     );
-    assert!(
-        rendered.contains("u16"),
-        "the expectation survives: {rendered}"
-    );
+    assert!(rendered.contains("u16"), "the expectation did not survive");
 
     // POSITIVE CONTROL: the raw message really does contain the credential, so the stripping
     // removed something rather than acting on a message that never had it.
@@ -240,11 +237,11 @@ fn the_whole_configuration_stack_never_puts_a_value_in_an_error() {
     let rendered = error.to_string();
     assert!(
         !rendered.contains(CREDENTIAL),
-        "the adapter leaked the value: {rendered}"
+        "the adapter leaked the value"
     );
     assert!(
         rendered.contains("port"),
-        "and still names the key: {rendered}"
+        "the error no longer names the key"
     );
 }
 
@@ -326,11 +323,11 @@ fn no_public_type_holding_configuration_can_print_a_value() {
     for (name, output) in &rendered {
         assert!(
             !output.contains(CREDENTIAL),
-            "{name} printed the credential: {output}"
+            "{name} printed the credential"
         );
         assert!(
             !output.contains("8080"),
-            "{name} printed an unmarked value too: {output}"
+            "{name} printed an unmarked value too"
         );
     }
 
@@ -344,7 +341,7 @@ fn no_public_type_holding_configuration_can_print_a_value() {
         .build::<Settings>();
     assert!(
         !format!("{inner:?}").contains(CREDENTIAL),
-        "LayeredResolver printed the credential: {inner:?}"
+        "LayeredResolver printed the credential"
     );
 
     // POSITIVE CONTROL: the credential really is present in every one of those values, so the

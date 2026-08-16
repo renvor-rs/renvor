@@ -90,15 +90,29 @@ fn spawn_child(test_name: &str, hostile: &[(OsString, OsString)]) -> Output {
 /// The second half is the control described in the module documentation.
 fn assert_child_ran(output: &Output) {
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // W-005 security delta S1-1. This used to dump the child's whole stdout and stderr into the
+    // failure message. The child is a process whose ENVIRONMENT CONTAINS THE SYNTHETIC CREDENTIAL
+    // — that is what it is for — so on a redaction regression the parent's diagnostic republished
+    // whatever the child had printed, including anything that leaked. The diagnostics here name
+    // the status and the counts, and a needle check makes the omission safe rather than merely
+    // quiet: if the child's output ever does carry the credential, that is its own failure with
+    // its own fixed message.
+    let carried_a_needle = [SECRET, "hunter2"].iter().any(|needle| {
+        stdout.contains(needle) || String::from_utf8_lossy(&output.stderr).contains(needle)
+    });
+    assert!(
+        !carried_a_needle,
+        "the child process printed a credential; its output is deliberately not reproduced here"
+    );
     assert!(
         output.status.success(),
-        "the child process failed\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+        "the child process failed; re-run it directly to see its output"
     );
     assert!(
         stdout.contains("1 passed"),
         "the child matched no test, so it proved nothing — check the test name passed to \
-         `spawn_child`\n--- stdout ---\n{stdout}"
+         `spawn_child`"
     );
 }
 
@@ -150,17 +164,20 @@ fn a_prefixed_variable_with_an_unrepresentable_value_is_refused_without_exposing
         let rendered = error.to_string();
         assert!(
             rendered.contains("RENVOR_ENVTEST_PORT"),
-            "the error must name the variable so it is actionable: {rendered}"
+            "the error must name the variable so it is actionable"
         );
         assert!(
             !rendered.contains(SECRET),
-            "the value reached the error message: {rendered}"
+            "the value reached the error message"
         );
 
         // The lifecycle path refuses the same way rather than panicking.
         let source = SchemaSource::new("application configuration", resolver());
         let error = source.load().expect_err("the lifecycle path refuses too");
-        assert!(!error.to_string().contains(SECRET), "{error}");
+        assert!(
+            !error.to_string().contains(SECRET),
+            "the value reached the error message"
+        );
         return;
     }
 
@@ -184,11 +201,11 @@ fn a_prefixed_variable_with_an_unrepresentable_name_is_refused() {
         let rendered = error.to_string();
         assert!(
             rendered.contains("RENVOR_ENVTEST_"),
-            "the readable part of the name must survive so the operator can find it: {rendered}"
+            "the readable part of the name must survive so the operator can find it"
         );
         assert!(
             !rendered.contains(SECRET),
-            "the value reached the error message: {rendered}"
+            "the value reached the error message"
         );
         return;
     }

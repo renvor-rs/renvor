@@ -423,6 +423,13 @@ cargo test --workspace --all-targets
 # gate12-control.rs` and `crates/renvor/globals-probe.txt`. Both are removed above, by an
 # explicit `rm` and by a trap that fires even on an early exit. This is what turns "they are
 # removed" from an intention into a checked fact.
+#
+# WHAT THIS DOES NOT SEE (W-005 delta D5-1). `git status --porcelain` consults `.gitignore`, so a
+# leftover file matching an ignore rule is invisible to it — the same blind spot T120 removed from
+# `release-dry-run.yml`, where the fix was to compare a `find` listing instead. Both probe files
+# above are tracked-visible, so this detector does see the ones it is aimed at; it would not see a
+# probe someone later planted under an ignored path. The claim this check supports is "no tracked
+# or untracked-but-visible file changed", which is narrower than "the repository is byte-identical".
 git status --porcelain > "$GATE12_AFTER"
 if ! diff -u "$GATE12_BEFORE" "$GATE12_AFTER"; then
   echo "FAIL 12 — this gate changed the repository state; a probe file was left behind"; exit 1
@@ -449,8 +456,10 @@ echo "GATE 12 PASS"
 
 **Pass**: **every** example is discovered, compiles, and runs to a zero exit; the discovery finds at
 least three; an example that cannot run **fails the gate**; **no example uses global mutable
-state**; and the gate **leaves the repository exactly as it found it** — each of the five proven by
-a control rather than assumed.
+state**; and the gate **leaves the repository exactly as it found it**. The last four are each
+proven by a control; the first — that every discovered example runs to a zero exit — is the gate's
+main assertion rather than a controlled one. (An earlier version of this line said "each of the
+five proven by a control", which two other lines in this same file already contradicted.)
 
 **Runs unchanged in bash 3.2 and in zsh**, and is verified in both. The two shells disagree about
 unquoted expansion in a way that decides this gate: bash word-splits `$EXAMPLES` into three names,
@@ -992,10 +1001,10 @@ paragraph above says.
 | 3 | SC-020 (8 obligations) | yes | — decision point for the fallback |
 | 4 | SC-007, SC-016 | yes | unmarked credential **+ leaking wrapper** |
 | 5 | SC-005, SC-021 | yes | 1024-chain depth test |
-| 6 | SC-006 | yes | — |
-| 7 | SC-008 | no | — |
-| 8 | SC-009 | no | — |
-| 9 | SC-019 | yes | — |
+| 6 | SC-006 | yes | the zero-budget case, which must still report outstanding work |
+| 7 | SC-008 | no | health and readiness are required to **disagree**, so a derived answer fails |
+| 8 | SC-009 | no | every one of the 21 combinations asserts the outcome its phase produces |
+| 9 | SC-019 | yes | `tests/run_id.rs` asserts distinctness across runs, so a constant identifier fails |
 | 10 | FR-029 | yes | install-after-build proves nothing was installed |
 | 11 | FR-038 | yes | fuzz/property corpus |
 | 12 | SC-013, SC-014 | yes | **4 controls**: discovery minimum, a failing example, a planted global, a planted leftover file |

@@ -350,7 +350,7 @@ that has not been integrated, with the corrections below outstanding.
 
 ---
 
-## Phase 11: Post-Review Corrections (T133–T141)
+## Phase 11: Post-Review Corrections (T133–T142)
 
 **Why this phase exists.** Phase 10 opened PR #19. Reviewing the open pull request found a second
 layer of defects that Phase 10's own corrections had introduced or left: six of the nine CodeQL
@@ -381,7 +381,8 @@ where it was true of three.
 ### C. Final validation and closure
 
 - [x] T140 Re-run the complete matrix on a clean tree at the final head: `cargo xtask verify` 11/11 on **1.94.0** and on **1.97.1**, `cargo test --workspace -- --test-threads=1`, the no-default-features all-target check on both toolchains, `cargo deny`'s four checks, `actionlint -no-color`, and quickstart gates **0–15 individually** — with Gate 12 additionally run under **both** shells — re-recording T125's table against the gate scripts as they now stand. Correct every gate that selects tests by module path, and add a `run_tests_expecting` guard to the shared Setup preamble so a selection that matches nothing **fails** — mutation-tested against a filter that matches nothing, which the old form reported as a pass
-- [ ] T141 Wait for every check on the exact new head; dismiss **only** CodeQL alerts #1, #2, and #3 as `false positive`, individually and with a stated reason, after verifying that #4–#9 are gone, that no new alert exists, and that #1–#3 still point at the redacting implementation; resolve the nine review threads; and update PR #19's body to the verified final state. **Stop before merging**
+- [x] T142 Close the **round-three W-005 delta reviews**: fix S1-1 by establishing the no-leaking-diagnostic property with a discovering gate rather than another list of files, S2-1 and S2-2 by bounding value depth at both entry points with an iterative measurement, and S1-2/S3-2/S4-1 in source; correct D6-1, D7-1, D7-2, D7-4 and D7-6 in the record; and disposition every one of the 21 findings individually
+- [ ] T141 Wait for every check on the exact new head; dismiss **only** the three `Secret<T>` demonstration alerts in `crates/renvor/examples/configuration.rs:99–101` — `Display`, `Debug`, and embedded `Display` — as `false positive`, individually and each with a stated reason, after verifying that #4–#9 are gone, that no genuinely new finding exists, and that each still points at the redacting implementation. **They were #1, #2, #3 and are now #1, #10, #11**: changing the file re-fingerprinted #2 and #3, which GitHub closed as `fixed` and reissued at the same lines with byte-identical source, so the numbers must be re-read from the live API rather than taken from this sentence. Resolve the review threads, and update PR #19's body to the verified final state. **Stop before merging**
 
 ---
 

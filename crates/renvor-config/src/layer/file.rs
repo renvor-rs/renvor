@@ -126,10 +126,15 @@ impl FileLayer {
         // and a new row in the FR-040 inventory — a scope change this phase does not take. Named
         // open item 24. Under `ApplicationBuilder::build` even the residual is contained:
         // `source.load()` runs inside `bounded_call`, so it is reported as a timeout.
+        // The message states the RULE, not a causal claim about the particular path. An earlier
+        // wording said the path "can block a read indefinitely", which is true of a FIFO and false
+        // of `/dev/null` — and a diagnostic that explains a refusal with a reason that does not
+        // apply sends the reader looking for a hang that was never there (W-005 delta S3-2).
         if !metadata.is_file() {
             return Err(self.failure(&Constraint::Rule(
-                "the path is not a regular file; a pipe, socket, or device can block a read \
-                 indefinitely, and a byte ceiling does not bound waiting",
+                "a configuration source must be a regular file; pipes, sockets, and devices are \
+                 refused as a class, because some of them make a read wait for ever and a byte \
+                 ceiling bounds bytes rather than waiting",
             )));
         }
 

@@ -72,6 +72,21 @@ pub enum Constraint {
         /// The largest accepted size, in bytes.
         maximum_bytes: u64,
     },
+    /// Nested deeper than a declared ceiling.
+    ///
+    /// Distinct from [`Self::TooLong`] and [`Self::TooLarge`] because a nesting depth is neither a
+    /// character count nor a byte count, and because the reason for the ceiling is different: a
+    /// structure past it cannot be decoded **or dropped** without recursing far enough to overflow
+    /// the stack, which no Rust guard can catch.
+    ///
+    /// Added at the W-005 security delta review (S4-1). The two depth refusals previously wrote
+    /// the number into a `Rule`'s `&'static str`, so the ceiling and the message that named it
+    /// were independent — setting the constant to 8 left both messages saying 32, and a test
+    /// asserting the literal still passed. Carrying the number makes that impossible.
+    TooDeep {
+        /// The deepest accepted nesting.
+        maximum_depth: usize,
+    },
     /// A fixed, author-written explanation.
     ///
     /// `&'static str` on purpose: a runtime value cannot become one, so this variant cannot be
@@ -182,6 +197,11 @@ impl Constraint {
             Self::TooLarge { maximum_bytes } => {
                 format!("exceeds the {maximum_bytes} byte ceiling")
             }
+            Self::TooDeep { maximum_depth } => format!(
+                "nests deeper than the {maximum_depth}-level ceiling; decoding and then dropping a \
+                 structure that deep recurses far enough to overflow the stack, which no Rust \
+                 guard can catch"
+            ),
             Self::Rule(rule) => (*rule).to_owned(),
             Self::Decoder(report) => report.clone(),
         }
@@ -223,16 +243,10 @@ mod tests {
         let described = constraint.describe();
         assert!(
             !described.contains(CREDENTIAL),
-            "the value survived stripping: {described}"
+            "the value survived stripping"
         );
-        assert!(
-            described.contains("u16"),
-            "the expectation is kept: {described}"
-        );
-        assert!(
-            described.contains("string"),
-            "the shape is kept: {described}"
-        );
+        assert!(described.contains("u16"), "the expectation was discarded");
+        assert!(described.contains("string"), "the shape was discarded");
 
         // POSITIVE CONTROL: the raw message really does contain the value, so the stripping above
         // removed something rather than acting on a message that never had it.
@@ -260,12 +274,12 @@ mod tests {
                 !described.contains("s3cr3t-token-abc123")
                     && !described.contains("LEAKED-TAIL")
                     && !described.contains("hunter2"),
-                "a value containing the separator reached the error: {described}"
+                "a value containing the separator reached the error"
             );
             // And what survives is a description of shapes, never a fragment of the input.
             assert!(
                 described.starts_with("found string, expected "),
-                "unexpected shape: {described}"
+                "the rewritten message has an unexpected shape"
             );
         }
     }
@@ -290,7 +304,7 @@ mod tests {
             let described = Constraint::from_decoder(raw, "string").describe();
             assert!(
                 described.ends_with(expected),
-                "the declared type was discarded: {described}"
+                "the declared type was discarded"
             );
         }
     }
@@ -309,7 +323,7 @@ mod tests {
             let described = Constraint::from_decoder(&raw, "string").describe();
             assert_eq!(
                 described, "found string, expected the declared type",
-                "a non-type fragment was forwarded: {described}"
+                "a non-type fragment was forwarded"
             );
         }
     }
@@ -320,8 +334,11 @@ mod tests {
         let raw = format!("something unexpected happened near \"{CREDENTIAL}\"");
         let described = Constraint::from_decoder(&raw, "string").describe();
 
-        assert!(!described.contains(CREDENTIAL), "{described}");
-        assert!(!described.contains("something unexpected"), "{described}");
+        assert!(!described.contains(CREDENTIAL), "the credential survived");
+        assert!(
+            !described.contains("something unexpected"),
+            "the unrecognised message was forwarded rather than discarded"
+        );
         assert_eq!(described, "found string, expected the declared type");
     }
 
@@ -360,7 +377,7 @@ mod tests {
         for constraint in &variants {
             assert!(
                 !constraint.describe().contains(CREDENTIAL),
-                "{constraint:?} rendered the credential"
+                "a constraint variant rendered the credential"
             );
         }
 
@@ -388,9 +405,12 @@ mod tests {
 
         assert_eq!(error.category(), ErrorCategory::Configuration);
         let rendered = error.to_string();
-        assert!(rendered.contains("database.password"), "{rendered}");
-        assert!(rendered.contains("environment"), "{rendered}");
-        assert!(rendered.contains("at least 12"), "{rendered}");
+        assert!(rendered.contains("database.password"), "the key is missing");
+        assert!(rendered.contains("environment"), "the layer is missing");
+        assert!(
+            rendered.contains("at least 12"),
+            "the constraint is missing"
+        );
         assert!(!rendered.contains(CREDENTIAL));
     }
 }

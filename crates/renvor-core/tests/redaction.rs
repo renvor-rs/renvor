@@ -106,7 +106,7 @@ async fn an_unmarked_credential_appears_in_zero_application_outputs() {
     for (name, rendered) in &outputs {
         assert!(
             !rendered.contains(CREDENTIAL),
-            "the credential reached `{name}`: {rendered}"
+            "the credential reached route {name}"
         );
     }
 
@@ -138,9 +138,12 @@ async fn the_permitted_type_name_is_present_while_the_contents_are_not() {
     let rendered = format!("{:?}", application.state());
     assert!(
         rendered.contains("UnmarkedCredential"),
-        "the permitted type name is missing: {rendered}"
+        "the permitted type name is missing"
     );
-    assert!(!rendered.contains(CREDENTIAL), "{rendered}");
+    assert!(
+        !rendered.contains(CREDENTIAL),
+        "the credential was rendered"
+    );
 }
 
 #[tokio::test]
@@ -175,11 +178,11 @@ async fn an_error_raised_while_the_credential_is_registered_stays_clean() {
 
     assert!(
         !rendered.contains(CREDENTIAL),
-        "the credential reached a failure report: {rendered}"
+        "the credential reached a failure report"
     );
     assert!(
         rendered.contains("breaks"),
-        "and the failure still names the provider: {rendered}"
+        "the failure no longer names the provider"
     );
 }
 
@@ -220,16 +223,19 @@ fn a_resolved_configuration_prints_its_keys_and_never_its_values() {
     let rendered = format!("{resolved:?}");
     assert!(
         !rendered.contains(CREDENTIAL),
-        "the configuration value reached Debug output: {rendered}"
+        "the configuration value reached Debug output"
     );
     assert!(
         !rendered.contains("localhost"),
-        "an unmarked value reached Debug output too: {rendered}"
+        "an unmarked value reached Debug output too"
     );
 
     // The useful half survives: which key came from which layer.
-    assert!(rendered.contains("password"), "{rendered}");
-    assert!(rendered.contains("Environment"), "{rendered}");
+    assert!(rendered.contains("password"), "the key is missing");
+    assert!(
+        rendered.contains("Environment"),
+        "the attribution is missing"
+    );
 
     // POSITIVE CONTROL: the value really is in there, so the absence above is redaction rather
     // than an empty struct.

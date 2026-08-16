@@ -5,16 +5,19 @@
 
 ## Status
 
-**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T139** have
-been executed on the branch `feat/phase-002-core-kernel`, which is **pushed and open as pull
-request #19**. **T122, T123, T125, T128, T131, and T132 were reopened on 2026-08-16** and close
-with Phase 11; **T140 and T141 are open** — the final verification matrix and the CodeQL
-disposition, neither of which can be completed before the corrections they verify are pushed.
+**Implementation is complete, conditional on integration into `main`.** The branch
+`feat/phase-002-core-kernel` is **pushed and open as pull request #19**.
 `specs/002-core-kernel/tasks.md` is authoritative for which tasks are checked, and this ledger must
 never claim more than it does.
 
+**This paragraph deliberately no longer names the open set.** It named it three times and was wrong
+twice — the third occurrence was found by the W-005 requirements delta review (D6-1), which
+observed this sentence naming *T140 and T141* while `tasks.md`, declared authoritative in the same
+sentence, marked *T128, T132, T141*. A summary of a moving boundary drifts every time the boundary
+moves, and the fix that keeps failing is remembering to update it. Read `tasks.md`.
+
 > **Corrected a third time, 2026-08-16 (T139).** Reviewing the open pull request found a second
-> layer of defects, recorded in [Post-review corrections](#post-review-corrections-t133t141). Six
+> layer of defects, recorded in [Post-review corrections](#post-review-corrections-t133t142). Six
 > tasks that had been checked were **not** complete on their own terms — most sharply T128, whose
 > W-005 reviews genuinely ran but whose findings were not all individually dispositioned. The
 > boundary in this paragraph has now moved three times and been wrong at two of them, which is
@@ -53,7 +56,7 @@ not cover. They are recorded in [Pre-shipping corrections](#pre-shipping-correct
 below, and T001–T110 must be read as *complete-as-specified*, not as *audited-and-shipped*.
 
 A second audit the same day, this time of the **open pull request**, found a further layer:
-[Post-review corrections](#post-review-corrections-t133t141). Six of Phase 10's own corrections
+[Post-review corrections](#post-review-corrections-t133t142). Six of Phase 10's own corrections
 were incomplete, and two MAJOR security findings on public API were still live behind a grouped
 disposition. T111–T132 must be read the same way T001–T110 is.
 
@@ -714,7 +717,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
 | 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
 | 23 | `MAX_OUTSTANDING_PROBES` has **no setter**, so an application whose contributors have all hung reports `NotAsked` until the process restarts | The application is genuinely broken at that point — 64 readiness workers have never returned — and reporting not-ready is correct. But an operator cannot raise or reset the budget | No |
-| ~~22~~ | ~~**9 open CodeQL `rust/cleartext-logging` alerts** on PR #19, *"all nine false positives"*~~ | **CLOSED 2026-08-16 (T133, T136, T141), and the original entry was wrong.** Only **#1–#3** were false positives — the `Display`, `Debug`, and embedded-`Display` demonstrations, whose sanitiser CodeQL cannot model. **#4–#9 were real defects and are fixed in source**: #4 printed `expose().len()`, and #5–#9 were assertion diagnostics that would have printed the synthetic credential on a redaction regression. #1–#3 are dismissed individually as `false positive` with a stated reason. See the CodeQL section for the full correction, including that the raw-credential positive control is at line 188 and was never flagged | — |
+| 22 | **3 open CodeQL `rust/cleartext-logging` alerts** on PR #19 — the `Display`, `Debug`, and embedded-`Display` demonstrations in `examples/configuration.rs:99–101` | The original entry called **all nine** false positives; only these three are. **#4–#9 were real defects and are fixed in source** — GitHub reports all six `fixed`. These three are custom-sanitizer false positives: every one renders `[redacted]`, verified by mutation. They are **not yet dismissed**; T141 does that, and this row will not be struck until GitHub reports 0 open alerts. Note the renumbering: #2 and #3 were re-fingerprinted as **#10 and #11** when the file changed, at the same lines with byte-identical source | **No** — all four required checks pass. But the PR shows a red CodeQL check until the three are dismissed |
 | 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
 | 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
 | 24 | The FIFO refusal is **check-then-open** and therefore racy | SV-N2's fix rejects a non-regular file on a `stat`, which does not open the path — so a FIFO present at check time never reaches the blocking `open`. An attacker who can **replace** the path between the `stat` and the `open` can still present one. Closing that needs `O_NONBLOCK` at open time, which means a direct `libc` dependency and a new row in the FR-040 inventory | No — under `ApplicationBuilder::build` even the residual is contained: `source.load()` runs inside `bounded_call` and is reported as a timeout. A caller using `FileLayer::read()` directly, on a path an attacker can write, is exposed |
@@ -722,6 +725,9 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 26 | "0 examples require a transport" rests on a **denylist**, not a proof | RV-N4. Gate 13a checks that no transport, database, or CLI package name appears in the resolved graph. That is what is available without a capability model; it cannot prove a future package is not a transport | No |
 | 27 | Gate 15's **15d has no positive control** | RV-N10. It is fail-closed through `pipefail` on its own pipeline, but nothing plants a row with an empty licence cell and requires the awk to catch it — the same shape as Q7-5, introduced by Q7-7's fix. T138 added three controls to 15f and none to 15d | No — but the file's own rule is that every zero-asserting check carries a control, and this one does not |
 | 28 | `MAX_OUTSTANDING_PROBES` is **not re-exported** from `health`'s root | SV-N4. Callers reach through `health::contributor::`, and the crate's own integration test does. The matching defect in `renvor-config` was fixed at T139 — `MAX_KEY_DEPTH` now sits at the crate root — so this is the remaining half of the same inconsistency | No |
+| 29 | Gate 12's repository-state check **cannot see an ignored path** | D5-1. `git status --porcelain` consults `.gitignore` — the same blind spot T120 removed from `release-dry-run.yml`, where the fix was a `find` comparison. Both of Gate 12's own probe files are git-visible, so the detector sees what it is aimed at | No — but the claim it supports is "no tracked or untracked-but-visible file changed", not "byte-identical" |
+| 30 | The wait-inventory gate's comment strip is **not a comment parser** | D7-5. `split_once("//")` truncates at a `//` inside a string literal — one production line is truncated today, `observe/spans.rs:163`, with no live effect — and `/* … */` is not stripped at all, so the original false positive reproduces in block-comment form | No — the errors run in opposite directions (stricter for bounding constructs, laxer for author calls) and both are named in the code |
+| 31 | A **regular file is now required** for a configuration source | S3-2. `/dev/null` as a deliberately-empty source, `/dev/stdin` when stdin is a pipe, and process substitution are all refused. The alternative — permitting character devices — readmits `/dev/zero`, which is the memory exhaustion finding 4.1 was raised for | No — but an operator who passed `/dev/stdin` before now gets a refusal, and the release note should say so |
 
 ## Pre-shipping corrections (T111–T132)
 
@@ -803,8 +809,8 @@ and none is omitted.** Individual processes are the point: a concatenated script
 | 14 | Publication and governance (SC-011, FR-034, ADR-0007) | **PASS** | — | **14d would have FAILED before T124** — status pattern never matched |
 | 15 | Resolved-dependency inventory (FR-040) | **PASS** | — | **compared nothing before T122**, and read no prose before T134 — now 48 = 48 both directions, with the narrative checked and three planted controls |
 
-**16 of 16 pass. 0 skipped. 0 inconclusive. 162 tests executed across gates 2–11**, against 62
-before, four of which contributed nothing. Repository entries before and after the full run were
+**16 of 16 pass. 0 skipped. 0 inconclusive. 162 tests executed across gates 2–11**, against **56**
+before — the sum of the column above — four of which contributed nothing. Repository entries before and after the full run were
 identical and no probe file survived. Gate 14b's GitHub-releases half was verified with an
 authenticated `gh`, not recorded as an unverified gap.
 
@@ -1348,7 +1354,7 @@ treat a non-required red check as cosmetic. W-001 requires the checks to be *cle
 *passing where required*, and six of these nine were pointing at real defects, which is the
 argument against treating any of them as cosmetic. The alerts are worked to zero.
 
-## Post-review corrections (T133–T141)
+## Post-review corrections (T133–T142)
 
 A second audit on **2026-08-16**, this time of the **open pull request** at `a7643c5`, found a
 layer of defects that Phase 10's corrections had introduced or left standing. Six previously
@@ -1497,8 +1503,13 @@ stops matching is a failure rather than a silent pass. Mutation-tested:
 | `cargo test -p renvor-config this_matches_nothing::` | `test result: ok`, **exit 0** |
 | `run_tests_expecting 8 -p renvor-config this_matches_nothing::` | `tests executed: 0 (minimum 8)`, **exit 1** |
 
-Gates 2–11 now execute **162** tests between them, against **62** before — of which four gates
+Gates 2–11 now execute **162** tests between them, against **56** before — of which four gates
 contributed nothing at all.
+
+> **The first version of this sentence said 62, and the delta review (D7-1) caught it.** The
+> per-gate figures in the table above are correct and sum to 56 (`31+0+0+0+9+6+2+6+2+0`); 62 was
+> written from memory rather than from the column beside it. A total that does not derive from its
+> own table is the exact defect this section exists to record, recurring inside the record of it.
 
 ### D — the dependency inventory disagreed with its own table (T134)
 
@@ -1512,6 +1523,119 @@ Gate 15's new **15f** derives every figure from `cargo metadata` and from resear
 candidate table, then requires the document to state it. A missing row fails as loudly as a wrong
 one. Three planted controls — a stale prose total, a wrong summary row, a deleted row — are each
 required to be caught.
+
+### C4 — the W-005 delta reviews, round 3 (T139)
+
+Two more clean-context reviews, **NON-INDEPENDENT and ADVISORY**, run against `976648e` and scoped
+to the two commits this phase had just produced. Both delivered to disk, both returned enumerated
+findings.
+
+| Delta review | Findings |
+|---|---|
+| Requirements | **0 CRITICAL, 3 MAJOR, 8 MINOR** — D0-1 … D7-6 |
+| Security | **0 CRITICAL, 4 MAJOR, 6 MINOR** — S1-1 … S6-2 |
+
+**This round paid for itself twice over, and both times on the same mistake.**
+
+**S1-1 — I fixed the files I was pointed at, again.** The round-2 re-review had already caught this
+exact shape: security finding 1.1 named `ResolvedConfig<T>`, four sibling types kept the defect.
+T133 then removed secret-derived diagnostics from the three files the CodeQL alerts pointed at —
+and left **24 sites of the identical defect in five other files**. The reviewer proved it by
+execution: breaking `Secret`'s `Display` printed ``the credential reached the `Display` path:
+"hunter2-do-not-print"`` from `renvor-config/tests/redaction.rs`, and reverting `from_decoder`
+printed it from `renvor-core/src/error/context.rs`. In the same run, `leak_separator.rs` — one of
+the three files T133 *did* fix — also failed, and printed nothing. The technique worked; it had
+simply not been finished.
+
+**The response is a gate, not a longer list.** `crates/renvor-core/tests/diagnostics.rs` discovers
+every file in the workspace that handles a credential needle and fails if any assertion diagnostic
+interpolates anything but an allowlisted label or index. An allowlist, not a denylist: the failure
+mode is *a binding nobody anticipated*, and only an allowlist fails closed on one. It carries three
+controls, including a negative one, because a gate that fires on the fix is a gate that gets
+deleted.
+
+Re-running the reviewer's own mutation afterwards:
+
+| | Before T139 | After |
+|---|---|---|
+| Failing tests under the Display/Debug/`from_decoder` mutation | 12 | 12 |
+| Occurrences of `hunter2` in the failure output | **1** | **0** |
+| Occurrences of `s3cr3t-token`, `LEAKED-TAIL`, `do-not-print` | — | **0** |
+
+**S2-1 and S2-2 — the depth guard bounded the key and not the value.** SV-N1's fix counted
+`key.split('.')`. The recursion runs over the key **and** the value, so a shallow key with a
+1,575-deep value still aborted at exit 134, and `decode_source` — which is what
+`LayeredResolver::resolve()` calls — had no depth check of any kind. The ledger had recorded
+SV-N1's residual as *"none"*.
+
+`MAX_VALUE_DEPTH = 128` now guards both entry points, measured iteratively so the measurement
+cannot overflow on the input it exists to refuse. 128 sits between two measured numbers: the TOML
+parser refuses its own nesting at **81**, so nothing readable from a file or an environment
+variable is newly refused, and the descent overflows at about **1,575**. A caller-constructed
+`toml::Table` skips the parser, which is exactly why the gap mattered.
+
+**The three MAJOR requirements findings were all claims running ahead of reality**, and one of them
+is pointed: D7-1 found *"162 tests, against 62 before"* where the table beside it sums to **56**. A
+total not derivable from its own table — inside the section recording that defect. D6-1 found the
+Status paragraph naming a different open set from `tasks.md`, for the third time; that paragraph no
+longer names one. D7-2 found open item 22 struck through as CLOSED, asserting the CodeQL alerts
+"are dismissed", while **0** were dismissed and the check was still red.
+
+### Round 3, requirements delta — all 11 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| D0-1 | MINOR | The repository was **modified during** this read-only review: an uncommitted section appeared in the ledger at 21:34. The reviewer re-anchored its documentary findings to the committed blob and said so | **ACCEPTED, and my fault.** Editing the subject of a running review invalidates exactly the property that makes it evidence. The reviewer's handling was correct; the practice is recorded so a future round holds the tree still |
+| D3-1 | MINOR | SV-N1's residual was recorded as **"none"**, but the guard counts key segments and the value is uninspected | **FIXED**, with S2-1 — and the residual row corrected. Not attacker-reachable through a file or the environment, so the *security* claim stood; "residual: none" did not |
+| D5-1 | MINOR | Gate 12's 12e proves "unchanged" with `git status --porcelain`, which consults `.gitignore` — the blind spot T120 removed from `release-dry-run.yml`. The planted control uses a git-visible path, so the blind region is never exercised | **ACCEPTED, and the claim narrowed.** The gate now states what it establishes: no tracked or untracked-but-visible file changed, which is weaker than "byte-identical". **Open item 29** |
+| D6-1 | **MAJOR** | The Status paragraph named the open set as T140/T141 while `tasks.md`, declared authoritative in the same sentence, marked T128/T132/T141. Third occurrence of the RV-N1 drift | **FIXED by deletion.** The paragraph no longer names an open set at all. It named one three times and was wrong twice; the remedy that kept failing was remembering to update it |
+| D6-2 | MINOR | `tasks.md` marks T131/T140 `[x]` covering a full matrix the ledger records only at older commits | **FIXED at T140**, whose matrix is recorded at the final head |
+| D7-1 | **MAJOR** | *"162 tests … against **62** before"*, stated twice, where the table beside it sums to **56**. Re-measured from `a7643c5`: 56 | **FIXED.** Both occurrences say 56, with the arithmetic shown. The defect class this section documents, recurring inside the documentation of it |
+| D7-2 | **MAJOR** | Open item 22 struck through as CLOSED, asserting *"#1–#3 are dismissed"*, while **0** were dismissed and CodeQL was still failing | **FIXED.** The item is open, describes the live state, and will not be struck until GitHub reports 0 open alerts |
+| D7-3 | MINOR | T141 says *"dismiss only #1, #2, #3"*; #2 and #3 are now `fixed` and the live open alerts are **#1, #10, #11** | **FIXED.** T141 names the three by content and by their live numbers, with the renumbering explained |
+| D7-4 | MINOR | Gate 12's Pass paragraph claims *"each of the five proven by a control"*; there are four controls, and two other lines in the same file say four | **FIXED.** Four are controlled; the fifth is the gate's main assertion, and the paragraph says so |
+| D7-5 | MINOR | The comment-strip is `split_once("//")`, not a comment parser: it truncates a line at a `//` inside a string literal, and does not strip `/* … */` at all. One production line is truncated today | **ACCEPTED, with both limits named in the code.** They fail in the stricter direction for bounding constructs and the laxer direction for author calls, so neither is safe to forget. **Open item 30** |
+| D7-6 | MINOR | The Summary-of-gates table still showed gates 6 and 9 as zero-asserting with control **"—"**, against the file's own rule | **FIXED.** Gates 6, 7, 8, and 9 name their controls |
+
+### Round 3, security delta — all 10 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| S1-1 | **MAJOR** | The secret-diagnostic removal reached 3 files and left **24 sites of the identical class in 5 others**. Proven live by mutation | **FIXED**, and made a property: `tests/diagnostics.rs` discovers every credential-handling file and fails on any interpolating diagnostic. Re-running the reviewer's mutation now yields **0** credential occurrences |
+| S1-2 | MINOR | A bare `assert!` renders its own expression source, which contained the credential literal — so the example still printed `hunter2` on a regression, in a file the same diff had edited | **FIXED.** The assertion carries a message, and its needle is assembled from halves so the expression no longer contains it either |
+| S2-1 | **MAJOR** | The depth guard counts `key` segments; the recursion is over key **and** value. `decode_single("a", <1575-deep value>)` still aborted, exit 134 | **FIXED.** `MAX_VALUE_DEPTH`, measured iteratively, checked before the clone |
+| S2-2 | **MAJOR** | `decode_source` had **no depth guard at all**, and it is what the shipped resolver calls: abort at depth 1,575 through public API | **FIXED**, same guard, at every entry point. Reachability caveat confirmed: the TOML parser caps at 81, so no file or environment variable reached it — a caller-built `Table` did |
+| S2-3 | MINOR | Three effective ceilings are in force — 32 (env key), ~81 (file, via the parser only), unbounded (caller-supplied) | **CLOSED by the S2-2 fix** for the third; the first two remain and are now both Renvor's, named. **Open item 21** covers the numbers |
+| S3-1 | **MAJOR** | The check-then-open TOCTOU is trivially winnable: **101 attempts, 1,517 ms**. `ApplicationBuilder::build` containment verified and **holds** | **ACCEPTED as already-declared open item 24**, now with the reviewer's measurement in it rather than a qualitative "racy". Closing it needs `O_NONBLOCK`, hence `libc`, hence an FR-040 inventory row — a scope change this phase does not take |
+| S3-2 | MINOR | Legitimate cases refused: `/dev/null` as an empty source, `/dev/stdin` when stdin is a pipe, process substitution. And the message blames indefinite blocking, untrue of `/dev/null` | **Message FIXED** — it states the rule and why the class is refused, rather than a cause that does not apply to every member. **The refusal itself is kept**, because allowing character devices readmits `/dev/zero`. **Open item 31** |
+| S4-1 | MINOR | The constant and the two `"32 levels"` messages were independent: setting `MAX_KEY_DEPTH = 8` left both saying 32, and the new test still passed because it asserted the literal | **FIXED.** A `Constraint::TooDeep { maximum_depth }` variant carries the number, so the message *is* the constant, and both tests read the constant instead of a literal |
+| S6-1 | MINOR | The depth refusal reproduces the key verbatim: a 9,999,999-byte key becomes a 10,000,269-byte error | **ACCEPTED. Open item 25**, now carrying the measurement |
+| S6-2 | MINOR | `read_process_environment` names the lossy form of a non-Unicode variable name, expanding each invalid byte to U+FFFD: a 200,007-byte name produced a **600,221-byte** error — an exact **3.00×** amplification | **ACCEPTED. Open item 25.** Pre-existing and not in the delta, recorded because the amplification factor was not previously known |
+
+**No finding at HIGH or above is refused, across all three rounds.** That is now a claim about
+**82** individually enumerated findings (26 + 12 + 19 + 4 + 11 + 10).
+
+### D2 — final cross-artifact analysis (T140)
+
+Re-run against the final artifacts. Every check is **mechanical** — extracted and compared by
+script, not read — because the previous round's defects were all cases of a document agreeing with
+itself in prose while disagreeing with a machine-readable fact.
+
+| Check | Result |
+|---|---|
+| `spec.md` identifiers | FR-001…FR-044 (**44**), SC-001…SC-022 (**22**) |
+| Evidence-map rows | **44** FR, **22** SC, **0** duplicates, **0** missing, **0** extra, **0** empty cells |
+| Requirements with no mention in `tasks.md` | **0** |
+| Task ledger | **141** rows, T001–T141, **0** gaps, **0** duplicate IDs, 138 checked + 3 open = 141 |
+| Quickstart gate headings vs the Summary-of-gates table | **16** and **16**, identical sets |
+| Numeric bounds (1024, 8192, 2048, 16384, 18432) across spec / plan / research / data-model | present in all four, no contradiction |
+| Unresolved placeholders (`TODO`, `TKTK`, `???`, `FIXME`) | **0** |
+| Terminology: "21 combinations" | consistent, and the `Drain` limit is stated wherever the claim appears |
+
+**0 CRITICAL, 0 HIGH, 0 MEDIUM.** The findings this round came from *executing* the artifacts —
+counting the tests each gate ran, running Gate 12 in a second shell, reproducing two security
+findings from outside the crate — not from cross-reading them. That is the lesson worth carrying:
+the cross-artifact analysis was clean at `a7643c5` too, while four gates were running zero tests.
 
 ### E — the workflow-quality defects (T135, T137)
 

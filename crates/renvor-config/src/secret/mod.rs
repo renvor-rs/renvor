@@ -243,7 +243,7 @@ mod tests {
             .expect("the manifest declares secrecy");
         assert!(
             !secrecy_line.contains("serde"),
-            "the crate's serde feature was enabled: {secrecy_line}"
+            "the crate's serde feature was enabled in the manifest"
         );
 
         // POSITIVE CONTROL: the manifest scan reads real text and can find a feature that IS

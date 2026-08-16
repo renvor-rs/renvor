@@ -153,6 +153,14 @@ mod tests {
     use super::TypedStateMap;
     use crate::error::ErrorCategory;
 
+    /// The synthetic credential, named once so no assertion has to spell it out.
+    ///
+    /// W-005 security delta S1-1/S1-2: a bare `assert!` renders its own expression source in the
+    /// panic message, so `assert!(!e.contains("hunter2-…"))` printed the credential on exactly the
+    /// run that proved a leak. Every assertion below carries a fixed message instead, and refers
+    /// to the value through this constant.
+    const CREDENTIAL: &str = "hunter2-do-not-print";
+
     #[derive(Debug, PartialEq)]
     struct Db(u16);
 
@@ -189,7 +197,10 @@ mod tests {
             .expect_err("a second value of the same type must be rejected");
 
         assert_eq!(error.category(), ErrorCategory::StateDuplicate);
-        assert!(error.to_string().contains("Db"), "{error}");
+        assert!(
+            error.to_string().contains("Db"),
+            "the type name is missing from the error"
+        );
 
         // The original survives. Silently replacing would make the winner depend on registration
         // order nobody wrote down.
@@ -206,7 +217,10 @@ mod tests {
             .expect_err("an unregistered type must not be retrievable");
 
         assert_eq!(error.category(), ErrorCategory::StateMissing);
-        assert!(error.to_string().contains("Db"), "{error}");
+        assert!(
+            error.to_string().contains("Db"),
+            "the type name is missing from the error"
+        );
     }
 
     #[test]
@@ -235,30 +249,36 @@ mod tests {
         let mut state = TypedStateMap::new();
         state
             .insert(ApiCredential {
-                token: "hunter2-do-not-print".to_owned(),
+                token: CREDENTIAL.to_owned(),
             })
             .unwrap();
 
         let debug_output = format!("{state:?}");
         assert!(
-            !debug_output.contains("hunter2-do-not-print"),
-            "the credential reached Debug output: {debug_output}"
+            !debug_output.contains(CREDENTIAL),
+            "the credential reached Debug output"
         );
 
         // The error paths are the other output forms that could leak.
         let duplicate = state
             .insert(ApiCredential {
-                token: "hunter2-do-not-print".to_owned(),
+                token: CREDENTIAL.to_owned(),
             })
             .unwrap_err();
-        assert!(!duplicate.to_string().contains("hunter2-do-not-print"));
+        assert!(
+            !duplicate.to_string().contains(CREDENTIAL),
+            "the duplicate-insert error carried the stored value"
+        );
 
         let missing = state.get::<Db>().unwrap_err();
-        assert!(!missing.to_string().contains("hunter2-do-not-print"));
+        assert!(
+            !missing.to_string().contains(CREDENTIAL),
+            "the missing-type error carried a stored value"
+        );
 
         // POSITIVE CONTROL: the search string is findable when it IS present, so the three
         // assertions above are discriminating rather than vacuous.
-        assert!(format!("{:?}", "hunter2-do-not-print").contains("hunter2-do-not-print"));
+        assert!(format!("{CREDENTIAL:?}").contains(CREDENTIAL));
     }
 
     #[test]
@@ -270,11 +290,11 @@ mod tests {
         state.insert(Cache("redis")).unwrap();
 
         let output = format!("{state:?}");
-        assert!(output.contains("Db"), "{output}");
-        assert!(output.contains("Cache"), "{output}");
+        assert!(output.contains("Db"), "the first type name is missing");
+        assert!(output.contains("Cache"), "the second type name is missing");
         assert!(
             !output.contains("5432") && !output.contains("redis"),
-            "values leaked into Debug: {output}"
+            "a stored value leaked into Debug"
         );
     }
 

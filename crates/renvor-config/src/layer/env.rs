@@ -172,16 +172,20 @@ pub fn read_environment<P: DeserializeOwned>(
         // Checked BEFORE `nest` builds anything. Every recursion this bound protects — nesting,
         // deserializing, and dropping — happens inside the calls below, so a check afterwards
         // would run after the overflow it exists to prevent.
-        let depth = key.split('.').count();
-        if depth > MAX_KEY_DEPTH {
+        //
+        // The ceiling travels IN the constraint rather than being written into a `Rule`'s text
+        // (S4-1). The previous form said "deeper than 32 levels" in a `&'static str`, which the
+        // constant could not reach — setting `MAX_KEY_DEPTH` to 8 left the message saying 32, and
+        // a test asserting the literal went on passing. A number a reader is given and a number
+        // the code enforces have to be the same number.
+        if key.split('.').count() > MAX_KEY_DEPTH {
             return Err(configuration(
                 key,
                 SourceLayer::Environment.label(),
                 "a key nested no deeper than the ceiling",
-                &Constraint::Rule(
-                    "the variable name describes a key deeper than 32 levels; building it would \
-                     recurse deeply enough to overflow the stack, which no Rust guard can catch",
-                ),
+                &Constraint::TooDeep {
+                    maximum_depth: MAX_KEY_DEPTH,
+                },
             ));
         }
 
@@ -253,7 +257,7 @@ fn graft(table: &mut Table, name: String, value: Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{NESTING_SEPARATOR, read_environment};
+    use super::{MAX_KEY_DEPTH, NESTING_SEPARATOR, read_environment};
     use renvor_core::ErrorCategory;
     use serde::Deserialize;
     use std::collections::BTreeMap;
@@ -398,9 +402,13 @@ mod tests {
             .expect_err("a key deeper than the ceiling must be refused");
 
         assert_eq!(error.category(), ErrorCategory::Configuration);
+        // Read from the constant, never written as a literal — see S4-1 and the matching
+        // assertion in `decode.rs`.
         assert!(
-            error.to_string().contains("32 levels"),
-            "the ceiling must be named: {error}"
+            error
+                .to_string()
+                .contains(&format!("{MAX_KEY_DEPTH}-level ceiling")),
+            "the ceiling must be named, and must be the one the code enforces: {error}"
         );
     }
 

@@ -288,7 +288,10 @@ mod tests {
         .expect("no conflicts");
 
         let features = merged.table["features"].as_array().expect("an array");
-        assert_eq!(features.len(), 1, "0 concatenations: {features:?}");
+        assert!(
+            features.len() == 1,
+            "arrays were concatenated rather than replaced"
+        );
         assert_eq!(features[0].as_str(), Some("z"));
     }
 
@@ -303,11 +306,14 @@ mod tests {
 
         assert_eq!(error.category(), ErrorCategory::ConfigurationConflict);
         let rendered = error.to_string();
-        assert!(rendered.contains("server"), "key: {rendered}");
-        assert!(rendered.contains("base.toml"), "first layer: {rendered}");
-        assert!(rendered.contains("override.toml"), "second: {rendered}");
-        assert!(rendered.contains("table"), "first shape: {rendered}");
-        assert!(rendered.contains("string"), "second shape: {rendered}");
+        assert!(rendered.contains("server"), "the key is missing");
+        assert!(rendered.contains("base.toml"), "the first layer is missing");
+        assert!(
+            rendered.contains("override.toml"),
+            "the second layer is missing"
+        );
+        assert!(rendered.contains("table"), "the first shape is missing");
+        assert!(rendered.contains("string"), "the second shape is missing");
     }
 
     #[test]
