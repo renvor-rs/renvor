@@ -23,7 +23,7 @@
 //! else changes. Making `build` async would therefore have churned every call site **and still**
 //! needed `spawn_blocking` underneath.
 //!
-//! So [`bounded_call`] runs each source call on its own thread and waits on a channel with
+//! So each source call runs on its own thread, and the kernel waits on a channel with
 //! [`std::sync::mpsc::Receiver::recv_timeout`]. The signature does not change, and the kernel's
 //! wait is bounded.
 //!
