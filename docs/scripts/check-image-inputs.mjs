@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Reachability guard for the `image-size` advisory exception (T108).
+ * No-image-input guard for the `image-size` isolation (T108).
  *
  * WHY THIS EXISTS
  * ---------------
@@ -10,10 +10,16 @@
  * loops in the ICNS, JXL and HEIF parsers) have NO fixed version at any release, and
  * the upstream repository is archived, so no fix is coming from that direction.
  *
- * The documentation site is currently safe from those parsers for one reason only:
- * it embeds no images, so `mdx-loader` never invokes them. That is a property of the
- * content, and content changes. This script turns that property into an enforced
- * precondition instead of an assumption someone has to remember.
+ * The advisories are now closed by removal rather than by upgrade: an npm `overrides`
+ * entry redirects `image-size` to `vendor/image-size-disabled`, a local no-op, so the
+ * vulnerable parsers are never installed. The security premise no longer depends on
+ * this script.
+ *
+ * What the script now protects is the consequence of that removal. The replacement
+ * cannot measure anything — it throws — so an image added to this site would build
+ * without width/height attributes and shift layout as it loads. This guard keeps the
+ * "no image input" precondition enforced rather than remembered, and keeps the
+ * isolation honest: image support is genuinely gone, not quietly degraded.
  *
  * FAIL-CLOSED BY CONSTRUCTION
  * ---------------------------
@@ -22,9 +28,9 @@
  * unexpected exception) rather than skipping — a check that cannot run is a failure,
  * never a skip, matching the project's verification contract.
  *
- * The exception this guards is time-bounded. When it lapses or is lifted, delete this
- * script and the `prebuild` hook together; leaving the guard without the exception, or
- * the exception without the guard, is worse than having neither.
+ * Retire this script only together with the override and the vendored replacement: a
+ * real image pipeline needs all three changed at once, and leaving the guard without
+ * the override, or the override without the guard, is worse than having neither.
  */
 
 import {readdirSync, readFileSync, statSync} from 'node:fs';
@@ -138,7 +144,7 @@ try {
 
 if (violations.length > 0) {
   console.error('');
-  console.error('[T108] BUILD REFUSED — image input found while the image-size advisory exception is active.');
+  console.error('[T108] BUILD REFUSED — image input found while image-size is disabled.');
   console.error('');
   for (const v of violations) {
     console.error(`  ${v.file}${v.line ? `:${v.line}` : ''}`);
@@ -146,11 +152,14 @@ if (violations.length > 0) {
   }
   console.error('');
   console.error('  GHSA-w3rx-r6r6-pgpr and GHSA-5p2g-fcmc-qvqq (both high, CVSS 7.5) have no fixed');
-  console.error('  version, and image-size upstream is archived. The exception recorded for T108');
-  console.error('  rests on this site processing no images at all. Adding one voids it.');
+  console.error('  version, and image-size upstream is archived, so T108 closed them by removing');
+  console.error('  the package: an npm override points image-size at vendor/image-size-disabled,');
+  console.error('  a no-op that throws instead of measuring. This site therefore cannot size an');
+  console.error('  image, and one added here would render without width/height and shift layout.');
   console.error('');
-  console.error('  To proceed you must either remove the image input, or close T108 by resolving');
-  console.error('  the advisories. Do not weaken or delete this check to make a build pass.');
+  console.error('  To proceed, either remove the image input, or restore a real image-size and');
+  console.error('  retire this guard with it. Do not weaken or delete this check on its own to');
+  console.error('  make a build pass.');
   console.error('');
   process.exit(1);
 }
