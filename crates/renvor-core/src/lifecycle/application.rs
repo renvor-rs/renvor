@@ -34,7 +34,7 @@ use crate::health::HealthState;
 use crate::lifecycle::LifecyclePhase;
 use crate::lifecycle::drain::{DrainOutcome, WorkGate};
 use crate::lifecycle::rollback::{BootFailure, RollbackReport, roll_back};
-use crate::observe::RunIdentifier;
+use crate::observe::{RunIdentifier, phase_span};
 use crate::provider::{
     InitContext, InitialisationOrder, ProviderId, ProviderRegistry, ResolutionReport,
 };
@@ -97,15 +97,45 @@ impl PhaseLog {
 pub struct PhaseCursor {
     current: LifecyclePhase,
     log: PhaseLog,
+    run_id: RunIdentifier,
+    /// The current phase's span, held so that dropping it closes the phase.
+    ///
+    /// One span at a time, replaced on each transition — FR-043 asks for one span **per phase**,
+    /// and keeping the previous one alive would nest them into a tree that says the phases overlap.
+    span: Option<tracing::Span>,
 }
 
 impl PhaseCursor {
     /// Starts at the first phase and records it.
+    ///
+    /// Takes the run identifier because FR-043 requires **every** emitted record to carry it, and
+    /// the first span is emitted here. Generating it later would leave the earliest records
+    /// unattributed — the ones a startup failure produces.
     #[must_use]
-    pub fn start(log: PhaseLog) -> Self {
+    pub fn start(log: PhaseLog, run_id: RunIdentifier) -> Self {
         let current = LifecyclePhase::first();
         log.record(current);
-        Self { current, log }
+        let span = Some(phase_span(current, &run_id));
+        Self {
+            current,
+            log,
+            run_id,
+            span,
+        }
+    }
+
+    /// The identifier every span from this cursor carries.
+    #[must_use]
+    pub const fn run_id(&self) -> &RunIdentifier {
+        &self.run_id
+    }
+
+    /// Replaces the current span with one for `phase`.
+    fn open(&mut self, phase: LifecyclePhase) {
+        // Assigning drops the previous span, which closes it. Order matters: the new span is built
+        // first so a subscriber never sees a gap with no phase open.
+        let next = phase_span(phase, &self.run_id);
+        self.span = Some(next);
     }
 
     /// The phase the run is in.
@@ -122,6 +152,7 @@ impl PhaseCursor {
         if let Some(next) = self.current.next() {
             self.current = next;
             self.log.record(next);
+            self.open(next);
         }
         self.current
     }
@@ -139,6 +170,7 @@ impl PhaseCursor {
         if phase.position() > self.current.position() {
             self.current = phase;
             self.log.record(phase);
+            self.open(phase);
         }
         self.current
     }
@@ -520,11 +552,16 @@ pub(crate) fn deadline_millis(deadline: Duration) -> u64 {
 mod tests {
     use super::{PhaseCursor, PhaseLog};
     use crate::lifecycle::LifecyclePhase;
+    use crate::observe::{FixedEntropy, RunIdentifier};
+
+    fn run_id() -> RunIdentifier {
+        RunIdentifier::generate(&FixedEntropy::new(vec![5; 32])).expect("fixed entropy generates")
+    }
 
     #[test]
     fn a_cursor_records_the_phase_it_starts_in() {
         let log = PhaseLog::new();
-        let cursor = PhaseCursor::start(log.clone());
+        let cursor = PhaseCursor::start(log.clone(), run_id());
         assert_eq!(cursor.current(), LifecyclePhase::Load);
         assert_eq!(log.entries(), vec![LifecyclePhase::Load]);
     }
@@ -534,7 +571,7 @@ mod tests {
         // FR-001 / V-A1. There is no argument to `advance`, so there is no way to ask for an
         // earlier phase or to skip one; this test records the resulting sequence.
         let log = PhaseLog::new();
-        let mut cursor = PhaseCursor::start(log.clone());
+        let mut cursor = PhaseCursor::start(log.clone(), run_id());
         for _ in 0..LifecyclePhase::ALL.len() {
             cursor.advance();
         }
@@ -544,7 +581,7 @@ mod tests {
     #[test]
     fn advancing_past_the_final_phase_stays_there_and_records_nothing_more() {
         let log = PhaseLog::new();
-        let mut cursor = PhaseCursor::start(log.clone());
+        let mut cursor = PhaseCursor::start(log.clone(), run_id());
         while cursor.current() != LifecyclePhase::Stop {
             cursor.advance();
         }
@@ -567,7 +604,7 @@ mod tests {
         let observer = log.clone();
         assert!(observer.entries().is_empty());
 
-        let mut cursor = PhaseCursor::start(log);
+        let mut cursor = PhaseCursor::start(log, run_id());
         cursor.advance();
         assert_eq!(
             observer.entries(),

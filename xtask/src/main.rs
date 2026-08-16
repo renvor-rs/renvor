@@ -24,11 +24,11 @@ const EXIT_OK: i32 = 0;
 const EXIT_STEP_FAILED: i32 = 1;
 /// A required toolchain is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
-/// The working tree was dirty after an otherwise successful run (step 10).
+/// The working tree was dirty after an otherwise successful run (step 11).
 const EXIT_DIRTY_TREE: i32 = 3;
 
 /// Total number of steps in the sequence, used only for progress output.
-const TOTAL_STEPS: usize = 10;
+const TOTAL_STEPS: usize = 11;
 
 /// A tool the sequence needs, how to detect it, and how to install it.
 struct Tool {
@@ -50,7 +50,7 @@ const REQUIRED: &[Tool] = &[
         program: "git",
         probe: &["--version"],
         name: "git",
-        purpose: "secret scanning and working-tree cleanliness, steps 7 and 10",
+        purpose: "secret scanning and working-tree cleanliness, steps 8 and 11",
         install: "https://git-scm.com/downloads",
     },
     Tool {
@@ -204,13 +204,23 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 7: secret scan ----
+    // ---- Step 7: architecture invariants ----
+    //
+    // Three claims the plan makes that are otherwise only assertions in prose. Each is checked
+    // against the RESOLVED graph or the actual document text, and each carries a positive control
+    // — a query that must find what the first query must not, so a check that silently stopped
+    // working is caught rather than reported as a pass.
+    if !architecture_invariants(&root) {
+        return EXIT_STEP_FAILED;
+    }
+
+    // ---- Step 8: secret scan ----
     // `gitleaks detect` was REMOVED in Gitleaks 8.x. The history scanner is now
     // `gitleaks git`, and the working-tree scanner is `gitleaks dir`. Both run:
     // the history scan cannot see uncommitted files, and the directory scan cannot
     // see deleted-but-committed ones. Neither substitutes for the other.
     if !run(
-        7,
+        8,
         "secret scan (history)",
         "gitleaks",
         &["git", ".", "--no-banner"],
@@ -220,7 +230,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        7,
+        8,
         "secret scan (working tree)",
         "gitleaks",
         &["dir", ".", "--no-banner"],
@@ -230,11 +240,11 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 8: documentation site ----
+    // ---- Step 9: documentation site ----
     let docs = root.join("docs");
     if !docs.join("package.json").is_file() {
         step_fail(
-            8,
+            9,
             "documentation site",
             "docs/package.json not found — the documentation package is missing",
         );
@@ -245,7 +255,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        8,
+        9,
         "documentation site (install)",
         "npm",
         &["ci"],
@@ -255,7 +265,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        8,
+        9,
         "documentation site (build)",
         "npm",
         &["run", "build"],
@@ -265,7 +275,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 9: link check over the BUILT output ----
+    // ---- Step 10: link check over the BUILT output ----
     //
     // `--root-dir` is required, not optional: the built site uses root-relative links
     // (`/docs/intro`). Without it lychee cannot resolve a single one against the local
@@ -277,7 +287,7 @@ fn verify() -> i32 {
     let link_root = docs.join("build");
     let link_root = link_root.to_string_lossy().to_string();
     if !run(
-        9,
+        10,
         "link check",
         "lychee",
         &[
@@ -295,16 +305,16 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 10: working-tree cleanliness ----
+    // ---- Step 11: working-tree cleanliness ----
     // This is what proves the ignore rules are correct rather than merely present.
     match dirty_entries(&root) {
         Err(message) => {
-            step_fail(10, "working-tree cleanliness", &message);
+            step_fail(11, "working-tree cleanliness", &message);
             EXIT_STEP_FAILED
         }
         Ok(entries) if entries.is_empty() => {
             step_ok(
-                10,
+                11,
                 "working-tree cleanliness",
                 "no untracked or modified files",
             );
@@ -314,7 +324,7 @@ fn verify() -> i32 {
         }
         Ok(entries) => {
             step_fail(
-                10,
+                11,
                 "working-tree cleanliness",
                 "the working tree is not clean",
             );
@@ -454,3 +464,249 @@ fn workspace_root() -> std::path::PathBuf {
         .expect("xtask manifest directory always has a parent")
         .to_path_buf()
 }
+
+/// Step 7: the crate DAG, the facade's feature isolation, and the SC-022 wording agreement.
+///
+/// Kept in one step because the three share a shape: **a claim, and a control that proves the
+/// check can fail**. Splitting them would triple the progress output without adding information.
+fn architecture_invariants(root: &std::path::Path) -> bool {
+    if !crate_dag_holds(root) {
+        return false;
+    }
+    if !facade_feature_isolation_holds(root) {
+        return false;
+    }
+    if !instability_wording_agrees(root) {
+        return false;
+    }
+    step_ok(
+        7,
+        "architecture invariants",
+        "crate DAG, facade isolation, and instability wording all hold, each with a control",
+    );
+    true
+}
+
+/// Resolves one crate's normal-edge dependency graph.
+fn normal_edges(root: &std::path::Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("cargo")
+        .args(["tree", "--edges", "normal", "--prefix", "none"])
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// T101: the crate DAG has the direction the plan claims, with positive controls.
+fn crate_dag_holds(root: &std::path::Path) -> bool {
+    // `renvor-core` carries no parser, no derive macro, and no secret type. That absence is the
+    // whole reason `renvor-config` exists as a separate crate.
+    let Some(core) = normal_edges(root, &["-p", "renvor-core"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor-core` failed",
+        );
+        return false;
+    };
+    for forbidden in ["serde ", "toml ", "secrecy "] {
+        if core.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "renvor-core resolves `{}`, which the crate split exists to prevent",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL 1: the query works and finds what IS there.
+    if !core.contains("petgraph") || !core.contains("tokio") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the renvor-core tree query found neither petgraph nor tokio, so it is not reading the graph",
+        );
+        return false;
+    }
+
+    // Nothing depends on `renvor-testkit`, which is what keeps `test-util` out of every production
+    // graph.
+    for package in ["renvor", "renvor-core", "renvor-config"] {
+        let Some(tree) = normal_edges(root, &["-p", package]) else {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!("`cargo tree -p {package}` failed"),
+            );
+            return false;
+        };
+        if tree.contains("renvor-testkit") {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "{package} depends on renvor-testkit, which would put test-util in a production graph"
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL 2: the facade DOES depend on renvor-core, so the absences above are facts
+    // about the graph rather than about an empty query.
+    let Some(facade) = normal_edges(root, &["-p", "renvor"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor` failed",
+        );
+        return false;
+    };
+    if !facade.contains("renvor-core") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the facade tree does not show renvor-core, so the DAG queries are not working",
+        );
+        return false;
+    }
+    true
+}
+
+/// T102: `renvor` with `--no-default-features` resolves none of the configuration crates, and
+/// **with** default features resolves them — both directions, because either alone is half a claim.
+fn facade_feature_isolation_holds(root: &std::path::Path) -> bool {
+    let lean = normal_edges(root, &["-p", "renvor", "--no-default-features"]);
+    let Some(lean) = lean else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the core-only facade tree query failed",
+        );
+        return false;
+    };
+    for forbidden in ["serde ", "toml ", "secrecy ", "confique "] {
+        if lean.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` without default features resolves `{}`",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL: the same query WITH default features must resolve them. Without this, a
+    // broken query returning nothing would read as perfect isolation — and the plan's stated
+    // limit, that default-feature consumers still get the configuration dependencies, would go
+    // unproven rather than proven true.
+    let Some(full) = normal_edges(root, &["-p", "renvor"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the default facade tree query failed",
+        );
+        return false;
+    };
+    for expected in ["serde ", "toml ", "secrecy "] {
+        if !full.contains(expected) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` WITH default features does not resolve `{}`, so the isolation check proves nothing",
+                    expected.trim()
+                ),
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// T104: the instability-closure sentence is byte-identical in all three normative locations, and
+/// **0** phase numbers appear inside FR-036's normative closure clause.
+fn instability_wording_agrees(root: &std::path::Path) -> bool {
+    let spec = root.join("specs/002-core-kernel/spec.md");
+    let Ok(text) = std::fs::read_to_string(&spec) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "specs/002-core-kernel/spec.md is unreadable",
+        );
+        return false;
+    };
+
+    // Located by its own text rather than by line number, so editing the document around it does
+    // not silently disable this check.
+    let occurrences = text.matches(SC022_SENTENCE).count();
+    if occurrences < SC022_REQUIRED_OCCURRENCES {
+        step_fail(
+            7,
+            "architecture invariants",
+            &format!(
+                "the instability-closure sentence appears {occurrences} time(s); SC-022 requires \
+                 {SC022_REQUIRED_OCCURRENCES} byte-identical copies across the clarification \
+                 record, FR-036, and the Dependencies section"
+            ),
+        );
+        return false;
+    }
+
+    // **0 phase numbers inside the normative clause.** The requirement's surrounding prose does
+    // mention Phase 004 — deliberately, as roadmap rationale — so this checks the conditions
+    // themselves, between where they are introduced and where the rationale begins. Checking the
+    // whole requirement would fail on text that is explicitly not part of the condition.
+    let Some(clause_start) = text.find("requires **both** of the following") else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "FR-036's closure clause could not be located; the wording check is not reading it",
+        );
+        return false;
+    };
+    let after = &text[clause_start..];
+    let clause_end = after
+        .find("*(Roadmap rationale")
+        .unwrap_or_else(|| after.len().min(2000));
+    let clause = &after[..clause_end];
+
+    if clause.contains("Phase ") || clause.contains("phase 0") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "FR-036's normative closure clause names a phase number; the gate is event-named",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL: the clause really was extracted and really does state both conditions, so
+    // the absence above means "no phase number" rather than "nothing was scanned".
+    if !clause.contains("supersedes ADR-0002") || !clause.contains("first real transport adapter") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the extracted closure clause is missing a condition, so the scan is looking at the wrong text",
+        );
+        return false;
+    }
+    true
+}
+
+/// The instability-closure sentence SC-022 requires to be byte-identical everywhere.
+const SC022_SENTENCE: &str =
+    "the first real transport adapter has exercised the surface and its feedback has been applied";
+
+/// How many normative locations must carry it: the clarification record, FR-036, and Dependencies.
+const SC022_REQUIRED_OCCURRENCES: usize = 3;

@@ -203,16 +203,18 @@ impl ApplicationBuilder {
     ///   each produce a distinct diagnostic; **0** cases reach `Boot` (SC-005).
     /// - [`BuildError::Entropy`] if the run identifier's entropy source fails.
     pub fn build(self) -> Result<Application, BuildError> {
-        let mut cursor = PhaseCursor::start(self.phases.clone());
+        // The run identifier is generated **first**, because FR-043 requires every emitted record
+        // to carry it and the very first phase span is emitted by `PhaseCursor::start`. Generating
+        // it after `Load` would leave the records a startup failure produces unattributed — which
+        // are the ones anybody actually reads.
+        let run_id = RunIdentifier::generate(self.entropy.as_ref())?;
+
+        let mut cursor = PhaseCursor::start(self.phases.clone(), run_id);
 
         // Load — in declaration order, because precedence is that order (FR-044).
         for source in &self.config_sources {
             source.load()?;
         }
-
-        // The run identifier is fixed for the run and must exist before anything can be recorded
-        // against it (FR-043).
-        let run_id = RunIdentifier::generate(self.entropy.as_ref())?;
 
         // Validate.
         cursor.advance();

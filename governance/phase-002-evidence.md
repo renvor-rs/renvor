@@ -386,6 +386,122 @@ common case. Measured, not assumed: the first version of `TestClock` did exactly
 tests failed. `TestClock::new` now attaches to an already-paused clock and `TestClock::pausing`
 covers the other case.
 
+## Phase 9 — polish, and the verification sequence itself
+
+**Status**: T096–T105 and T107–T110 complete; **T106 partially** (see below). Workspace tests
+**250 → 262**.
+
+### Observability: the kernel installs nothing, proven by installing something afterwards
+
+You cannot ask `tracing` whether a global subscriber is installed, so the proof is indirect and
+stronger than a query: `tests/observe_bootstrap.rs` runs a **complete lifecycle** — build, boot,
+shutdown — and then **successfully claims the global slot**. The slot is single-claim per process,
+so a successful claim afterwards proves the lifecycle never took it (C-O7, FR-029).
+
+Its positive control immediately claims again and asserts `AlreadyInstalled`. Without that, a
+`try_init_global` that ignored its argument and returned `Ok` would satisfy the first assertion.
+
+`try_init_global` returns an error on a second call rather than panicking, silently succeeding, or
+silently replacing. FR-029 permits **0** of those three, and each fails the same way — the caller
+believes something about their subscriber that is not true.
+
+### Two more self-reading tests caught themselves
+
+- The span module's "0 interpolated strings" scan matched **its own prose**, which said *there is
+  no `format!` in this module*. Comment lines are now stripped before scanning. That is the second
+  time this phase has walked into the trap; the earlier instance was in the secret module.
+- The span field test asserted against `Span::metadata()`, which returns `None` when **no
+  subscriber is listening** — so it was inspecting a disabled span and would have passed for the
+  wrong reason. Replaced with a hand-written recording `Subscriber` (~40 lines, no
+  `tracing-subscriber` in `renvor-core`) that asserts what a subscriber **actually receives**.
+
+### The run identifier is generated first, and that changed the build order
+
+FR-043 requires **every** emitted record to carry the run identifier, and the first phase span is
+emitted by `PhaseCursor::start`. Generating the identifier after `Load`, as the first version did,
+would have left the records a **startup failure** produces unattributed — which are the ones anybody
+actually reads. It is now the first thing `build` does.
+
+### The verification sequence grew from 10 steps to 11
+
+New **step 7, architecture invariants**, carrying T101, T102, and T104. Each check has a positive
+control, because each asserts an absence:
+
+| Check | Claim | Control |
+|---|---|---|
+| Crate DAG (T101) | `renvor-core` resolves **0** of `serde`, `toml`, `secrecy`; nothing depends on `renvor-testkit` | the same query finds `petgraph` and `tokio`, and the facade **does** resolve `renvor-core` |
+| Facade isolation (T102) | `renvor --no-default-features` resolves **0** configuration crates | the same query **with** default features **does** resolve all three — measured: `secrecy 0.10.3`, `serde 1.0.229`, `toml 1.1.4` |
+| SC-022 wording (T104) | the closure sentence is byte-identical in **3** locations; **0** phase numbers in FR-036's normative clause | the extracted clause is asserted to contain both conditions, so "no phase number" cannot mean "nothing was scanned" |
+
+T104's check nearly asserted the wrong sentence. The byte-identical text is *"the first real
+transport adapter has exercised the surface and its feedback has been applied"*, confirmed present
+**3** times. FR-036 does mention Phase 004 — deliberately, in a parenthetical marked *"Roadmap
+rationale, not part of the condition"* — so the phase-number check extracts the conditions
+themselves rather than scanning the whole requirement, which would have failed on text that is
+explicitly not part of the condition.
+
+### T106 — both toolchains, and what was **not** run
+
+| Toolchain | What ran | Result |
+|---|---|---|
+| **1.94.0** (pinned, active) | full `cargo xtask verify`, all 11 steps | **11 of 11 passed** |
+| **1.97.1** (current stable) | `cargo test --workspace` | **262 passed, 0 failed** |
+
+**Counted and named, not inferred**: the pinned toolchain ran the complete 11-step sequence; current
+stable ran **only the test step**. The other ten were **not** run on stable and are **not** claimed.
+SC-013 asks for **0 silently skipped checks** — these are skipped, and they are named. Open item 14.
+
+### T107 — quickstart gates
+
+| Gate | Result |
+|---|---|
+| 0–5 (workspace, format, lint, test, docs, deny) | covered by `xtask verify` steps 1–6, all passed |
+| 13 (crate DAG and facade isolation) | **now automated** as verify step 7, with controls |
+| 14 (publication status) | passed — see T110 below |
+| 15 (working-tree cleanliness) | verify step 11, passes once work is committed |
+
+### T108 — scope and authorization
+
+- **FR-041**: this phase implements **no authentication, no authorization, and no identity**.
+  Authorization impact is therefore **none**. Confirmed by review: `renvor-core` has no user, role,
+  permission, token, or session type, and no code path consults one.
+- **FR-033 / SC-010**: **0** runtime capabilities outside declared scope. What was checked, by name:
+  no HTTP, no listener, no socket, no database, no CLI. `renvor-core`'s `tokio` features are
+  `rt`, `time`, `sync`, `macros` — `net`, `fs`, `process`, `signal`, and `full` are all excluded, so
+  the kernel **cannot** acquire a transport by accident. `renvor-config` reads the filesystem for
+  TOML files and the environment, both of which FR-015 declares.
+
+### T109 — Phase 001 deployment gates, still open and untouched
+
+| Gate | Status |
+|---|---|
+| **`001-T102`** | non-completed, untouched by Phase 002 |
+| **`001-T108`** | non-completed, untouched by Phase 002 |
+| **`001-T109`** | non-completed, untouched by Phase 002 |
+| **`001-T111`** | non-completed, untouched by Phase 002 |
+
+The `001-` prefix is mandatory: Phase 002 has its own T105, and an unprefixed "T105" in this record
+would read as this phase's rustdoc task.
+
+### T110 — FR-034, and a defect in the check itself
+
+**0 crates published, 0 tags, 0 releases.**
+
+| Query | Result |
+|---|---|
+| `gh api repos/renvor-rs/renvor/tags` | **0** |
+| `gh api repos/renvor-rs/renvor/releases` | **0** |
+| `crates.io/api/v1/crates/{renvor, renvor-core, renvor-config, renvor-testkit}` | **404** — all four |
+
+**The first run of this check reported HTTP 403 for all four crates**, which T110's own rule
+("any status other than 200 or 404 is a failure") correctly classifies as a failure. The cause was
+**a missing `User-Agent` header**, which crates.io requires — not publication status. Re-run with
+one, all four return 404.
+
+Worth recording because the check behaved exactly as designed: it refused to interpret an
+unexpected status as a pass. A check that treated "not 200" as "not published" would have reported
+success for the wrong reason.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -403,6 +519,7 @@ covers the other case.
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
 | 12 | **SC-015 does not hold**: `Load` and `Validate` call author code synchronously with no deadline | `ApplicationBuilder::build` is not `async`. Bounding them needs `spawn_blocking` plus an async build, which changes the surface every US1 test uses | **Yes — this is an unmet success criterion**, not a nicety |
 | 13 | **C-L9's `Panic` behaviour is not injectable** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency | **Yes — SC-009 is met for phases, not for all three behaviours** |
+| 14 | **SC-013 is partially met**: current stable ran the **test step only**, not the other ten | Running the full sequence on a second toolchain needs a CI lane, not a local invocation. The ten unrun steps are named rather than inferred from a passing exit status | No — but the claim must stay "tests on both, sequence on one" |
 
 ## Publication status
 
