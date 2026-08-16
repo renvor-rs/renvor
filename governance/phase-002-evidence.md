@@ -717,7 +717,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
 | 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
 | 23 | `MAX_OUTSTANDING_PROBES` has **no setter**, so an application whose contributors have all hung reports `NotAsked` until the process restarts | The application is genuinely broken at that point — 64 readiness workers have never returned — and reporting not-ready is correct. But an operator cannot raise or reset the budget | No |
-| 22 | **3 open CodeQL `rust/cleartext-logging` alerts** on PR #19 — the `Display`, `Debug`, and embedded-`Display` demonstrations in `examples/configuration.rs:99–101` | The original entry called **all nine** false positives; only these three are. **#4–#9 were real defects and are fixed in source** — GitHub reports all six `fixed`. These three are custom-sanitizer false positives: every one renders `[redacted]`, verified by mutation. They are **not yet dismissed**; T141 does that, and this row will not be struck until GitHub reports 0 open alerts. Note the renumbering: #2 and #3 were re-fingerprinted as **#10 and #11** when the file changed, at the same lines with byte-identical source | **No** — all four required checks pass. But the PR shows a red CodeQL check until the three are dismissed |
+| ~~22~~ | ~~**9 open CodeQL `rust/cleartext-logging` alerts** on PR #19, *"all nine false positives"*~~ | **CLOSED 2026-08-16 (T133, T136, T141). GitHub reports 0 open alerts on PR #19.** The original entry was wrong: only **three** were false positives. **#4–#9 were real defects and are fixed in source** — GitHub reports all six `fixed`. The three sanitiser demonstrations are **dismissed individually** as `false positive`, each with its own stated reason. They were #1, #2, #3 and are #1, **#10**, **#11**: changing the file re-fingerprinted #2 and #3, which GitHub closed as `fixed` and reissued at the same lines with byte-identical source | — |
 | 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
 | 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
 | 24 | The FIFO refusal is **check-then-open** and therefore racy | SV-N2's fix rejects a non-regular file on a `stat`, which does not open the path — so a FIFO present at check time never reaches the blocking `open`. An attacker who can **replace** the path between the `stat` and the `open` can still present one. Closing that needs `O_NONBLOCK` at open time, which means a direct `libc` dependency and a new row in the FR-040 inventory | No — under `ApplicationBuilder::build` even the residual is contained: `source.load()` runs inside `bounded_call` and is reported as a timeout. A caller using `FileLayer::read()` directly, on a path an attacker can write, is exposed |
@@ -1648,6 +1648,51 @@ detects it.
 The release workflow's MSRV comment claimed the toolchain was "taken from rust-toolchain.toml
 rather than restated here" while passing `toolchain: "1.94.0"` — the reverse of the mechanism. It
 now says what is true, including that **nothing verifies** the three declaration sites agree.
+
+### F — the CodeQL disposition, and what GitHub reports (T141)
+
+Performed at head `68dcc32`, against the live API rather than against a plan.
+
+**Precondition, checked before anything was dismissed.** Alerts **#4–#9** are `fixed` — GitHub's own
+state, not an inference from the diff. Nothing was dismissed until that was true, because dismissing
+is how a real defect gets closed by mistake.
+
+| Alert | Line | Verdict | Disposition |
+|---|---|---|---|
+| **#1** | `configuration.rs:99` — `Display` | False positive | **dismissed**, `false positive`: *"Custom sanitizer not modeled by CodeQL: `Secret<T>::Display` always emits `[redacted]`…"* |
+| **#10** | `configuration.rs:100` — `Debug` | False positive | **dismissed**, `false positive`: *"…`Secret<T>::Debug` emits only the key and `[redacted]`…"* |
+| **#11** | `configuration.rs:101` — embedded `Display` | False positive | **dismissed**, `false positive`: *"…embedded formatting uses `Secret<T>::Display`…"* |
+| **#2–#9** | — | #2 and #3 re-fingerprinted; #4–#9 real | **fixed in source**, or closed by GitHub as `fixed` |
+
+**The numbers moved under the work, and that is worth recording rather than smoothing over.** The
+three false positives were #1, #2, #3 when the plan for this task was written. Changing
+`configuration.rs` caused CodeQL to re-fingerprint the file: it closed **#2** and **#3** as `fixed`
+and opened **#10** and **#11** in their place. Lines 99, 100, and 101 are byte-identical to what
+they were; the rule, path, line, message, and severity all match. #10 and #11 are #2 and #3 under
+new numbers.
+
+Each was therefore matched **by content** before being dismissed — same rule, same file, same line,
+same rendering, verified by running the example — rather than by trusting a number the platform had
+reassigned. Dismissing #10 and #11 on the strength of the numbers alone would have been the same
+mistake as calling all nine false positives.
+
+**Re-verified at dismissal time, by execution:**
+
+```text
+  Display  : [redacted]
+  Debug    : Secret { key: "password", value: "[redacted]" }
+  in a msg : the password is [redacted]
+```
+
+0 occurrences of the credential in the example's output.
+
+**Live state after the dispositions**: `gh api …/code-scanning/alerts?ref=refs/pull/19/head` reports
+**0 open**, 8 `fixed`, 3 `dismissed`. **11 review threads, 0 unresolved** — GitHub resolved the
+github-advanced-security threads itself as their alerts closed.
+
+**CodeQL was treated as a W-001 cleanliness gate**, though it is not one of the four required status
+contexts. The temptation was to call a non-required red check cosmetic; six of the nine were
+pointing at real leak-on-failure diagnostics, which is the argument against ever doing that.
 
 ## Publication status
 
