@@ -122,6 +122,9 @@ struct Inner {
     draining: Mutex<bool>,
     contributors: Mutex<Vec<Arc<dyn ReadinessContributor>>>,
     readiness_deadline: Mutex<Duration>,
+    /// Readiness workers this state has outstanding. **Per state, not per process**: a global
+    /// counter let one application's hung contributor refuse another's probes (W-005 N13).
+    outstanding: contributor::Outstanding,
 }
 
 impl Default for Inner {
@@ -131,6 +134,7 @@ impl Default for Inner {
             draining: Mutex::default(),
             contributors: Mutex::default(),
             readiness_deadline: Mutex::new(DEFAULT_READINESS_DEADLINE),
+            outstanding: contributor::Outstanding::default(),
         }
     }
 }
@@ -234,7 +238,12 @@ impl HealthState {
             .iter()
             .enumerate()
             .map(|(position, contributor)| {
-                contributor::ask(contributor, position, self.readiness_deadline())
+                contributor::ask(
+                    contributor,
+                    position,
+                    self.readiness_deadline(),
+                    &self.inner.outstanding,
+                )
             })
             .collect();
 

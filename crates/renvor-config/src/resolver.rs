@@ -17,6 +17,7 @@
 //! required key nobody supplied, naming the key. **0** of those three produce a started
 //! application (SC-003), because `ApplicationBuilder::build` runs them before `Boot` exists.
 
+use core::fmt;
 use std::collections::BTreeMap;
 
 use renvor_core::KernelError;
@@ -34,7 +35,7 @@ use crate::schema::ConfigSchema;
 ///
 /// Sources are added lowest-precedence first and the order is kept, because that order **is** the
 /// precedence (FR-044). A set would discard it silently, which is why this holds a vector.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct LayeredResolverBuilder {
     defaults: Option<Table>,
     files: Vec<FileLayer>,
@@ -100,14 +101,55 @@ impl LayeredResolverBuilder {
     }
 }
 
+/// Emits the **shape** of the source list and never a value from any of it.
+///
+/// The worst of the four that derived `Debug`, and the reason is `env_override`: a
+/// `BTreeMap<String, String>` of **environment values**, which is the single most likely place a
+/// credential lives. The derive printed variable names and values together.
+///
+/// Found by the W-005 verification re-review (finding 1.1) after `ResolvedConfig` alone had been
+/// hand-written. `SchemaSource` guards its own `Debug` carefully and then holds a
+/// [`LayeredResolver`] that any caller could print — a guarded door beside an open window, which
+/// is what the first fix claimed to have closed and had only half closed.
+impl fmt::Debug for LayeredResolverBuilder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LayeredResolverBuilder")
+            .field("defaults", &self.defaults.as_ref().map(Table::len))
+            .field("files", &self.files.len())
+            .field("env_prefix", &self.env_prefix)
+            .field(
+                "env_override",
+                &self.env_override.as_ref().map(BTreeMap::len),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 /// Resolves configuration for one schema from ordered layers.
-#[derive(Debug)]
 pub struct LayeredResolver<T: ConfigSchema> {
     defaults: Option<Table>,
     files: Vec<FileLayer>,
     env_prefix: Option<String>,
     env_override: Option<BTreeMap<String, String>>,
     schema: core::marker::PhantomData<fn() -> T>,
+}
+
+/// Emits the same shape as [`LayeredResolverBuilder`], for the same reason.
+///
+/// This is the value `SchemaSource` holds, so leaving it derived made that type's hand-written
+/// `Debug` decorative.
+impl<T: ConfigSchema> fmt::Debug for LayeredResolver<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LayeredResolver")
+            .field("defaults", &self.defaults.as_ref().map(Table::len))
+            .field("files", &self.files.len())
+            .field("env_prefix", &self.env_prefix)
+            .field(
+                "env_override",
+                &self.env_override.as_ref().map(BTreeMap::len),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T: ConfigSchema> LayeredResolver<T> {

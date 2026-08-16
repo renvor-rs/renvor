@@ -5,10 +5,20 @@
 
 ## Status
 
-**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T126** have
-been executed and verified on the branch `feat/phase-002-core-kernel`. **T127–T132 are the phase's
-own closure steps and are in progress**; `specs/002-core-kernel/tasks.md` is authoritative for
-which are checked, and this ledger must never claim more than it does.
+**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T132** have
+been executed on the branch `feat/phase-002-core-kernel`, which is **pushed and open as pull
+request #19**. `specs/002-core-kernel/tasks.md` is authoritative for which tasks are checked, and
+this ledger must never claim more than it does.
+
+> **Corrected twice, in opposite directions, and the second correction is the more interesting
+> one.** The W-005 requirements review (Q6-1) caught this paragraph claiming T001–T132 complete
+> while T127–T132 were not done. It was rewritten to claim T001–T126 with the rest "in progress" —
+> accurate when written, and then **two later commits moved reality past it without revisiting
+> it** (`2cd0530` checked T131, `bf70553` checked T132). The verification re-review (N1) caught the
+> stale version, now *under*-claiming.
+>
+> The same drift mechanism produced both. A status line that names a moving boundary has to be
+> re-read every time the boundary moves, and twice it was not.
 
 > **Corrected 2026-08-16, on finding Q6-1 of the W-005 requirements review.** This paragraph
 > previously read *"Every task T001–T132 has been executed and verified."* That was false when
@@ -688,6 +698,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 17 | `DEFAULT_READINESS_DEADLINE` is **5 s by Renvor's choice, not by specification** | Same shape as items 7 and 11. FR-025 requires the bound; no artifact names a value. Chosen to sit under a typical container probe interval, so a hung contributor reports as hung rather than as a probe that never answered | No — a phase that measures real probe intervals should revisit it |
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
 | 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
+| 23 | `MAX_OUTSTANDING_PROBES` has **no setter**, so an application whose contributors have all hung reports `NotAsked` until the process restarts | The application is genuinely broken at that point — 64 readiness workers have never returned — and reporting not-ready is correct. But an operator cannot raise or reset the budget | No |
 | 22 | **9 open CodeQL `rust/cleartext-logging` alerts** on PR #19 | All nine are false positives on the code that demonstrates and tests redaction — verified by running the example and observing **0** occurrences of the credential. Resolving the alert status needs a repository security-settings change, which this workflow is not authorized to make | **No** — CodeQL is not a required check, and all four required checks pass. But the PR shows a red check until a maintainer dismisses the alerts |
 | 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
 | 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
@@ -871,6 +882,82 @@ the disposition is the same within each and listing 24 near-identical rows would
 **No finding at HIGH or above was refused.** The single CRITICAL and all twelve MAJOR findings are
 either fixed with a regression test or accepted with the reason stated and an open item raised.
 
+## T128 (continued) — W-005 verification re-review
+
+The first pair of reviews found defects; those defects were then **fixed**; and the final head
+therefore contained code neither reviewer had seen. Reporting fixes as verified when the
+verification predates the fix is the same prospective claim Q6-1 was raised for, so both reviews
+were re-run against `bf70553`, scoped to **attacking the fixes** rather than repeating themselves.
+
+Both **NON-INDEPENDENT and ADVISORY**, both delivered to disk, both returned enumerated findings.
+
+| Re-review | Original findings | New findings |
+|---|---|---|
+| Requirements | **6 CLOSED**, 0 not closed, 0 regressed | 2 CRITICAL, 3 MAJOR, 6 MINOR |
+| Security | **3 CLOSED**, 1 **REGRESSED**, 1 closed on the byte ceiling only | 4 |
+
+**This is the pass that earned its cost.** It found a regression I introduced while fixing a
+finding, and a fix that closed the type it was pointed at while four siblings kept the defect.
+
+### The regression: a fix that traded one denial of service for another
+
+Security 5.1's fix bounded the readiness thread leak with a **process-global** `static`. Both
+reviewers found what that cost, independently, and both **reproduced** it:
+
+| Defect | Evidence |
+|---|---|
+| One application's hung contributor permanently refuses **every other application's** probes in the same process | A separate `HealthState` with a healthy contributor returned `NotAsked` for ever |
+| It broke the **shipped test suite** under `--test-threads=1` | libtest runs alphabetically; the ceiling test saturated the counter and a later test received the refusal fallback instead of its contributor's name |
+| The ceiling was not atomic — `load()` then `fetch_add` with an allocation between | Reproduced at 4096-way concurrency: 64, then **65**, then **67** workers entered. The documented "hard ceiling" was `64 + concurrent callers` |
+| The shipped regression test probed **serially**, asserting a property the implementation did not hold, without exercising the case that broke it | — |
+
+**Fixed by moving the counter into the `HealthState`** — so the budget is per application, and the
+cross-application coupling cannot exist — **and by claiming slots with `fetch_update`**, so the
+documented bound is the real one. Two new tests: one proving two applications are isolated, one
+driving 256 concurrent probes and asserting the ceiling holds, with a control requiring the ceiling
+to actually be approached.
+
+`--test-threads=1` now passes. It is the standard invocation for chasing a flake, and it was
+reproducibly broken.
+
+### The sibling defect: fixing the type that was pointed at
+
+Security 1.1 named `ResolvedConfig<T>` for deriving `Debug`. It was hand-written. **Four other
+public types held the same data and kept deriving it**, each reproduced printing the credential:
+
+| Type | What printed |
+|---|---|
+| `DecodedLayer` | `table: {"password": String("hunter2-do-not-print"), …}` |
+| `Merged` | the whole merged tree |
+| `LayeredResolverBuilder` | defaults **and** `env_override` — a map of environment **values** |
+| `LayeredResolver` | the same, and **this is the value `SchemaSource` wraps** |
+
+The last row is the one worth sitting with. `SchemaSource` hand-writes `Debug` specifically so a
+resolved configuration cannot print, and it holds a `LayeredResolver` any caller could print. The
+guarded door had an open window; the first fix closed a *different* window and said so.
+
+All four are now hand-written. The new test enumerates **every public type that can hold a
+configuration value** and asserts the property across the set, because C-E3 is a claim about a set
+and fixing the member somebody named does not establish it.
+
+### The two CRITICALs, both about drift
+
+| ID | Finding | Disposition |
+|---|---|---|
+| N1 | The Status paragraph, rewritten to fix Q6-1, went stale in the **opposite** direction — two later commits checked T131 and T132 without revisiting it, so it under-claimed | **FIXED**, with both corrections recorded. A status line naming a moving boundary must be re-read every time the boundary moves; twice it was not |
+| N2 | The T132 section recorded head `2cd0530` and a diff total, uncaveated, while T131's section carried exactly that caveat | **FIXED.** The section now states which head it observed and that conclusions were re-confirmed later |
+
+### Remaining new findings, dispositioned
+
+| ID | Finding | Disposition |
+|---|---|---|
+| N3 | The new global-mutable-state pattern missed `static X: AtomicUsize` and `static X: Mutex<…>` — the idiomatic forms — while its Pass paragraph claimed the broader property. **The same commit had added a `static _: AtomicUsize` to the kernel** | **FIXED.** The alternation now covers them, and the control plants an `AtomicUsize`. The kernel static it would have caught is gone, removed by the N13 fix |
+| N4 | "0 examples require a transport" is attributed to Gate 13a, which is a **denylist** of package names rather than a proof | **ACCEPTED.** A denylist is what is available without a capability model. Recorded rather than restated as proof |
+| N8 | "The set is eight" appears in three places; only the test carried the `Debug` exclusion | **FIXED.** The module documentation and the FR-025 evidence row now say **eight lifecycle callbacks**, with the exclusion named |
+| N15–N19, and the security re-review's remaining four | The FIFO test skips silently where `mkfifo` is absent; the depth ceiling is hard-coded in its own message; the end-to-end leak test covers one of two layers; a stale comment; T125's table predates the rewrites it evidences | **ACCEPTED.** None is a false pass. Recorded as known imprecision |
+
+**No finding at HIGH or above was refused, in either round.**
+
 ## Complete requirement evidence map (T129)
 
 **Exactly FR-001…FR-044 and SC-001…SC-022.** Every requirement in the specification has a row.
@@ -909,7 +996,7 @@ rather than in a footnote.
 | **FR-022** | No silent fallbacks | Every refusal returns an error; the env layer's two-candidate decode offers the **same value** to the **same type** | `tests/no_silent_fallback.rs` | **MET** |
 | **FR-023** | Cancellation propagates to running work | `cancel/mod.rs` `CancelScope`, `ProviderScope` | `cancel` unit tests | **MET** |
 | **FR-024** | Cancellation leaves no provider half-initialised | Rollback runs on every Boot failure path, cancellation included | `tests/lifecycle_edges.rs` | **MET** |
-| **FR-025** | Deadlines explicit and bounded; **0** unbounded kernel-owned waits | **Eight** bounded callbacks — entropy, source name, load, validate, Register declarations, provider init, provider stop, readiness | `tests/deadlines.rs`, including the discovery gate (T115) | **MET** |
+| **FR-025** | Deadlines explicit and bounded; **0** unbounded kernel-owned waits | **Eight** bounded *lifecycle* callbacks — entropy, source name, load, validate, Register declarations, provider init, provider stop, readiness. Two `Debug` impls call author code unbounded and are a **named exclusion**, not a gap | `tests/deadlines.rs`, including the discovery gate (T115) | **MET** |
 | **FR-026** | Health and readiness independently queryable, able to disagree | `health/mod.rs`; readiness reads no liveness value | `tests/health.rs`, both directions | **MET** |
 | **FR-027** | Drain makes readiness not-ready while liveness stays alive | `HealthState::begin_draining` touches only the drain flag | `tests/health.rs` | **MET** |
 | **FR-028** | A failing readiness contributor is individually identifiable | `ContributorVerdict { name, readiness, fault }`; `ContributorFault` distinguishes panicked from timed out from not-asked | `tests/health.rs`, `renvor-testkit/tests/injection.rs` | **MET** |
@@ -1011,8 +1098,16 @@ prospective claim the W-005 review caught at Q6-1.
 
 ## T132 — pull request #19, and the one check that failed
 
-Opened **2026-08-16** into `main` at `19605e9`, head `2cd0530`, non-draft, mergeable.
-112 changed files, +24,949 / −117.
+Opened **2026-08-16** into `main` at `19605e9`, non-draft, mergeable, 112 changed files.
+
+> **This section records observations taken at head `2cd0530`.** The head has since advanced —
+> `bf70553` recorded these results, and a further commit closes the verification re-review's
+> findings. The check *conclusions* below were re-confirmed on `bf70553` and are unchanged; the
+> diff totals move with each commit and are therefore not restated here.
+>
+> Caveated because the W-005 verification re-review (N2) is right that the T131 section carries
+> exactly this caveat and this one did not, so it read as observed-at-final-head when it was
+> observed one commit earlier. Same class as Q6-1, smaller claim.
 
 ### Check results
 

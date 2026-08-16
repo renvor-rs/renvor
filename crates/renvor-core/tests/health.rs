@@ -326,3 +326,152 @@ async fn a_permanently_hung_contributor_stops_consuming_threads_at_the_ceiling()
         "a refused probe must be reported as a fault"
     );
 }
+
+/// W-005 verification finding N13 — the readiness ceiling must be **per application**.
+///
+/// It was a crate-level `static` for one commit. N12 reproduced what that cost by running the
+/// suite with `--test-threads=1`: one test saturating the ceiling made a *later, unrelated* test
+/// receive the refusal fallback instead of its contributor's name. Test binaries stood in for
+/// applications, which is exactly the coupling this asserts is gone.
+#[tokio::test]
+async fn one_application_saturating_its_ceiling_does_not_refuse_another_application() {
+    use renvor_core::ContributorFault;
+
+    /// Never returns, so every worker it is asked on is leaked.
+    struct Hung;
+
+    impl ReadinessContributor for Hung {
+        fn name(&self) -> &str {
+            "hung-check"
+        }
+        fn readiness(&self) -> Readiness {
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+
+    let sick = builder()
+        .with_provider(contributing("hung", || Arc::new(Hung)))
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect("boots");
+    sick.health()
+        .set_readiness_deadline(std::time::Duration::from_millis(5));
+
+    // Drive the first application hard past its own ceiling.
+    let probes = renvor_core::health::contributor::MAX_OUTSTANDING_PROBES * 2;
+    for _ in 0..probes {
+        let _ = sick.health().readiness();
+    }
+    assert_eq!(
+        sick.health().readiness().contributors[0].fault,
+        ContributorFault::NotAsked,
+        "the first application must have reached its own ceiling"
+    );
+
+    // A SECOND, independent application, built after the first is saturated.
+    let healthy = builder()
+        .with_provider(contributing("db", || {
+            Arc::new(Fixed {
+                name: "db-pool",
+                readiness: Readiness::Ready,
+            })
+        }))
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect("boots");
+
+    let report = healthy.health().readiness();
+    assert_eq!(
+        report.readiness,
+        Readiness::Ready,
+        "a healthy application must not inherit another's exhausted ceiling"
+    );
+    assert_eq!(
+        report.contributors[0].name, "db-pool",
+        "named by its own contributor"
+    );
+    assert_eq!(
+        report.contributors[0].fault,
+        ContributorFault::None,
+        "and asked, not refused"
+    );
+}
+
+/// W-005 verification finding N14 / security 5.1 — the ceiling must be a **hard** bound.
+///
+/// The first version did `load() >= MAX` and then `fetch_add` as two operations, with an
+/// `Arc::clone` and a channel allocation in between. Concurrent callers could all observe 63 and
+/// all proceed. Reproduced by the re-review at 4096-way concurrency: 64, then **65**, then **67**
+/// workers entered — the documented "hard ceiling" was really `64 + concurrent callers`.
+///
+/// The shipped test probed **serially**, so it asserted a property the implementation did not hold
+/// while never exercising the case that broke it. This is that case.
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn the_ceiling_holds_under_concurrent_probes() {
+    use renvor_core::health::contributor::MAX_OUTSTANDING_PROBES;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static ENTERED: AtomicUsize = AtomicUsize::new(0);
+
+    /// Counts entries, then never returns — so no slot is ever released.
+    struct Hung;
+
+    impl ReadinessContributor for Hung {
+        fn name(&self) -> &str {
+            "hung-check"
+        }
+        fn readiness(&self) -> Readiness {
+            ENTERED.fetch_add(1, Ordering::SeqCst);
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+
+    let application = builder()
+        .with_provider(contributing("hung", || Arc::new(Hung)))
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect("boots");
+    let health = application.health().clone();
+    health.set_readiness_deadline(std::time::Duration::from_millis(2));
+
+    // Many probes at once, which is the shape of the real threat: a probe runs on a timer
+    // somebody else controls, and nothing serialises two monitors.
+    let mut probes = Vec::new();
+    for _ in 0..256 {
+        let health = health.clone();
+        probes.push(tokio::task::spawn_blocking(move || {
+            drop(health.readiness());
+        }));
+    }
+    for probe in probes {
+        drop(probe.await);
+    }
+
+    // Give any worker that was mid-spawn time to enter, so the count is not read early.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let entered = ENTERED.load(Ordering::SeqCst);
+    assert!(
+        entered <= MAX_OUTSTANDING_PROBES,
+        "{entered} workers entered under concurrency, exceeding the ceiling of \
+         {MAX_OUTSTANDING_PROBES}; the claim-and-increment is not atomic"
+    );
+
+    // POSITIVE CONTROL: the ceiling was actually reached, so the bound above was tested rather
+    // than satisfied by a run where few workers ever started.
+    assert!(
+        entered >= MAX_OUTSTANDING_PROBES / 2,
+        "only {entered} workers entered across 256 probes; the ceiling was never approached and \
+         this test proves nothing"
+    );
+}

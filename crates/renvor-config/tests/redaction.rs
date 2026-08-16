@@ -19,9 +19,13 @@
 //!
 //! This also closes **User Story 3 scenario 7**, which `layering.rs` defers here by name.
 
-use renvor_config::{REDACTED, Secret};
+use std::collections::BTreeMap;
+
+use renvor_config::{ConfigSchema, REDACTED, SchemaSource, Secret};
 use renvor_core::error::context::{Constraint, configuration};
 use renvor_core::{ErrorCategory, KernelError};
+use serde::Deserialize;
+use toml::Table;
 
 /// The value that must appear in **0** outputs.
 const CREDENTIAL: &str = "hunter2-do-not-print";
@@ -253,4 +257,98 @@ fn the_credential_is_findable_when_it_is_actually_present() {
         format!("{CREDENTIAL:?}").contains(CREDENTIAL),
         "Debug route"
     );
+}
+
+/// W-005 verification finding 1.1 — the redaction guarantee is a property of a **set** of types.
+///
+/// `ResolvedConfig` was hand-written because a review named that type. Four siblings holding the
+/// same data still derived `Debug`, and the re-review printed each one and got the credential:
+/// `DecodedLayer`, `Merged`, `LayeredResolverBuilder`, and `LayeredResolver` — the last being the
+/// value `SchemaSource` carefully wraps, which made that type's hand-written `Debug` decorative.
+///
+/// So this test enumerates **every public type that can hold a configuration value** and asserts
+/// the property across all of them at once. Fixing the type that was pointed at is not the same as
+/// establishing the guarantee.
+/// A schema for the set-wide redaction test below. Nothing reads its field back.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct Settings {
+    port: u16,
+}
+
+/// Its all-optional partner. Nothing reads either back.
+#[allow(dead_code)]
+#[derive(Debug, Default, Deserialize)]
+struct PartialSettings {
+    port: Option<u16>,
+    password: Option<String>,
+}
+
+impl ConfigSchema for Settings {
+    type Partial = PartialSettings;
+}
+
+#[test]
+fn no_public_type_holding_configuration_can_print_a_value() {
+    use renvor_config::{DecodedLayer, LayeredResolverBuilder, Merged};
+    use renvor_core::config_port::SourceLayer;
+
+    const CREDENTIAL: &str = "hunter2-do-not-print";
+
+    let table: Table = format!("password = \"{CREDENTIAL}\"\nport = 8080")
+        .parse()
+        .expect("valid");
+    let environment: BTreeMap<String, String> =
+        [("RENVOR_PASSWORD".to_owned(), CREDENTIAL.to_owned())]
+            .into_iter()
+            .collect();
+
+    let builder = LayeredResolverBuilder::new()
+        .with_defaults(table.clone())
+        .with_environment_map("RENVOR_", environment);
+    let resolver = LayeredResolverBuilder::new()
+        .with_defaults(table.clone())
+        .build::<Settings>();
+    let decoded = DecodedLayer::new(SourceLayer::Defaults, table.clone());
+    let merged = Merged {
+        table,
+        ..Merged::default()
+    };
+    let source = SchemaSource::new("application configuration", resolver);
+
+    let rendered = [
+        ("LayeredResolverBuilder", format!("{builder:?}")),
+        ("DecodedLayer", format!("{decoded:?}")),
+        ("Merged", format!("{merged:?}")),
+        ("SchemaSource", format!("{source:?}")),
+    ];
+
+    for (name, output) in &rendered {
+        assert!(
+            !output.contains(CREDENTIAL),
+            "{name} printed the credential: {output}"
+        );
+        assert!(
+            !output.contains("8080"),
+            "{name} printed an unmarked value too: {output}"
+        );
+    }
+
+    // The LayeredResolver held inside the source, printed directly.
+    let inner = LayeredResolverBuilder::new()
+        .with_defaults(
+            "password = \"hunter2-do-not-print\""
+                .parse::<Table>()
+                .expect("valid"),
+        )
+        .build::<Settings>();
+    assert!(
+        !format!("{inner:?}").contains(CREDENTIAL),
+        "LayeredResolver printed the credential: {inner:?}"
+    );
+
+    // POSITIVE CONTROL: the credential really is present in every one of those values, so the
+    // absences above are redaction rather than empty structures.
+    assert!(format!("{CREDENTIAL:?}").contains(CREDENTIAL));
+    assert!(rendered.iter().all(|(_, output)| output.len() > 10));
 }

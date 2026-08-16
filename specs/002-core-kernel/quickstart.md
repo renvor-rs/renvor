@@ -306,12 +306,17 @@ echo "control: a failing example is detected"
 
 # FR-032 / SC-014's "no hidden global mutable state" — CHECKED, not asserted in prose. The
 # Pass paragraph used to claim this while the script checked only exit status.
-GLOBALS='static mut|lazy_static!|once_cell::|OnceLock|OnceCell|thread_local!|SyncLazy|LazyLock'
+# The alternation covers `static mut` AND the forms that are idiomatic in safe Rust since
+# `Mutex::new` became `const` — `static X: Mutex<..>`, `static X: AtomicUsize`, and friends. The
+# first version of this pattern missed exactly those, which the W-005 verification re-review (N3)
+# caught by noting that the same commit adding this gate had added a `static _: AtomicUsize` to the
+# kernel: the grep was hunting a shape its own author had just written and would not have found.
+GLOBALS='static mut|static [A-Z_]+ *: *(Mutex|RwLock|Atomic|Cell|RefCell|OnceLock|OnceCell|LazyLock)|lazy_static!|once_cell::|thread_local!|SyncLazy|Box::leak'
 if grep -REn "$GLOBALS" "$EXAMPLE_DIR" ; then
   echo "FAIL 12 — an example uses global mutable state (FR-032)"; exit 1
 fi
 # CONTROL 3: the pattern can match. Without this a typo in $GLOBALS reads as a clean result.
-printf 'static mut X: u8 = 0;\n' > "$EXAMPLE_DIR/../globals-probe.txt"
+printf 'static COUNTER: AtomicUsize = AtomicUsize::new(0);\n' > "$EXAMPLE_DIR/../globals-probe.txt"
 grep -REn "$GLOBALS" "$EXAMPLE_DIR/.." > /dev/null \
   || { rm -f "$EXAMPLE_DIR/../globals-probe.txt"; echo "FAIL 12 — the global-state pattern matches nothing"; exit 1; }
 rm -f "$EXAMPLE_DIR/../globals-probe.txt"

@@ -50,27 +50,53 @@ impl fmt::Debug for dyn ReadinessContributor {
     }
 }
 
-/// The most readiness workers that may be outstanding at once, across all contributors.
+/// The most readiness workers one [`crate::HealthState`] may have outstanding at once.
 ///
 /// **Renvor's number.** A healthy contributor's worker lives for microseconds, so reaching this
 /// ceiling means workers are not returning — and the honest response to that is to stop making
 /// more of them, not to keep asking.
+///
+/// # Per application, not per process
+///
+/// The counter lives in the `HealthState`, so **one application's hung contributor cannot refuse
+/// another application's probes.** It was a crate-level `static` for exactly one commit, and the
+/// W-005 verification re-review (N12, N13) found what that cost: a process-global budget couples
+/// independent applications, and it was reproduced as a **test-suite failure** — one test
+/// saturating the ceiling made a later test in the same binary receive the refusal fallback under
+/// `--test-threads=1`.
+///
+/// That reproduction is the useful part. Test binaries stood in for applications and demonstrated
+/// the cross-application coupling directly, on a defect whose disclosure said only "bounded".
 pub const MAX_OUTSTANDING_PROBES: usize = 64;
 
-/// How many readiness workers have been spawned and have not yet finished.
-static OUTSTANDING: AtomicUsize = AtomicUsize::new(0);
+/// How many readiness workers one health state has outstanding.
+pub(crate) type Outstanding = Arc<AtomicUsize>;
 
-/// Decrements [`OUTSTANDING`] on drop, including while unwinding.
+/// Decrements the counter on drop, including while unwinding.
 ///
 /// A guard rather than a decrement at the end of the worker: the worker's body runs author code
 /// inside `catch_unwind`, and an early return or an unwind past the guard would otherwise lose the
 /// slot permanently — turning the ceiling into a slow leak of its own.
-struct Release;
+struct Release(Outstanding);
 
 impl Drop for Release {
     fn drop(&mut self) {
-        OUTSTANDING.fetch_sub(1, Ordering::Relaxed);
+        self.0.fetch_sub(1, Ordering::Relaxed);
     }
+}
+
+/// Claims a slot, or reports that the ceiling is reached.
+///
+/// `fetch_update` rather than load-then-add. The first version checked and then incremented as two
+/// operations, so concurrent callers could all observe 63 and all proceed — making the true bound
+/// `64 + concurrent callers` while the documentation called it a hard ceiling (W-005 N14). A probe
+/// is externally driven and plausibly concurrent, which is precisely when that gap opens.
+fn claim(outstanding: &Outstanding) -> bool {
+    outstanding
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            (current < MAX_OUTSTANDING_PROBES).then_some(current + 1)
+        })
+        .is_ok()
 }
 
 /// Why a verdict is not the contributor's own answer.
@@ -143,6 +169,7 @@ pub(crate) fn ask(
     contributor: &Arc<dyn ReadinessContributor>,
     position: usize,
     deadline: Duration,
+    outstanding: &Outstanding,
 ) -> ContributorVerdict {
     let fallback = format!("<contributor at registration position {position}>");
 
@@ -154,7 +181,7 @@ pub(crate) fn ask(
     //
     // The leak does not go away; no Rust API can interrupt a blocked thread. It becomes **bounded**,
     // which is the difference between a recorded limitation and a denial of service.
-    if OUTSTANDING.load(Ordering::Relaxed) >= MAX_OUTSTANDING_PROBES {
+    if !claim(outstanding) {
         return ContributorVerdict {
             name: fallback,
             readiness: Readiness::NotReady,
@@ -163,16 +190,16 @@ pub(crate) fn ask(
     }
 
     let handle = Arc::clone(contributor);
+    let release = Release(Arc::clone(outstanding));
     let (sender, receiver) = channel();
 
-    OUTSTANDING.fetch_add(1, Ordering::Relaxed);
     let spawned = std::thread::Builder::new()
         .name("renvor-readiness".to_owned())
         .spawn(move || {
             // Decremented by the worker itself, so a thread that eventually returns gives its slot
             // back. One that never returns keeps its slot for ever — which is exactly the fact the
             // ceiling is accounting for.
-            let _release = Release;
+            let _release = release;
             // Two guards, not one. `readiness` panicking is the likely case and `name` panicking
             // is the pathological one; guarding them together would throw away a perfectly good
             // name every time the likely case happened.
@@ -185,7 +212,9 @@ pub(crate) fn ask(
         });
 
     if spawned.is_err() {
-        OUTSTANDING.fetch_sub(1, Ordering::Relaxed);
+        // No manual decrement: `Builder::spawn` takes the closure by value, so a failed spawn
+        // drops it, and dropping it runs the `Release` guard it captured. Decrementing here as
+        // well would return the slot twice and wrap the counter.
         // Fail closed: an application whose readiness could not be established is not ready.
         return ContributorVerdict {
             name: fallback,

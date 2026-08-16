@@ -30,6 +30,14 @@
 //! (In-flight work draining is bounded by the drain budget, but nothing author-supplied is *called*
 //! there — the kernel waits on its own counter — so it is a bounded wait rather than a callback.)
 //!
+//! **The set is eight *lifecycle* callbacks, and that qualifier is load-bearing.** Two `Debug`
+//! implementations — for `dyn Provider` and `dyn ReadinessContributor` — also call author code,
+//! with **no** deadline. They are excluded deliberately, enumerated by
+//! [`formatting_reaches_author_code_unbounded_and_that_is_named_rather_than_hidden`], and no
+//! lifecycle phase formats either type. Stating "eight" without that qualifier is what the W-005
+//! verification re-review (N8) objected to: the exclusion was named in the test and not in the
+//! claim, and a reader meets the claim first.
+//!
 //! # The gate no longer trusts a list of files
 //!
 //! Twice burned. [`every_file_that_can_reach_author_code_is_accounted_for`] **discovers** every

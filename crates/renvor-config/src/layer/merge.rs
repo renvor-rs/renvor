@@ -25,12 +25,14 @@
 
 use std::collections::BTreeMap;
 
+use core::fmt;
+
 use renvor_core::KernelError;
 use renvor_core::config_port::{Attribution, Presence, SourceLayer};
 use toml::{Table, Value};
 
 /// One source, decoded and ready to merge.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct DecodedLayer {
     /// Which layer this is, for attribution and diagnostics.
     pub layer: SourceLayer,
@@ -46,8 +48,27 @@ impl DecodedLayer {
     }
 }
 
+/// Emits the layer and the **number** of keys, never the keys' values.
+///
+/// Hand-written for the reason C-E3 gives: a decoded source is a configuration value, and **0**
+/// output forms may emit one. This derived `Debug` until the W-005 verification re-review (finding
+/// 1.1) printed it and got `table: {"password": String("hunter2-do-not-print"), ...}`.
+///
+/// The lesson is the shape of the first fix, not the miss itself. `ResolvedConfig` was hand-written
+/// because a review named *that type*; the four siblings holding the same data were never looked
+/// for. A redaction guarantee is a property of a **set** of types, and fixing the one that was
+/// pointed at is not the same as establishing it.
+impl fmt::Debug for DecodedLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DecodedLayer")
+            .field("layer", &self.layer)
+            .field("keys", &self.table.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// The merged tree plus the layer that won each resolved key.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Merged {
     /// The merged configuration tree.
     pub table: Table,
@@ -57,6 +78,19 @@ pub struct Merged {
     /// between runs — FR-016 asks for a report, and a report that reshuffles itself is harder to
     /// diff than one that does not.
     pub attribution: BTreeMap<String, Attribution>,
+}
+
+/// Emits key **counts** and the attribution map, never a value. Same reasoning as [`DecodedLayer`].
+///
+/// Attribution is safe and is the useful half: which layer won for which key is exactly what a
+/// reader debugging configuration wants, and it never needed the value to learn it.
+impl fmt::Debug for Merged {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Merged")
+            .field("keys", &self.table.len())
+            .field("attribution", &self.attribution)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Merges layers in precedence order, lowest first.
