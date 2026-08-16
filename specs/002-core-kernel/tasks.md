@@ -134,11 +134,11 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 - [x] T035 Implement `KernelError` and `ErrorCategory` in `crates/renvor-core/src/error/mod.rs` with `thiserror`, covering all 13 categories in `contracts/error-taxonomy.md` C-E1
 - [x] T036 [P] Implement the `LifecyclePhase` enum and its ordering invariant in `crates/renvor-core/src/lifecycle/phase.rs` so a backwards transition is unrepresentable rather than merely rejected (FR-001)
-- [ ] T037 [P] Implement `CancellationToken` scoping in `crates/renvor-core/src/cancel/mod.rs` wrapping `tokio_util::sync::CancellationToken` with per-provider child scopes (FR-023, FR-024)
+- [x] T037 [P] Implement `CancellationToken` scoping in `crates/renvor-core/src/cancel/mod.rs` wrapping `tokio_util::sync::CancellationToken` with per-provider child scopes (FR-023, FR-024)
 - [x] T038 [P] Implement the `EntropySource` trait, `OsEntropy` over `getrandom`, and the fixed-byte test source in `crates/renvor-core/src/observe/entropy.rs`, with **exactly one** generation site
 - [x] T039 Implement `RunIdentifier` in `crates/renvor-core/src/observe/run_id.rs` as a pure function of supplied entropy bytes, encoding 0 host, clock, process, counter, or configuration inputs
 - [x] T040 Implement the `ConfigResolver` and `ResolvedConfig` port types in `crates/renvor-core/src/config_port/mod.rs` with **no** `serde`, `toml`, or parser dependency
-- [ ] T041 Implement `TypedStateMap` in `crates/renvor-core/src/state/mod.rs` as `HashMap<TypeId, StateEntry>` retaining `&'static str` type names — **must not merge before T029 records the ADR-0007 outcome** (FR-010)
+- [x] T041 Implement `TypedStateMap` in `crates/renvor-core/src/state/mod.rs` as `HashMap<TypeId, StateEntry>` retaining `&'static str` type names — **must not merge before T029 records the ADR-0007 outcome** (FR-010)
 
 **Checkpoint**: gates reported, primitives available — user story implementation can begin.
 

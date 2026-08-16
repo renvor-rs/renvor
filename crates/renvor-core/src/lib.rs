@@ -11,13 +11,17 @@
 //! compatibility procedure, and no semantic-versioning promise applies while the instability
 //! window is open. See the `renvor` facade documentation for the conditions that close it.
 
+pub mod cancel;
 pub mod config_port;
 pub mod error;
 pub mod lifecycle;
 pub mod observe;
 pub mod provider;
+pub mod state;
 
+pub use cancel::{CancelScope, ProviderScope};
 pub use config_port::{ConfigResolver, ResolvedConfig, SourceLayer};
 pub use error::{ErrorCategory, KernelError};
 pub use lifecycle::LifecyclePhase;
 pub use observe::{EntropySource, OsEntropy, RunIdentifier};
+pub use state::TypedStateMap;
