@@ -73,8 +73,11 @@ The repository contains a working **transport-independent kernel** as of Phase 0
 deserialisation of remote data. Its input surfaces are local configuration files, process
 environment variables, and code the application author writes. The security properties it does
 assert are secret redaction across every output form, bounded deadlines on every call into
-author code, and containment of a panicking provider or readiness check — each tested, and each
-limited to the unwinding panic strategy.
+author code, and containment of a panicking provider or readiness check — each tested.
+
+Panic containment is built on `catch_unwind`, so it holds under the **unwinding** panic strategy
+only. Rather than leave that as a caveat a build profile could silently violate, `panic = "abort"`
+is **unsupported** and `renvor-core` refuses to compile under it.
 
 This policy was established ahead of the code, so that a reporting path existed from the first
 line of functionality rather than being retrofitted after the first incident.

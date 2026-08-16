@@ -33,31 +33,39 @@
 //! The panic **still prints** through the process's panic hook. That is deliberate: containing a
 //! panic should not hide it, and the hook's output carries the backtrace this module cannot.
 //!
-//! # What this does NOT contain: `panic = "abort"`
+//! # `panic = "abort"` is refused, not tolerated
 //!
 //! `catch_unwind` catches a panic that **unwinds**. It has nothing to catch under
 //! `panic = "abort"`, where a panic calls the abort handler and the process ends without any
-//! unwinding for a landing pad to intercept. A consumer who sets
+//! unwinding for a landing pad to intercept. Neither this module nor
+//! [`crate::health::contributor`] can contain anything there — the containment is a property of
+//! the unwinding runtime, not of Renvor, and the same limit applies to every `catch_unwind` in the
+//! ecosystem.
+//!
+//! Until T147 that was written down as a **limitation** and nothing else, which left C-L9 and
+//! SC-009 reading as unconditional guarantees that a build profile could quietly remove. The
+//! maintainer ruling is that `panic = "abort"` is **unsupported**, and `renvor-core`'s crate root
+//! now refuses to compile under it (`#[cfg(panic = "abort")] compile_error!`). A consumer who sets
 //!
 //! ```toml
 //! [profile.release]
 //! panic = "abort"
 //! ```
 //!
-//! gets **no** provider panic containment, and neither this module nor
-//! [`crate::health::contributor`] can give them any — the containment is a property of the
-//! unwinding runtime, not of Renvor. The same limit applies to every `catch_unwind` in the
-//! ecosystem; it is stated here because C-L9 and SC-009 are otherwise easy to read as an
-//! unconditional guarantee.
+//! gets a build failure naming the reason, rather than a kernel whose central guarantee is absent
+//! at run time with no indication.
 //!
-//! Two further cases unwinding cannot reach, for completeness:
+//! # What unwinding still cannot reach
+//!
+//! These are **not** waived by the ruling above, because no panic strategy makes them catchable:
 //!
 //! - a **double panic** — panicking while a panic is already unwinding — aborts;
-//! - `std::process::abort` and a stack overflow are not panics at all.
+//! - `std::process::abort` and a stack overflow are not panics at all, so `catch_unwind` never
+//!   sees them. The stack-overflow case is why `MAX_KEY_DEPTH` and `MAX_VALUE_DEPTH` refuse deep
+//!   structures rather than trying to survive them.
 //!
-//! Renvor does not set `panic` in any profile, so the default (`unwind`) applies unless a consumer
-//! changes it. The claim this module supports is therefore: **a provider panic is contained
-//! wherever unwinding is the panic strategy**, which is the default and is what CI runs.
+//! The claim this module supports is therefore: **a provider panic that unwinds is contained**,
+//! and unwinding is now the only strategy the crate builds under.
 
 use core::any::Any;
 use core::fmt;
@@ -162,6 +170,49 @@ mod tests {
 
     fn immediate_panic() -> ProviderFuture<'static> {
         Box::pin(async { panic!("scripted panic before any await") })
+    }
+
+    #[test]
+    fn the_unsupported_panic_strategy_is_refused_at_compile_time() {
+        // T147. This module's guarantee is conditional on unwinding, and until T147 that condition
+        // was recorded in prose only — so a consumer could set `panic = "abort"` and receive a
+        // kernel whose central guarantee was absent, with nothing to tell them.
+        //
+        // The guard cannot be exercised from inside a test: a test binary that failed to compile
+        // would not run this assertion, and one that compiled proves only that *this* build is
+        // unwinding. So there are two halves, and both are needed.
+        //
+        // Half one, here: the guard is present in the source, with the right cfg and the right
+        // macro. This stops it being deleted or weakened to a `#[deprecated]` in a later edit.
+        let root = include_str!("../lib.rs");
+        assert!(
+            root.contains("#[cfg(panic = \"abort\")]"),
+            "the panic-strategy guard's cfg is gone from the crate root"
+        );
+        assert!(
+            root.contains("compile_error!"),
+            "the panic-strategy guard no longer refuses the build; a `cfg` that warns is not the \
+             ruling, which is that `panic = \"abort\"` is unsupported"
+        );
+
+        // Half two is NOT an assertion, and the first draft of this test got that wrong.
+        //
+        // It read `assert!(cfg!(panic = "unwind"), ...)`, which clippy rejected as an assertion on
+        // a constant — correctly, and for the interesting reason. The guard above makes that
+        // condition **structurally** true: a build under `panic = "abort"` never produces a test
+        // binary, so no assertion inside one can ever observe the abort case. Writing it as a
+        // runtime check dressed a tautology up as evidence, which is the exact habit this phase's
+        // reviews keep finding.
+        //
+        // The honest statement is the one this comment makes: **the fact that this test runs at
+        // all is the evidence.** The crate compiled, therefore the crate root's `compile_error!`
+        // did not fire, therefore this is an unwinding build — and every containment test in this
+        // module is testing containment rather than passing by never running.
+        //
+        // Half three, run out of band and recorded rather than executed here: building with
+        // `RUSTFLAGS="-C panic=abort"` exits **101** and prints the message above. A test cannot
+        // assert that without invoking cargo recursively, which would make this suite depend on a
+        // network-and-toolchain-shaped side effect. The evidence ledger carries the transcript.
     }
 
     fn panic_after_await() -> ProviderFuture<'static> {
