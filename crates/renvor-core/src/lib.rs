@@ -13,7 +13,9 @@
 
 pub mod error;
 pub mod lifecycle;
+pub mod observe;
 pub mod provider;
 
 pub use error::{ErrorCategory, KernelError};
 pub use lifecycle::LifecyclePhase;
+pub use observe::{EntropySource, OsEntropy, RunIdentifier};
