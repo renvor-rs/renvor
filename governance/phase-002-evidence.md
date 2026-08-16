@@ -1853,6 +1853,29 @@ byte longer than the prefix, which keeps `starts_with` deciding on exactly the b
 That last row is the one that matters in practice: a bound that rewrote ordinary keys would satisfy
 every size assertion above and make every real diagnostic worse.
 
+#### The exact scope of the bound, stated rather than implied
+
+The bound covers **configuration identifiers** — values that arrive from a TOML file, an
+environment variable, or a file path, and are therefore chosen by whoever supplies the
+configuration. Every output path such an identifier can reach was enumerated rather than sampled:
+
+| Path | Covered by |
+|---|---|
+| TOML keys | `configuration()` / `conflict()`, the only constructors for the two variants that carry them |
+| Environment variable names | the same, plus the pre-conversion window in `lossy_identifier_window` |
+| Source attribution | `SourceLayer::file`, and `bounded_label` inside both rendering impls |
+| Error `Display` | the constructors — the stored `String` is already bounded |
+| `SourceLayer` `Display` and `Debug` | hand-written, both bounding |
+| **Tracing** | **nothing to bound.** `phase_span` records exactly two fields: `phase`, a `&'static str`, and `run_id`, a fixed-length identifier. **No configuration key, layer, or path is ever recorded as a tracing field**, so there is no unbounded tracing path — verified by reading `observe/spans.rs`, not assumed |
+
+`KernelError` has **nine** variants carrying a `String`. The two bounded here are the two that
+carry configuration-derived values. The other seven — `DependencyMissing`, `CapabilityDuplicate`,
+`ProviderInit`, `ProviderStop`, `DeadlineExceeded`, `ShuttingDown`, `ResourceUnavailable` — carry
+provider identifiers and operation labels written by the application author in code, not supplied
+through a configuration source. They are **not** bounded, and that is a scope statement rather than
+an oversight: an author who constructs a `ProviderId` from configuration input at run time would
+sit outside this bound. Named here so it is a known edge rather than a discovered one.
+
 Truncation lands on a character boundary — `&raw[..n]` panics when `n` splits a character, and
 SC-004 allows **0** panics on hostile input. Exercised across every offset in the boundary region.
 
@@ -1940,6 +1963,139 @@ pointed at a tampered copy cannot be shown to fail. Extracted into `check_invent
 has one for **each** of its two branches: an **empty** licence cell and one reading **`none`**.
 
 Gate 15 now carries **7** controls and passes in both shells.
+
+### I — platform verification, and a claim that had gone stale (T150)
+
+`SUPPORT.md` listed macOS and Windows as "not yet claimed", giving the reason **"No
+platform-sensitive code exists to verify"**. That stopped being true when the configuration layer
+landed and nobody revisited it. The kernel resolves filesystem paths, refuses non-regular files by
+type from an open descriptor, opens files with a platform-specific flag, and reads `OsString`
+environment names that are arbitrary bytes on unix and WTF-8 on Windows — the parts most likely to
+differ, verified on exactly one platform.
+
+A `platform` job now runs the workspace suite serially and the no-default-features check on macOS
+and Windows, on both toolchains.
+
+**It is a separate job from `verify`, and that is load-bearing.** `verify`'s matrix produces the
+required status contexts `verify (1.94.0)` and `verify (stable)`. Adding an `os` dimension to it
+would have renamed them to `verify (ubuntu-latest, 1.94.0)`, and branch protection matches contexts
+**by name** — so the rule would have silently started requiring checks that no longer existed. The
+diff to `ci.yml` is purely additive and `verify`'s matrix block is byte-identical.
+
+| Check | Result |
+|---|---|
+| `platform (macos-latest, 1.94.0)` | pass |
+| `platform (macos-latest, stable)` | pass |
+| `platform (windows-latest, 1.94.0)` | pass |
+| `platform (windows-latest, stable)` | pass |
+| `verify (1.94.0)`, `verify (stable)` | pass — names unchanged |
+
+Unix-only behaviour that cannot exist on Windows — the FIFO refusal, the non-Unicode
+environment-name path — is `#[cfg(unix)]`-gated and is therefore verified on Linux and macOS only.
+That is a property of the platform, not a gap in the matrix.
+
+### J — the advisories were closed by removal, because no fix exists (T151)
+
+PLAN.md §17.3 forbids accepting a phase with an open Critical or High finding, and the previous
+revision carried **two HIGH** advisories as a named limitation on the grounds that they were npm
+transitives of the documentation site, absent from the Rust graph, and pre-existing. All three
+statements were true. None of them is a waiver, and §17.3 offers none.
+
+| Alert | Severity | Package | Affected | First patched |
+|---|---|---|---|---|
+| #5 `GHSA-w3rx-r6r6-pgpr` | **high** | `image-size` | `<= 2.0.2` | **none** |
+| #4 `GHSA-5p2g-fcmc-qvqq` | **high** | `image-size` | `<= 2.0.2` | **none** |
+| #2 `GHSA-w5hq-g745-h8pq` | medium | `uuid` | `< 11.1.1` | 11.1.1 |
+
+`image-size` 2.0.2 is the **latest published version**, so every released version is inside the
+affected range and there is nothing to upgrade to. `@docusaurus/mdx-loader@3.10.2` requires it, and
+3.10.2 is the latest Docusaurus, so there is no upgrade path from that direction either. Upgrading
+was not an option that existed.
+
+**Closed by removal.** An npm `overrides` entry redirects `image-size` to
+`docs/vendor/image-size-disabled`, a local no-op that **throws** rather than returning fabricated
+dimensions. The vulnerable parsers are never installed: `docs/package-lock.json` now resolves
+`node_modules/image-size` to a link, and no published `image-size` tarball appears anywhere in it.
+
+The stub is safe here for a reason that predates it: the site already enforced **no image input at
+all** through `docs/scripts/check-image-inputs.mjs`, a build-time guard added with the original
+T108 exception. The vulnerable code path was already provably unreachable; T151 removed the package
+as well. The guard is retained and reworded — it now protects the *consequence* of the removal (an
+image added to this site would render without dimensions) rather than a security premise.
+
+`uuid` raised to **11.1.1** via an override. Its consumer is `sockjs`, which does
+`require('uuid').v4`; uuid 11.1.1 ships a CommonJS entry through its `exports` map's `require`
+condition, verified by executing `require('uuid').v4()` against the installed package.
+
+| Verification | Result |
+|---|---|
+| `npm ci` (frozen install from the committed lockfile) | 1320 packages, exit 0 |
+| `npm run build` (production) | `[SUCCESS] Generated static files`, exit 0 |
+| `[T108]` image-input guard | ok — no MDX image embeds, no raster assets, no image imports |
+| `npm audit` | **0 vulnerabilities** |
+| vulnerable `image-size` / `uuid` entries in the lockfile | **none** |
+
+**A scoping fact that must not be glossed.** Dependabot computes alerts from the **default
+branch**. The fix is on `feat/phase-002-core-kernel`, so alerts #2, #4, and #5 remain `open`
+against `main` until this pull request merges — they are not dismissed, not waived, and not
+suppressed. The branch is measurably clean; the repository-level alert set closes on merge and not
+before.
+
+### K — validation on the clean committed tree (T156)
+
+Every figure below was produced from the committed tree at the head this pull request now carries.
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all` + `git diff --check` | clean |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | **0** |
+| `cargo test --workspace --all-features -- --test-threads=1` | 28 targets, **333 tests, 0 failing** |
+| `cargo xtask verify` @ **1.94.0** | **11/11** |
+| `cargo xtask verify` @ **stable 1.97.1** | **11/11** |
+| `cargo check --locked -p renvor --no-default-features --all-targets` @ 1.94.0 | pass |
+| `cargo check --locked -p renvor --no-default-features --all-targets` @ stable | pass |
+| `cargo deny check licenses advisories bans sources` | 4/4 ok |
+| `actionlint -no-color` | **0** |
+| Quickstart gates **0–15, individually**, each in its own shell | **16/16**, **168** tests executed across gates 2–11 |
+| Gate 12 under **bash 3.2** | PASS, 7 controls |
+| Gate 12 under **zsh 5.9** | PASS, 7 controls |
+| FR-001…FR-044 present in the requirement map | **44/44**, no gaps |
+| SC-001…SC-022 present in the requirement map | **22/22**, no gaps |
+| Task IDs T001…T158 | contiguous, unique, no duplicates |
+
+`cargo xtask verify` covers formatting, clippy under `-D warnings`, the workspace tests, rustdoc
+with warnings denied, `cargo deny`, secret scanning over both the working tree and the full commit
+history, the documentation site's frozen install and production build, the link check, and
+working-tree cleanliness.
+
+#### One intermittent test failure, recorded rather than smoothed over
+
+The **first** `cargo xtask verify` run on 1.94.0 failed at step 4 with
+`a_hanging_provider_is_bounded_at_boot_and_at_stop` in `crates/renvor-testkit/tests/injection.rs`
+asserting `stop.fired`. It has not reproduced since.
+
+| Attempt to reproduce | Result |
+|---|---|
+| the same test, isolated and serial | 1/1 pass |
+| the same suite, default parallelism | 5/5 pass |
+| `cargo test --workspace --all-features` (the exact step-4 command) | 3/3 pass |
+| the suite, 12 runs under deliberate CPU saturation (28 spinners on 14 cores) | 0/12 failed |
+| the suite, 60 runs at **this head** under load | 0/60 failed |
+| the suite, 60 runs at the **base commit** `2555c01` under identical load | 0/60 failed |
+| `cargo xtask verify` @ 1.94.0, re-run | 11/11 |
+| `cargo xtask verify` @ stable, first run | 11/11 |
+| CI `verify (1.94.0)` and `verify (stable)` on this head | pass |
+
+**132 subsequent runs at this head and 60 at the base produced 0 failures**, so there is no
+evidence the intermittency is new, and the corrective batch touches no part of the lifecycle stop
+path. `InjectingProvider::stop` calls `mark()` before its first `await`, so `fired` can only be
+false if the returned future was dropped before its first poll — a cancellation-ordering race under
+`tokio`'s paused clock, in the harness rather than in the kernel.
+
+The constitution states that flaky tests are defects. This one is **recorded as an open item with
+an owner** rather than claimed to be fixed: it was observed once, it has not been root-caused to a
+line, and asserting a fix that has not been demonstrated is the exact habit these four rounds
+exist to correct. It is **not** presented as resolved.
 
 ## Publication status
 
