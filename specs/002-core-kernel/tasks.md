@@ -51,7 +51,7 @@ Per the plan and research revision 2, these **block all of Phase 3 onward**:
 | Configuration compatibility proof (8 obligations) | T014–T020 | all `renvor-config` implementation | obligations 4 and 6 carry known negative evidence; failing them triggers the recorded fallback | **FAILED, 4 of 8 met** (1, 4, 6, 7 unmet) → `serde` + `toml` partial-layer fallback **triggered**, and therefore **in ADR-0007 scope**. Research §D6 |
 | Provider-resolver feasibility and counters | T021–T025 | all resolver implementation | revision 1's design was infeasible against its own budget; this proves revision 2's is not | **PASSED, 8 of 8 met.** Counters exactly 2048 / 8192 / 10240; 1024-chain resolves with ≈ 4× stack headroom in debug. Iterative-SCC fallback **not** triggered, so **nothing added to ADR-0007 scope**. Research §D8 |
 | **ADR-0007 governance gate** | T026–T029 | merging **any** custom infrastructure | **neither W-002 nor W-003 authorises accepting a Phase 002 ADR**; W-004 does, under compensating controls | pending |
-| Complete resolved transitive dependency inventory | T030–T034 | adoption confirmation | the research table covers **direct candidates only** | pending |
+| Complete resolved transitive dependency inventory | T030–T034 | adoption confirmation | the research table covers **direct candidates only** | **PASSED.** 55 external packages; 0 without a licence, 0 over MSRV 1.94.0, `cargo deny` clean on all four checks. 43 of 55 arrived transitively. `governance/phase-002-dependency-inventory.md` |
 
 The two proof gates disagreed, and that is the outcome working rather than an inconsistency: the
 configuration gate failed on evidence the research had already predicted, while the resolver gate
@@ -124,11 +124,11 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 ### 2D — Complete resolved transitive dependency inventory
 
-- [ ] T030 Create `governance/phase-002-dependency-inventory.md` listing **every** resolved package from `cargo tree --workspace --edges normal` — transitive included — with version, licence, MSRV compatibility, and advisory status (FR-040, SC-012, SC-017)
-- [ ] T031 Run `cargo deny check licenses advisories bans sources` against the **actual** `Cargo.lock` and record the result in `governance/phase-002-dependency-inventory.md`
-- [ ] T032 [P] Record enabled features (`cargo tree --edges features`) and duplicate-version findings (`cargo tree --duplicates`) in `governance/phase-002-dependency-inventory.md`
-- [ ] T033 Fail the phase if **any** resolved package lacks the evidence FR-040 requires, and record in `governance/phase-002-dependency-inventory.md` whether the direct-candidate evaluation in research §3 accurately predicted the transitive graph (SC-012, SC-017)
-- [ ] T034 Reconcile ADR-0003's dependency policy with FR-040 in `specs/002-core-kernel/research.md` §D12: ADR-0003 records that **reusable library crates do not commit a lockfile**, FR-040 requires versions resolvable **from a committed lockfile**, and this workspace tracks `Cargo.lock`. State which rule governs here and why, so the two are not left contradicting each other in writing (readiness CHK044)
+- [x] T030 Create `governance/phase-002-dependency-inventory.md` listing **every** resolved package from `cargo tree --workspace --edges normal` — transitive included — with version, licence, MSRV compatibility, and advisory status (FR-040, SC-012, SC-017)
+- [x] T031 Run `cargo deny check licenses advisories bans sources` against the **actual** `Cargo.lock` and record the result in `governance/phase-002-dependency-inventory.md`
+- [x] T032 [P] Record enabled features (`cargo tree --edges features`) and duplicate-version findings (`cargo tree --duplicates`) in `governance/phase-002-dependency-inventory.md`
+- [x] T033 Fail the phase if **any** resolved package lacks the evidence FR-040 requires, and record in `governance/phase-002-dependency-inventory.md` whether the direct-candidate evaluation in research §3 accurately predicted the transitive graph (SC-012, SC-017)
+- [x] T034 Reconcile ADR-0003's dependency policy with FR-040 in `specs/002-core-kernel/research.md` §D12: ADR-0003 records that **reusable library crates do not commit a lockfile**, FR-040 requires versions resolvable **from a committed lockfile**, and this workspace tracks `Cargo.lock`. State which rule governs here and why, so the two are not left contradicting each other in writing (readiness CHK044)
 
 ### 2E — Shared kernel primitives (unblocked once 2A–2D report)
 
