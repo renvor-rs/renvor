@@ -304,14 +304,33 @@ fi
 rm -f "$CONTROL"; trap - EXIT
 echo "control: a failing example is detected"
 
+# FR-032 / SC-014's "no hidden global mutable state" — CHECKED, not asserted in prose. The
+# Pass paragraph used to claim this while the script checked only exit status.
+GLOBALS='static mut|lazy_static!|once_cell::|OnceLock|OnceCell|thread_local!|SyncLazy|LazyLock'
+if grep -REn "$GLOBALS" "$EXAMPLE_DIR" ; then
+  echo "FAIL 12 — an example uses global mutable state (FR-032)"; exit 1
+fi
+# CONTROL 3: the pattern can match. Without this a typo in $GLOBALS reads as a clean result.
+printf 'static mut X: u8 = 0;\n' > "$EXAMPLE_DIR/../globals-probe.txt"
+grep -REn "$GLOBALS" "$EXAMPLE_DIR/.." > /dev/null \
+  || { rm -f "$EXAMPLE_DIR/../globals-probe.txt"; echo "FAIL 12 — the global-state pattern matches nothing"; exit 1; }
+rm -f "$EXAMPLE_DIR/../globals-probe.txt"
+echo "control: the global-state pattern fires on a planted global"
+
 cargo test --workspace --all-targets
 echo "GATE 12 PASS"
 ```
 
 **Pass**: **every** example is discovered, compiles, and runs to a zero exit; the discovery finds at
-least three; and an example that cannot run **fails the gate** — proven, not assumed. **0** examples
-require a transport, a port, or a database. CI runs the same sequence on both `1.94.0` and current
-stable.
+least three; an example that cannot run **fails the gate**; and **no example uses global mutable
+state** — each of the four proven by a control rather than assumed.
+
+**"0 examples require a transport, a port, or a database" is evidenced by Gate 13a, not here.** No
+transport, database, or CLI package exists anywhere in the resolved workspace graph, so no example
+can require one. This gate runs the examples; 13a is what makes their independence a fact rather
+than an observation about three files somebody read.
+
+CI runs the same sequence on both `1.94.0` and current stable.
 
 ---
 
@@ -449,8 +468,26 @@ verified locally:
 
 ```bash
 set -euo pipefail
-grep -rlE 'ghcr\.io|docker/build-push-action' .github/workflows/ && \
-  { echo "FAIL — an image-publishing workflow exists"; exit 1; } || echo "14c: no image-publishing workflow"
+# The directory must exist. `grep -r` on a missing path exits 2, and the previous form's `||`
+# branch treated that exactly like "found nothing" — a zero-asserting check that passed hardest
+# when there was nothing to search.
+test -d .github/workflows \
+  || { echo "FAIL 14c — .github/workflows/ is missing; this check has nothing to search"; exit 1; }
+
+if grep -rlE 'ghcr\.io|docker/build-push-action' .github/workflows/ ; then
+  echo "FAIL 14c — an image-publishing workflow exists"; exit 1
+fi
+
+# POSITIVE CONTROL: the pattern and the search both work. Without it, a renamed action or a typo
+# in the alternation reads as "no image publishing" — the fail-open this gate exists to prevent,
+# and the only zero-asserting check in this file that had no control.
+CONTROL=.github/workflows/gate14c-control.yml
+trap 'rm -f "$CONTROL"' EXIT
+printf 'jobs:\n  probe:\n    steps:\n      - uses: docker/build-push-action@v6\n' > "$CONTROL"
+grep -rlE 'ghcr\.io|docker/build-push-action' .github/workflows/ > /dev/null \
+  || { echo "FAIL 14c control — the pattern did not match a planted publishing step"; exit 1; }
+rm -f "$CONTROL"; trap - EXIT
+echo "14c: no image-publishing workflow (control fired)"
 ```
 
 > **Stated limit**: an anonymous query against a container registry returns **403** for both *absent*
@@ -594,17 +631,46 @@ if diff -q "$WORK/tampered.txt" "$WORK/resolved.txt" > /dev/null; then
 fi
 echo "control: the inventory comparison detects a package the graph does not contain"
 
-# --- 15d: policy and supporting evidence against the real lockfile ---
+# --- 15d: every documented row carries the columns FR-040 requires ---
+#
+# The Pass paragraph claimed licence, MSRV, and origin were verified. Nothing checked them: the
+# extraction above captures name and version and discards the rest of each row. A row with an
+# empty licence cell would have compared equal and passed.
+awk '/^## T030\/T033/{inside=1; next} inside && /^## /{inside=0} inside' "$INVENTORY" \
+  | grep '^| `' \
+  | awk -F'|' '{
+      name=$2; version=$3; licence=$4; msrv=$5; origin=$6; reach=$7;
+      gsub(/^[ \t]+|[ \t]+$/, "", licence);
+      gsub(/^[ \t]+|[ \t]+$/, "", msrv);
+      gsub(/^[ \t]+|[ \t]+$/, "", origin);
+      gsub(/^[ \t]+|[ \t]+$/, "", reach);
+      if (licence == "" || msrv == "" || origin == "" || reach == "")
+        { print "INCOMPLETE ROW:" name; bad=1 }
+      if (licence ~ /none/) { print "NO LICENCE:" name; bad=1 }
+    } END { exit bad ? 1 : 0 }' \
+  || { echo "FAIL 15 — a documented package is missing evidence FR-040 requires"; exit 1; }
+echo "every documented row carries a licence, an MSRV, an origin, and a reach"
+
+# --- 15e: policy and supporting evidence against the real lockfile ---
 cargo deny check licenses advisories bans sources
-cargo tree --workspace --duplicates || true              # duplicate-version findings, recorded
+
+# Duplicate versions are RECORDED, not discarded. The previous form piped this to `|| true` and
+# kept nothing, while the Pass paragraph said duplicates were recorded.
+cargo tree --workspace --duplicates > "$WORK/duplicates.txt" 2>&1 || true
+echo "duplicate-version findings:"; cat "$WORK/duplicates.txt"
 cargo tree --workspace --edges features --prefix none > "$WORK/features.txt"
+echo "enabled-feature lines: $(wc -l < "$WORK/features.txt")"
 echo "GATE 15 PASS"
 ```
 
 **Pass**: the documented inventory and the resolved graph are **identical, in both directions** —
-no stale row, no unevaluated package — and every documented package carries a version, licence,
-MSRV, and origin; `cargo deny` is clean against the real lockfile; enabled features and duplicate
-versions are recorded.
+no stale row, no unevaluated package — **every documented row carries a non-empty licence, MSRV,
+origin, and reach**, checked column by column; `cargo deny` is clean against the real lockfile; and
+the duplicate-version and enabled-feature output is **printed**, not discarded.
+
+Every clause above is now executed by the script. Three of them were prose until 2026-08-16: the
+per-column evidence check did not exist, the duplicate output went to `|| true` and was thrown
+away, and the feature file was written and then deleted by the cleanup trap without being read.
 
 **This gate previously compared nothing.** It counted resolved packages, printed the count, and ran
 `cargo deny`; the inventory document was never opened. A row for a package that had left the graph,

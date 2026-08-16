@@ -182,3 +182,57 @@ async fn an_error_raised_while_the_credential_is_registered_stays_clean() {
         "and the failure still names the provider: {rendered}"
     );
 }
+
+/// W-005 security finding 1.1 — the wrapper that was left deriving `Debug`.
+///
+/// `SchemaSource` and `ConfigHandle` both hand-write `Debug` so a resolved configuration cannot
+/// print. `ResolvedConfig` — the value they wrap — derived it, so formatting the thing they were
+/// protecting printed every raw value it held.
+#[test]
+fn a_resolved_configuration_prints_its_keys_and_never_its_values() {
+    use renvor_core::config_port::{Attribution, ResolvedConfig, SourceLayer};
+
+    /// Both fields exist to be *printed*, or rather not to be. Nothing reads `host` back, which
+    /// is the shape of the test rather than an oversight.
+    #[allow(dead_code)]
+    #[derive(Debug)]
+    struct Settings {
+        host: String,
+        password: String,
+    }
+
+    const CREDENTIAL: &str = "hunter2-do-not-print";
+
+    let resolved = ResolvedConfig::new(
+        Settings {
+            host: "localhost".to_owned(),
+            password: CREDENTIAL.to_owned(),
+        },
+        vec![(
+            "password".to_owned(),
+            Attribution {
+                layer: SourceLayer::Environment,
+                presence: renvor_core::config_port::Presence::Present,
+            },
+        )],
+    );
+
+    let rendered = format!("{resolved:?}");
+    assert!(
+        !rendered.contains(CREDENTIAL),
+        "the configuration value reached Debug output: {rendered}"
+    );
+    assert!(
+        !rendered.contains("localhost"),
+        "an unmarked value reached Debug output too: {rendered}"
+    );
+
+    // The useful half survives: which key came from which layer.
+    assert!(rendered.contains("password"), "{rendered}");
+    assert!(rendered.contains("Environment"), "{rendered}");
+
+    // POSITIVE CONTROL: the value really is in there, so the absence above is redaction rather
+    // than an empty struct.
+    assert_eq!(resolved.value().password, CREDENTIAL);
+    assert!(format!("{:?}", resolved.value()).contains(CREDENTIAL));
+}

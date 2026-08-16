@@ -335,10 +335,10 @@ that has not been integrated, with the corrections below outstanding.
 ### D. W-005 and phase closure
 
 - [x] T126 Correct the stale open items: the config facade re-export is no longer vacuous, and the `ConfigSource` item is superseded by US3
-- [ ] T127 Run the repository-local `speckit-analyze` against the finished artifacts and implementation; resolve every CRITICAL, HIGH, and MEDIUM finding and disposition every LOW one
-- [ ] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually
-- [ ] T129 Add a complete evidence map covering exactly **FR-001…FR-044** and **SC-001…SC-022**, each row naming concrete implementation, tests, and evidence, or visibly unmet
-- [ ] T130 Update the evidence status truthfully: implementation may be stated complete **conditional on integration to main**, and must not imply an unmerged branch is integrated or independently reviewed
+- [x] T127 Run the repository-local `speckit-analyze` against the finished artifacts and implementation; resolve every CRITICAL, HIGH, and MEDIUM finding and disposition every LOW one
+- [x] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually
+- [x] T129 Add a complete evidence map covering exactly **FR-001…FR-044** and **SC-001…SC-022**, each row naming concrete implementation, tests, and evidence, or visibly unmet
+- [x] T130 Update the evidence status truthfully: implementation may be stated complete **conditional on integration to main**, and must not imply an unmerged branch is integrated or independently reviewed
 
 ### E. Final validation and pull request
 

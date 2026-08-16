@@ -97,10 +97,33 @@ pub struct Attribution {
 ///
 /// Generic over the decoded type `T` so the kernel never needs to know the schema. `renvor-config`
 /// decodes; the kernel receives.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ResolvedConfig<T> {
     value: T,
     attribution: Vec<(String, Attribution)>,
+}
+
+/// Emits the **keys and their layers**, and never the values.
+///
+/// Hand-written, and for the same reason `SchemaSource` and `ConfigHandle` are: a resolved
+/// configuration is precisely the object that holds credentials, and C-E3 allows **0** output
+/// forms to emit one. Those two types were written carefully and this one — the value they both
+/// wrap — was left deriving `Debug`, so the careful hand-written impls guarded a door beside an
+/// open window. Found by the W-005 security review (finding 1.1).
+///
+/// A field marked [`Secret`](../../renvor_config/secret/struct.Secret.html) would have redacted
+/// itself here, but that is the author remembering to mark it. This impl does not depend on their
+/// having remembered, which is the difference between a convention and a guarantee.
+///
+/// Attribution is safe and is the useful half: a reader debugging configuration wants to know
+/// *which layer won for which key*, and never needed the value to learn that.
+impl<T> fmt::Debug for ResolvedConfig<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ResolvedConfig")
+            .field("keys", &self.attribution.len())
+            .field("attribution", &self.attribution)
+            .finish_non_exhaustive()
+    }
 }
 
 impl<T> ResolvedConfig<T> {

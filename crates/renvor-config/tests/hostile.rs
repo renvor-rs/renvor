@@ -24,6 +24,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use renvor_config::{ConfigSchema, FileLayer, LayeredResolverBuilder};
+use renvor_core::ErrorCategory;
 use renvor_core::config_port::ConfigResolver as _;
 use serde::Deserialize;
 
@@ -288,4 +289,65 @@ fn generated_environments_never_panic() {
             .build::<Settings>()
             .resolve();
     }
+}
+
+/// W-005 security finding 4.1 — a file whose reported length is a lie.
+///
+/// A FIFO reports `len() == 0` and then yields as many bytes as the reader takes, so the metadata
+/// check waves it through and the read decides the outcome. Before the bounded read, this consumed
+/// memory until the process died; now it is refused at the ceiling.
+///
+/// `#[cfg(unix)]` because a FIFO is a unix concept. Linux is the claimed platform and Ubuntu CI is
+/// the authority; this also runs on the maintainer's macOS workstation.
+#[cfg(unix)]
+#[test]
+fn a_fifo_whose_length_reports_zero_is_bounded_by_the_read_rather_than_the_metadata() {
+    let directory = std::env::temp_dir().join(format!("renvor-fifo-{}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("a temporary directory");
+    let path = directory.join("config.toml");
+
+    // `mkfifo` via the shell: creating one needs `libc`, and this workspace forbids `unsafe`.
+    let made = std::process::Command::new("mkfifo")
+        .arg(&path)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    if !made {
+        eprintln!("skipping: mkfifo unavailable");
+        let _ = std::fs::remove_dir_all(&directory);
+        return;
+    }
+
+    // The metadata check sees zero, so it cannot be what refuses this.
+    let reported = std::fs::metadata(&path).expect("the fifo exists").len();
+    assert_eq!(
+        reported, 0,
+        "a fifo reports no length; that is the whole point"
+    );
+
+    // A writer that keeps producing. It ends when the reader stops, which is what proves the
+    // reader stopped.
+    let writer = std::thread::spawn({
+        let path = path.clone();
+        move || {
+            if let Ok(mut pipe) = std::fs::OpenOptions::new().write(true).open(&path) {
+                let block = vec![b'a'; 64 * 1024];
+                // Stops on EPIPE once the bounded read gives up.
+                while pipe.write_all(&block).is_ok() {}
+            }
+        }
+    });
+
+    let error = FileLayer::required(&path)
+        .with_max_bytes(4096)
+        .read()
+        .expect_err("an endless stream must be refused, not consumed");
+    assert_eq!(error.category(), ErrorCategory::Configuration);
+    assert!(
+        error.to_string().contains("4096"),
+        "the ceiling must be named: {error}"
+    );
+
+    drop(writer.join());
+    let _ = std::fs::remove_dir_all(&directory);
 }

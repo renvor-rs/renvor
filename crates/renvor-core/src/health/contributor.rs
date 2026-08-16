@@ -23,6 +23,7 @@
 use core::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
@@ -46,6 +47,29 @@ impl fmt::Debug for dyn ReadinessContributor {
         f.debug_struct("ReadinessContributor")
             .field("name", &self.name())
             .finish()
+    }
+}
+
+/// The most readiness workers that may be outstanding at once, across all contributors.
+///
+/// **Renvor's number.** A healthy contributor's worker lives for microseconds, so reaching this
+/// ceiling means workers are not returning — and the honest response to that is to stop making
+/// more of them, not to keep asking.
+pub const MAX_OUTSTANDING_PROBES: usize = 64;
+
+/// How many readiness workers have been spawned and have not yet finished.
+static OUTSTANDING: AtomicUsize = AtomicUsize::new(0);
+
+/// Decrements [`OUTSTANDING`] on drop, including while unwinding.
+///
+/// A guard rather than a decrement at the end of the worker: the worker's body runs author code
+/// inside `catch_unwind`, and an early return or an unwind past the guard would otherwise lose the
+/// slot permanently — turning the ceiling into a slow leak of its own.
+struct Release;
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        OUTSTANDING.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -121,12 +145,34 @@ pub(crate) fn ask(
     deadline: Duration,
 ) -> ContributorVerdict {
     let fallback = format!("<contributor at registration position {position}>");
+
+    // Refuse before spawning once too many workers are already stuck. Without this the leak is
+    // **unbounded**: a contributor that never returns leaks one thread per probe, and a probe runs
+    // on a timer somebody else controls — so a single hung check turns a readiness endpoint into a
+    // thread-exhaustion vector that grows for as long as the process is monitored. Found by the
+    // W-005 security review (finding 5.1).
+    //
+    // The leak does not go away; no Rust API can interrupt a blocked thread. It becomes **bounded**,
+    // which is the difference between a recorded limitation and a denial of service.
+    if OUTSTANDING.load(Ordering::Relaxed) >= MAX_OUTSTANDING_PROBES {
+        return ContributorVerdict {
+            name: fallback,
+            readiness: Readiness::NotReady,
+            fault: ContributorFault::NotAsked,
+        };
+    }
+
     let handle = Arc::clone(contributor);
     let (sender, receiver) = channel();
 
+    OUTSTANDING.fetch_add(1, Ordering::Relaxed);
     let spawned = std::thread::Builder::new()
         .name("renvor-readiness".to_owned())
         .spawn(move || {
+            // Decremented by the worker itself, so a thread that eventually returns gives its slot
+            // back. One that never returns keeps its slot for ever — which is exactly the fact the
+            // ceiling is accounting for.
+            let _release = Release;
             // Two guards, not one. `readiness` panicking is the likely case and `name` panicking
             // is the pathological one; guarding them together would throw away a perfectly good
             // name every time the likely case happened.
@@ -139,6 +185,7 @@ pub(crate) fn ask(
         });
 
     if spawned.is_err() {
+        OUTSTANDING.fetch_sub(1, Ordering::Relaxed);
         // Fail closed: an application whose readiness could not be established is not ready.
         return ContributorVerdict {
             name: fallback,

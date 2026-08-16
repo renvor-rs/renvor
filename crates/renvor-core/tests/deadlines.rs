@@ -196,25 +196,25 @@ const BOUNDING_CONSTRUCTS: &[&str] = &["tokio::time::timeout(", "bounded_call(",
 /// contain a bounding construct. An entry cannot be used to wave a file through.
 const BOUNDED_BY_ANCESTOR: &[(&str, &str, &str)] = &[
     (
-        "provider/mod.rs",
-        "lifecycle/builder.rs",
+        "renvor-core/provider/mod.rs",
+        "renvor-core/lifecycle/builder.rs",
         "`resolve_tracking` reads provider declarations; `build` calls it inside `bounded_call`",
     ),
     (
-        "provider/registry.rs",
-        "lifecycle/builder.rs",
+        "renvor-core/provider/registry.rs",
+        "renvor-core/lifecycle/builder.rs",
         "`declared_size` reads `dependencies()`; reached only from `resolve_tracking`, which \
          `build` bounds. The `Debug` impl also reads declarations, and formatting a provider is \
          not a lifecycle wait",
     ),
     (
-        "observe/run_id.rs",
-        "lifecycle/builder.rs",
+        "renvor-core/observe/run_id.rs",
+        "renvor-core/lifecycle/builder.rs",
         "`generate` calls `EntropySource::fill`; `build` calls it inside `bounded_call`",
     ),
     (
-        "health/mod.rs",
-        "health/contributor.rs",
+        "renvor-core/health/mod.rs",
+        "renvor-core/health/contributor.rs",
         "`readiness` delegates every contributor call to `contributor::ask`, which bounds it",
     ),
 ];
@@ -226,10 +226,26 @@ const BOUNDED_BY_ANCESTOR: &[(&str, &str, &str)] = &[
 /// `recv_timeout`, so the mechanism counted itself as a ninth call site.
 const EXPECTED_BOUNDS: &[(&str, &str, usize)] = &[
     // entropy, source name, load, validate, Register declarations.
-    ("lifecycle/builder.rs", "bounded_call(deadline,", 5),
-    ("lifecycle/application.rs", "tokio::time::timeout(", 1),
-    ("lifecycle/rollback.rs", "tokio::time::timeout(", 1),
-    ("health/contributor.rs", "recv_timeout(deadline)", 1),
+    (
+        "renvor-core/lifecycle/builder.rs",
+        "bounded_call(deadline,",
+        5,
+    ),
+    (
+        "renvor-core/lifecycle/application.rs",
+        "tokio::time::timeout(",
+        1,
+    ),
+    (
+        "renvor-core/lifecycle/rollback.rs",
+        "tokio::time::timeout(",
+        1,
+    ),
+    (
+        "renvor-core/health/contributor.rs",
+        "recv_timeout(deadline)",
+        1,
+    ),
 ];
 
 /// The drain's bound, excluded from [`EXPECTED_BOUNDS`] and checked separately.
@@ -237,19 +253,26 @@ const EXPECTED_BOUNDS: &[(&str, &str, usize)] = &[
 /// It is a bounded wait but **not** a callback: the kernel waits on its own permit counter, and
 /// no author method is called. Folding it into the callback total would make the number mean two
 /// things at once.
-const DRAIN_BOUND: (&str, &str) = ("lifecycle/drain.rs", "tokio::time::timeout(");
+const DRAIN_BOUND: (&str, &str) = ("renvor-core/lifecycle/drain.rs", "tokio::time::timeout(");
 
 /// Reads every `.rs` file under `src/`, returning `(relative path, production source)`.
 ///
 /// Discovery rather than a list. The two times this file closed the wrong set, it was because
 /// something decided in advance where to look.
 fn kernel_sources() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    // BOTH kernel crates. Walking only `renvor-core` evidenced SC-015 for one of the two crates
+    // that can reach author code, and said "every file under src/" while meaning one crate's.
+    let core = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let config = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the crate directory has a parent")
+        .join("renvor-config/src");
+
     let mut found = Vec::new();
-    let mut pending = vec![root.clone()];
+    let mut pending = vec![core.clone(), config.clone()];
 
     while let Some(directory) = pending.pop() {
-        let entries = std::fs::read_dir(&directory).expect("the crate's own src/ is readable");
+        let entries = std::fs::read_dir(&directory).expect("a kernel crate's src/ is readable");
         for entry in entries {
             let path = entry.expect("a readable directory entry").path();
             if path.is_dir() {
@@ -263,9 +286,13 @@ fn kernel_sources() -> Vec<(String, String)> {
                     .expect("split always yields one part")
                     .to_owned();
                 let relative = path
-                    .strip_prefix(&root)
-                    .expect("every path came from root")
-                    .to_string_lossy()
+                    .strip_prefix(&core)
+                    .map(|rest| format!("renvor-core/{}", rest.to_string_lossy()))
+                    .or_else(|_| {
+                        path.strip_prefix(&config)
+                            .map(|rest| format!("renvor-config/{}", rest.to_string_lossy()))
+                    })
+                    .expect("every path came from one of the two roots")
                     .replace('\\', "/");
                 found.push((relative, production));
             }
@@ -365,45 +392,45 @@ fn no_call_into_author_code_is_left_bare() {
             .unwrap_or_else(|| panic!("src/{name} not found; the call site moved"))
     };
 
-    let boot = read("lifecycle/application.rs");
-    let stop = read("lifecycle/rollback.rs");
-    let builder = read("lifecycle/builder.rs");
-    let contributor = read("health/contributor.rs");
+    let boot = read("renvor-core/lifecycle/application.rs");
+    let stop = read("renvor-core/lifecycle/rollback.rs");
+    let builder = read("renvor-core/lifecycle/builder.rs");
+    let contributor = read("renvor-core/health/contributor.rs");
 
     // Each row: the file, the bare shape that must NOT appear, and the wrapper that must.
     let checks: &[(&str, &str, &[&str])] = &[
         (
-            "lifecycle/application.rs",
+            "renvor-core/lifecycle/application.rs",
             "provider.initialise(&mut context).await",
             &["tokio::time::timeout(", "provider.initialise("],
         ),
         (
-            "lifecycle/rollback.rs",
+            "renvor-core/lifecycle/rollback.rs",
             "provider.stop().await",
             &["tokio::time::timeout(", "provider.stop()"],
         ),
         (
-            "lifecycle/builder.rs",
+            "renvor-core/lifecycle/builder.rs",
             "handle.load()?",
             &["bounded_call(deadline, move || handle.load())"],
         ),
         (
-            "lifecycle/builder.rs",
+            "renvor-core/lifecycle/builder.rs",
             "handle.validate()?",
             &["bounded_call(deadline, move || handle.validate())"],
         ),
         (
-            "lifecycle/builder.rs",
+            "renvor-core/lifecycle/builder.rs",
             "RunIdentifier::generate(self.entropy",
             &["bounded_call(deadline, move || RunIdentifier::generate("],
         ),
         (
-            "lifecycle/builder.rs",
+            "renvor-core/lifecycle/builder.rs",
             "self.registry.resolve()",
             &["registry.resolve_tracking(&counter)"],
         ),
         (
-            "health/contributor.rs",
+            "renvor-core/health/contributor.rs",
             "contributor.readiness()",
             &["recv_timeout(deadline)", "handle.readiness()"],
         ),
@@ -411,9 +438,9 @@ fn no_call_into_author_code_is_left_bare() {
 
     for (file, bare, wrappers) in checks {
         let text = match *file {
-            "lifecycle/application.rs" => &boot,
-            "lifecycle/rollback.rs" => &stop,
-            "lifecycle/builder.rs" => &builder,
+            "renvor-core/lifecycle/application.rs" => &boot,
+            "renvor-core/lifecycle/rollback.rs" => &stop,
+            "renvor-core/lifecycle/builder.rs" => &builder,
             _ => &contributor,
         };
         assert!(
@@ -430,6 +457,71 @@ fn no_call_into_author_code_is_left_bare() {
             );
         }
     }
+}
+
+/// `Debug` implementations the kernel provides that call author code, and why each is unbounded.
+///
+/// Found by the W-005 requirements review (Q4-1, Q4-2, Q4-3), which is worth recording: the
+/// discovery gate above scans for *handles and invocations* and both of these are invocations, so
+/// it saw them — and then the `BOUNDED_BY_ANCESTOR` entry for each file waved them through on the
+/// strength of a **lifecycle** ancestor that has nothing to do with formatting. The exemption was
+/// real; the reason attached to it was about a different call.
+const FORMATTING_CALLS_AUTHOR_CODE: &[(&str, &str)] = &[
+    (
+        "renvor-core/health/contributor.rs",
+        "impl fmt::Debug for dyn ReadinessContributor calls `name()`",
+    ),
+    (
+        "renvor-core/provider/registry.rs",
+        "impl fmt::Debug for dyn Provider calls `id()`, `provides()`, and `dependencies()`",
+    ),
+];
+
+#[test]
+fn formatting_reaches_author_code_unbounded_and_that_is_named_rather_than_hidden() {
+    // T128/Q4-1. **This is a stated limit, not a bound.** Formatting a provider or a contributor
+    // calls author code with no deadline, so an author whose `name()` blocks will hang whatever
+    // formatted it.
+    //
+    // It is not bounded, and bounding it would be worse than the disease: a `Debug` impl that
+    // spawned a thread per field would make every log line a scheduling event, and `fmt::Debug`
+    // has no way to report a deadline failure except by writing one into the output it is
+    // producing.
+    //
+    // What matters is that the claim "the set is eight" is now stated with its exclusion named,
+    // rather than being true only because nobody looked at `Debug`. **No lifecycle phase formats
+    // an author's provider or contributor** — the kernel's own diagnostics carry names and
+    // positions it already holds — so no bounded path is compromised by this.
+    let sources = kernel_sources();
+
+    let mut found = Vec::new();
+    for (path, text) in &sources {
+        if text.contains("impl fmt::Debug for dyn ") {
+            found.push(path.clone());
+        }
+    }
+    found.sort();
+
+    let mut expected: Vec<String> = FORMATTING_CALLS_AUTHOR_CODE
+        .iter()
+        .map(|(path, _)| (*path).to_owned())
+        .collect();
+    expected.sort();
+
+    assert_eq!(
+        found, expected,
+        "a `Debug` impl on an author-implemented trait appeared or moved. Each one calls author \
+         code with no deadline; add it to FORMATTING_CALLS_AUTHOR_CODE with the methods it calls, \
+         or remove the impl. Do not leave it unrecorded — the eight-callback inventory is only \
+         complete if this exclusion is explicit"
+    );
+
+    // POSITIVE CONTROL: the search finds something. An empty match would make the equality above
+    // hold against an empty expectation and record an exclusion list nobody verified.
+    assert!(
+        !found.is_empty(),
+        "the `impl fmt::Debug for dyn` search matched nothing; it is not reading the crate"
+    );
 }
 
 #[test]

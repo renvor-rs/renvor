@@ -47,6 +47,30 @@ use crate::layer::decode::{decode_single, nest};
 /// key called `log_level`, while `SERVER__PORT` is `server.port`.
 pub const NESTING_SEPARATOR: &str = "__";
 
+/// The deepest key a single environment variable may describe.
+///
+/// # This bound exists because its absence aborted the process
+///
+/// Found by the W-005 security review (finding 3.1) and **measured**: one variable named
+/// `RENVOR_A__A__A__…` with about 3,000 separators — a name of roughly 9 KB, far under the ~128 KiB
+/// an operating system permits per environment string — overflowed the stack and aborted. Nesting
+/// a `toml::Table` recurses once per level, deserializing it recurses again, and dropping it
+/// recurses a third time.
+///
+/// **A stack overflow is not a panic.** `catch_unwind` has nothing to catch, and running the work
+/// on a worker thread does not help — an overflow on any thread aborts the whole process. So no
+/// containment Renvor has could have caught this; only refusing to build the structure can.
+///
+/// The file layer never had the defect, and not by design: `toml_parser` enforces its own recursion
+/// limit, measured between 80 and 90 levels. The environment layer does not go through the TOML
+/// **document** parser, so it inherited no limit. One untrusted surface was protected by a
+/// dependency and the other by nothing, and nothing in the code or the tests noticed the asymmetry.
+///
+/// 32 is Renvor's number — generous for configuration nobody writes by hand past three or four
+/// levels, and an order of magnitude under the measured threshold. Recorded as an open item with
+/// the phase's other chosen bounds.
+pub const MAX_KEY_DEPTH: usize = 32;
+
 /// Reads the process environment into a prefixed map, refusing rather than panicking.
 ///
 /// # Why not `std::env::vars`
@@ -144,6 +168,23 @@ pub fn read_environment<P: DeserializeOwned>(
         }
 
         let key = remainder.to_lowercase().replace(NESTING_SEPARATOR, ".");
+
+        // Checked BEFORE `nest` builds anything. Every recursion this bound protects — nesting,
+        // deserializing, and dropping — happens inside the calls below, so a check afterwards
+        // would run after the overflow it exists to prevent.
+        let depth = key.split('.').count();
+        if depth > MAX_KEY_DEPTH {
+            return Err(configuration(
+                key,
+                SourceLayer::Environment.label(),
+                "a key nested no deeper than the ceiling",
+                &Constraint::Rule(
+                    "the variable name describes a key deeper than 32 levels; building it would \
+                     recurse deeply enough to overflow the stack, which no Rust guard can catch",
+                ),
+            ));
+        }
+
         let value = decode_variable::<P>(&key, text)?;
         merge_into(&mut table, &key, value);
     }
@@ -212,7 +253,7 @@ fn graft(table: &mut Table, name: String, value: Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::read_environment;
+    use super::{NESTING_SEPARATOR, read_environment};
     use renvor_core::ErrorCategory;
     use serde::Deserialize;
     use std::collections::BTreeMap;
@@ -341,6 +382,45 @@ mod tests {
         let table = read_environment::<Partial>("RENVOR_", &env(&[("RENVOR_HOST", "")]))
             .expect("an empty string is a valid String");
         assert_eq!(table["host"].as_str(), Some(""));
+    }
+
+    #[test]
+    fn a_variable_naming_a_deeply_nested_key_is_refused_rather_than_overflowing_the_stack() {
+        // W-005 security finding 3.1, as a regression test. 3,000 levels aborted the process
+        // before this bound existed — measured, not theorised — and an abort is not catchable, so
+        // the only test that can exist is one that proves the structure is never built.
+        //
+        // 3,000 is the measured crashing depth, used verbatim so this reproduces the original
+        // scenario rather than an approximation of it. Reaching the assertions at all proves the
+        // process survived; the assertions prove it was *refused* rather than merely tolerated.
+        let deep = format!("RENVOR_{}", vec!["A"; 3000].join(NESTING_SEPARATOR));
+        let error = read_environment::<Partial>("RENVOR_", &env(&[(deep.as_str(), "1")]))
+            .expect_err("a key deeper than the ceiling must be refused");
+
+        assert_eq!(error.category(), ErrorCategory::Configuration);
+        assert!(
+            error.to_string().contains("32 levels"),
+            "the ceiling must be named: {error}"
+        );
+    }
+
+    #[test]
+    fn a_key_at_the_ceiling_is_accepted() {
+        // POSITIVE CONTROL: the bound discriminates rather than rejecting nesting on sight.
+        // Without this, `MAX_KEY_DEPTH = 0` would satisfy the test above perfectly.
+        //
+        // `Partial` has no field this deep, so decoding is what would fail — which is the point:
+        // reaching a *decode* error rather than a *depth* error proves the depth check passed.
+        let at_ceiling = format!("RENVOR_{}", vec!["a"; 32].join(NESTING_SEPARATOR));
+        let outcome = read_environment::<Partial>("RENVOR_", &env(&[(at_ceiling.as_str(), "1")]));
+        let message = outcome
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+        assert!(
+            !message.contains("32 levels"),
+            "a key exactly at the ceiling must not be refused for depth: {message}"
+        );
     }
 
     #[test]

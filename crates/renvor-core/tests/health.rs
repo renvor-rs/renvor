@@ -253,3 +253,76 @@ async fn a_healthy_application_with_contributors_reports_ready() {
     assert!(report.panicking().is_empty());
     assert!(!report.draining);
 }
+
+/// W-005 security finding 5.1 — a hung contributor leaked one thread per probe, without limit.
+///
+/// A readiness probe runs on a timer somebody else controls, so "one leaked thread per probe" is a
+/// resource-exhaustion vector that grows for as long as the process is monitored. The leak itself
+/// cannot be removed — no Rust API interrupts a blocked thread — so the fix bounds it.
+#[tokio::test]
+async fn a_permanently_hung_contributor_stops_consuming_threads_at_the_ceiling() {
+    use renvor_core::ContributorFault;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static SPAWNED: AtomicUsize = AtomicUsize::new(0);
+
+    /// Never returns. Counts how many times it was actually entered.
+    struct Hung;
+
+    impl ReadinessContributor for Hung {
+        fn name(&self) -> &str {
+            "hung-check"
+        }
+        fn readiness(&self) -> Readiness {
+            SPAWNED.fetch_add(1, Ordering::Relaxed);
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+
+    let application = builder()
+        .with_provider(contributing("hung", || Arc::new(Hung)))
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect("boots");
+
+    let health = application.health().clone();
+    health.set_readiness_deadline(std::time::Duration::from_millis(5));
+
+    // Probe far more times than the ceiling allows.
+    let probes = renvor_core::health::contributor::MAX_OUTSTANDING_PROBES * 4;
+    let mut refused = 0_usize;
+    for _ in 0..probes {
+        let report = health.readiness();
+        let verdict = &report.contributors[0];
+        assert_eq!(
+            report.readiness,
+            Readiness::NotReady,
+            "a hung check is not ready"
+        );
+        if verdict.fault == ContributorFault::NotAsked {
+            refused += 1;
+        }
+    }
+
+    // The ceiling held: threads stopped being created well before the probe count.
+    let entered = SPAWNED.load(Ordering::Relaxed);
+    assert!(
+        entered <= renvor_core::health::contributor::MAX_OUTSTANDING_PROBES,
+        "{entered} workers were entered for {probes} probes; the ceiling did not bound the leak"
+    );
+    assert!(
+        refused > 0,
+        "no probe was refused across {probes} attempts, so the ceiling never engaged"
+    );
+
+    // POSITIVE CONTROL: refusal is reported as a FAULT, not as a contributor that said no. An
+    // operator must be able to tell "we stopped asking" from "the check answered not-ready".
+    assert!(
+        health.readiness().contributors[0].fault.is_fault(),
+        "a refused probe must be reported as a fault"
+    );
+}

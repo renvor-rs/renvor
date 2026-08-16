@@ -101,10 +101,33 @@ impl Constraint {
     ///
     /// 1. A message naming only a **key** (`missing field`, `unknown field`, `duplicate key`) is
     ///    kept as-is. Keys are already carried by the error and are permitted by C-E3.
-    /// 2. Otherwise the fragment after `", expected "` is kept — that is the declared type, and
-    ///    everything before it is where decoders quote the input.
-    /// 3. A message matching neither shape is discarded entirely and replaced with the shapes.
+    /// 2. Otherwise the fragment after the **last** `", expected "` is kept — that is the declared
+    ///    type, and everything before it is where decoders quote the input.
+    /// 3. That fragment is then checked against a type-description whitelist. Anything that does
+    ///    not look like a bare type name is discarded.
+    /// 4. A message matching neither shape is discarded entirely and replaced with the shapes.
     ///    **Failing closed** matters more here than a richer message.
+    ///
+    /// # Rule 2 said `split_once` until 2026-08-16, and that was a fail-open
+    ///
+    /// Found by the W-005 security review (finding 2.1), **measured through the real stack** on
+    /// both the file and environment layers, at top level and nested. `split_once` splits at the
+    /// **first** occurrence, and the rule assumed the first `", expected "` was the decoder's own
+    /// separator. A value containing that literal put the first occurrence *inside itself*, so
+    /// everything after it — the rest of the value included — was written into the error:
+    ///
+    /// ```text
+    /// value:  s3cr3t-token-abc123", expected u16
+    /// before: found a string, expected s3cr3t-token-abc123", expected u16      ← leaked
+    /// after:  found a string, expected the declared type                       ← discarded
+    /// ```
+    ///
+    /// The doc comment claimed the unmatched case failed closed. It did — but that case is the one
+    /// needing no protection. The branch reached by attacker-chosen text was the forwarding one.
+    ///
+    /// `rsplit_once` fixes it because the decoder appends its separator **last**, so the final
+    /// occurrence is always the decoder's own. Rule 3 exists because relying on that alone would be
+    /// one library rewording away from being wrong again.
     #[must_use]
     pub fn from_decoder(message: &str, found: &'static str) -> Self {
         if KEY_ONLY_PREFIXES
@@ -114,13 +137,35 @@ impl Constraint {
             return Self::Decoder(message.to_owned());
         }
 
-        message.split_once(", expected ").map_or(
-            Self::WrongShape {
-                found,
-                expected: "the declared type",
-            },
-            |(_discarded, expected)| Self::Decoder(format!("found {found}, expected {expected}")),
-        )
+        let stripped = Self::WrongShape {
+            found,
+            expected: "the declared type",
+        };
+
+        message
+            .rsplit_once(", expected ")
+            .filter(|(_, expected)| Self::is_type_description(expected))
+            .map_or(stripped, |(_discarded, expected)| {
+                Self::Decoder(format!("found {found}, expected {expected}"))
+            })
+    }
+
+    /// Whether a fragment looks like a bare type description rather than smuggled input.
+    ///
+    /// A whitelist, deliberately. The alternative — looking for characters that indicate a value —
+    /// is a blocklist, and a blocklist of ways to encode a credential is a list somebody will get
+    /// wrong. A serde or toml type name is short and made of identifier characters, spaces, and a
+    /// little punctuation for generics and tuples; anything else is discarded rather than judged.
+    fn is_type_description(fragment: &str) -> bool {
+        !fragment.is_empty()
+            && fragment.len() <= 64
+            && fragment.chars().all(|character| {
+                character.is_ascii_alphanumeric()
+                    || matches!(
+                        character,
+                        ' ' | '_' | '-' | ':' | '<' | '>' | ',' | '(' | ')'
+                    )
+            })
     }
 
     /// How this constraint reads inside an error message.
@@ -192,6 +237,81 @@ mod tests {
         // POSITIVE CONTROL: the raw message really does contain the value, so the stripping above
         // removed something rather than acting on a message that never had it.
         assert!(raw.contains(CREDENTIAL));
+    }
+
+    #[test]
+    fn a_value_that_contains_the_separator_does_not_smuggle_itself_through() {
+        // W-005 security finding 2.1, as a regression test. `split_once` took the FIRST
+        // `", expected "`; a value containing that literal put the first occurrence inside itself,
+        // so its tail was copied into the error. Measured through the real stack on both layers
+        // before the fix, on values an attacker controls: an environment variable and a TOML file.
+        //
+        // Each payload below is a *value*. The message is what the decoder produces around it.
+        for payload in [
+            "s3cr3t-token-abc123\", expected u16",
+            "hunter2, expected LEAKED-TAIL",
+            "a, expected b, expected c",
+            ", expected ",
+        ] {
+            let raw = format!("invalid type: string \"{payload}\", expected u16");
+            let described = Constraint::from_decoder(&raw, "string").describe();
+
+            assert!(
+                !described.contains("s3cr3t-token-abc123")
+                    && !described.contains("LEAKED-TAIL")
+                    && !described.contains("hunter2"),
+                "a value containing the separator reached the error: {described}"
+            );
+            // And what survives is a description of shapes, never a fragment of the input.
+            assert!(
+                described.starts_with("found string, expected "),
+                "unexpected shape: {described}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_ordinary_type_name_still_survives() {
+        // POSITIVE CONTROL for the test above and for `is_type_description`. Tightening the rule
+        // must not make every message collapse to "the declared type" — a constraint that never
+        // says what was expected is safe and useless, and would pass the leak assertions perfectly.
+        for (raw, expected) in [
+            ("invalid type: string \"x\", expected u16", "u16"),
+            ("invalid type: integer 1, expected a string", "a string"),
+            (
+                "invalid type: string \"x\", expected Vec<String>",
+                "Vec<String>",
+            ),
+            (
+                "invalid type: string \"x\", expected a sequence of (u8, u8)",
+                "a sequence of (u8, u8)",
+            ),
+        ] {
+            let described = Constraint::from_decoder(raw, "string").describe();
+            assert!(
+                described.ends_with(expected),
+                "the declared type was discarded: {described}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_fragment_that_is_not_a_type_name_is_discarded() {
+        // Rule 3 on its own: even after `rsplit_once`, anything that does not look like a bare
+        // type name is thrown away rather than judged. This is what stops a future library
+        // rewording from re-opening finding 2.1.
+        for fragment in [
+            "a value containing \"quotes\"",
+            "a\nnewline",
+            "a really long fragment that goes well past the sixty-four character ceiling set here",
+        ] {
+            let raw = format!("invalid type: string \"v\", expected {fragment}");
+            let described = Constraint::from_decoder(&raw, "string").describe();
+            assert_eq!(
+                described, "found string, expected the declared type",
+                "a non-type fragment was forwarded: {described}"
+            );
+        }
     }
 
     #[test]

@@ -20,10 +20,18 @@
 //! | `Drain` | a task holding a work permit | releases it and returns | releases it by **unwinding** | keeps it |
 //! | `Stop` | `Provider::stop` | returns an error | panics **after an await** | never resolves |
 //!
-//! `Drain` is the row worth reading twice. `Fail` and `Panic` both *complete* the drain, because
-//! the permit is released either way — by an ordinary early return and by RAII during unwinding.
-//! `drain.rs` claims exactly that in prose ("an author who takes a permit and returns early …
-//! still releases it") and nothing tested the unwinding half until this did.
+//! `Drain` is the row worth reading twice, and it carries a **stated limit**. `Fail` and `Panic`
+//! both *complete* the drain, because the permit is released either way — by an ordinary early
+//! return and by RAII during unwinding. `drain.rs` claims exactly that in prose ("an author who
+//! takes a permit and returns early … still releases it") and nothing tested the unwinding half
+//! until this did.
+//!
+//! **The limit**: the harness catches that panic itself, so by the time `shutdown()` runs, the
+//! kernel sees the same state for `Drain × Panic` as for `Drain × Fail` — no permit held. The two
+//! exercise the same kernel path, and only the *permit's* behaviour differs between them. Renvor
+//! does not own the author's task, has no join handle for it, and therefore has no kernel-side
+//! observation to make: a task that panics somewhere in an application is not something the drain
+//! can distinguish from one that returned. Recorded as an open item rather than asserted away.
 //!
 //! # Three gaps this harness found, all now closed
 //!

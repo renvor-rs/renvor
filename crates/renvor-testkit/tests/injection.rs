@@ -180,6 +180,11 @@ async fn all_twenty_one_behaviour_and_phase_combinations_execute_and_are_attribu
             (LifecyclePhase::Drain, Behaviour::Hang, Outcome::DrainIncomplete(outstanding)) => {
                 assert_eq!(*outstanding, 1, "the held work is reported as outstanding");
             }
+            // STATED LIMIT: these two reach the kernel identically. The harness catches the
+            // injected panic, so `shutdown()` sees "no permit held" either way. What the pair
+            // proves is that the permit is released **by unwinding** as well as by an ordinary
+            // return — a property of `WorkPermit`'s Drop, not a kernel branch. Renvor has no join
+            // handle for an author's task and so has no kernel-side way to tell them apart.
             (LifecyclePhase::Drain, Behaviour::Fail | Behaviour::Panic, Outcome::Stopped) => {}
             (LifecyclePhase::Stop, _, Outcome::Stopped) => {
                 assert_eq!(

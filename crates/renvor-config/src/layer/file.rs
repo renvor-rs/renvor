@@ -104,7 +104,7 @@ impl FileLayer {
             Err(_) => return Err(self.failure(&Constraint::Rule("the file could not be read"))),
         };
 
-        // Checked before reading, so an oversized file is never brought into memory. Checking
+        // Checked before reading, so an oversized file is usually never opened at all. Checking
         // after would make the ceiling a report rather than a limit (C-C10).
         if metadata.len() > self.max_bytes {
             // Lengths, not contents: the size of an oversized file is a shape fact and safe to
@@ -114,8 +114,18 @@ impl FileLayer {
             }));
         }
 
-        let text = std::fs::read_to_string(&self.path)
-            .map_err(|_| self.failure(&Constraint::Rule("the file could not be read")))?;
+        // The metadata check ALONE is not a bound, and the W-005 security review (finding 4.1) is
+        // right about why. Two ways past it:
+        //
+        // * **Time of check to time of use.** The file may grow between `metadata` and the read.
+        // * **A file whose length is a lie.** A FIFO, a character device, or most of `/proc`
+        //   reports `len() == 0` and then yields as many bytes as the reader will take. A named
+        //   pipe passed as a configuration path would have been read until memory ran out.
+        //
+        // So the read is bounded too, by construction rather than by a second check: `take` stops
+        // at the ceiling, and one extra byte is allowed through solely to tell "exactly at the
+        // ceiling" apart from "truncated here".
+        let text = self.read_bounded()?;
 
         // A parse error's message describes syntax and position, but a `toml` error also renders
         // the offending line. The message is therefore dropped rather than forwarded — the file
@@ -123,6 +133,36 @@ impl FileLayer {
         text.parse::<Table>()
             .map(Some)
             .map_err(|_| self.failure(&Constraint::Rule("the file is not valid TOML")))
+    }
+
+    /// Reads at most [`Self::max_bytes`] bytes, refusing anything longer.
+    ///
+    /// Bounded by `Read::take` rather than by a size check, so it holds for a file that grows
+    /// during the read and for one whose reported length was never true — a FIFO or a `/proc`
+    /// entry reports zero and then yields indefinitely.
+    fn read_bounded(&self) -> Result<String, KernelError> {
+        use std::io::Read as _;
+
+        let unreadable = || self.failure(&Constraint::Rule("the file could not be read"));
+        let file = std::fs::File::open(&self.path).map_err(|_| unreadable())?;
+
+        // One byte past the ceiling: enough to detect an overrun, never enough to be one.
+        let mut buffer = Vec::new();
+        let read = file
+            .take(self.max_bytes.saturating_add(1))
+            .read_to_end(&mut buffer)
+            .map_err(|_| unreadable())?;
+
+        if read as u64 > self.max_bytes {
+            return Err(self.failure(&Constraint::TooLarge {
+                maximum_bytes: self.max_bytes,
+            }));
+        }
+
+        // Invalid UTF-8 is refused without reproducing any of it: the bytes of a configuration
+        // file are exactly what must not reach a diagnostic.
+        String::from_utf8(buffer)
+            .map_err(|_| self.failure(&Constraint::Rule("the file is not valid UTF-8")))
     }
 
     /// Builds a diagnostic naming this file.

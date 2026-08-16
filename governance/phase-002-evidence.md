@@ -5,8 +5,19 @@
 
 ## Status
 
-**Implementation is complete, conditional on integration into `main`.** Every task T001–T132 has
-been executed and verified on the branch `feat/phase-002-core-kernel`.
+**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T126** have
+been executed and verified on the branch `feat/phase-002-core-kernel`. **T127–T132 are the phase's
+own closure steps and are in progress**; `specs/002-core-kernel/tasks.md` is authoritative for
+which are checked, and this ledger must never claim more than it does.
+
+> **Corrected 2026-08-16, on finding Q6-1 of the W-005 requirements review.** This paragraph
+> previously read *"Every task T001–T132 has been executed and verified."* That was false when
+> written: T132 is the push and pull request, which had not happened and provably could not have —
+> the branch had no upstream and no remote ref existed — and T128 is the very review that caught
+> it, which was being written at the time. The claim was **prospective**, stated as though it were
+> observed, and it was the first and most load-bearing sentence in the document. A ledger whose
+> opening completion claim runs ahead of its own evidence is the exact failure this ledger's first
+> paragraph says it exists to avoid.
 
 Three things this ledger is **not** claiming, stated here so no reader has to infer them:
 
@@ -676,7 +687,9 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 16 | `catch_unwind` contains only **unwinding** panics; under `panic = "abort"` there is **no** provider or contributor panic containment | A property of the panic strategy, not of Renvor. Nothing in the language can catch an abort. Renvor sets no `panic` profile, so the default `unwind` applies unless a consumer changes it. Also outside reach: a double panic, `process::abort`, and a stack overflow | No — but a consumer who sets `panic = "abort"` loses C-L9's `Panic` guarantee and must be told so |
 | 17 | `DEFAULT_READINESS_DEADLINE` is **5 s by Renvor's choice, not by specification** | Same shape as items 7 and 11. FR-025 requires the bound; no artifact names a value. Chosen to sit under a typical container probe interval, so a hung contributor reports as hung rather than as a probe that never answered | No — a phase that measures real probe intervals should revisit it |
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
-| 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded; the thread is not | No — but a permanently-hung contributor accumulates one thread per probe |
+| 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
+| 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
+| 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
 
 ## Pre-shipping corrections (T111–T132)
 
@@ -785,6 +798,77 @@ fixed string, and by reading where it is not.
 | Constitution conflicts | **0** |
 
 **0 CRITICAL. 0 HIGH. 4 MEDIUM, all resolved. 2 LOW, both dispositioned explicitly.**
+
+## T128 — W-005 advisory reviews
+
+Both run on **2026-08-16** in **clean contexts**, against explicit written checklists of seven
+numbered questions each, with the deliverable written to a file rather than returned as a message.
+
+**Both are NON-INDEPENDENT and ADVISORY.** They are agent reviews performed under a recorded
+exception. Neither is an independent human review, no independent human review of Phase 002 has
+occurred, and describing either as independent anywhere would be false.
+
+### The delivery remedy worked, and was needed again
+
+W-004's attempt 1 recorded both reviews as **NOT PERFORMED** because the agents went idle without
+returning anything. The remedy — narrow checklists and a **file on disk** rather than a returned
+message — was adopted then. It earned itself here: the requirements reviewer **went idle again**,
+and its 841-line review was on disk and complete. Had the deliverable still depended on message
+delivery, this would have been the third occurrence of the same failure.
+
+### Results
+
+| Review | Result | Findings |
+|---|---|---|
+| Requirements | **PERFORMED**, all seven questions answered | **1 CRITICAL, 7 MAJOR, 17 MINOR** |
+| Security | **PERFORMED**, all seven questions answered | **0 CRITICAL, 5 MAJOR, 7 MINOR** |
+
+Neither returned silence. Question 3 of the security checklist returned an explicit **NO FINDINGS**
+naming what was checked, which is a recorded result and not an absence.
+
+### CRITICAL — dispositioned
+
+| ID | Finding | Disposition |
+|---|---|---|
+| Q6-1 | This ledger's opening sentence claimed *"Every task T001–T132 has been executed and verified"*. T132 is the push and pull request, which had not happened and provably could not have — no upstream, no remote ref. T128 was the review reporting it | **FIXED.** The Status section now claims T001–T126 and names T127–T132 as in progress, with `tasks.md` authoritative. The claim was **prospective, stated as observed**, and it was the first sentence in the document |
+
+### Security MAJOR — all five fixed, each with a regression test
+
+| ID | Finding | Disposition |
+|---|---|---|
+| 1.1 | `ResolvedConfig<T>` derived `Debug`, so every raw configuration value had a printing route. `SchemaSource` and `ConfigHandle` both hand-write `Debug` for exactly this reason — the careful impls guarded a door beside an open window | **FIXED.** Hand-written `Debug` emitting key count and attribution, never values. `tests/redaction.rs` asserts an unmarked credential does not appear and that attribution still does |
+| 2.1 | `Constraint::from_decoder` used `split_once`, which splits at the **first** `", expected "`. A value containing that literal put the first occurrence inside itself, so its tail was copied into the error. **Measured through the real stack**, both layers, top level and nested | **FIXED.** `rsplit_once` — the decoder appends its separator last — plus an `is_type_description` whitelist so a future library rewording cannot re-open it. Three tests, including the reviewer's exact payloads, and an end-to-end check through `renvor-config` |
+| 3.1 | A **single** environment variable named `RENVOR_A__A__…` with ~3,000 separators — a 9 KB name, far under the ~128 KiB an OS permits — **overflowed the stack and aborted**. Not catchable: an overflow is not a panic, and a worker thread does not help | **FIXED.** `MAX_KEY_DEPTH = 32`, checked before anything is nested. The regression test uses the measured 3,000 verbatim. The asymmetry the reviewer identified is the sharpest part: the file layer was protected **by `toml_parser`'s own recursion limit**, not by Renvor, and the environment layer inherited nothing |
+| 4.1 | The byte ceiling checked `metadata.len()` and then called `read_to_string`. A file may grow between the two, and a **FIFO or `/proc` entry reports zero and yields indefinitely** — a named pipe as a configuration path would have been read until memory ran out | **FIXED.** `Read::take` bounds the read by construction, one byte past the ceiling to tell "at the ceiling" from "truncated". A `#[cfg(unix)]` test creates a real FIFO with an endless writer and requires refusal |
+| 5.1 | A hung readiness contributor leaked **one thread per probe, without limit**. A probe runs on a timer somebody else controls, so the leak grows for as long as the process is monitored | **FIXED.** `MAX_OUTSTANDING_PROBES = 64`, with an RAII guard so a returning worker gives its slot back. The leak is not removed — nothing in Rust interrupts a blocked thread — it is **bounded**, which is the difference between a limitation and a denial of service |
+
+### Requirements MAJOR — dispositioned
+
+| ID | Finding | Disposition |
+|---|---|---|
+| Q2-1 / Q7-1 | FR-032 / SC-014's "no hidden global mutable state" was cited to Gate 12, which contained no such check | **FIXED.** Gate 12 now greps the examples for `static mut`, `lazy_static!`, `once_cell`, `OnceLock`, `thread_local!`, and friends, with a control that plants a global and requires the pattern to fire. The "0 examples require a transport" half is now attributed to **Gate 13a**, which is what actually evidences it |
+| Q3-1 | `Drain × Panic` and `Drain × Fail` reach the kernel identically — the harness catches the panic before `shutdown()` runs — so "all 21 are attributed" overstated the pair | **ACCEPTED AND CORRECTED, not fixed.** Renvor has no join handle for an author's task and therefore no kernel-side observation to make: a task that panicked is not something the drain can distinguish from one that returned. The pair proves the **permit is released by unwinding**, which is a `Drop` property `drain.rs` claimed and nothing tested. Now stated as a limit in the harness documentation, in the test, and as open item 20 |
+| Q4-1 | `impl fmt::Debug for dyn ReadinessContributor` calls the author's `name()` unbounded, invisible to all three `deadlines.rs` checks | **FIXED as a named exclusion.** Bounding a `Debug` impl would be worse than the defect — it has no way to report a deadline except by writing into the output it is producing. A new test enumerates every `impl fmt::Debug for dyn` and fails if one appears or moves without being recorded. **No lifecycle phase formats an author's provider or contributor**, so no bounded path is compromised |
+| Q4-2 / Q4-3 | `impl Debug for dyn Provider` and the derived `Debug` on `ApplicationBuilder` do the same | **DISPOSITIONED with Q4-1**, by the same test and the same reasoning |
+| Q4-4 | The discovery gate walked only `renvor-core/src`; `renvor-config/src` was never scanned, so SC-015 was evidenced for one of the two kernel crates | **FIXED.** Both crates are walked. The answer is unchanged — 11 `renvor-config` files reach no author trait, because it *implements* `ConfigSource` rather than calling it — but it is now a measured answer rather than an unasked question |
+| Q5-1 | `tasks.md` marked T127 and T129 `[ ]` while this ledger presented both as complete | **FIXED.** The task list is authoritative and the ledger now says so |
+| Q7-5 | Gate 14c is zero-asserting with **no control**, and `grep -r` on a missing directory exits 2, which its `||` branch read as "found nothing" | **FIXED.** The directory's existence is asserted, and a control plants a `docker/build-push-action` step and requires the pattern to match. It was the only zero-asserting gate in the file without a control |
+| Q7-7 | Gate 15's Pass paragraph claimed licence, MSRV, and origin were verified and duplicates recorded. The parser captured name and version only, `--duplicates` went to `\|\| true` and was discarded, and `features.txt` was deleted by the cleanup trap unread | **FIXED.** A per-column check requires every documented row to carry a non-empty licence, MSRV, origin, and reach; duplicates and feature output are printed |
+
+### MINOR — dispositioned
+
+The 24 MINOR findings across both reviews fall into four groups, dispositioned as groups because
+the disposition is the same within each and listing 24 near-identical rows would obscure that.
+
+| Group | Findings | Disposition |
+|---|---|---|
+| Evidence-map citations that name a module rather than a path, or cite a document section rather than a test | Q1-1, Q1-2, Q2-2, Q6-2 | **ACCEPTED, not individually rewritten.** Every cited artifact exists and was checked by the reviewer; the imprecision is in the citation format. Recorded rather than churned, because a reader following any of them arrives at real evidence |
+| Assertions weaker than the kernel's own behaviour — six build-phase combinations asserted as `BuildFailed(_)` though the kernel distinguishes them; `Register × Fail` yields `DependencyCycle` rather than the documented `DependencyMissing` | Q3-2, Q3-3, Q3-4 | **ACCEPTED.** The assertions are true and under-specific. Tightening them is worthwhile and is **not** done here: it changes test expectations at the end of a phase, and the risk of encoding today's behaviour as a requirement outweighs the precision gained |
+| Gate scripts whose patterns or ordering could be tightened — `grep -c` exiting 1 under `pipefail`, a stale package alternation in 13b, 13f's regex not matching `impl<T>` or `async fn`, locale-dependent `sort`, the summary table's control counts | Q7-2, Q7-3, Q7-4, Q7-8, Q7-9, Q7-10 | **ACCEPTED.** None is a false pass today — each is either fail-closed or currently exact. Recorded as known imprecision in the gate scripts rather than fixed in the closing hours of a phase |
+| Documented limits that are narrower or wider than their prose implies — zeroization scope, within-layer key collision, the depth bound's misattributed test, the panic-escape list, the proc-macro disclosure, the inventory's own count | 1.2, 3.2, 4.2, 6.1, 7.1, 7.2 | **ACCEPTED, and two folded into open items.** 6.1's additional panic escapes are recorded in open item 16; 7.2's count is the same superseded 55 already corrected at T122 and noted on ADR-0007 |
+
+**No finding at HIGH or above was refused.** The single CRITICAL and all twelve MAJOR findings are
+either fixed with a regression test or accepted with the reason stated and an open item raised.
 
 ## Complete requirement evidence map (T129)
 
