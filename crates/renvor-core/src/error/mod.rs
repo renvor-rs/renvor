@@ -1,4 +1,4 @@
-//! The kernel error taxonomy: thirteen categories, each matchable without reading message text.
+//! The kernel error taxonomy: fourteen categories, each matchable without reading message text.
 //!
 //! # Why a category is a separate type
 //!
@@ -53,6 +53,8 @@ pub enum ErrorCategory {
     DependencyCycle,
     /// A declared dependency is unprovided.
     DependencyMissing,
+    /// Two providers offer the same capability, so a dependency on it has no single answer.
+    CapabilityDuplicate,
     /// A provider or edge ceiling was breached at Register.
     LimitExceeded,
     /// A provider failed during Boot.
@@ -72,15 +74,16 @@ pub enum ErrorCategory {
 impl ErrorCategory {
     /// Every category, for exhaustiveness tests.
     ///
-    /// C-E1 lists thirteen rows. A test asserts this array's length against that number, so
+    /// C-E1 lists fourteen rows. A test asserts this array's length against that number, so
     /// adding a category without updating the contract fails loudly.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Configuration,
         Self::ConfigurationConflict,
         Self::StateDuplicate,
         Self::StateMissing,
         Self::DependencyCycle,
         Self::DependencyMissing,
+        Self::CapabilityDuplicate,
         Self::LimitExceeded,
         Self::ProviderInit,
         Self::ProviderStop,
@@ -100,6 +103,7 @@ impl ErrorCategory {
             Self::StateMissing => "state_missing",
             Self::DependencyCycle => "dependency_cycle",
             Self::DependencyMissing => "dependency_missing",
+            Self::CapabilityDuplicate => "capability_duplicate",
             Self::LimitExceeded => "limit_exceeded",
             Self::ProviderInit => "provider_init",
             Self::ProviderStop => "provider_stop",
@@ -215,6 +219,29 @@ pub enum KernelError {
         capability: String,
     },
 
+    /// Two providers offer the same capability.
+    ///
+    /// Names the capability **and both** providers, because the author's next question is
+    /// "which two?" and a diagnostic naming one of them answers half of it.
+    ///
+    /// This row exists because implementing the registry found a case no earlier artifact
+    /// covered. A dependency on an ambiguously-provided capability has no single answer, and the
+    /// three ways of not saying so are each already prohibited: picking a winner is a silent
+    /// fallback (FR-022), panicking breaks SC-004's zero-panic assertion, and reporting it as
+    /// [`Self::DependencyMissing`] would print a false statement — the capability *is* provided,
+    /// twice. See `governance/phase-002-evidence.md`.
+    #[error(
+        "capability `{capability}` is offered by two providers: `{first}` and `{second}` — a dependency on it has no single answer"
+    )]
+    CapabilityDuplicate {
+        /// The capability offered twice.
+        capability: String,
+        /// The provider that offered it first, in registration order.
+        first: String,
+        /// The provider that offered it again.
+        second: String,
+    },
+
     /// A declared graph exceeded a ceiling at Register.
     ///
     /// Names the ceiling **and** the observed count. This is raised on the **declared** counts,
@@ -308,6 +335,7 @@ impl KernelError {
             Self::StateMissing { .. } => ErrorCategory::StateMissing,
             Self::DependencyCycle { .. } => ErrorCategory::DependencyCycle,
             Self::DependencyMissing { .. } => ErrorCategory::DependencyMissing,
+            Self::CapabilityDuplicate { .. } => ErrorCategory::CapabilityDuplicate,
             Self::LimitExceeded { .. } => ErrorCategory::LimitExceeded,
             Self::ProviderInit { .. } => ErrorCategory::ProviderInit,
             Self::ProviderStop { .. } => ErrorCategory::ProviderStop,
@@ -323,6 +351,23 @@ impl KernelError {
     #[must_use]
     pub const fn is_kernel_defect(&self) -> bool {
         self.category().is_kernel_defect()
+    }
+}
+
+/// Budget exhaustion becomes an [`ErrorCategory::Internal`] error and **nothing else**.
+///
+/// This conversion is the whole of FR-039(c)'s enforcement: it is the only route from the
+/// resolver's budget check into the kernel's error type, and it lands on the one category that
+/// says plainly the kernel is at fault. There is no path by which an exhausted budget becomes a
+/// cycle, a ceiling breach, or any other author-facing diagnostic, because no other conversion
+/// exists.
+impl From<crate::provider::graph::BudgetExhausted> for KernelError {
+    fn from(exhausted: crate::provider::graph::BudgetExhausted) -> Self {
+        Self::Internal {
+            axis: exhausted.axis,
+            observed: exhausted.observed,
+            allowed: exhausted.allowed,
+        }
     }
 }
 
@@ -361,6 +406,11 @@ mod tests {
                 dependent: "http".into(),
                 capability: "database".into(),
             },
+            KernelError::CapabilityDuplicate {
+                capability: "database".into(),
+                first: "postgres".into(),
+                second: "sqlite".into(),
+            },
             KernelError::LimitExceeded {
                 limit: "provider",
                 ceiling: 1024,
@@ -393,11 +443,11 @@ mod tests {
     }
 
     #[test]
-    fn the_taxonomy_has_the_thirteen_categories_the_contract_lists() {
+    fn the_taxonomy_has_the_fourteen_categories_the_contract_lists() {
         assert_eq!(
             ErrorCategory::ALL.len(),
-            13,
-            "contract C-E1 lists thirteen categories"
+            14,
+            "contract C-E1 revision 1.1.0 lists fourteen categories"
         );
         let mut names: Vec<&str> = ErrorCategory::ALL.iter().map(|c| c.as_str()).collect();
         names.sort_unstable();
@@ -461,6 +511,45 @@ mod tests {
         let rendered = error.to_string();
         assert!(rendered.contains("base.toml"), "{rendered}");
         assert!(rendered.contains("environment"), "{rendered}");
+    }
+
+    #[test]
+    fn a_duplicate_capability_error_names_the_capability_and_both_providers() {
+        // The author's next question is "which two?". A diagnostic naming one answers half of it.
+        let rendered = KernelError::CapabilityDuplicate {
+            capability: "database".into(),
+            first: "postgres".into(),
+            second: "sqlite".into(),
+        }
+        .to_string();
+        for named in ["database", "postgres", "sqlite"] {
+            assert!(rendered.contains(named), "`{named}` missing: {rendered}");
+        }
+    }
+
+    #[test]
+    fn budget_exhaustion_converts_only_to_the_internal_category() {
+        // FR-039(c). The conversion is the single route from the resolver's budget check into
+        // KernelError, so an exhausted budget cannot arrive wearing an author-facing category.
+        use crate::provider::graph::BudgetExhausted;
+
+        let error: KernelError = BudgetExhausted {
+            axis: BudgetAxis::TotalWorkUnits,
+            observed: 20_000,
+            allowed: 18_432,
+        }
+        .into();
+        assert_eq!(error.category(), ErrorCategory::Internal);
+        assert!(error.is_kernel_defect());
+
+        // POSITIVE CONTROL: an author-facing error is not a kernel defect, so the assertion above
+        // discriminates rather than holding for everything.
+        assert!(
+            !KernelError::DependencyCycle {
+                providers: vec!["a".into(), "b".into()],
+            }
+            .is_kernel_defect()
+        );
     }
 
     #[test]

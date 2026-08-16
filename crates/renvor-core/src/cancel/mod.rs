@@ -24,6 +24,7 @@
 //! optional is absent in the diagnostic you actually need at 3am.
 
 use core::fmt;
+use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
@@ -33,7 +34,10 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone, Debug)]
 pub struct CancelScope {
     token: CancellationToken,
-    name: &'static str,
+    /// `Arc<str>` rather than `&'static str` because provider names are runtime values — an
+    /// author's provider is named at registration, not at compile time — and rather than `String`
+    /// because a scope is cloned once per child and per task that watches it.
+    name: Arc<str>,
 }
 
 impl CancelScope {
@@ -42,7 +46,7 @@ impl CancelScope {
     pub fn root() -> Self {
         Self {
             token: CancellationToken::new(),
-            name: "root",
+            name: Arc::from("root"),
         }
     }
 
@@ -52,10 +56,10 @@ impl CancelScope {
     /// parent. That asymmetry is the whole point of a hierarchy — one provider failing to stop
     /// must not tear down its siblings' scopes.
     #[must_use]
-    pub fn child(&self, name: &'static str) -> Self {
+    pub fn child(&self, name: impl Into<Arc<str>>) -> Self {
         Self {
             token: self.token.child_token(),
-            name,
+            name: name.into(),
         }
     }
 
@@ -64,7 +68,7 @@ impl CancelScope {
     /// The returned [`ProviderScope`] cancels itself on drop unless [`ProviderScope::complete`]
     /// is called first. See the module documentation for why this is a guard rather than a rule.
     #[must_use]
-    pub fn provider(&self, provider: &'static str) -> ProviderScope {
+    pub fn provider(&self, provider: impl Into<Arc<str>>) -> ProviderScope {
         ProviderScope {
             scope: self.child(provider),
             completed: false,
@@ -73,8 +77,8 @@ impl CancelScope {
 
     /// This scope's name, for diagnostics.
     #[must_use]
-    pub const fn name(&self) -> &'static str {
-        self.name
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Whether cancellation has been signalled for this scope.
@@ -132,7 +136,7 @@ impl ProviderScope {
 
     /// The provider name this scope guards.
     #[must_use]
-    pub const fn provider(&self) -> &'static str {
+    pub fn provider(&self) -> &str {
         self.scope.name()
     }
 
@@ -161,7 +165,7 @@ impl Drop for ProviderScope {
 
 impl fmt::Display for CancelScope {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name)
+        f.write_str(&self.name)
     }
 }
 

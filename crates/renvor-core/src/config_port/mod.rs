@@ -144,6 +144,53 @@ impl<T> ResolvedConfig<T> {
     }
 }
 
+/// One configuration source, as the **lifecycle** sees it.
+///
+/// # Why this is separate from [`ConfigResolver`]
+///
+/// They answer different questions and belong to different phases.
+///
+/// - `ConfigSource` is what `Load` and `Validate` operate on. The kernel needs sources it can
+///   attempt **in order** (FR-044) and that can **fail** in a way that names the source or the
+///   key — because C-L2 says a `Load` failure names the source that could not be read and a
+///   `Validate` failure names the key, the constraint, and the layer, and FR-017 says neither may
+///   let a single provider start.
+/// - [`ConfigResolver`] is what produces a **typed value with attribution**. It is generic over
+///   the decoded type, so it is not object-safe and cannot be held in an ordered list of
+///   heterogeneous sources.
+///
+/// Merging them would force the lifecycle to know the schema type, which is exactly the coupling
+/// this module exists to prevent.
+///
+/// **This trait carries no value type on purpose.** US1's requirement is about *phase behaviour on
+/// failure*, not about values; `renvor-config` supplies typed decoding through [`ConfigResolver`].
+/// Inventing a placeholder value type here to look more complete would be a shape nobody measured.
+pub trait ConfigSource: Send + Sync + fmt::Debug {
+    /// Which layer this source contributes.
+    fn layer(&self) -> SourceLayer;
+
+    /// Reads the source. Called during `Load`, in declaration order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error naming the source that could not be read. Nothing has started when this
+    /// fails (C-L2).
+    fn load(&self) -> Result<(), crate::error::KernelError>;
+
+    /// Checks what was read. Called during `Validate`, in the same order.
+    ///
+    /// Defaults to accepting, because a source with nothing to check should not be made to say so.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::error::KernelError::Configuration`] naming the key, the violated
+    /// constraint, and the layer. **0** providers are booted and **0** listeners opened when this
+    /// fails (FR-017).
+    fn validate(&self) -> Result<(), crate::error::KernelError> {
+        Ok(())
+    }
+}
+
 /// Resolves configuration into a decoded value with per-key attribution.
 ///
 /// Implemented by `renvor-config`. Declared here so the kernel can depend on the *capability*

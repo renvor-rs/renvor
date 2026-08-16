@@ -279,6 +279,42 @@ mod tests {
     }
 
     #[test]
+    fn no_production_path_in_this_module_can_panic() {
+        // SC-004 requires **0** panics in ordinary use. The tests above prove the two error paths
+        // return errors; this proves there is no *third* path that ends the process instead —
+        // including one added later by an edit that never runs in any existing test.
+        //
+        // The scan reads this module's own source and stops at the test module, because tests are
+        // allowed to unwrap: a test that cannot fail loudly is not a test.
+        let source = include_str!("mod.rs");
+        let production = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("split always yields at least one part");
+
+        for construct in [
+            ".unwrap()",
+            ".expect(",
+            "panic!",
+            "unreachable!",
+            "todo!",
+            "unimplemented!",
+        ] {
+            assert!(
+                !production.contains(construct),
+                "`{construct}` reached the production half of the typed state map, \
+                 which SC-004 requires to have 0 panicking paths"
+            );
+        }
+
+        // POSITIVE CONTROL: the same search finds these constructs in the test half, so its
+        // silence above means "absent", not "the search is broken".
+        let tests = &source[production.len()..];
+        assert!(tests.contains(".unwrap()"), "the control text moved");
+        assert!(tests.contains(".expect("), "the control text moved");
+    }
+
+    #[test]
     fn contains_and_len_track_registration() {
         let mut state = TypedStateMap::new();
         assert!(state.is_empty());

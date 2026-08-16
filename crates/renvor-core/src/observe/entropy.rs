@@ -43,6 +43,21 @@ pub struct EntropyUnavailable {
     source: Box<dyn std::error::Error + Send + Sync + 'static>,
 }
 
+impl EntropyUnavailable {
+    /// Reports that a source could not supply the bytes it was asked for.
+    ///
+    /// Public because [`EntropySource`] is a public, **fallible** trait: an implementor outside
+    /// this module has to be able to say it failed. Without this, the trait could be named from
+    /// anywhere and implemented only from here — and the fallible half of it, the half C-E4 cares
+    /// about, could never be exercised by a test double. Found by writing that test.
+    #[must_use]
+    pub fn new(source: impl Into<Box<dyn std::error::Error + Send + Sync + 'static>>) -> Self {
+        Self {
+            source: source.into(),
+        }
+    }
+}
+
 impl fmt::Display for EntropyUnavailable {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("the operating-system random source is unavailable")
@@ -90,9 +105,7 @@ impl OsEntropy {
 
 impl EntropySource for OsEntropy {
     fn fill(&self, destination: &mut [u8]) -> Result<(), EntropyUnavailable> {
-        getrandom::fill(destination).map_err(|error| EntropyUnavailable {
-            source: Box::new(error),
-        })
+        getrandom::fill(destination).map_err(EntropyUnavailable::new)
     }
 }
 

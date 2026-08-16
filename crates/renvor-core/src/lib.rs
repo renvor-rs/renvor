@@ -20,8 +20,15 @@ pub mod provider;
 pub mod state;
 
 pub use cancel::{CancelScope, ProviderScope};
-pub use config_port::{ConfigResolver, ResolvedConfig, SourceLayer};
+pub use config_port::{ConfigResolver, ConfigSource, ResolvedConfig, SourceLayer};
 pub use error::{ErrorCategory, KernelError};
-pub use lifecycle::LifecyclePhase;
+pub use lifecycle::{
+    Application, ApplicationBuilder, BootFailure, BuildError, LifecyclePhase, PhaseLog,
+    RollbackReport,
+};
 pub use observe::{EntropySource, OsEntropy, RunIdentifier};
+pub use provider::{
+    CapabilityId, InitContext, InitialisationOrder, Provider, ProviderId, ProviderRegistry,
+    ResolutionReport,
+};
 pub use state::TypedStateMap;
