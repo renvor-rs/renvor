@@ -46,20 +46,79 @@ means you can read the number here rather than compute it from a release schedul
 Every member inherits it with `rust-version.workspace = true`. No second independent
 declaration exists, and that is asserted mechanically rather than trusted.
 
+## Supported panic strategy
+
+| Field | Value |
+|---|---|
+| **Supported** | **`unwind`** — the Rust default |
+| **Unsupported** | **`panic = "abort"`** — refused at compile time |
+
+Renvor sets no `panic` key in any profile, so the default applies unless a consumer
+overrides it.
+
+### Why abort is unsupported rather than merely discouraged
+
+Contract C-L9 and success criterion SC-009 require a panicking provider or readiness
+contributor to be **contained** and reported as a failure. Both containments are built on
+`std::panic::catch_unwind`, which catches panics that *unwind*. Under `panic = "abort"` a
+panic calls the abort handler and the process ends with no unwinding for a landing pad to
+intercept — so there is nothing to catch, by Renvor or by anyone.
+
+That made a build profile capable of silently removing the kernel's central guarantee. A
+consumer who never read this document would get an application that ended on a
+misbehaving readiness check with no indication that containment had ever been promised.
+
+`renvor-core` therefore **refuses to compile** under `panic = "abort"`:
+
+```text
+error: renvor-core does not support `panic = "abort"`.
+```
+
+A consumer who needs `panic = "abort"` needs a kernel that does not promise panic
+containment. That is a different product, not a configuration of this one.
+
 ## Supported platforms
 
 Only platforms with passing evidence are listed as supported. Claiming a platform without
 a verification run behind it would be a claim exceeding measurement.
 
-| Platform | Status | Why |
+| Platform | Status | Evidence |
 |---|---|---|
-| Linux (`ubuntu-latest`) | **Supported** | Primary verification platform |
-| macOS | **Not yet claimed** | No platform-sensitive code exists to verify |
-| Windows | **Not yet claimed** | Same |
+| Linux (`ubuntu-latest`) | **Supported** | `verify (1.94.0)` and `verify (stable)` — the full verification sequence, on every pull request |
+| macOS (`macos-latest`) | **Supported** | `platform (macos-latest, 1.94.0)` and `platform (macos-latest, stable)` |
+| Windows (`windows-latest`) | **Supported** | `platform (windows-latest, 1.94.0)` and `platform (windows-latest, stable)` |
 
-macOS and Windows enter the matrix in the phase that introduces platform-sensitive
-behaviour. "Not yet claimed" means exactly that — it is not a statement that Renvor fails
-on those platforms, only that nothing has been verified, so nothing is promised.
+### The previous entry was wrong, and had been for a while
+
+Until T150 this table listed macOS and Windows as "not yet claimed", giving the reason
+**"No platform-sensitive code exists to verify"**. That stopped being true when the
+configuration layer landed in Phase 002, and nobody revisited it. The kernel resolves
+filesystem paths, refuses non-regular files **by type from an open descriptor**, opens
+files with a platform-specific flag (`O_NONBLOCK` on unix), and reads `OsString`
+environment names that are arbitrary bytes on unix and WTF-8 on Windows. Those are
+precisely the parts most likely to differ between platforms, and they were being verified
+on exactly one.
+
+The correction is a verification job, not a rewording: `platform` runs the workspace test
+suite serially and the no-default-features check on macOS and Windows, on **both**
+toolchains.
+
+`platform` is a **separate job** from `verify` on purpose. `verify`'s matrix produces the
+two required status contexts, and adding an `os` dimension to it would have renamed them
+to `verify (ubuntu-latest, 1.94.0)` and silently emptied the branch-protection rule, which
+matches contexts by name.
+
+### What "supported" does and does not mean here
+
+It means the tests above pass on that platform at the exact head being claimed. It does
+**not** mean every platform receives the full verification sequence: `cargo xtask verify`
+also runs secret scanning, a link check, and a commit-history scan, which are properties of
+the repository rather than of the platform, and running them three times would triple a
+link check against github.com to learn nothing.
+
+Unix-specific behaviour that cannot exist on Windows — the FIFO refusal, the
+non-Unicode environment-name path — is `#[cfg(unix)]`-gated and is therefore verified on
+Linux and macOS only. That is a property of the platform, not a gap in the matrix.
 
 ## Rules for raising the MSRV
 

@@ -9,8 +9,15 @@ body:
         everyone, including anyone who would exploit the report. Use the private path
         in [SECURITY.md](https://github.com/renvor-rs/renvor/blob/main/SECURITY.md).
 
-        Renvor is pre-release and ships no runtime capability yet, so most reports at
-        this stage concern documentation, governance, or the verification sequence.
+        Renvor is pre-release and unpublished, but it is no longer documentation only:
+        Phase 002 landed a working transport-independent kernel — application lifecycle,
+        provider resolution, layered configuration, health, and a failure-injection
+        harness. It has **no transport**, so it can start and stop an application but
+        cannot serve anything. Reports about kernel behaviour are in scope, as are
+        reports about the documentation, governance, or the verification sequence.
+
+        Every API is explicitly unstable (FR-036), so "this changed" is expected and is
+        not by itself a bug.
   - type: textarea
     id: what-happened
     attributes:
@@ -43,6 +50,8 @@ body:
     id: platform
     attributes:
       label: Platform
-      description: Only Linux is currently claimed as supported.
+      description: >-
+        Linux, macOS, and Windows are verified in CI. See SUPPORT.md for what each
+        claim rests on.
     validations:
       required: true

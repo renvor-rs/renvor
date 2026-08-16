@@ -93,3 +93,54 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: cargo xtask verify
+
+  platform:
+    # Produces `platform (macos-latest, 1.94.0)`, `platform (macos-latest, stable)`,
+    # `platform (windows-latest, 1.94.0)`, and `platform (windows-latest, stable)`.
+    #
+    # A SEPARATE job, deliberately. The `verify` job above produces the two required status
+    # contexts `verify (1.94.0)` and `verify (stable)`; adding an `os` dimension to its matrix
+    # would have renamed them to `verify (ubuntu-latest, 1.94.0)` and silently emptied the
+    # branch protection rule, which checks contexts by name. Nothing here touches that job.
+    #
+    # # Why this job exists at all
+    #
+    # SUPPORT.md said macOS and Windows were "not yet claimed" because "no platform-sensitive
+    # code exists to verify". That stopped being true during Phase 002 and nobody noticed:
+    # the configuration layer resolves filesystem paths, refuses non-regular files by type,
+    # reads `OsString` environment names that are WTF-8 on Windows and arbitrary bytes on unix,
+    # and opens files with platform-specific flags. Those are the parts most likely to differ,
+    # and they were being verified on exactly one platform.
+    #
+    # # Why not `cargo xtask verify`
+    #
+    # The verification sequence includes gitleaks, lychee, and a commit-history scan — tools
+    # and checks that are properties of the repository, not of the platform, and running them
+    # three times would triple a link check against github.com to learn nothing. This job runs
+    # the parts whose behaviour can actually differ per platform.
+    name: platform
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        toolchain: ["1.94.0", "stable"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ matrix.toolchain }}
+
+      # Serial, matching the Linux run. Several suites assert on process-wide state — the
+      # tracing global subscriber has exactly one owner, and the readiness ceiling is
+      # per-application but observable across tests in one binary — so a parallel run is
+      # testing a different thing from the one the evidence describes.
+      - name: Workspace tests
+        run: cargo test --workspace --all-features -- --test-threads=1
+
+      # FR-034: the facade must build with no default features on every claimed platform, not
+      # only on the one where the feature graph was designed.
+      - name: No default features
+        run: cargo check -p renvor --no-default-features --all-targets
