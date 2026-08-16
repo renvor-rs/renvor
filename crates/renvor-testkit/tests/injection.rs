@@ -6,11 +6,9 @@
 //! harness was constructed. The phase list is taken from `LifecyclePhase::ALL`, so adding an
 //! eighth phase fails this file rather than silently leaving it uncovered.
 //!
-//! It does **not** claim that `Panic` is injectable at `Boot` or `Stop`: the kernel does not
-//! contain a panicking provider, and the harness says so with a diagnostic instead of pretending.
-//! It does **not** claim that `Hang` is enforced at `Load` or `Validate`: those phases are
-//! synchronous and unbounded. Both gaps are asserted here as the current, measured behaviour, so
-//! that closing either one **fails this file** and forces the claim to be updated.
+//! Both gaps this file used to record are now closed, and **the tests that recorded them are what
+//! forced the update**: each asserted the gap, so fixing the kernel failed the test and brought
+//! whoever fixed it back here. That is the whole reason to assert a gap rather than omit it.
 
 use std::time::Duration;
 
@@ -138,28 +136,66 @@ async fn a_hanging_provider_is_bounded_at_boot_and_at_stop() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn a_panicking_provider_is_reported_as_not_injectable_rather_than_faked() {
-    // **This test documents a gap, and exists so closing it is noticed.** C-L9 requires `Panic` at
-    // every phase. The kernel does not contain a panicking provider: catching a panic across an
-    // `await` needs a `'static` future (ruled out by `InitContext` borrowing the state map) or a
-    // new dependency in a phase whose inventory is a recorded gate.
+async fn a_panicking_provider_is_contained_at_boot() {
+    // C-L9's third behaviour, and the one that used to be unavailable. The injected provider
+    // panics **after a yield**, so the panic happens on a later poll — the case a `catch_unwind`
+    // around the call site could never reach.
     //
-    // If containment is ever added, this test **fails**, and whoever adds it has to come here and
-    // update the claim. That is the point of asserting a gap rather than omitting it.
-    for phase in [LifecyclePhase::Boot, LifecyclePhase::Stop] {
-        let run = Harness::injecting(FailureInjectionPoint::new(phase, Behaviour::Panic))
-            .run()
-            .await;
+    // Reaching the assertions at all proves containment: an escaping panic would abort this test.
+    let run = Harness::injecting(FailureInjectionPoint::new(
+        LifecyclePhase::Boot,
+        Behaviour::Panic,
+    ))
+    .run()
+    .await;
 
-        match run.outcome {
-            Outcome::NotInjectable(ref why) => {
-                assert!(why.contains("not contained"), "{why}");
-                assert!(why.contains("evidence"), "and points at the record: {why}");
-            }
-            ref other => panic!(
-                "panic containment appears to have been added at {phase} ({other:?}) — \
-                 update SC-009's record and this test"
-            ),
+    assert!(run.fired, "the panic was injected");
+    match run.outcome {
+        Outcome::BootFailed(ref message) => {
+            assert!(
+                message.contains("injected"),
+                "the failure names the provider: {message}"
+            );
+        }
+        ref other => panic!("a panicking provider must fail the boot, got {other:?}"),
+    }
+    assert!(!run.reached(LifecyclePhase::Ready), "Ready is not reached");
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_panicking_provider_is_contained_at_stop() {
+    // The worse moment to abort: a panic here would unwind through the shutdown of every provider
+    // behind it. Shutdown must still complete.
+    let run = Harness::injecting(FailureInjectionPoint::new(
+        LifecyclePhase::Stop,
+        Behaviour::Panic,
+    ))
+    .run()
+    .await;
+
+    assert!(run.fired, "the panic was injected");
+    assert!(
+        run.reached(LifecyclePhase::Stop),
+        "shutdown completed despite the panic"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn all_three_behaviours_are_injectable_at_boot_and_stop() {
+    // SC-009 in full: 7 of 7 phases **and** all three behaviours where each applies. Taken from
+    // `Behaviour::ALL`, so a fourth behaviour cannot be added without covering it.
+    for phase in [LifecyclePhase::Boot, LifecyclePhase::Stop] {
+        for behaviour in Behaviour::ALL {
+            let run = Harness::injecting(FailureInjectionPoint::new(phase, behaviour))
+                .run()
+                .await;
+
+            assert!(run.fired, "{behaviour} at {phase} never fired");
+            assert!(
+                !matches!(run.outcome, Outcome::NotInjectable(_)),
+                "{behaviour} at {phase} reported not injectable: {:?}",
+                run.outcome
+            );
         }
     }
 }

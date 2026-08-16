@@ -11,32 +11,29 @@
 //! | `Load` | a configuration source that fails to read | the source deadline |
 //! | `Validate` | a configuration source that rejects a value | the source deadline |
 //! | `Register` | a provider depending on a capability nobody offers | the work budget (counted, not timed) |
-//! | `Boot` | a provider that fails, panics, or never returns | the provider deadline |
+//! | `Boot` | a provider that fails, panics, or never returns | the provider deadline, and `catch_unwind` |
 //! | `Ready` | liveness driven to `Dead` once `Ready` is reached | n/a — reaching `Ready` is the success condition |
 //! | `Drain` | in-flight work that outlives the drain budget | the drain budget |
-//! | `Stop` | a provider that fails or never returns while stopping | the provider deadline |
+//! | `Stop` | a provider that fails, panics, or never returns while stopping | the provider deadline, and `catch_unwind` |
 //!
-//! # Two gaps this harness found. One is fixed; one is still open.
+//! # Two gaps this harness found, both now closed
 //!
-//! **1. `Load` and `Validate` were unbounded — now fixed.** They call author-supplied code
-//! *synchronously*, and `ApplicationBuilder::build` is not `async`, so there was no deadline
-//! around either: a configuration source reading a hung network mount blocked the process
-//! indefinitely. `tests/deadlines.rs` enumerated "three kernel-owned waits" and missed these two,
-//! because it searched for `.await` and a synchronous call that never returns is not an await.
+//! **1. `Load` and `Validate` were unbounded.** They call author-supplied code *synchronously*,
+//! and `ApplicationBuilder::build` is not `async`, so there was no deadline around either: a
+//! configuration source reading a hung network mount blocked the process indefinitely.
+//! `tests/deadlines.rs` enumerated "three kernel-owned waits" and missed these two, because it
+//! searched for `.await` and a synchronous call that never returns is not an await.
 //!
-//! Both are now bounded by a worker thread and `recv_timeout`, and the enumeration is corrected to
-//! **five**. A panicking configuration source is contained by the same mechanism.
+//! Both are bounded by a worker thread and `recv_timeout`, and the enumeration is corrected to
+//! **five**.
 //!
-//! **2. A panicking *provider* is still not contained.** [`Behaviour::Panic`] at `Boot` or `Stop`
-//! unwinds through the kernel and ends the process. Catching it needs one of two things Renvor does
-//! not have: a `'static` future (ruled out by `InitContext` borrowing the state map) or
-//! `futures::FutureExt::catch_unwind` (a new dependency in a phase whose inventory is a recorded
-//! gate). Readiness contributors and configuration sources **are** contained, because both are
-//! reached synchronously.
+//! **2. A panicking provider was not contained.** [`Behaviour::Panic`] at `Boot` or `Stop` unwound
+//! through the kernel and ended the process. It is now caught by
+//! [`renvor_core::provider::contain`], which polls the provider's already-boxed future inside
+//! `catch_unwind` — no new dependency, and no `unsafe`, because `Pin<Box<_>>` is `Unpin`.
 //!
-//! That gap is not worked around here. [`Harness::run`] refuses a `Panic` point with a diagnostic
-//! that says which requirement is unmet, which is the failing-loudly this project prefers to a
-//! harness that appears to cover something it does not.
+//! Both gaps were found by writing this harness rather than by reading the requirements, which is
+//! the argument for building the injection surface before claiming the phase is complete.
 
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
@@ -65,6 +62,10 @@ pub enum Outcome {
     /// The run reached `Ready` and shut down cleanly.
     Stopped,
     /// The injection point cannot be honoured, and why.
+    ///
+    /// Retained after the last case that used it was fixed. A harness that can only report success
+    /// has nowhere to put "this cannot be tested", and the next unreachable combination would be
+    /// silently dropped instead of named.
     NotInjectable(String),
 }
 
@@ -166,8 +167,14 @@ impl Provider for InjectingProvider {
                     std::future::pending::<()>().await;
                     unreachable!("a pending future never resolves")
                 }
-                // `Panic` is refused before a run starts; see the module documentation.
-                Some(Behaviour::Panic) | None => Ok(()),
+                Some(Behaviour::Panic) => {
+                    self.mark();
+                    // After a yield, so the panic happens on a *later* poll — the case a
+                    // `catch_unwind` around the call site could never reach.
+                    tokio::task::yield_now().await;
+                    panic!("this panic was injected by the test harness at boot");
+                }
+                None => Ok(()),
             }
         })
     }
@@ -184,7 +191,12 @@ impl Provider for InjectingProvider {
                     std::future::pending::<()>().await;
                     unreachable!("a pending future never resolves")
                 }
-                Some(Behaviour::Panic) | None => Ok(()),
+                Some(Behaviour::Panic) => {
+                    self.mark();
+                    tokio::task::yield_now().await;
+                    panic!("this panic was injected by the test harness at stop");
+                }
+                None => Ok(()),
             }
         })
     }
@@ -233,22 +245,6 @@ impl Harness {
         let phase = self.point.phase();
         let behaviour = self.point.behaviour();
         let fired = Arc::new(Mutex::new(false));
-
-        if behaviour == Behaviour::Panic
-            && matches!(phase, LifecyclePhase::Boot | LifecyclePhase::Stop)
-        {
-            // Refused rather than faked. See the module documentation: containing a panic across
-            // an await needs a `'static` future or a new dependency, and pretending otherwise
-            // would make SC-009 read as covered when it is not.
-            return HarnessRun {
-                phases: Vec::new(),
-                fired: false,
-                outcome: Outcome::NotInjectable(format!(
-                    "a panicking provider is not contained at {phase}: the kernel would unwind \
-                     through the process. See governance/phase-002-evidence.md"
-                )),
-            };
-        }
 
         let mut builder = ApplicationBuilder::new()
             .with_entropy(Box::new(renvor_core::observe::FixedEntropy::new(vec![

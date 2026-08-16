@@ -106,6 +106,11 @@ pub enum Behaviour {
     Hang,
     /// Initialises cleanly, then never answers while stopping.
     HangOnStop,
+    /// **Panics after an await** while initialising — the case a `catch_unwind` around the call
+    /// site could never reach, because the panic happens on a later poll.
+    PanicOnInit,
+    /// Initialises cleanly, then panics after an await while stopping.
+    PanicOnStop,
     /// **The FR-022 anti-pattern, on purpose.** Carries on without the [`Marker`] it needs,
     /// recording that it degraded. Used as a positive control: the journal must be able to catch
     /// a degrading provider, or its silence on the kernel's own paths proves nothing.
@@ -197,9 +202,13 @@ impl Provider for Scripted {
                     std::future::pending::<()>().await;
                     unreachable!("a pending future never resolves")
                 }
-                Behaviour::HangOnStop => {
+                Behaviour::HangOnStop | Behaviour::PanicOnStop => {
                     self.journal.record("init", &self.id);
                     Ok(())
+                }
+                Behaviour::PanicOnInit => {
+                    tokio::task::yield_now().await;
+                    panic!("this provider panics on purpose while initialising");
                 }
                 Behaviour::AwaitCancellation => {
                     context.cancel().cancelled().await;
@@ -224,6 +233,10 @@ impl Provider for Scripted {
             self.journal.record("stop", &self.id);
             if self.behaviour == Behaviour::HangOnStop {
                 std::future::pending::<()>().await;
+            }
+            if self.behaviour == Behaviour::PanicOnStop {
+                tokio::task::yield_now().await;
+                panic!("this provider panics on purpose while stopping");
             }
             if self.behaviour == Behaviour::FailStop {
                 return Err("this provider was scripted to fail while stopping".into());

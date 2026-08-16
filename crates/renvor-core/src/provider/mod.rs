@@ -30,9 +30,11 @@
 //! say the kernel is broken rather than blame the author's graph — and it can only say that if it
 //! looks at the budget first.
 
+pub mod contain;
 pub mod graph;
 pub mod registry;
 
+pub use contain::Panicked;
 pub use registry::{
     CapabilityId, DeclaredSize, InitContext, InitialisationOrder, Provider, ProviderFuture,
     ProviderId, ProviderRegistry, ResolutionReport,

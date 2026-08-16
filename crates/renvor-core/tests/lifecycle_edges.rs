@@ -202,3 +202,118 @@ async fn retrieving_unregistered_state_is_an_error_not_a_panic() {
     assert_eq!(error.category(), ErrorCategory::StateMissing);
     assert!(error.to_string().contains("Marker"), "{error}");
 }
+
+#[tokio::test]
+async fn a_panicking_provider_fails_the_boot_without_ending_the_process() {
+    // C-L9. Reaching the assertions at all proves containment — an escaping panic would abort this
+    // test rather than fail it.
+    let journal = Journal::new();
+    let failure = builder()
+        .with_provider(
+            Scripted::new(&journal, "first")
+                .provides(&["first"])
+                .boxed(),
+        )
+        .with_provider(
+            Scripted::new(&journal, "panics")
+                .needs(&["first"])
+                .behaving(Behaviour::PanicOnInit)
+                .boxed(),
+        )
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect_err("a panicking provider must fail the boot");
+
+    // **Attribution is unweakened**: still a ProviderInit failure, still naming the provider.
+    assert_eq!(failure.origin().category(), ErrorCategory::ProviderInit);
+    assert!(
+        failure.origin().to_string().contains("panics"),
+        "{}",
+        failure.origin()
+    );
+
+    // And a caller can tell a panic from a returned error, by downcasting the cause.
+    let cause = std::error::Error::source(failure.origin()).expect("the cause survives");
+    let panicked = cause
+        .downcast_ref::<renvor_core::provider::Panicked>()
+        .expect("the cause is a contained panic, distinguishable from an ordinary failure");
+    assert!(panicked.message().contains("on purpose"), "{panicked}");
+
+    // **Rollback is unweakened**: what started is still stopped, in reverse order.
+    assert_eq!(journal.inits(), vec!["first"]);
+    assert_eq!(journal.stops(), vec!["first"]);
+    assert!(failure.rollback().is_clean());
+}
+
+#[tokio::test]
+async fn a_provider_that_panics_while_stopping_does_not_strand_the_rest() {
+    // The worse moment: a panic here would unwind through the shutdown of every provider behind
+    // it. C-L4 requires the rest of the rollback to continue, and every failure to be reported.
+    let journal = Journal::new();
+    let failure = builder()
+        .with_provider(
+            Scripted::new(&journal, "first")
+                .provides(&["first"])
+                .behaving(Behaviour::PanicOnStop)
+                .boxed(),
+        )
+        .with_provider(
+            Scripted::new(&journal, "second")
+                .provides(&["second"])
+                .needs(&["first"])
+                .boxed(),
+        )
+        .with_provider(
+            Scripted::new(&journal, "third")
+                .needs(&["second"])
+                .behaving(Behaviour::FailInit)
+                .boxed(),
+        )
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect_err("the third provider fails");
+
+    // The panicking provider did not strand the one behind it.
+    assert_eq!(journal.stops(), vec!["second", "first"]);
+
+    let failures = failure.rollback().failures();
+    assert_eq!(failures.len(), 1, "the panic is reported, not swallowed");
+    assert_eq!(failures[0].category(), ErrorCategory::ProviderStop);
+    assert!(failures[0].to_string().contains("first"), "{}", failures[0]);
+
+    // The originating failure is still the originating failure.
+    assert_eq!(failure.origin().category(), ErrorCategory::ProviderInit);
+    assert!(failure.origin().to_string().contains("third"));
+}
+
+#[tokio::test]
+async fn containing_a_panic_does_not_weaken_the_deadline() {
+    // The two guards compose, and stay distinguishable: `contain` is *inside* `timeout`, so a
+    // provider that hangs is still a deadline and not a panic. Wrapping the other way round would
+    // make a panicking provider look like a slow one.
+    let journal = Journal::new();
+    let failure = builder()
+        .with_provider_deadline(std::time::Duration::from_millis(80))
+        .with_provider(
+            Scripted::new(&journal, "hangs")
+                .behaving(Behaviour::AwaitCancellation)
+                .boxed(),
+        )
+        .build()
+        .expect("assembles")
+        .boot()
+        .await
+        .expect_err("the provider never returns");
+
+    assert_eq!(failure.origin().category(), ErrorCategory::DeadlineExceeded);
+    assert!(
+        std::error::Error::source(failure.origin())
+            .and_then(|cause| cause.downcast_ref::<renvor_core::provider::Panicked>())
+            .is_none(),
+        "a hang must not be reported as a panic"
+    );
+}

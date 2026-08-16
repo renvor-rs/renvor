@@ -572,6 +572,61 @@ The file now checks the synchronous call sites too, and a new test **counts the 
 sites** so a sixth wait added later fails there rather than silently escaping the enumeration —
 which is exactly how the set came to be wrong the first time.
 
+## Open item 13 closed — provider panics are contained
+
+**Status**: SC-009 is met in full — 7 of 7 phases **and** all three C-L9 behaviours. Workspace
+tests **267 → 278**. **0 packages added.**
+
+### The package-first comparison, and why the answer needed no package
+
+| Approach | New packages | `unsafe` | Verdict |
+|---|---|---|---|
+| `futures::FutureExt::catch_unwind` | **`futures-util` and its tree** — confirmed absent from the lockfile, so a genuine addition | no | works, but pays a dependency for ~30 lines |
+| `tokio::spawn` + `JoinError::is_panic` | none | no | **does not work** — needs a `'static` future, and `InitContext` borrows the state map. Forcing it would put the state map behind a `Mutex` and stop `InitContext::state` returning a borrow: **changing the provider API to buy a panic guard** |
+| **Poll the boxed future inside `catch_unwind`** | **none** | **none** | chosen |
+
+The third works because of a decision made much earlier for an unrelated reason. Wrapping an
+arbitrary future normally needs to project `Pin<&mut Self>` to `Pin<&mut F>`, which requires
+`unsafe` or a projection macro — and this workspace declares `unsafe_code = "forbid"`.
+
+**`ProviderFuture` is already `Pin<Box<dyn Future>>`**, because the trait had to be dyn-compatible.
+`Pin<Box<T>>` is `Unpin`, so a struct holding one is `Unpin`, so `Pin::get_mut` is safe and free.
+The boxing that was the cost of avoiding `async-trait` is what makes containment free here.
+
+### What was proven, and what was proven *not* to change
+
+`catch_unwind` around a call site cannot catch a panic that happens on a **later poll**, so every
+test panics **after an await** — the case the naive approach misses.
+
+| Claim | Test |
+|---|---|
+| Panic at `Boot` fails the boot, naming the provider | `lifecycle_edges::a_panicking_provider_fails_the_boot_without_ending_the_process` |
+| Panic at `Stop` does not strand the providers behind it (C-L4) | `lifecycle_edges::a_provider_that_panics_while_stopping_does_not_strand_the_rest` |
+| **Attribution unweakened** — still `ProviderInit`/`ProviderStop`, and a caller can downcast the cause to `Panicked` to tell a panic from a returned error | both of the above |
+| **Rollback unweakened** — what started is still stopped, in reverse actual order | both of the above |
+| **Deadlines unweakened** — a hang is still a deadline, **not** reported as a panic | `lifecycle_edges::containing_a_panic_does_not_weaken_the_deadline` |
+| All three behaviours injectable at `Boot` and `Stop` | `injection::all_three_behaviours_are_injectable_at_boot_and_stop` |
+
+`contain` sits **inside** `timeout`, not outside. Reversed, a panicking provider would look like a
+slow one, and the two failure modes call for different investigations.
+
+### The gap tests did their job
+
+`injection.rs` asserted the gap so that closing it would **fail the suite** and force the claim to
+be updated. It did exactly that, and this section is the update. The alternative — omitting the
+gap — would have left SC-009 quietly overstated.
+
+### Dependency gates re-run
+
+No direct dependency was added, and the gates were re-run rather than assumed:
+
+| Gate | Result |
+|---|---|
+| `Cargo.lock` | **byte-identical** — 0 packages added, 0 removed; still **53** entries (48 external + 5 workspace) |
+| `cargo deny check licenses advisories bans sources` | **all four ok** |
+| MSRV 1.94.0 | the pinned build compiles and tests clean |
+| Feature isolation | verify step 7, both directions, with controls |
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -588,7 +643,7 @@ which is exactly how the set came to be wrong the first time.
 | 10 | `expected_type` is reported **inside the constraint text**, not as its own field, for file and environment layers | `KernelError::Configuration::expected_type` is `&'static str` so it cannot carry a value (C-E3); the adapter has no schema description to read a per-key type from. All three facts C-C3 requires are in the message | No |
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
 | ~~12~~ | ~~SC-015 does not hold~~ | **CLOSED**: both bounded by a worker thread and `recv_timeout`; the enumeration is corrected from three waits to five, with a counting test so a sixth cannot escape it | — |
-| 13 | **C-L9's `Panic` behaviour is not injectable for _providers_** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency. **Narrowed 2026-08-16**: configuration sources and readiness contributors *are* contained, both being reached synchronously | **Yes — SC-009 is met for phases, and for all three behaviours everywhere except provider initialise and stop** |
+| ~~13~~ | ~~`Panic` not injectable for providers~~ | **CLOSED**: contained by polling the already-boxed provider future inside `catch_unwind` — 0 new packages, 0 `unsafe`. SC-009 met in full | — |
 | 15 | A configuration source that never returns **leaks its worker thread** | No Rust API can interrupt a blocked thread. The kernel's *wait* is bounded, which is what FR-025 requires; the thread is not, and cannot be | No — but an application that hits it repeatedly will accumulate threads |
 | ~~14~~ | ~~SC-013 partially met~~ | **CLOSED**: the full 11-step sequence ran on both 1.94.0 and 1.97.1, 0 skipped, with toolchain propagation verified by probe | — |
 

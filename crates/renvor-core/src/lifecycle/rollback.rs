@@ -27,6 +27,7 @@ use crate::error::KernelError;
 use crate::lifecycle::LifecyclePhase;
 use crate::lifecycle::application::InitialisedProvider;
 use crate::lifecycle::application::deadline_millis;
+use crate::provider::contain::contain;
 use crate::provider::{ProviderId, ProviderRegistry};
 
 /// What happened while unwinding a partial start.
@@ -86,16 +87,24 @@ pub(crate) async fn roll_back(
 
         report.stopped.push(entry.id().clone());
 
-        // Bounded, because a provider that hangs while stopping would hang shutdown itself —
-        // an unbounded wait in a kernel-owned path (FR-025, C-L7). Its deadline is reported as a
-        // deadline rather than as a refusal: not answering and refusing are different faults.
-        match tokio::time::timeout(deadline, provider.stop()).await {
-            Ok(Ok(())) => {}
+        // Bounded **and** contained. A provider that hangs while stopping would hang shutdown
+        // itself — an unbounded wait in a kernel-owned path (FR-025, C-L7) — and one that panics
+        // while stopping would unwind through the shutdown of every provider behind it, which is
+        // the worst possible moment to abort.
+        //
+        // The three outcomes stay distinct because they call for different responses: a refusal is
+        // the provider's answer, a deadline is its silence, and a panic is its defect.
+        match tokio::time::timeout(deadline, contain(provider.stop())).await {
+            Ok(Ok(Ok(()))) => {}
             // Collected, never returned early: a failure here must not strand the providers that
             // have not been stopped yet (C-L4).
-            Ok(Err(source)) => report.failures.push(KernelError::ProviderStop {
+            Ok(Ok(Err(source))) => report.failures.push(KernelError::ProviderStop {
                 provider: entry.id().to_string(),
                 source,
+            }),
+            Ok(Err(panicked)) => report.failures.push(KernelError::ProviderStop {
+                provider: entry.id().to_string(),
+                source: Box::new(panicked),
             }),
             Err(_) => report.failures.push(KernelError::DeadlineExceeded {
                 operation: format!("stop provider `{}`", entry.id()),

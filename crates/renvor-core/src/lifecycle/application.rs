@@ -29,12 +29,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::cancel::CancelScope;
-use crate::error::KernelError;
+use crate::error::{BoxedCause, KernelError};
 use crate::health::HealthState;
 use crate::lifecycle::LifecyclePhase;
 use crate::lifecycle::drain::{DrainOutcome, WorkGate};
 use crate::lifecycle::rollback::{BootFailure, RollbackReport, roll_back};
 use crate::observe::{RunIdentifier, phase_span};
+use crate::provider::contain::contain;
 use crate::provider::{
     InitContext, InitialisationOrder, ProviderId, ProviderRegistry, ResolutionReport,
 };
@@ -429,9 +430,16 @@ impl Application {
                 return Err(self.unwind(origin).await);
             };
 
-            // FR-025 and C-L7: every kernel-owned wait is bounded. A provider that hangs is an
-            // unbounded wait in the kernel's own boot loop, and cancellation does not fix it —
-            // a provider that ignores its scope ignores it forever.
+            // Two guarantees, one call. FR-025 and C-L7: the wait is **bounded**, because a
+            // provider that hangs is an unbounded wait in the kernel's own boot loop and
+            // cancellation does not fix it — a provider that ignores its scope ignores it forever.
+            // C-L9: the panic is **contained**, so a misbehaving provider is a failure rather than
+            // a process abort.
+            //
+            // The order is deliberate. `contain` is inside `timeout`, so a provider that panics
+            // *and* one that hangs are still distinguishable: the first yields a panic value, the
+            // second an elapsed deadline. Wrapping the other way round would make a panicking
+            // provider look like a slow one.
             let outcome = {
                 let mut context = InitContext::new(
                     &id,
@@ -442,11 +450,14 @@ impl Application {
                 );
                 match tokio::time::timeout(
                     self.provider_deadline,
-                    provider.initialise(&mut context),
+                    contain(provider.initialise(&mut context)),
                 )
                 .await
                 {
-                    Ok(outcome) => outcome,
+                    Ok(Ok(outcome)) => outcome,
+                    // A panic becomes the failure's *cause*, so `ProviderInit` still names the
+                    // provider and a caller can downcast to tell a panic from a returned error.
+                    Ok(Err(panicked)) => Err(Box::new(panicked) as BoxedCause),
                     Err(_) => {
                         // Reported as the deadline it was, not as a provider failure: the
                         // provider did not refuse, it failed to answer, and those call for
