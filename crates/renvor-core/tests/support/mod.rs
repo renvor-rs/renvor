@@ -100,6 +100,12 @@ pub enum Behaviour {
     RegisterMarker,
     /// Waits until its own scope is cancelled, then reports cancellation (FR-024).
     AwaitCancellation,
+    /// **Never answers while initialising.** The C-L9 `Hang` behaviour: it exercises deadline
+    /// enforcement, and unlike `AwaitCancellation` it ignores cancellation entirely — which is
+    /// what makes a deadline necessary rather than merely tidy.
+    Hang,
+    /// Initialises cleanly, then never answers while stopping.
+    HangOnStop,
     /// **The FR-022 anti-pattern, on purpose.** Carries on without the [`Marker`] it needs,
     /// recording that it degraded. Used as a positive control: the journal must be able to catch
     /// a degrading provider, or its silence on the kernel's own paths proves nothing.
@@ -187,6 +193,14 @@ impl Provider for Scripted {
                     self.journal.record("init", &self.id);
                     Ok(())
                 }
+                Behaviour::Hang => {
+                    std::future::pending::<()>().await;
+                    unreachable!("a pending future never resolves")
+                }
+                Behaviour::HangOnStop => {
+                    self.journal.record("init", &self.id);
+                    Ok(())
+                }
                 Behaviour::AwaitCancellation => {
                     context.cancel().cancelled().await;
                     Err(KernelError::Cancelled {
@@ -208,6 +222,9 @@ impl Provider for Scripted {
     fn stop(&self) -> ProviderFuture<'_> {
         Box::pin(async move {
             self.journal.record("stop", &self.id);
+            if self.behaviour == Behaviour::HangOnStop {
+                std::future::pending::<()>().await;
+            }
             if self.behaviour == Behaviour::FailStop {
                 return Err("this provider was scripted to fail while stopping".into());
             }

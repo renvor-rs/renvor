@@ -109,8 +109,8 @@ pub use renvor_core as kernel;
 
 // Assembling and running an application.
 pub use renvor_core::{
-    Application, ApplicationBuilder, BootFailure, BuildError, LifecyclePhase, PhaseLog,
-    RollbackReport,
+    Application, ApplicationBuilder, BootFailure, BuildError, DrainOutcome, LifecyclePhase,
+    PhaseLog, RollbackReport, ShutdownReport, WorkGate, WorkPermit,
 };
 
 // Writing a provider.

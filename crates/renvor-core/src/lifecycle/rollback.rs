@@ -21,10 +21,12 @@
 //! indistinguishable from the rest, and the first is the one the author has to fix.
 
 use core::fmt;
+use std::time::Duration;
 
 use crate::error::KernelError;
 use crate::lifecycle::LifecyclePhase;
 use crate::lifecycle::application::InitialisedProvider;
+use crate::lifecycle::application::deadline_millis;
 use crate::provider::{ProviderId, ProviderRegistry};
 
 /// What happened while unwinding a partial start.
@@ -58,7 +60,7 @@ impl RollbackReport {
     }
 }
 
-/// Stops every initialised provider in reverse initialisation order.
+/// Stops every initialised provider in reverse initialisation order, each within `deadline`.
 ///
 /// Drains `initialised`, so the caller cannot roll the same provider back twice — `Stop` runs **at
 /// most once** per provider (FR-008, V-A3), and here that is a consequence of the collection being
@@ -66,6 +68,7 @@ impl RollbackReport {
 pub(crate) async fn roll_back(
     registry: &ProviderRegistry,
     initialised: &mut Vec<InitialisedProvider>,
+    deadline: Duration,
 ) -> RollbackReport {
     let mut report = RollbackReport::default();
 
@@ -82,13 +85,22 @@ pub(crate) async fn roll_back(
         };
 
         report.stopped.push(entry.id().clone());
-        if let Err(source) = provider.stop().await {
+
+        // Bounded, because a provider that hangs while stopping would hang shutdown itself —
+        // an unbounded wait in a kernel-owned path (FR-025, C-L7). Its deadline is reported as a
+        // deadline rather than as a refusal: not answering and refusing are different faults.
+        match tokio::time::timeout(deadline, provider.stop()).await {
+            Ok(Ok(())) => {}
             // Collected, never returned early: a failure here must not strand the providers that
             // have not been stopped yet (C-L4).
-            report.failures.push(KernelError::ProviderStop {
+            Ok(Err(source)) => report.failures.push(KernelError::ProviderStop {
                 provider: entry.id().to_string(),
                 source,
-            });
+            }),
+            Err(_) => report.failures.push(KernelError::DeadlineExceeded {
+                operation: format!("stop provider `{}`", entry.id()),
+                deadline_ms: deadline_millis(deadline),
+            }),
         }
 
         // The provider's scope is cancelled once it has been stopped, so anything it left running

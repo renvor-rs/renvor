@@ -33,6 +33,7 @@ use core::pin::Pin;
 
 use crate::cancel::CancelScope;
 use crate::error::{BoxedCause, KernelError};
+use crate::lifecycle::drain::{WorkGate, WorkPermit};
 use crate::provider::graph::{MAX_EDGES, MAX_PROVIDERS};
 use crate::state::TypedStateMap;
 
@@ -133,6 +134,7 @@ pub struct InitContext<'a> {
     provider: &'a ProviderId,
     state: &'a mut TypedStateMap,
     cancel: &'a CancelScope,
+    work: &'a WorkGate,
 }
 
 impl<'a> InitContext<'a> {
@@ -142,11 +144,13 @@ impl<'a> InitContext<'a> {
         provider: &'a ProviderId,
         state: &'a mut TypedStateMap,
         cancel: &'a CancelScope,
+        work: &'a WorkGate,
     ) -> Self {
         Self {
             provider,
             state,
             cancel,
+            work,
         }
     }
 
@@ -163,6 +167,21 @@ impl<'a> InitContext<'a> {
     #[must_use]
     pub const fn cancel(&self) -> &CancelScope {
         self.cancel
+    }
+
+    /// Admits one unit of in-flight work, which the drain will wait for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelError::ShuttingDown`] if shutdown has already begun (FR-006).
+    pub fn begin_work(&self, operation: impl Into<String>) -> Result<WorkPermit, KernelError> {
+        self.work.begin(operation)
+    }
+
+    /// The application's work gate, for a provider that keeps working after initialisation.
+    #[must_use]
+    pub const fn work(&self) -> &WorkGate {
+        self.work
     }
 
     /// Registers a value in the application's typed state.

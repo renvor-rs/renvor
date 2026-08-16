@@ -31,6 +31,7 @@ use std::time::Duration;
 use crate::cancel::CancelScope;
 use crate::error::KernelError;
 use crate::lifecycle::LifecyclePhase;
+use crate::lifecycle::drain::{DrainOutcome, WorkGate};
 use crate::lifecycle::rollback::{BootFailure, RollbackReport, roll_back};
 use crate::observe::RunIdentifier;
 use crate::provider::{
@@ -38,11 +39,14 @@ use crate::provider::{
 };
 use crate::state::TypedStateMap;
 
-/// The documented default drain budget (C-L5).
+/// How long a single provider is given to initialise or to stop.
 ///
-/// Stated as a constant rather than a literal at the one place it is used, because C-L5 calls it
-/// "documented" and a documented value that only exists inside a function body is not.
-pub const DEFAULT_DRAIN_BUDGET: Duration = Duration::from_secs(30);
+/// **This number is Renvor's choice, not the specification's.** FR-042 fixes 30 seconds for the
+/// *drain* budget and says nothing about per-provider waits — but FR-025 and C-L7 prohibit an
+/// unbounded wait in any kernel-owned path, and a provider that hangs is exactly that. A bound was
+/// therefore required and a value had to be picked; matching the drain default is a deliberate
+/// symmetry rather than a measured figure, and it is author-overridable.
+pub const DEFAULT_PROVIDER_DEADLINE: Duration = Duration::from_secs(30);
 
 /// A shared, readable record of the phases a run entered.
 ///
@@ -121,10 +125,58 @@ impl PhaseCursor {
         self.current
     }
 
+    /// Jumps forward to a **later** phase, recording only the phase actually entered.
+    ///
+    /// Used when shutdown is requested before `Ready`: the run genuinely never entered `Boot`, and
+    /// walking through it one step at a time would put a phase in the log that never ran — which
+    /// is a worse failure than the gap it would paper over.
+    ///
+    /// A target at or before the current phase is a **no-op**, so this cannot walk backwards. That
+    /// keeps FR-001's guarantee intact: the parameter can name any phase, and the ones that would
+    /// break the ordering do nothing.
+    pub fn skip_to(&mut self, phase: LifecyclePhase) -> LifecyclePhase {
+        if phase.position() > self.current.position() {
+            self.current = phase;
+            self.log.record(phase);
+        }
+        self.current
+    }
+
     /// The log this cursor writes to.
     #[must_use]
     pub fn log(&self) -> PhaseLog {
         self.log.clone()
+    }
+}
+
+/// What a shutdown did.
+///
+/// Holds the drain outcome and the stop outcome **separately**. A single "did shutdown work?"
+/// answer would have to merge "work was still in flight" with "a provider refused to stop", and
+/// those call for different responses from whoever reads it.
+#[derive(Debug, Default)]
+pub struct ShutdownReport {
+    drain: DrainOutcome,
+    stop: RollbackReport,
+}
+
+impl ShutdownReport {
+    /// How the drain ended (FR-007).
+    #[must_use]
+    pub const fn drain(&self) -> DrainOutcome {
+        self.drain
+    }
+
+    /// Which providers were stopped, and which failed to (C-L2, FR-005).
+    #[must_use]
+    pub const fn stop(&self) -> &RollbackReport {
+        &self.stop
+    }
+
+    /// Whether the drain completed **and** every provider stopped cleanly.
+    #[must_use]
+    pub fn is_clean(&self) -> bool {
+        self.drain.is_clean() && self.stop.is_clean()
     }
 }
 
@@ -173,8 +225,12 @@ pub struct Application {
     report: ResolutionReport,
     initialised: Vec<InitialisedProvider>,
     cancel: CancelScope,
+    work: WorkGate,
     run_id: RunIdentifier,
     drain_budget: Duration,
+    provider_deadline: Duration,
+    shutdown: ShutdownReport,
+    shutdown_done: bool,
 }
 
 impl Application {
@@ -186,6 +242,7 @@ impl Application {
         report: ResolutionReport,
         run_id: RunIdentifier,
         drain_budget: Duration,
+        provider_deadline: Duration,
     ) -> Self {
         Self {
             cursor,
@@ -195,8 +252,12 @@ impl Application {
             report,
             initialised: Vec::new(),
             cancel: CancelScope::root(),
+            work: WorkGate::new(),
             run_id,
             drain_budget,
+            provider_deadline,
+            shutdown: ShutdownReport::default(),
+            shutdown_done: false,
         }
     }
 
@@ -263,6 +324,22 @@ impl Application {
         self.drain_budget
     }
 
+    /// How long each provider is given to initialise or to stop (FR-025, C-L7).
+    #[must_use]
+    pub const fn provider_deadline(&self) -> Duration {
+        self.provider_deadline
+    }
+
+    /// The gate that admits in-flight work and refuses it once shutdown begins.
+    ///
+    /// Public because FR-006's guarantee is about *the author's* work, not the kernel's: a
+    /// request handler takes a permit from here, and a permit it cannot take is a request the
+    /// application correctly refused.
+    #[must_use]
+    pub const fn work(&self) -> &WorkGate {
+        &self.work
+    }
+
     /// Initialises every provider in dependency order, reaching `Ready`.
     ///
     /// Each provider is initialised inside a [`crate::cancel::ProviderScope`], which cancels
@@ -299,9 +376,30 @@ impl Application {
                 return Err(self.unwind(origin).await);
             };
 
+            // FR-025 and C-L7: every kernel-owned wait is bounded. A provider that hangs is an
+            // unbounded wait in the kernel's own boot loop, and cancellation does not fix it —
+            // a provider that ignores its scope ignores it forever.
             let outcome = {
-                let mut context = InitContext::new(&id, &mut self.state, guard.scope());
-                provider.initialise(&mut context).await
+                let mut context = InitContext::new(&id, &mut self.state, guard.scope(), &self.work);
+                match tokio::time::timeout(
+                    self.provider_deadline,
+                    provider.initialise(&mut context),
+                )
+                .await
+                {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        // Reported as the deadline it was, not as a provider failure: the
+                        // provider did not refuse, it failed to answer, and those call for
+                        // different investigations.
+                        drop(guard);
+                        let origin = KernelError::DeadlineExceeded {
+                            operation: format!("initialise provider `{id}`"),
+                            deadline_ms: deadline_millis(self.provider_deadline),
+                        };
+                        return Err(self.unwind(origin).await);
+                    }
+                }
             };
 
             match outcome {
@@ -333,6 +431,39 @@ impl Application {
         Ok(self)
     }
 
+    /// Drains in-flight work, then stops every provider in reverse initialisation order.
+    ///
+    /// Idempotent (FR-008, C-L6): the second and subsequent calls do no work and return the first
+    /// call's report. `Stop` therefore runs **at most once** per provider — a consequence of the
+    /// initialised set being drained and the outcome being retained, not of a flag a future edit
+    /// has to remember to check.
+    ///
+    /// Requesting shutdown **before** `Ready` still rolls back whatever was initialised (FR-009).
+    /// The phase record shows the phases the run actually entered, so a run stopped during
+    /// `Register` records no `Boot`.
+    pub async fn shutdown(&mut self) -> &ShutdownReport {
+        if !self.shutdown_done {
+            self.shutdown_done = true;
+
+            self.cursor.skip_to(LifecyclePhase::Drain);
+            let drain = self.work.drain(self.drain_budget).await;
+
+            self.cursor.skip_to(LifecyclePhase::Stop);
+            let stop = roll_back(
+                &self.registry,
+                &mut self.initialised,
+                self.provider_deadline,
+            )
+            .await;
+
+            // Every provider is down, so the root scope is cancelled: anything still running under
+            // it is running against an application that no longer exists.
+            self.cancel.cancel();
+            self.shutdown = ShutdownReport { drain, stop };
+        }
+        &self.shutdown
+    }
+
     /// Whether cancellation has been signalled, as the error it becomes.
     fn cancellation_check(&self) -> Option<KernelError> {
         self.cancel.is_cancelled().then(|| KernelError::Cancelled {
@@ -342,9 +473,23 @@ impl Application {
 
     /// Rolls back everything initialised and packages the failure.
     async fn unwind(mut self, origin: KernelError) -> BootFailure {
-        let report: RollbackReport = roll_back(&self.registry, &mut self.initialised).await;
+        let report: RollbackReport = roll_back(
+            &self.registry,
+            &mut self.initialised,
+            self.provider_deadline,
+        )
+        .await;
         BootFailure::new(origin, report, self.cursor.log().entries())
     }
+}
+
+/// A deadline in whole milliseconds, saturating rather than wrapping.
+///
+/// `as` would wrap a very long duration down to a small number and report a deadline that was
+/// never set. Saturating keeps the reported figure wrong in the direction that cannot mislead
+/// someone into thinking the wait was shorter than it was.
+pub(crate) fn deadline_millis(deadline: Duration) -> u64 {
+    u64::try_from(deadline.as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

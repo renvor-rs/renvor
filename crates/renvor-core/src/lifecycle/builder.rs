@@ -28,7 +28,10 @@ use std::time::Duration;
 
 use crate::config_port::ConfigSource;
 use crate::error::{ErrorCategory, KernelError};
-use crate::lifecycle::application::{Application, DEFAULT_DRAIN_BUDGET, PhaseCursor, PhaseLog};
+use crate::lifecycle::application::{
+    Application, DEFAULT_PROVIDER_DEADLINE, PhaseCursor, PhaseLog,
+};
+use crate::lifecycle::drain::DEFAULT_DRAIN_BUDGET;
 use crate::observe::{EntropySource, EntropyUnavailable, OsEntropy, RunIdentifier};
 use crate::provider::{Provider, ProviderRegistry};
 
@@ -113,6 +116,7 @@ pub struct ApplicationBuilder {
     config_sources: Vec<Box<dyn ConfigSource>>,
     registry: ProviderRegistry,
     drain_budget: Option<Duration>,
+    provider_deadline: Option<Duration>,
     entropy: Box<dyn EntropySource>,
     phases: PhaseLog,
 }
@@ -131,6 +135,7 @@ impl ApplicationBuilder {
             config_sources: Vec::new(),
             registry: ProviderRegistry::new(),
             drain_budget: None,
+            provider_deadline: None,
             entropy: Box::new(OsEntropy::new()),
             phases: PhaseLog::new(),
         }
@@ -157,6 +162,16 @@ impl ApplicationBuilder {
     #[must_use]
     pub const fn with_drain_budget(mut self, budget: Duration) -> Self {
         self.drain_budget = Some(budget);
+        self
+    }
+
+    /// Overrides how long each provider is given to initialise or to stop.
+    ///
+    /// FR-025 and C-L7 require the bound to exist; its default value is Renvor's choice rather
+    /// than the specification's, which is why it is overridable and why the constant says so.
+    #[must_use]
+    pub const fn with_provider_deadline(mut self, deadline: Duration) -> Self {
+        self.provider_deadline = Some(deadline);
         self
     }
 
@@ -216,13 +231,14 @@ impl ApplicationBuilder {
             report,
             run_id,
             self.drain_budget.unwrap_or(DEFAULT_DRAIN_BUDGET),
+            self.provider_deadline.unwrap_or(DEFAULT_PROVIDER_DEADLINE),
         ))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ApplicationBuilder, BuildError, DEFAULT_DRAIN_BUDGET};
+    use super::{ApplicationBuilder, BuildError, DEFAULT_DRAIN_BUDGET, DEFAULT_PROVIDER_DEADLINE};
     use crate::config_port::{ConfigSource, SourceLayer};
     use crate::error::{ErrorCategory, KernelError};
     use crate::lifecycle::LifecyclePhase;
@@ -322,6 +338,7 @@ mod tests {
             ]
         );
         assert_eq!(application.drain_budget(), DEFAULT_DRAIN_BUDGET);
+        assert_eq!(application.provider_deadline(), DEFAULT_PROVIDER_DEADLINE);
     }
 
     #[test]

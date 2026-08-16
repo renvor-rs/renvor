@@ -22,12 +22,15 @@
 
 pub mod application;
 pub mod builder;
+pub mod drain;
 pub mod phase;
 pub mod rollback;
 
 pub use application::{
-    Application, DEFAULT_DRAIN_BUDGET, InitialisedProvider, PhaseCursor, PhaseLog,
+    Application, DEFAULT_PROVIDER_DEADLINE, InitialisedProvider, PhaseCursor, PhaseLog,
+    ShutdownReport,
 };
 pub use builder::{ApplicationBuilder, BuildError};
+pub use drain::{DEFAULT_DRAIN_BUDGET, DrainOutcome, WorkGate, WorkPermit};
 pub use phase::LifecyclePhase;
 pub use rollback::{BootFailure, RollbackReport};
