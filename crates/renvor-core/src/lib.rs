@@ -11,4 +11,9 @@
 //! compatibility procedure, and no semantic-versioning promise applies while the instability
 //! window is open. See the `renvor` facade documentation for the conditions that close it.
 
+pub mod error;
+pub mod lifecycle;
 pub mod provider;
+
+pub use error::{ErrorCategory, KernelError};
+pub use lifecycle::LifecyclePhase;
