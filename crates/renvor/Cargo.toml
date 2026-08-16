@@ -7,7 +7,7 @@
 
 [package]
 name = "renvor"
-description = "Facade crate for the Renvor framework; this release exposes version metadata only and provides no runtime capability."
+description = "Facade for the Renvor framework's transport-independent kernel: application lifecycle, provider resolution, layered configuration, and health. Pre-release, unpublished, and explicitly unstable."
 documentation = "https://docs.rs/renvor"
 readme = "README.md"
 keywords = ["renvor", "framework"]

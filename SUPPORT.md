@@ -5,11 +5,18 @@ document.
 
 ## Current status
 
-**Renvor is pre-release and ships no runtime capability.** **Nothing is published** —
-neither `renvor` nor `renvor-cli` exists on crates.io. The `renvor` crate in this
-repository exposes version constants only. Everything below is the *support contract* that will
-govern the framework as it is built — established before the code, deliberately, so the
-promise is not retrofitted around whatever happened to be convenient.
+**Renvor is pre-release and unpublished.** **Nothing is published** — neither `renvor` nor
+`renvor-cli` exists on crates.io, and there is no way to install Renvor.
+
+The repository contains a working **transport-independent kernel** as of Phase 002:
+application lifecycle, provider resolution, layered configuration, health, and a failure
+injection harness. It has **no transport** — no HTTP, no database, no CLI — so it can start
+and stop an application but cannot yet serve anything.
+
+**Every API is explicitly unstable (FR-036)** and carries no compatibility promise before
+`0.1.0`. Everything below is the *support contract* that will govern the framework as it is
+built — established before the code, deliberately, so the promise is not retrofitted around
+whatever happened to be convenient.
 
 ## Supported Rust versions
 

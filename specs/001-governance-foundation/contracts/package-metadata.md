@@ -17,7 +17,21 @@ Every package intended for publication declares all of the following. A missing 
 | `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly |
 | `include` or `exclude` | Explicit — the shipped file set is stated, never inferred |
 
-**Prohibited**: any git or path dependency in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
+**Prohibited**: a **git** dependency, or a **path-only** dependency, in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
+
+> **Corrected 2026-08-16 (T118).** This line previously read "any git or path dependency", which is
+> stricter than FR-040 and stricter than reality. FR-040's words are *path-**only*** dependency, and
+> the difference is the whole mechanism by which a multi-crate workspace publishes at all:
+>
+> | Form | Publishable? | Why |
+> |---|---|---|
+> | `{ git = "…" }` | **No** | crates.io rejects it; nothing pins what was built |
+> | `{ path = "../x" }` | **No** | Nothing tells the registry which version to resolve — this is the *path-only* case FR-040 names |
+> | `{ path = "../x", version = "0.0.0" }` | **Yes** | cargo rewrites it to the version requirement at publish time and **drops the path** |
+>
+> The facade has carried `{ path, version }` since Phase 002 and was compliant throughout; the
+> contract text was not. Read literally, the old wording made the workspace unpublishable by rule
+> while it was publishable in fact.
 
 ## Rehearsal procedure
 

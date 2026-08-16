@@ -87,11 +87,60 @@ jobs:
       # tree are how a later run packages something the previous run left behind, and how
       # a cleanliness assertion turns into noise that gets suppressed.
       #
+      # CORRECTED 2026-08-16 (T120). This step previously set only REHEARSAL_DIR, and the
+      # claim above was FALSE: `cargo package` and `cargo publish --dry-run` write their
+      # archives and verification builds to `target/`, which is inside the checkout. The
+      # artifacts were then COPIED out of the checkout at the end, which is a different
+      # thing from never being written into it.
+      #
+      # CARGO_TARGET_DIR is what actually makes the claim true.
+      #
       # Set here rather than in a workflow-level `env:` block: the `runner` context is not
       # available at workflow or job level, only at step level. $RUNNER_TEMP is the plain
       # environment variable the runner always exports, so it works in any `run` shell.
-      - name: Locate the artifact directory outside the checkout
-        run: echo "REHEARSAL_DIR=${RUNNER_TEMP}/rehearsal" >> "$GITHUB_ENV"
+      - name: Locate every generated directory outside the checkout
+        run: |
+          set -euo pipefail
+          {
+            echo "REHEARSAL_DIR=${RUNNER_TEMP}/rehearsal"
+            echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/target"
+          } >> "$GITHUB_ENV"
+
+      # The baseline for the cleanliness assertion at the end.
+      #
+      # A plain file listing, taken with `find` and NOT with git. `git status --porcelain`
+      # consults .gitignore, so it is structurally incapable of seeing a generated file in
+      # an ignored directory — which is the exact class of file this job produces. The old
+      # assertion used git alone and would have reported a clean checkout no matter how
+      # much build output was left in `target/`.
+      - name: Snapshot the checkout before anything is generated
+        run: |
+          set -euo pipefail
+          find . -path ./.git -prune -o -type f -print | sort > "${RUNNER_TEMP}/tree-before.txt"
+          wc -l < "${RUNNER_TEMP}/tree-before.txt"
+
+      # POSITIVE CONTROL for that assertion. A detector nobody has seen fire is a detector
+      # nobody has evidence about — and this one replaced a detector that could not fire at
+      # all. Plants a file in an IGNORED directory, confirms the comparison catches it, and
+      # removes it. If this step ever passes silently, the final assertion means nothing.
+      - name: Prove the cleanliness detector can detect an ignored generated file
+        run: |
+          set -euo pipefail
+          mkdir -p target
+          touch target/planted-by-the-positive-control
+          find . -path ./.git -prune -o -type f -print | sort > "${RUNNER_TEMP}/tree-probe.txt"
+          if diff -q "${RUNNER_TEMP}/tree-before.txt" "${RUNNER_TEMP}/tree-probe.txt" > /dev/null; then
+            echo "the cleanliness detector did NOT see a planted file in an ignored" >&2
+            echo "directory, so the assertion at the end of this job proves nothing" >&2
+            exit 1
+          fi
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "unexpected: git reported the planted file, so target/ is not ignored" >&2
+            exit 1
+          fi
+          echo "detector fires on an ignored generated file that git cannot see"
+          rm -rf target/planted-by-the-positive-control
+          rmdir target 2>/dev/null || true
 
       # `--locked` fails if Cargo.lock is stale. A release built from an unlocked
       # resolution is a release nobody can reproduce.
@@ -180,25 +229,42 @@ jobs:
           print("components", len(bom.get("components", [])))
           PY
 
+      # Collected from CARGO_TARGET_DIR, which is outside the checkout — so this is a copy
+      # between two temporary directories rather than an extraction from the source tree.
       - name: Collect artifacts and checksums
         run: |
           set -euo pipefail
-          cp target/package/*.crate "${REHEARSAL_DIR}/"
+          cp "${CARGO_TARGET_DIR}/package/"*.crate "${REHEARSAL_DIR}/"
           cd "$REHEARSAL_DIR"
           sha256sum ./*.crate ./*-package-list.txt ./*-sbom.json > SHA256SUMS
           cat SHA256SUMS
 
       # Nothing above may write into the checkout. If something did, the release would be
       # built from a tree that no longer matches the commit under review.
+      #
+      # TWO checks, because each is blind to what the other sees:
+      #
+      #   * the file-listing diff catches CREATED or DELETED files, including ones inside
+      #     ignored directories — proven capable of that by the positive control above;
+      #   * `git status --porcelain` catches MODIFIED content in tracked files, which a
+      #     listing that compares only paths cannot see.
+      #
+      # The old version of this step ran the second alone and described it as proof that no
+      # generated file reached the source tree. It was not: it could not have seen one.
       - name: Assert the checkout is unmodified
         run: |
           set -euo pipefail
+          find . -path ./.git -prune -o -type f -print | sort > "${RUNNER_TEMP}/tree-after.txt"
+          if ! diff -u "${RUNNER_TEMP}/tree-before.txt" "${RUNNER_TEMP}/tree-after.txt"; then
+            echo "the rehearsal created or removed files in the source tree (diff above)" >&2
+            exit 1
+          fi
           if [ -n "$(git status --porcelain)" ]; then
-            echo "the rehearsal wrote into the source tree:" >&2
+            echo "the rehearsal modified tracked files:" >&2
             git status --porcelain >&2
             exit 1
           fi
-          echo "checkout clean: no generated file reached the source tree"
+          echo "checkout unchanged: no generated file reached the source tree, ignored or not"
 
       # 90 days is the platform maximum for public repositories and matches
       # governance/evidence-retention-policy.md clause 1. These artifacts are evidence

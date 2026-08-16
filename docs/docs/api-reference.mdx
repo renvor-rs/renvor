@@ -23,7 +23,20 @@ build rather than shipping.
 
 ## What the current release exposes
 
-`renvor` **0.0.0** provides three constants and no capability:
+`renvor` **0.0.0** is the facade over the transport-independent kernel. It re-exports
+`renvor-core`, and `renvor-config` behind the default-on `config` feature.
+
+The kernel surface covers the application lifecycle (`ApplicationBuilder`, `Application`,
+`LifecyclePhase`), providers (`Provider`, `ProviderId`, `CapabilityId`, `InitContext`), errors
+(`KernelError`, `ErrorCategory`), health (`HealthState`, `Liveness`, `Readiness`,
+`ReadinessContributor`), cancellation, and typed state. **It exposes no transport**: nothing
+here opens a socket or receives a request.
+
+**Every one of these APIs is explicitly unstable (FR-036)** and will change once the first real
+transport adapter exercises the surface. The authoritative reference is the rustdoc, which is
+built with warnings denied; this page is an orientation, not a contract.
+
+The three identity constants remain:
 
 | Item | Type | Value |
 | --- | --- | --- |

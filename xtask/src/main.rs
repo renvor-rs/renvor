@@ -479,6 +479,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !lean_facade_compiles(root) {
         return false;
     }
+    if !publishable_dependencies_are_resolvable(root) {
+        return false;
+    }
     if !instability_wording_agrees(root) {
         return false;
     }
@@ -726,6 +729,155 @@ fn facade_feature_isolation_holds(root: &std::path::Path) -> bool {
     true
 }
 
+/// T118: every dependency of a publishable package is resolvable from a registry.
+///
+/// FR-040 prohibits a **path-only** dependency in a publishable package, and prohibits git
+/// dependencies outright. `{ path, version }` is permitted, and is how a multi-crate workspace
+/// publishes at all: cargo rewrites it to the version requirement and drops the path.
+///
+/// Three documents stated this rule and **two stated it wrongly**, as "any path dependency" —
+/// which, read literally, made this workspace unpublishable by rule while it was publishable in
+/// fact. Nothing noticed, because nothing executed it. This does.
+///
+/// # Why this reads the manifests as text rather than asking `cargo metadata`
+///
+/// `cargo metadata` emits JSON, and parsing JSON needs a dependency. `xtask` is **deliberately
+/// dependency-free**, and its manifest says why: the verification runner is the thing that checks
+/// the dependency policy, so giving it dependencies would put the checker's own supply chain
+/// outside the check it performs. That principle outranks the convenience of a parser here.
+///
+/// The scan is therefore line-oriented, and **fails closed** on any manifest shape it does not
+/// recognise — a `[dependencies.name]` sub-table is refused rather than skipped, because skipping
+/// what it cannot read is exactly how a text scan reports a clean result it never earned.
+fn publishable_dependencies_are_resolvable(root: &std::path::Path) -> bool {
+    let Some(manifests) = workspace_manifests(root) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the workspace manifests could not be read",
+        );
+        return false;
+    };
+
+    match scan_manifests(&manifests) {
+        Ok(()) => true,
+        Err(reason) => {
+            step_fail(7, "architecture invariants", &reason);
+            false
+        }
+    }
+}
+
+/// The pure half of [`publishable_dependencies_are_resolvable`].
+///
+/// Separated so its refusals can be unit-tested against synthetic manifests. A check whose failure
+/// path has never run is a check nobody has evidence about.
+fn scan_manifests(manifests: &[(String, String)]) -> Result<(), String> {
+    let mut publishable = 0_usize;
+    let mut examined = 0_usize;
+    let mut path_and_version = 0_usize;
+
+    for (name, text) in manifests {
+        // `publish = false` is what exempts a package from this rule.
+        if text.contains("publish = false") {
+            continue;
+        }
+        publishable += 1;
+
+        let mut section = String::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('[') {
+                section = trimmed.to_owned();
+                // Fail closed on the sub-table form this scan cannot read line-by-line.
+                if section.starts_with("[dependencies.")
+                    || section.starts_with("[build-dependencies.")
+                {
+                    return Err(format!(
+                        "`{name}` declares `{section}`, a dependency sub-table this check \
+                             cannot read line-by-line. Rewrite it inline, or teach this check the \
+                             shape — do not leave it unexamined"
+                    ));
+                }
+                continue;
+            }
+
+            // Dev-dependencies are stripped from the published manifest, so a path-only one there
+            // is harmless. Normal and build dependencies are not.
+            let relevant = matches!(section.as_str(), "[dependencies]" | "[build-dependencies]")
+                || (section.starts_with("[target.")
+                    && (section.ends_with(".dependencies]")
+                        || section.ends_with(".build-dependencies]")));
+            if !relevant {
+                continue;
+            }
+            examined += 1;
+
+            if trimmed.contains("git = ") {
+                return Err(format!(
+                    "publishable package `{name}` has a git dependency: `{trimmed}`. crates.io \
+                         rejects it, and nothing pins what was built (FR-040)"
+                ));
+            }
+
+            if trimmed.contains("path = ") {
+                if !trimmed.contains("version = ") {
+                    return Err(format!(
+                        "publishable package `{name}` has a PATH-ONLY dependency: `{trimmed}`. \
+                             Add `version` so cargo can rewrite it at publish time (FR-040)"
+                    ));
+                }
+                path_and_version += 1;
+            }
+        }
+    }
+
+    // POSITIVE CONTROL: the scan read real manifests, found real dependency lines, and found at
+    // least one in the `{ path, version }` form the corrected rule exists to permit. Without this,
+    // a scan that read nothing would report perfect compliance — and the corrected wording would
+    // itself go untested.
+    if publishable < 2 || examined == 0 || path_and_version == 0 {
+        return Err(format!(
+            "the manifest scan saw {publishable} publishable package(s), {examined} dependency \
+                 line(s), and {path_and_version} in the `{{ path, version }}` form; it is not \
+                 reading the workspace"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Reads every workspace member manifest as `(package name, text)`.
+///
+/// Discovered from the directory layout rather than from a list, so a new crate is examined
+/// without anybody remembering to add it here.
+fn workspace_manifests(root: &std::path::Path) -> Option<Vec<(String, String)>> {
+    let mut manifests = Vec::new();
+    for directory in [root.join("crates"), root.to_path_buf()] {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Cargo.toml");
+            if !manifest.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&manifest).ok()?;
+            // The virtual workspace root declares no package and has nothing to check.
+            if !text.contains("[package]") {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            manifests.push((name, text));
+        }
+    }
+    manifests.sort();
+    (!manifests.is_empty()).then_some(manifests)
+}
+
 /// T104: the instability-closure sentence is byte-identical in all three normative locations, and
 /// **0** phase numbers appear inside FR-036's normative closure clause.
 fn instability_wording_agrees(root: &std::path::Path) -> bool {
@@ -801,3 +953,121 @@ const SC022_SENTENCE: &str =
 
 /// How many normative locations must carry it: the clarification record, FR-036, and Dependencies.
 const SC022_REQUIRED_OCCURRENCES: usize = 3;
+
+#[cfg(test)]
+mod tests {
+    use super::scan_manifests;
+
+    /// A publishable manifest with the `{ path, version }` form the rule permits.
+    fn compliant() -> (String, String) {
+        (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             renvor-core = { path = \"../renvor-core\", version = \"0.0.0\" }\n\
+             tokio = { version = \"1.53.1\" }\n\
+             \n[dev-dependencies]\nscratch = { path = \"../scratch\" }\n"
+                .to_owned(),
+        )
+    }
+
+    /// A second publishable manifest, so the `publishable < 2` control is satisfied.
+    fn second() -> (String, String) {
+        (
+            "renvor-core".to_owned(),
+            "[package]\nname = \"renvor-core\"\n\n[dependencies]\npetgraph = { version = \"0.8.3\" }\n"
+                .to_owned(),
+        )
+    }
+
+    #[test]
+    fn the_permitted_path_and_version_form_passes() {
+        // POSITIVE CONTROL for every refusal below: the scan accepts what the corrected rule
+        // permits, so its refusals are about the offending shape rather than about paths on sight.
+        // The dev-dependency here is path-ONLY and must be ignored: dev-dependencies are stripped
+        // from the published manifest.
+        scan_manifests(&[compliant(), second()]).expect("`{ path, version }` is permitted");
+    }
+
+    #[test]
+    fn a_path_only_dependency_is_refused() {
+        let broken = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             renvor-core = { path = \"../renvor-core\" }\n"
+                .to_owned(),
+        );
+        let reason = scan_manifests(&[broken, second()]).expect_err("path-only is prohibited");
+        assert!(reason.contains("PATH-ONLY"), "{reason}");
+        assert!(reason.contains("renvor-core"), "names it: {reason}");
+    }
+
+    #[test]
+    fn a_git_dependency_is_refused() {
+        let broken = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             thing = { git = \"https://example.invalid/thing\" }\n"
+                .to_owned(),
+        );
+        let reason = scan_manifests(&[broken, second()]).expect_err("git is prohibited");
+        assert!(reason.contains("git dependency"), "{reason}");
+    }
+
+    #[test]
+    fn a_dependency_sub_table_is_refused_rather_than_skipped() {
+        // The failure mode a line-oriented scan is prone to: a shape it cannot read looks exactly
+        // like a shape with nothing wrong. This must fail closed.
+        let unreadable = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies.renvor-core]\npath = \"../renvor-core\"\n"
+                .to_owned(),
+        );
+        let reason =
+            scan_manifests(&[unreadable, second()]).expect_err("an unreadable shape fails");
+        assert!(reason.contains("sub-table"), "{reason}");
+    }
+
+    #[test]
+    fn a_non_publishable_package_is_exempt() {
+        let internal = (
+            "xtask".to_owned(),
+            "[package]\nname = \"xtask\"\npublish = false\n\n[dependencies]\n\
+             thing = { git = \"https://example.invalid/thing\" }\n"
+                .to_owned(),
+        );
+        scan_manifests(&[compliant(), second(), internal])
+            .expect("`publish = false` is what exempts a package from this rule");
+    }
+
+    #[test]
+    fn the_real_workspace_satisfies_the_rule() {
+        // The check run against the actual manifests, not only synthetic ones. `cargo xtask
+        // verify` step 7 runs the same pair; this makes `cargo test` run it too, so a manifest
+        // regression is caught by the fast suite rather than only by the full sequence.
+        let root = super::workspace_root();
+        let manifests =
+            super::workspace_manifests(&root).expect("the workspace manifests are readable");
+        assert!(
+            manifests.len() >= 4,
+            "discovery found only {} manifest(s): {:?}",
+            manifests.len(),
+            manifests.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        scan_manifests(&manifests).expect("the real workspace satisfies FR-040");
+    }
+
+    #[test]
+    fn a_scan_that_reads_nothing_is_a_failure_rather_than_a_pass() {
+        // The control that matters most: an empty or unreadable workspace must not report
+        // compliance. Every other assertion in this module rests on the scan having read something.
+        let reason = scan_manifests(&[]).expect_err("an empty scan proves nothing");
+        assert!(reason.contains("not reading the workspace"), "{reason}");
+
+        let no_dependencies = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n".to_owned(),
+        );
+        scan_manifests(&[no_dependencies, second()])
+            .expect_err("a workspace with no path dependency at all fails the control");
+    }
+}

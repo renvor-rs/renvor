@@ -121,8 +121,14 @@ Then confirm, against
 - every required manifest field is present and resolving;
 - `rust-version` matches [`SUPPORT.md`](SUPPORT.md) exactly;
 - the licence is `MIT OR Apache-2.0` and nothing else;
-- **no publishable package carries a git or path dependency.** `xtask` is exempt only
-  because it declares `publish = false`; if that line is ever removed, this rule binds it.
+- **no publishable package carries a git dependency, or a path-only dependency.** An
+  intra-workspace dependency **must** carry both keys — `{ path = "../x", version = "0.0.0" }` —
+  because cargo rewrites it to the version requirement at publish time and drops the path. A
+  `path` with no `version` tells the registry nothing about what to resolve, which is the
+  *path-only* case FR-040 prohibits. `xtask` is exempt only because it declares
+  `publish = false`; if that line is ever removed, this rule binds it.
+
+  Checked mechanically by `cargo xtask verify` step 7, not only by reading this list.
 
 The `.crate` archive has a hard **10 MB** registry limit. A release approaching it is a
 signal that something is being shipped that should not be.
@@ -140,13 +146,24 @@ Current order:
 
 | Position | Package | Depends on | Notes |
 |---|---|---|---|
-| 1 | `renvor` | *(nothing)* | Facade. Declares no dependencies at all |
+| 1 | `renvor-core` | *(nothing in the workspace)* | The kernel. Nothing else can publish before it |
+| 2 | `renvor-config` | `renvor-core` | The configuration adapter |
+| 2 | `renvor-testkit` | `renvor-core` | The test harness. Independent of `renvor-config`, so position 2 either way |
+| 3 | `renvor` | `renvor-core`, `renvor-config` | Facade. `renvor-config` is optional but default-on, so it must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
 
-The workspace currently contains exactly one publishable package with zero dependencies,
-so the order is trivial today. It is written down anyway, because the phase that adds
-`renvor-core`, `renvor-cli`, and the rest is the phase where an undocumented order
-becomes a guessed order.
+Positions 2's two packages have no dependency on each other and may publish in either
+order, or concurrently. Position 3 waits for **both** of position 2's, not only for
+`renvor-core`: an optional dependency still has to be resolvable at publish time.
+
+> **Corrected 2026-08-16 (T119).** This table previously listed `renvor` alone, at position 1,
+> "declares no dependencies at all", with a note that the workspace "contains exactly one
+> publishable package with zero dependencies, so the order is trivial today". That was true in
+> Phase 001 and became false in Phase 002, which gave the facade its first dependencies and added
+> three publishable crates. Following the stale table would have published the facade first, and
+> it would have failed against the registry with a message about a missing `renvor-core` that
+> reads like a network problem rather than an ordering mistake — the exact failure the paragraph
+> above warns about.
 
 **Between each package**: wait for the index, then verify.
 

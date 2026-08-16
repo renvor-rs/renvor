@@ -784,10 +784,39 @@ mod tests {
             Duration::from_secs(10),
             "shorter than the provider deadline: reading a file is not opening a pool"
         );
-        deterministic()
-            .with_build_deadline(Duration::from_millis(1))
+
+        // The override is proven by its EFFECT, not by a build that merely survived it.
+        //
+        // The earlier version set a 1ms deadline and asserted the build succeeded. That was a
+        // latent flake and it fired: this deadline now bounds five callbacks — entropy, the source
+        // name, load, validate, and the Register declarations — each of which starts a thread, and
+        // a loaded machine does not reliably start five threads inside a millisecond. Asserting
+        // "it did not time out" against a deadline chosen to be almost unmeetable was asserting
+        // the scheduler's mood.
+        //
+        // The same source, two deadlines, opposite outcomes. Neither assertion can pass by luck.
+        let short = ApplicationBuilder::new()
+            .with_entropy(Box::new(FixedEntropy::new(vec![5; 32])))
+            .with_build_deadline(Duration::from_millis(20))
+            .with_config_source(Arc::new(HangingSource))
             .build()
-            .expect("an override is accepted");
+            .expect_err("a short deadline cuts off a source that never returns");
+        assert_eq!(
+            short.category(),
+            Some(ErrorCategory::DeadlineExceeded),
+            "{short}"
+        );
+        assert!(
+            short.to_string().contains("20ms"),
+            "the override's value is the one reported: {short}"
+        );
+
+        // POSITIVE CONTROL: with a generous deadline the same builder assembles, so the refusal
+        // above is about the deadline rather than about the builder always failing.
+        deterministic()
+            .with_build_deadline(Duration::from_secs(30))
+            .build()
+            .expect("a generous override is accepted");
     }
 
     #[test]

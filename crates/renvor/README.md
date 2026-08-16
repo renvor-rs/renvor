@@ -5,14 +5,30 @@ Facade crate for the [Renvor](https://github.com/renvor-rs/renvor) framework.
 > `renvor.dev` is reserved for the project but **serves no content yet**, so this README
 > links to the repository instead. It will point at the site once that site is deployed.
 
-## This release provides no runtime capability
+## What this crate is, and what it is not
 
-Phase 001 of the Renvor programme establishes governance, naming, toolchain, and
-repository security **before** any runtime code exists. This crate is deliberately empty
-of capability: it exists so the workspace, package metadata, licence policy, and publish
-rehearsal are exercised against a real crate rather than a hypothetical one.
+This is the facade over Renvor's **transport-independent kernel**. It re-exports
+`renvor-core`, and — behind the default-on `config` feature — `renvor-config`.
 
-It exposes three constants — `VERSION`, `MSRV`, and `EXECUTABLE` — and nothing else.
+It gives you:
+
+- a seven-phase application lifecycle: `Load`, `Validate`, `Register`, `Boot`, `Ready`,
+  `Drain`, `Stop`, with rollback in reverse **actual** initialisation order;
+- providers with declared capabilities, resolved in a single pass under a counted work
+  budget, refusing cycles and ambiguity by naming every party involved;
+- layered configuration — defaults, TOML files, environment — with per-key attribution and
+  a `Secret<T>` that is redacted in every output form;
+- an enforced deadline on **every** call the kernel makes into your code;
+- liveness and readiness as two independent answers, because a draining application is
+  alive and not ready;
+- a failure-injection harness covering all 21 phase-and-behaviour combinations.
+
+It does **not** give you a transport. There is no HTTP server, no database adapter, and no
+way to receive a request — that is Phase 004's work. You can start and stop an application;
+you cannot yet serve anything with one.
+
+**Nothing is published, and every API is explicitly unstable.** This crate does not exist on
+crates.io. Its surface will change once the first real transport adapter exercises it.
 
 ## The command is `renover`, not `renvor`
 
