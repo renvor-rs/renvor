@@ -1,6 +1,6 @@
 ---
 description: "Phase 002 contract — provider registration, single-pass dependency resolution, graph ceilings, and the deterministic work budget"
-version: "1.1.0"
+version: "1.2.0"
 status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise"
 ---
 
@@ -35,14 +35,36 @@ normative — two independent implementations counting by them **MUST** arrive a
 
 | Unit | Incremented **exactly once** per | Not counted |
 |---|---|---|
-| **provider examination** | each yield of a node identifier from the adapter's node-identifier iterator, **and** each yield of a node from a neighbour iterator | reading a provider's own fields; formatting it into a diagnostic |
+| **provider examination** | each yield of a node identifier from the adapter's node-identifier iterator, **and** each **call to** the adapter's neighbour function | reading a provider's own fields; formatting it into a diagnostic; yielding a node **from** a neighbour iterator |
 | **edge examination** | each **advance** of a neighbour iterator that yields an edge's target | constructing the adjacency list before traversal; iterating edges to build a cycle diagnostic **after** the verdict |
 | **total work unit** | the arithmetic sum of the two counters above | — nothing separate is counted here |
 
+> **Corrected 2026-08-16 (T021–T025), and the correction is the point of writing the units down.**
+> The provider-examination row previously read *"each yield of a node identifier … **and** each
+> yield of a node from a neighbour iterator"*. Counting it that way gives `providers + edges`
+> provider examinations — **9216** at the ceilings — against an allowance of **2048**. The design
+> would have failed its own budget by a factor of four and a half, and no implementation could
+> have satisfied both this row and the **2048** recorded three sections below in C-G4.
+>
+> It was also **unobservable**. C-G6 requires every counted event to pass through Renvor code, and
+> the second provider source in C-G4 is petgraph's internal `visit()`, which Renvor cannot see.
+> What Renvor *can* see is the `neighbors(v)` **call** `visit()` makes — and reading petgraph
+> 0.8.3's source shows it makes exactly one such call per provider, because `visit` is guarded so
+> each node is visited at most once and its neighbour loop never exits early. So the observable
+> `1 × providers` **is** the unobservable one, counted at the boundary Renvor owns.
+>
+> The correction is to the **definition**, not to the budget: the allowances (2048 / 16384 /
+> 18432) and the observed values (2048 / 8192 / 10240) are unchanged, and the implementation now
+> reproduces them exactly. Evidence: `crates/renvor-core/tests/resolver_proof.rs`;
+> `specs/002-core-kernel/research.md` §D8.
+
 Two consequences follow, and both are intended:
 
-- Counting happens at **iterator yield**, not at algorithm entry, so the counters are a property of
-  what the traversal actually consumed rather than of what it was asked to consider.
+- Counting happens where the traversal **consumes** — at iterator yield, and at the request for a
+  neighbour list — not at algorithm entry. The counters are therefore a property of what the
+  traversal actually did rather than of what it was asked to consider. Iterator **exhaustion** is
+  not a consumption: the final `next` that returns nothing is not counted, or every traversal would
+  carry one phantom unit per iterator.
 - **Building** the graph and **rendering** a diagnostic are outside the budget. The budget measures
   *resolution*, and folding construction into it would make the number depend on how the adjacency
   list was assembled rather than on how the graph was traversed.
@@ -82,16 +104,26 @@ ordering.
 
 **Observed cost, counted from the algorithm's source rather than assumed:**
 
-| Operation | Count |
-|---|---|
-| outer scan over node identifiers | **1** per provider |
-| `visit()`, guarded so each node is visited at most once | **1** per provider |
-| neighbour iteration — the **only** neighbours call in the implementation | **1** per edge |
+| Operation | Where Renvor observes it | Counts as | Count |
+|---|---|---|---|
+| outer scan over node identifiers | a yield of the node-identifier iterator | provider examination | **1** per provider |
+| `visit()`, guarded so each node is visited at most once | the `neighbors(v)` **call** `visit()` makes — exactly one per visited node, and every node is visited | provider examination | **1** per provider |
+| neighbour iteration — the **only** neighbours call in the implementation | a yield of the neighbour iterator | edge examination | **1** per edge |
+
+The middle row's second column is what makes this table implementable. `visit()` is petgraph's,
+not Renvor's, and cannot be counted directly without reading a dependency's internals — which
+C-G6 forbids. Its `neighbors(v)` call is a one-for-one proxy that crosses the Renvor boundary, and
+the equivalence is a property of the published source, not an approximation.
 
 **Totals: 2 provider examinations per provider, 1 edge examination per edge.** At the ceilings the
 observed counters are **2048** provider examinations, **8192** edge examinations, and **10240**
 total work units, against allowances of **2048**, **16384**, and **18432** — inside budget on all
 three axes, with the edge axis at **half** its allowance.
+
+**These are now measured, not projected.**
+`crates/renvor-core/tests/resolver_proof.rs` builds a graph at both ceilings simultaneously and
+asserts each of the three figures exactly, and asserts the same `2 × providers` / `1 × edges`
+relationship at four graph sizes spanning 4 to 1024 providers.
 
 ## C-G5 — Edge direction is normative
 
@@ -165,6 +197,24 @@ against.
 > If that test fails, the fallback is a custom **iterative** single-pass SCC resolver, which is
 > then custom infrastructure under FR-035 and requires **ADR-0007** coverage and the D11 governance
 > gate before it merges. The trigger is written here in advance.
+
+**Outcome, 2026-08-16 (T024): the test passes and the fallback is NOT triggered.** The recursive
+implementation resolves the 1024-node chain on the pinned 2 MiB worker stack, and the measured
+margin is recorded rather than left as "it did not crash":
+
+| Build profile | Smallest worker stack that resolves the chain | Largest that fails | Headroom at 2 MiB |
+|---|---|---|---|
+| debug — how CI runs `cargo test` | **512 KiB** | 448 KiB | **≈ 4×** |
+| release | **96 KiB** | 64 KiB | **≈ 21×** |
+
+Measured by `crates/renvor-core/examples/stack_depth_probe.rs`, which varies the **stack** and
+never the graph — a chain deeper than the ceiling is not a graph Renvor accepts, so the ceiling
+stays enforced while the margin is measured. A stack overflow aborts the process and cannot be
+caught, so each size is one process invocation.
+
+The worst case is the one CI exercises, and it has roughly four times the stack it needs. No
+custom infrastructure is required for the resolver, so **nothing from this section enters ADR-0007's
+scope**.
 
 ## C-G11 — Missing dependencies
 

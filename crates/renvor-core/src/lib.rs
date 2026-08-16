@@ -10,3 +10,5 @@
 //! **This surface is explicitly unstable.** Breaking changes are permitted without a
 //! compatibility procedure, and no semantic-versioning promise applies while the instability
 //! window is open. See the `renvor` facade documentation for the conditions that close it.
+
+pub mod provider;

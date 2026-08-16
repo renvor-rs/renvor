@@ -372,6 +372,68 @@ was infeasible against its own numbers. The budget is **not** being raised; the 
     shown to satisfy every requirement. Recorded as unexamined rather than as rejected.
   - **`topological-sort`** — no cycle-member reporting, no counters.
 
+#### D8 outcome (T021–T025) — **the design holds; no fallback is triggered**
+
+Implemented in `crates/renvor-core/src/provider/graph.rs`, proven in
+`crates/renvor-core/tests/resolver_proof.rs` (13 tests, all passing). Every figure below is a
+counter read from a real traversal, not a projection.
+
+| Obligation | Required | Observed | Verdict |
+|---|---|---|---|
+| 1. One pass yields ordering **and** cycle membership | both from a single `tarjan_scc` call | both, with counters at exactly `2 × providers` / `1 × edges` — a second traversal is arithmetically excluded | **met** |
+| 2. Cycle report names **every** member | complete member list | 3-member cycle reported with all 3, and neither bystander | **met** |
+| 3. Deterministic initialisation order | registration order in, same order out | dependencies precede dependents at every size tested | **met** |
+| 4. Counters at both ceilings | 2048 / 8192 / 10240 | **2048 / 8192 / 10240** | **met** |
+| 5. Allowances | 2048 / 16384 / 18432 | **2048 / 16384 / 18432**, edge axis at exactly half | **met** |
+| 6. Counters scale within `2 × providers`, `2 × edges` | ≥ 3 graph sizes | 4 sizes — 4, 64, 256, 1024 providers — exactly `2N` and `1E` at each | **met** |
+| 7. A graph at **both** ceilings simultaneously resolves | 1024 providers **and** 8192 edges, acyclic | resolves, correctly ordered | **met** |
+| 8. 1024-node chain survives a pinned 2 MiB Tokio worker stack | no stack exhaustion | resolves; margin measured at ≈ 4× (debug) and ≈ 21× (release) | **met** |
+
+**8 of 8 met. The iterative-SCC fallback is not triggered**, so no custom infrastructure arises
+here and **nothing from D8 is added to ADR-0007's scope** (contrast D6, where the configuration
+gate failed and the `serde` + `toml` fallback *was* triggered).
+
+**Two defects were found by implementing this, not by reviewing it.**
+
+1. **The contract's counting unit contradicted its own budget.** C-G1 defined a provider
+   examination as a node-identifier yield **and** a neighbour-iterator yield. That is
+   `providers + edges` — **9216** at the ceilings, against an allowance of **2048**. The design
+   would have failed its own budget by 4.5×, and no implementation could satisfy both C-G1 and the
+   **2048** recorded in C-G4. It was also unobservable: C-G4's second provider source is petgraph's
+   internal `visit()`, which C-G6 forbids Renvor from reading. Reading petgraph 0.8.3's source
+   resolved both problems at once — `visit()` calls `neighbors(v)` exactly once per node, because
+   it is guarded to visit each node at most once and its neighbour loop never breaks early. So the
+   **`neighbors` call** is a one-for-one, boundary-crossing proxy for the unobservable `visit()`.
+   C-G1 and C-G4 were corrected to that definition. **The budget numbers did not change**, and the
+   implementation reproduces them exactly.
+
+2. **The recursion test asserted on a petgraph-internal thread name.** The first draft required the
+   worker thread's name to start with `tokio-runtime-worker`; Tokio 1.53 names it `tokio-rt-worker`,
+   and the control failed — correctly, since it was the control doing its job. Depending on an
+   undocumented internal string would have made the test break for reasons unrelated to the
+   resolver, which is the same failure mode the *pinned* stack size exists to prevent. The test now
+   pins its own worker name **and** compares thread ids against the test thread, so the "not the
+   main thread" claim holds regardless of what Tokio calls its threads.
+
+**Stack headroom, measured rather than asserted.** "It did not crash" is not a margin, so
+`crates/renvor-core/examples/stack_depth_probe.rs` shrinks the worker stack until the 1024-node
+chain stops resolving. It varies the **stack**, never the graph — a deeper chain is not a graph
+Renvor accepts — and runs one size per process, because a stack overflow aborts and cannot be
+caught.
+
+| Build profile | Smallest stack that resolves | Largest that fails | Headroom at the pinned 2 MiB |
+|---|---|---|---|
+| debug — how CI runs `cargo test` | 512 KiB | 448 KiB | **≈ 4×** |
+| release | 96 KiB | 64 KiB | **≈ 21×** |
+
+The worst case is the one CI actually exercises, and it has roughly four times the stack it needs.
+
+**What would falsify this.** The counter assertions are exact equalities, not bounds. A petgraph
+release that changed its traversal pattern — a second neighbour pass, an unguarded revisit — would
+move the observed numbers and fail the suite loudly rather than quietly consuming more budget. That
+is the intended behaviour of an instrumented adapter, and it is the reason the counters are
+observed at a Renvor-owned boundary instead of estimated.
+
 ### D9 — Typed state map: `std::any::TypeId` in-house, **ADR required**
 
 - **Decision**: `HashMap<TypeId, StateEntry>` where `StateEntry` carries the boxed value **and**
