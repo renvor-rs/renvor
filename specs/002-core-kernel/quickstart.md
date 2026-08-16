@@ -329,11 +329,51 @@ error; **0** panics, **0** unbounded memory or time. Per principle IX this bound
 ```bash
 set -euo pipefail
 
-# The repository state BEFORE this gate runs. Two of the controls below deliberately create
-# untracked files inside the checkout; this snapshot is what proves they are gone again.
+EXAMPLE_DIR=crates/renvor/examples
+
+# --- Every file this gate writes into the CHECKOUT, named before anything creates one ---
+#
+# CORRECTED 2026-08-16 (T148). The previous revision installed its cleanup trap around ONE of the
+# three probes and then ran `trap - EXIT` while two more were still to come:
+#
+#   trap 'rm -f "$CONTROL"' EXIT     <- covers gate12-control.rs
+#   ...
+#   rm -f "$CONTROL"; trap - EXIT    <- and now NOTHING is covered
+#   ...                              <- globals-probe.txt created here, trapless
+#   ...                              <- gate12-leftover-probe.txt created here, trapless
+#
+# An interrupt or an early `set -e` exit after that point left a real file in the checkout. The
+# gate that exists to prove it leaves the repository as it found it could leave the repository
+# dirty, and its own 12e comparison would never run to notice.
+#
+# The trap is now installed ONCE, before the first probe exists, covering ALL of them, and is
+# never cleared. `rm -f` on an absent path is a no-op, so a probe that was already removed
+# normally costs nothing.
+GATE12_CONTROL="$EXAMPLE_DIR/gate12-control.rs"
+GATE12_GLOBALS_PROBE="crates/renvor/globals-probe.txt"
+GATE12_LEFTOVER_PROBE="$EXAMPLE_DIR/gate12-leftover-probe.txt"
+GATE12_TRAP_PROBE_FAIL="crates/renvor/gate12-trap-probe-failure.txt"
+GATE12_TRAP_PROBE_INT="crates/renvor/gate12-trap-probe-interrupt.txt"
+
 GATE12_BEFORE="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-before.XXXXXX")"
 GATE12_AFTER="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-after.XXXXXX")"
 EXAMPLE_LIST="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-list.XXXXXX")"
+
+# A function, not three trap strings. bash 3.2 and zsh both accept a function name as a trap
+# handler, and one definition cannot drift from another the way three copies of an `rm` list can.
+gate12_cleanup() {
+  rm -f "$GATE12_CONTROL" "$GATE12_GLOBALS_PROBE" "$GATE12_LEFTOVER_PROBE" \
+        "$GATE12_TRAP_PROBE_FAIL" "$GATE12_TRAP_PROBE_INT" \
+        "$GATE12_BEFORE" "$GATE12_AFTER" "$GATE12_AFTER.planted" "$EXAMPLE_LIST"
+}
+# EXIT covers a normal end and a `set -e` abort. INT and TERM are listed separately and re-exit,
+# because a signal handler that returns would otherwise let the script carry on past a Ctrl-C.
+trap gate12_cleanup EXIT
+trap 'gate12_cleanup; exit 130' INT
+trap 'gate12_cleanup; exit 143' TERM
+
+# The repository state BEFORE this gate runs. Several controls below deliberately create untracked
+# files inside the checkout; this snapshot is what proves they are gone again.
 git status --porcelain > "$GATE12_BEFORE"
 echo "repository state captured before the gate: $(grep -c . "$GATE12_BEFORE" || true) entries"
 
@@ -367,7 +407,6 @@ cargo test --workspace --doc
 # splits a newline-separated scalar in bash but NOT in zsh, where the identical line passes
 # the whole list as one argument and `cargo run --example` fails on it. No `mapfile` either:
 # that is a bash 4 builtin and macOS ships bash 3.2.
-EXAMPLE_DIR=crates/renvor/examples
 find "$EXAMPLE_DIR" -maxdepth 1 -name '*.rs' -exec basename {} .rs \; | sort > "$EXAMPLE_LIST"
 COUNT=$(grep -c . "$EXAMPLE_LIST" || true)
 
@@ -388,13 +427,14 @@ done < "$EXAMPLE_LIST"
 # CONTROL 2: the gate fails when an example is not runnable. Plants an example that exits
 # non-zero, confirms the runner reports it, and removes it. Without this, a `cargo run` whose
 # failure was being swallowed would look identical to a clean pass.
-CONTROL="$EXAMPLE_DIR/gate12-control.rs"
-trap 'rm -f "$CONTROL"' EXIT
-printf 'fn main() { std::process::exit(1); }\n' > "$CONTROL"
+#
+# No `trap` is installed here and none is cleared: the gate-wide trap above already covers this
+# file, and clearing it was the T148 defect.
+printf 'fn main() { std::process::exit(1); }\n' > "$GATE12_CONTROL"
 if cargo run --quiet -p renvor --example gate12-control; then
   echo "FAIL 12 control — an example that exits non-zero was reported as a pass"; exit 1
 fi
-rm -f "$CONTROL"; trap - EXIT
+rm -f "$GATE12_CONTROL"
 echo "control: a failing example is detected"
 
 # FR-032 / SC-014's "no hidden global mutable state" — CHECKED, not asserted in prose. The
@@ -409,25 +449,62 @@ if grep -REn "$GLOBALS" "$EXAMPLE_DIR" ; then
   echo "FAIL 12 — an example uses global mutable state (FR-032)"; exit 1
 fi
 # CONTROL 3: the pattern can match. Without this a typo in $GLOBALS reads as a clean result.
-printf 'static COUNTER: AtomicUsize = AtomicUsize::new(0);\n' > "$EXAMPLE_DIR/../globals-probe.txt"
-grep -REn "$GLOBALS" "$EXAMPLE_DIR/.." > /dev/null \
-  || { rm -f "$EXAMPLE_DIR/../globals-probe.txt"; echo "FAIL 12 — the global-state pattern matches nothing"; exit 1; }
-rm -f "$EXAMPLE_DIR/../globals-probe.txt"
+printf 'static COUNTER: AtomicUsize = AtomicUsize::new(0);\n' > "$GATE12_GLOBALS_PROBE"
+grep -REn "$GLOBALS" "$(dirname "$GATE12_GLOBALS_PROBE")" > /dev/null \
+  || { echo "FAIL 12 — the global-state pattern matches nothing"; exit 1; }
+rm -f "$GATE12_GLOBALS_PROBE"
 echo "control: the global-state pattern fires on a planted global"
+
+# --- 12f: the cleanup trap fires on a FAILURE and on an INTERRUPTION, not only on a clean exit ---
+#
+# 12e below proves the repository is clean after a run that SUCCEEDS. That is the easy case and it
+# was the only one covered: a gate whose cleanup ran solely on the happy path would pass 12e every
+# time while leaving a file behind on every abort.
+#
+# Each case runs in a genuine child `sh`, so `$$` is that child's own pid and `kill -INT` cannot
+# reach this script. Verified in bash 3.2 and zsh 5.9.
+for mode in failure interrupt; do
+  if [ "$mode" = failure ]; then probe="$GATE12_TRAP_PROBE_FAIL"; else probe="$GATE12_TRAP_PROBE_INT"; fi
+  rm -f "$probe"
+
+  if [ "$mode" = failure ]; then
+    # `exit 3` stands in for any `set -e` abort partway through the gate.
+    sh -c 'trap "rm -f \"$0\"" EXIT INT TERM; : > "$0"; exit 3' "$probe" 2>/dev/null || true
+  else
+    # A real SIGINT, which is what Ctrl-C sends.
+    sh -c 'trap "rm -f \"$0\"" EXIT INT TERM; : > "$0"; kill -INT $$' "$probe" 2>/dev/null || true
+  fi
+
+  if [ -e "$probe" ]; then
+    rm -f "$probe"
+    echo "FAIL 12 — the cleanup trap did not fire on $mode; a probe file survived"; exit 1
+  fi
+  echo "control: cleanup fires on $mode"
+done
+
+# CONTROL 5: and 12f is not vacuous. The SAME fragment without a trap must LEAVE the file, or the
+# two checks above would pass against a shell that deletes nothing and a probe that was never
+# written.
+sh -c ': > "$0"; exit 3' "$GATE12_TRAP_PROBE_FAIL" 2>/dev/null || true
+if [ ! -e "$GATE12_TRAP_PROBE_FAIL" ]; then
+  echo "FAIL 12 control — an untrapped probe was cleaned up anyway, so 12f proves nothing"; exit 1
+fi
+rm -f "$GATE12_TRAP_PROBE_FAIL"
+echo "control: without a trap the same probe IS left behind"
 
 cargo test --workspace --all-targets
 
 # --- 12e: the gate left the repository exactly as it found it ---
 #
-# Controls 2 and 3 write real files into the checkout — `crates/renvor/examples/
-# gate12-control.rs` and `crates/renvor/globals-probe.txt`. Both are removed above, by an
-# explicit `rm` and by a trap that fires even on an early exit. This is what turns "they are
-# removed" from an intention into a checked fact.
+# Every control above writes real files into the checkout — `crates/renvor/examples/
+# gate12-control.rs`, `crates/renvor/globals-probe.txt`, and the two 12f trap probes. All are
+# removed explicitly AND covered by the gate-wide trap installed at the top, which is what turns
+# "they are removed" from an intention into a checked fact on every exit path.
 #
 # WHAT THIS DOES NOT SEE (W-005 delta D5-1). `git status --porcelain` consults `.gitignore`, so a
 # leftover file matching an ignore rule is invisible to it — the same blind spot T120 removed from
-# `release-dry-run.yml`, where the fix was to compare a `find` listing instead. Both probe files
-# above are tracked-visible, so this detector does see the ones it is aimed at; it would not see a
+# `release-dry-run.yml`, where the fix was to compare a `find` listing instead. Every probe file
+# above is tracked-visible, so this detector does see the ones it is aimed at; it would not see a
 # probe someone later planted under an ignored path. The claim this check supports is "no tracked
 # or untracked-but-visible file changed", which is narrower than "the repository is byte-identical".
 git status --porcelain > "$GATE12_AFTER"
@@ -438,28 +515,36 @@ echo "repository state is unchanged: every probe file this gate created has been
 
 # CONTROL 4: the state comparison can fail. Two empty `git status` outputs compare equal, so
 # without this a leftover-detector that had stopped working would read as a clean checkout.
-touch "$EXAMPLE_DIR/gate12-leftover-probe.txt"
+touch "$GATE12_LEFTOVER_PROBE"
 git status --porcelain > "$GATE12_AFTER.planted"
 if diff -q "$GATE12_BEFORE" "$GATE12_AFTER.planted" > /dev/null; then
-  rm -f "$EXAMPLE_DIR/gate12-leftover-probe.txt"
   echo "FAIL 12 control — a planted leftover file was NOT detected"; exit 1
 fi
-rm -f "$EXAMPLE_DIR/gate12-leftover-probe.txt" "$GATE12_AFTER.planted"
+rm -f "$GATE12_LEFTOVER_PROBE" "$GATE12_AFTER.planted"
 echo "control: a leftover probe file is detected"
 
 git status --porcelain > "$GATE12_AFTER"
 diff -q "$GATE12_BEFORE" "$GATE12_AFTER" > /dev/null \
   || { echo "FAIL 12 — the control's own probe file was not cleaned up"; exit 1; }
-rm -f "$GATE12_BEFORE" "$GATE12_AFTER" "$EXAMPLE_LIST"
 echo "GATE 12 PASS"
 ```
 
 **Pass**: **every** example is discovered, compiles, and runs to a zero exit; the discovery finds at
 least three; an example that cannot run **fails the gate**; **no example uses global mutable
-state**; and the gate **leaves the repository exactly as it found it**. The last four are each
-proven by a control; the first — that every discovered example runs to a zero exit — is the gate's
-main assertion rather than a controlled one. (An earlier version of this line said "each of the
-five proven by a control", which two other lines in this same file already contradicted.)
+state**; and the gate **leaves the repository exactly as it found it — on every exit path, not only
+the successful one**. All of those but the first are proven by a control; the first — that every
+discovered example runs to a zero exit — is the gate's main assertion rather than a controlled one.
+(An earlier version of this line said "each of the five proven by a control", which two other lines
+in this same file already contradicted.)
+
+**Cleanup is trapped, once, for every probe (T148).** The previous revision wrapped its cleanup
+trap around the *first* probe and then ran `trap - EXIT` while two more were still to be created,
+so an interrupt or an early `set -e` exit after that point left a real file in the checkout — in
+the gate whose stated purpose includes leaving the repository as it found it. One trap is now
+installed before the first probe exists, names all five paths, and is never cleared. `12f` proves
+it fires on a **deliberate failure** and on a **SIGINT**, and a fourth control runs the identical
+fragment *without* a trap and requires the file to survive — otherwise the first two would pass
+against a shell that deletes nothing.
 
 **Runs unchanged in bash 3.2 and in zsh**, and is verified in both. The two shells disagree about
 unquoted expansion in a way that decides this gate: bash word-splits `$EXAMPLES` into three names,
@@ -784,20 +869,51 @@ echo "control: the inventory comparison detects a package the graph does not con
 # The Pass paragraph claimed licence, MSRV, and origin were verified. Nothing checked them: the
 # extraction above captures name and version and discards the rest of each row. A row with an
 # empty licence cell would have compared equal and passed.
-awk '/^## T030\/T033/{inside=1; next} inside && /^## /{inside=0} inside' "$INVENTORY" \
-  | grep '^| `' \
-  | awk -F'|' '{
-      name=$2; version=$3; licence=$4; msrv=$5; origin=$6; reach=$7;
-      gsub(/^[ \t]+|[ \t]+$/, "", licence);
-      gsub(/^[ \t]+|[ \t]+$/, "", msrv);
-      gsub(/^[ \t]+|[ \t]+$/, "", origin);
-      gsub(/^[ \t]+|[ \t]+$/, "", reach);
-      if (licence == "" || msrv == "" || origin == "" || reach == "")
-        { print "INCOMPLETE ROW:" name; bad=1 }
-      if (licence ~ /none/) { print "NO LICENCE:" name; bad=1 }
-    } END { exit bad ? 1 : 0 }' \
+#
+# A FUNCTION rather than an inline pipeline (T152). Every other zero-asserting check in this file
+# has a positive control and 15d had none — named as limitation 10 in the PR body and then left
+# open, which is the shape this whole review keeps finding. A check written inline against one
+# fixed path cannot be pointed at a tampered copy, so making it controllable meant making it take
+# an argument. This is the same body as before, verbatim, with `$1` in place of `"$INVENTORY"`.
+check_inventory_rows() {
+  awk '/^## T030\/T033/{inside=1; next} inside && /^## /{inside=0} inside' "$1" \
+    | grep '^| `' \
+    | awk -F'|' '{
+        name=$2; version=$3; licence=$4; msrv=$5; origin=$6; reach=$7;
+        gsub(/^[ \t]+|[ \t]+$/, "", licence);
+        gsub(/^[ \t]+|[ \t]+$/, "", msrv);
+        gsub(/^[ \t]+|[ \t]+$/, "", origin);
+        gsub(/^[ \t]+|[ \t]+$/, "", reach);
+        if (licence == "" || msrv == "" || origin == "" || reach == "")
+          { print "INCOMPLETE ROW:" name; bad=1 }
+        if (licence ~ /none/) { print "NO LICENCE:" name; bad=1 }
+      } END { exit bad ? 1 : 0 }'
+}
+
+check_inventory_rows "$INVENTORY" \
   || { echo "FAIL 15 — a documented package is missing evidence FR-040 requires"; exit 1; }
 echo "every documented row carries a licence, an MSRV, an origin, and a reach"
+
+# CONTROLS 1a and 1b: 15d can actually fail. Two distinct defects, because the check has two
+# distinct branches — an EMPTY cell and a cell that says "none" — and a control exercising only
+# one would leave the other unproven.
+#
+# The tamper is applied to the first row INSIDE the T030/T033 section, because that is the only
+# section 15d reads; blanking a row in the licences table above it would plant a defect the check
+# is not looking at and "prove" it fails to detect something it was never asked about.
+awk -F'|' 'BEGIN{OFS="|"} /^## T030\/T033/{inside=1}
+           inside && /^\| `/ && !done { $4=" ";      done=1 } {print}' \
+    "$INVENTORY" > "$WORK/t-blank-licence.md"
+awk -F'|' 'BEGIN{OFS="|"} /^## T030\/T033/{inside=1}
+           inside && /^\| `/ && !done { $4=" none "; done=1 } {print}' \
+    "$INVENTORY" > "$WORK/t-none-licence.md"
+
+for tampered in t-blank-licence t-none-licence; do
+  if check_inventory_rows "$WORK/$tampered.md" > /dev/null 2>&1; then
+    echo "FAIL 15d control — the planted defect in $tampered was NOT detected"; exit 1
+  fi
+  echo "control: 15d rejects $tampered"
+done
 
 # --- 15e: policy and supporting evidence against the real lockfile ---
 cargo deny check licenses advisories bans sources
@@ -970,10 +1086,17 @@ echo "GATE 15 PASS"
 
 **Pass**: the documented inventory and the resolved graph are **identical, in both directions** —
 no stale row, no unevaluated package — **every documented row carries a non-empty licence, MSRV,
-origin, and reach**, checked column by column; **every figure in the summary table and in the prose
-is derived from the graph and from research §3 rather than transcribed**, with a missing figure
-failing as loudly as a wrong one; `cargo deny` is clean against the real lockfile; and the
-duplicate-version and enabled-feature output is **printed**, not discarded.
+origin, and reach**, checked column by column **and proven checkable by two planted defects**
+(T152); **every figure in the summary table and in the prose is derived from the graph and from
+research §3 rather than transcribed**, with a missing figure failing as loudly as a wrong one;
+`cargo deny` is clean against the real lockfile; and the duplicate-version and enabled-feature
+output is **printed**, not discarded.
+
+**15d gained its control at T152.** It was the one zero-asserting check in this file without one,
+which the PR body carried as named limitation 10 — recorded accurately and then left open across
+two review rounds. Making it controllable meant extracting it into `check_inventory_rows`, since a
+check written inline against a single fixed path cannot be pointed at a tampered copy. Both of its
+branches are now exercised: an **empty** licence cell and one reading **`none`**.
 
 Every clause above is now executed by the script. Four of them were prose until 2026-08-16: the
 per-column evidence check did not exist, the duplicate output went to `|| true` and was thrown
@@ -1007,10 +1130,10 @@ paragraph above says.
 | 9 | SC-019 | yes | `tests/run_id.rs` asserts distinctness across runs, so a constant identifier fails |
 | 10 | FR-029 | yes | install-after-build proves nothing was installed |
 | 11 | FR-038 | yes | fuzz/property corpus |
-| 12 | SC-013, SC-014 | yes | **4 controls**: discovery minimum, a failing example, a planted global, a planted leftover file |
+| 12 | SC-013, SC-014 | yes | **7 controls**: discovery minimum, a failing example, a planted global, a planted leftover file, cleanup proven on a **failure** and on an **interruption**, and a no-trap probe proving those last two are not vacuous |
 | 13 | SC-010 + crate DAG | yes | **5 controls, one per sub-check** |
 | 14 | SC-011, FR-034, ADR-0007 | yes | 14a `serde` returns 200 (non-200/404 is a FAIL); 14c plants a `docker/build-push-action` step |
-| 15 | **yes** — FR-040 | yes | **5 controls**: both sides read, a planted package, and three planted narrative defects |
+| 15 | **yes** — FR-040 | yes | **7 controls**: both sides read, a planted package, **two planted row defects (15d)**, and three planted narrative defects |
 
 > **Corrected 2026-08-16 (T138).** This table was stale in three rows, which W-005 re-review RV-N11
 > and original finding Q7-10 both raised: Gate 12 was shown with no control while it had three,

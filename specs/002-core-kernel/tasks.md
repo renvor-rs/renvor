@@ -386,6 +386,52 @@ where it was true of three.
 
 ---
 
+## Phase 12: Merge-Blocking Corrections (T143–T158)
+
+**Why this phase exists.** Phase 11 brought PR #19 to ten green checks, zero open CodeQL alerts,
+and zero unresolved conversations — and it was still not mergeable. Reviewing the *closure records*
+rather than the code found that several things the branch had written down as permanent limitations
+were, on inspection, defects that a phase-002 kernel must not ship with, and that PLAN.md §17.3
+independently forbids accepting a phase with an open High advisory.
+
+**The pattern this time is the third distinct one.** Phase 10 found *checks that never executed
+what they claimed*. Phase 11 found *records that summarised away the thing they were recording*.
+Phase 12 finds **accurate records of things that should not have been accepted** — a limitation
+correctly describing an unbounded call into author code, a correctly-stated TOCTOU residual, a
+correctly-measured 10 MB diagnostic, a correctly-noted missing control, and a correctly-listed pair
+of High advisories. Every one was written down honestly. Writing a defect down does not discharge
+it, and four of them contradicted a MUST.
+
+### A. Runtime correctness
+
+- [x] T143 Close the `FileLayer::read()` TOCTOU race in `crates/renvor-config/src/layer/file.rs`: open the path **once** with `O_NONBLOCK`, take the file type and length from `File::metadata` on that **open descriptor** rather than from a second `std::fs::metadata` of the pathname, and pass the descriptor into `read_bounded` instead of reopening. Preserve required-versus-optional semantics and the byte ceiling. Prove it by **mutation** — restoring check-then-open must make the race test fail — and by a race test that atomically re-points a symlink between a regular file and a FIFO, with a positive control requiring the run to have observed **both**
+- [x] T144 Record `libc` under **FR-040** in `governance/phase-002-dependency-inventory.md` as an individually-evaluated **direct** dependency with version, licence, MSRV, maintenance, advisories, and feature cost; correct the two summary rows the promotion moves; and re-run the dependency, MSRV, licence, advisory, feature, and lockfile gates. Record the measured package count on both sides of the change
+- [x] T145 Stop `impl fmt::Debug for dyn Provider` and `impl fmt::Debug for dyn ReadinessContributor` from invoking **any** author method. Render static text; take identity from the reports Renvor already holds. Invert the `deadlines.rs` gate that previously *recorded* the unbounded call as permanent, and add runtime tests using author methods that **panic** and author methods that **never return**, with a control proving the blocking fixtures really do block
+- [x] T146 Bound every identifier that reaches a diagnostic: add `MAX_IDENTIFIER_BYTES` and `bounded_identifier`, apply them at the two `KernelError` construction chokepoints, make `ConfigurationConflict` `#[non_exhaustive]` so the second one exists at all, bound `SourceLayer`'s `Display` **and** `Debug`, and take a window off an unrepresentable environment name **before** the lossy conversion that tripled it. Prove the rendered size does not grow with the input, and prove ordinary keys are still named in full
+- [x] T147 Apply the maintainer ruling that Phase 002 supports the **unwinding** panic strategy only. Refuse `panic = "abort"` at compile time in `renvor-core`'s crate root, and make `contain.rs`, `contributor.rs`, `SECURITY.md`, and `SUPPORT.md` state the ruling rather than describing a limitation. Verify the refusal by building under `RUSTFLAGS="-C panic=abort"` and recording the exit status and message
+
+### B. Gate and closure-record corrections
+
+- [x] T148 Fix quickstart **Gate 12**'s cleanup: install one `trap` covering **every** checkout probe before the first one exists, never clear it while a later probe can still be created, and prove the cleanup fires after a **success**, after a **deliberate failure**, and after an **interruption** — with a fourth control running the identical fragment untrapped and requiring the file to survive. Verified in **bash 3.2** and **zsh**
+- [x] T149 Correct `.github/ISSUE_TEMPLATE/bug_report.yml`, which told every reporter that Renvor "ships no runtime capability yet" five weeks after the kernel landed
+- [x] T152 Give quickstart **15d** the positive control it was the only zero-asserting check to lack — named as limitation 10 in the PR body and then left open across two rounds. Extract it into a function so it can be pointed at a tampered copy, and plant **both** of its branches: an empty licence cell and one reading `none`
+- [ ] T153 Re-audit every named limitation. Remove the ones this phase closed, keep only those that do not contradict a MUST, and state for each remaining one why it is a limitation rather than a defect
+- [ ] T154 Update the evidence ledger, task counts, requirement maps, dependency inventory, `SUPPORT.md`, the PR body, and the operational documentation to one consistent set of figures. Keep ADR-0008 `proposed`
+
+### C. Platform and supply chain
+
+- [ ] T150 Add **macOS** and **Windows** verification to CI as a separate `platform` job — never by adding an `os` dimension to `verify`, whose two matrix jobs produce the required status contexts and would be silently renamed. Exercise configuration, environment, path, lifecycle, and no-default-features behaviour on both toolchains. Correct `SUPPORT.md`'s claim that no platform-sensitive code exists, and claim a platform **only** where the exact final head has passing evidence
+- [ ] T151 Clear the open **High** dependency advisories. PLAN.md §17.3 forbids accepting a phase with an open Critical or High finding, and no waiver is available. Fix the Medium in the same change if it is safely compatible; otherwise record its owner and deadline truthfully. Run a frozen documentation install and build, dependency review, lockfile validation, and the security scans
+
+### D. Review, validation, and closure
+
+- [ ] T155 Run fresh **NON-INDEPENDENT** and **ADVISORY** requirements and security delta reviews covering this entire corrective batch, in clean context. Disposition every finding individually — no grouped dispositions — and fix every Critical, High, and Medium
+- [ ] T156 Run the full validation matrix on a clean committed tree: formatting and `git diff --check`, clippy with `-D warnings`, all workspace tests serially, doc tests, `cargo xtask verify` 11/11 on **1.94.0** and current stable, the all-target no-default-feature checks, `cargo deny`'s four checks, quickstart gates **0–15 individually**, Gate 12 under **bash 3.2 and zsh**, `actionlint`, the documentation frozen install and build, the release dry run with zero publication, secret scanning, and CodeQL. Verify the exact **FR-001…FR-044** and **SC-001…SC-022** mapping and that task IDs are contiguous, unique, and all checked
+- [ ] T157 Push the corrected exact head with a non-force refspec, update PR #19's body to the verified final facts and counts, and wait for every check on that exact head. Verify zero unresolved conversations, zero open CodeQL alerts, zero open Critical/High dependency alerts, and zero tags, releases, crates, deployments, or Phase 003 work
+- [ ] T158 Re-verify immediately before merging — open, non-draft, MERGEABLE/CLEAN, base at the current live `main`, head the exact reviewed SHA, all checks settled successfully except documented event-inapplicable skips — then **squash-merge with `--match-head-commit`**, and verify afterwards that PR #19 is merged, that `main` points at the resulting integration commit, that the integration tree equals the reviewed source tree, that the signature is verified, and that no crate, tag, release, deployment, or Phase 003 work was created
+
+---
+
 ## Dependencies
 
 ### Blocking order

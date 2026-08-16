@@ -1694,6 +1694,253 @@ github-advanced-security threads itself as their alerts closed.
 contexts. The temptation was to call a non-required red check cosmetic; six of the nine were
 pointing at real leak-on-failure diagnostics, which is the argument against ever doing that.
 
+## Merge-blocking corrections (T143–T158)
+
+Phase 11 left PR #19 with ten green checks, **0** open CodeQL alerts, and **0** unresolved
+conversations. It was still not mergeable, and reviewing the *closure records* rather than the code
+is what showed why.
+
+**This is the third distinct failure pattern in this branch, and it is the least comfortable.**
+
+| Round | Pattern |
+|---|---|
+| Phase 10 | checks that **never executed** what they claimed |
+| Phase 11 | records that **summarised away** the thing they were recording |
+| Phase 12 | **accurate records of things that should not have been accepted** |
+
+Every item below was already written down, correctly, in the PR body's named-limitations list or in
+the Dependabot alert set. Nothing was hidden and nothing was wrong. Four of them contradicted a
+MUST anyway. **Writing a defect down does not discharge it** — a limitation is a thing a reader
+must accept, and a reader cannot accept "a public API can be blocked for ever by a substituted
+FIFO" on a kernel whose contract is bounded calls.
+
+### A — the check-then-open race was a defect, not a residual (T143)
+
+Named limitation 5 stated it exactly: *"The FIFO refusal is check-then-open, and the race is
+winnable — measured at 101 attempts, 1,517 ms."* It then argued the scope cost — a direct `libc`
+dependency and an FR-040 row — was more than the phase should take.
+
+That trade was wrong in both directions.
+
+**The cost was near zero.** `libc` was already in the resolved graph, arriving as
+`renvor-core → getrandom 0.4.3 → libc 0.2.189`. Promoting it to a direct dependency of
+`renvor-config` adds **no package at all**: the lockfile held **48** external packages before the
+change and **48** after, and the entire `Cargo.lock` diff is one line adding `libc` to
+`renvor-config`'s dependency list.
+
+**The exposure was on public API.** `ApplicationBuilder::build` contains the residual through
+`bounded_call`, and that containment was verified — but `FileLayer::read()` is public, documented,
+and callable directly, and nothing wraps a direct caller.
+
+#### The fix is structural rather than a narrower window
+
+| Before | After |
+|---|---|
+| `std::fs::metadata(&self.path)` — resolves the **pathname** | `file.metadata()` — `fstat` on the **open descriptor** |
+| `std::fs::File::open(&self.path)` in `read_bounded` — resolves the pathname **again** | the descriptor is **moved in**; nothing is reopened |
+| two lookups, with a winnable gap between them | **one** lookup; there is no second one to race |
+
+The open uses `O_NONBLOCK` so that opening a FIFO cannot block *before* the type is known — the
+ordering problem that made the old check-then-open shape look necessary. Only the integer constant
+comes from `libc`; the open itself is `std::fs::OpenOptions` with
+`OpenOptionsExt::custom_flags`, so **no `unsafe` block and no FFI call appears in Renvor's
+source**, and `unsafe_code = "forbid"` is not relaxed.
+
+#### The race test, and the mutation that proves it is a test
+
+`replacing_the_path_between_check_and_open_cannot_block` points a symlink alternately at a regular
+file and a FIFO, re-pointing it with `rename` so the path is never absent, while a worker calls
+`FileLayer::read()` 400 times.
+
+| Code under test | Result |
+|---|---|
+| T143's fix | **passes** — 400/400 attempts return |
+| check-then-open restored by mutation | **fails** — `read()` did not return within **30 s** |
+
+It also carries a positive control requiring the run to have observed **both** outcomes — some
+attempts parsing the regular file, some refusing the FIFO. Without it a run in which the swapper
+never won would pass having reproduced nothing, which is precisely how the original defect
+survived a green suite.
+
+The three pre-existing FIFO variants — no writer, slow writer, flooding writer — still pass, as do
+the ordinary and oversized regular-file cases.
+
+### B — `libc` under FR-040 (T144)
+
+Recorded in `governance/phase-002-dependency-inventory.md` under **T143** with version, licence
+(`MIT OR Apache-2.0`, both branches on the allow list), MSRV (**1.65**, under the 1.94.0 floor),
+maintenance (`rust-lang/libc`), advisories (none), and feature cost (`default-features = false`).
+The alternatives are recorded with their measured cost: `rustix` would have added **three**
+packages — `bitflags`, `errno`, `linux-raw-sys` — for a constant `libc` already exposes.
+
+Two summary rows moved: *directly chosen* **10 → 11**, *arrived transitively* **38 → 37**. Both
+were found by **Gate 15f**, which derives them from `cargo metadata` rather than reading them, and
+both were corrected until the gate passed. `cargo deny check licenses advisories bans sources`:
+**all four ok**.
+
+### C — formatting called author code, and the gate recorded it as permanent (T145)
+
+Named limitation 4 stated it: *"`impl Debug for dyn Provider` and `dyn ReadinessContributor` call
+author methods with no deadline."* `deadlines.rs` went further and **asserted the defect's
+continued existence** — a constant named `FORMATTING_CALLS_AUTHOR_CODE` listing which author
+methods each impl invoked, with a test that failed if the list ever changed.
+
+That is a gate pointed backwards. FR-025 and C-L7 require **0** unbounded calls into author code;
+the correct response to finding two was to remove them, not to enumerate them accurately.
+
+**Neither impl now calls any author method.** `&self` is all `fmt` receives and every fact about a
+trait object is behind a trait method, so both render static text — `Provider { .. }` and
+`ReadinessContributor { .. }`. Identity was not lost, only relocated: it comes from
+`ResolutionReport`, `InitialisationOrder`, and `ReadinessReport`, which hold names Renvor captured
+itself inside already-bounded calls.
+
+Bounding the call instead was considered and rejected: a `Debug` impl spawning a thread per field
+would make every formatted provider a scheduling event, and `fmt::Debug` has no channel for a
+deadline failure except the output it is producing — so a log line would silently become a timeout
+report.
+
+The gate is now `DEBUG_IMPLS_ON_AUTHOR_TRAITS` and refuses any `impl fmt::Debug for dyn ...` whose
+body contains `self.` — an allowlist-free rule, since **every** dereference of `self` in that
+position is author code. Four runtime tests back it: author methods that **panic** and author
+methods that **never return**, for both traits, plus a control proving the blocking fixtures
+really do block.
+
+| Mutation | Static gate | Panic test | Blocking test |
+|---|---|---|---|
+| pre-T145 `Debug for dyn Provider` restored | **fails**, naming the file | **fails** | **fails at 10 s** |
+
+The other 11 tests in the suite stayed green under that mutation, so the three failures are
+targeted rather than a blanket break.
+
+### D — diagnostics were unbounded in length (T146)
+
+Named limitation 6 carried the measurements: a **9,999,999**-byte key produced a
+**10,000,269**-byte error, and a non-Unicode variable name amplified **3.00×** through its lossy
+rendering. Both numbers are attacker-chosen — a configuration file and an environment variable are
+the two inputs an operator most often lets someone else supply.
+
+`MAX_IDENTIFIER_BYTES = 128` and `bounded_identifier` now bound every identifier that reaches a
+diagnostic. The original byte length is reported alongside the truncation, because truncating
+silently would make two different 10 MB keys produce byte-identical errors.
+
+**Applied at the chokepoints, not at the call sites.** `KernelError::Configuration` was already
+`#[non_exhaustive]`, so `configuration()` was the only route in and bounding it covered every
+adapter. `ConfigurationConflict` was **not** — `renvor-config` built it with a struct literal,
+carrying three attacker-influenced identifiers with nothing in a position to bound them. It is now
+`#[non_exhaustive]` with a `conflict()` constructor, so the two variants describing the same
+subject finally have the same construction rule.
+
+`SourceLayer` gained a bounding `file()` constructor and **hand-written `Display` and `Debug`**.
+The derived `Debug` was the more important of the two: an attribution report is a struct of
+`SourceLayer`s and is far more likely to be logged with `{:?}` than formatted field by field, so
+bounding only `Display` would have covered the rarer path.
+
+The environment layer takes a **window** off the raw bytes *before* the lossy conversion, so the
+3× expansion applies to at most a window rather than to a 10 MB name. The window is at least one
+byte longer than the prefix, which keeps `starts_with` deciding on exactly the bytes it always did
+— asserted in both directions, including a prefix longer than the ceiling.
+
+| Proof | Result |
+|---|---|
+| 128 KB key vs 1.28 MB key, rendered | sizes differ by **≤ 4 bytes** |
+| 100 KB vs 1 MB key, through the real file → merge → error stack | differ by **≤ 8 bytes** |
+| 1 MB astral-plane key (4-byte characters) | bounded; byte length reported |
+| 500 KB environment variable name, through the real stack | bounded |
+| 200 KB file path (source attribution) | bounded |
+| 3 MB unrepresentable name, worst case (every byte invalid) | bounded; control confirms the fixture really amplifies 3× |
+| **ordinary keys** — `port`, `server.tls.certificate_chain_path` | **unchanged, no truncation notice** |
+
+That last row is the one that matters in practice: a bound that rewrote ordinary keys would satisfy
+every size assertion above and make every real diagnostic worse.
+
+Truncation lands on a character boundary — `&raw[..n]` panics when `n` splits a character, and
+SC-004 allows **0** panics on hostile input. Exercised across every offset in the boundary region.
+
+### E — the panic-strategy ruling (T147)
+
+Named limitation 1 said `panic = "abort"` removes provider and readiness panic containment. True,
+and unactionable as written: a consumer who never read the PR body would get a kernel whose central
+guarantee was silently absent.
+
+**The maintainer ruling is that `panic = "abort"` is unsupported.** `cfg(panic = ...)` has been
+stable since Rust 1.60 — well under the 1.94.0 floor — so the contradiction is refused rather than
+described:
+
+```text
+$ RUSTFLAGS="-C panic=abort" cargo check -p renvor-core
+error: renvor-core does not support `panic = "abort"`.
+
+       C-L9 and SC-009 require a panicking provider or readiness contributor to be contained
+       and reported as a failure. Both containments use `std::panic::catch_unwind`, which
+       catches only panics that UNWIND -- under `panic = "abort"` there is nothing to catch,
+       so the kernel would silently lose its central guarantee.
+       ...
+  --> crates/renvor-core/src/lib.rs:39:1
+error: could not compile `renvor-core` (lib) due to 1 previous error
+$ echo $?
+101
+```
+
+The control matters as much as the guard: the same command **without** `RUSTFLAGS` compiles
+cleanly, so the refusal is about the panic strategy and not about a crate that stopped building.
+
+`contain.rs`, `contributor.rs`, `SECURITY.md`, and `SUPPORT.md` state the ruling. The cases
+unwinding still cannot reach — a double panic, `process::abort`, a stack overflow — are **not**
+waived by it and remain stated, because no panic strategy makes them catchable.
+
+**One correction inside this item.** The first draft of the guard's test asserted
+`cfg!(panic = "unwind")` at run time. Clippy rejected it as an assertion on a constant, and was
+right for the interesting reason: the crate-root guard makes that condition structurally true, so a
+build under abort never produces a test binary and no assertion inside one can observe the abort
+case. It was a tautology dressed as evidence. The honest statement — that **this test running at
+all is the evidence** — is now a comment, and the test asserts only what it can: that the guard is
+still present in the source with the right `cfg` and the right macro.
+
+### F — Gate 12 cleared its own cleanup trap (T148)
+
+The gate whose stated purpose includes leaving the repository as it found it installed its trap
+around the **first** of three probes and then ran `trap - EXIT` while two more were still to be
+created:
+
+```bash
+trap 'rm -f "$CONTROL"' EXIT     # covers gate12-control.rs
+...
+rm -f "$CONTROL"; trap - EXIT    # and now NOTHING is covered
+...                              # globals-probe.txt created here, trapless
+...                              # gate12-leftover-probe.txt created here, trapless
+```
+
+An interrupt or an early `set -e` exit after that point left a real file in the checkout, and 12e —
+the comparison that would have noticed — never ran, because the abort happened first.
+
+One trap is now installed before the first probe exists, names every checkout probe, and is never
+cleared. **12f** proves it fires after a deliberate failure and after a **SIGINT**, each in a
+genuine child `sh` so `$$` is that child's own pid. A fourth control runs the identical fragment
+*untrapped* and requires the file to survive — otherwise the first two would pass against a shell
+that deletes nothing.
+
+Verified in **bash 3.2** and **zsh 5.9**, both with-trap and without-trap directions.
+
+### G — the issue template still said there was no runtime (T149)
+
+`.github/ISSUE_TEMPLATE/bug_report.yml` told every reporter that Renvor "ships no runtime
+capability yet, so most reports at this stage concern documentation, governance, or the
+verification sequence" — five weeks after the kernel landed. Corrected to describe what Phase 002
+actually ships, including that it has no transport, and that API instability is expected rather
+than a bug.
+
+### H — Gate 15d finally has a control (T152)
+
+Named limitation 10: *"Gate 15's 15d has no positive control, though every other zero-asserting
+check does."* Recorded accurately in two consecutive review rounds and left open in both.
+
+15d asserts that every inventory row carries a non-empty licence, MSRV, origin, and reach. It was
+written inline against one fixed path, which is *why* it had no control — a check that cannot be
+pointed at a tampered copy cannot be shown to fail. Extracted into `check_inventory_rows`, it now
+has one for **each** of its two branches: an **empty** licence cell and one reading **`none`**.
+
+Gate 15 now carries **7** controls and passes in both shells.
+
 ## Publication status
 
 **0 crates published, 0 tags, 0 releases** (FR-034). `publish = true` is a manifest attribute
