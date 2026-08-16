@@ -57,6 +57,15 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "macro
 # through `renvor-config`; this adds an edge, not a package.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
+# The configuration example uses `renvor::config`, which only exists when the `config` feature is
+# on. Without this declaration `cargo check --no-default-features --all-targets` FAILS to compile
+# it — and did, until T111. The `cargo tree` isolation check in `xtask` step 7 could never have
+# caught that: resolving a graph is not compiling against it.
+[[example]]
+name = "configuration"
+path = "examples/configuration.rs"
+required-features = ["config"]
+
 [features]
 # `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
 # isolation is opt-in via `default-features = false`. Stated plainly because the reverse is

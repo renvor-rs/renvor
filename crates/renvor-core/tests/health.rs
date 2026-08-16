@@ -214,7 +214,7 @@ async fn a_panicking_contributor_is_caught_identified_and_does_not_take_the_proc
     let healthy: Vec<&str> = report
         .contributors
         .iter()
-        .filter(|verdict| !verdict.panicked)
+        .filter(|verdict| !verdict.panicked())
         .map(|verdict| verdict.name.as_str())
         .collect();
     assert_eq!(healthy, vec!["healthy-check"]);

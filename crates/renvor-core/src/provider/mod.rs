@@ -41,6 +41,7 @@ pub use registry::{
 };
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::error::KernelError;
 use crate::provider::graph::{GraphSizeError, ProviderIx, ResolverGraphBuilder};
@@ -64,6 +65,28 @@ impl ProviderRegistry {
     /// - [`KernelError::DependencyCycle`] — providers form a cycle, naming **every** provider in
     ///   it (FR-013).
     pub fn resolve(&self) -> Result<(InitialisationOrder, ResolutionReport), KernelError> {
+        self.resolve_tracking(&AtomicU32::new(0))
+    }
+
+    /// [`Self::resolve`], reporting how far it got through the registration list.
+    ///
+    /// `examined` is written **before** each provider's declarations are read, never after, so a
+    /// provider that panics or never returns leaves its own position behind rather than its
+    /// predecessor's. That position is the only identity available when the failure happened
+    /// inside the call that would have supplied the name.
+    ///
+    /// Only the two loops that call **author** methods are tracked. Everything after them —
+    /// building the graph, the traversal, the budget check — is Renvor's own code, and pretending
+    /// a defect there was a provider's fault would be the misattribution [`KernelError::Internal`]
+    /// exists to prevent.
+    ///
+    /// # Errors
+    ///
+    /// Identical to [`Self::resolve`].
+    pub fn resolve_tracking(
+        &self,
+        examined: &AtomicU32,
+    ) -> Result<(InitialisationOrder, ResolutionReport), KernelError> {
         let size = self.declared_size()?;
 
         // Step 2: the capability map. Built before any lookup, because a map that silently kept
@@ -72,6 +95,7 @@ impl ProviderRegistry {
         let mut offered: HashMap<&CapabilityId, u32> = HashMap::new();
         for (position, provider) in self.providers().iter().enumerate() {
             let position = u32::try_from(position).unwrap_or(u32::MAX);
+            examined.store(position, Ordering::Relaxed);
             for capability in provider.provides() {
                 if let Some(first) = offered.insert(capability, position) {
                     return Err(KernelError::CapabilityDuplicate {
@@ -87,7 +111,11 @@ impl ProviderRegistry {
         // traversal's reverse-topological output the initialisation order with no second pass.
         let mut builder =
             ResolverGraphBuilder::with_capacity(size.providers as usize, size.edges as usize);
-        for provider in self.providers() {
+        for (position, provider) in self.providers().iter().enumerate() {
+            examined.store(
+                u32::try_from(position).unwrap_or(u32::MAX),
+                Ordering::Relaxed,
+            );
             let mut targets = Vec::with_capacity(provider.dependencies().len());
             for capability in provider.dependencies() {
                 let Some(&target) = offered.get(capability) else {

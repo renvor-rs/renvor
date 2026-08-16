@@ -30,7 +30,14 @@
 //! **The honest cost**: a thread that never returns is **leaked**. It cannot be cancelled — no
 //! Rust API can interrupt a blocked thread — so the process keeps one stuck thread per hung
 //! source. That is strictly better than the alternative, which was keeping the *whole application*
-//! stuck, and it is stated here rather than discovered.
+//! stuck, and it is stated here rather than discovered. It is recorded as an open item in
+//! `governance/phase-002-evidence.md` and it does not go away in this phase.
+//!
+//! Because threads leak, the process can eventually run out of them — so the **spawn itself** has
+//! to be fallible. [`std::thread::spawn`] panics when the operating system refuses; the builder
+//! form returns that refusal, and this module uses the builder form. Reaching a thread ceiling is
+//! a foreseeable consequence of the leak above, which makes an infallible spawn here the exact
+//! wrong choice rather than a theoretical one.
 //!
 //! **The unplanned benefit**: a source that **panics** kills only its own thread, dropping the
 //! channel sender. The wait ends with a disconnect rather than an unwind through `build`, so a
@@ -51,13 +58,14 @@
 
 use core::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
 use crate::config_port::ConfigSource;
 use crate::error::{ErrorCategory, KernelError, context};
 use crate::lifecycle::application::{
-    Application, DEFAULT_PROVIDER_DEADLINE, DEFAULT_SOURCE_DEADLINE, PhaseCursor, PhaseLog,
+    Application, DEFAULT_BUILD_DEADLINE, DEFAULT_PROVIDER_DEADLINE, PhaseCursor, PhaseLog,
     deadline_millis,
 };
 use crate::lifecycle::drain::DEFAULT_DRAIN_BUDGET;
@@ -148,7 +156,7 @@ pub struct ApplicationBuilder {
     registry: ProviderRegistry,
     drain_budget: Option<Duration>,
     provider_deadline: Option<Duration>,
-    source_deadline: Option<Duration>,
+    build_deadline: Option<Duration>,
     entropy: Box<dyn EntropySource>,
     phases: PhaseLog,
 }
@@ -168,7 +176,7 @@ impl ApplicationBuilder {
             registry: ProviderRegistry::new(),
             drain_budget: None,
             provider_deadline: None,
-            source_deadline: None,
+            build_deadline: None,
             entropy: Box::new(OsEntropy::new()),
             phases: PhaseLog::new(),
         }
@@ -211,10 +219,10 @@ impl ApplicationBuilder {
     /// Overrides how long each configuration source is given to load or to validate.
     ///
     /// FR-025 and C-L7 require the bound to exist; no artifact names a value, so the default is
-    /// Renvor's choice and is overridable — see [`DEFAULT_SOURCE_DEADLINE`].
+    /// Renvor's choice and is overridable — see [`DEFAULT_BUILD_DEADLINE`].
     #[must_use]
-    pub const fn with_source_deadline(mut self, deadline: Duration) -> Self {
-        self.source_deadline = Some(deadline);
+    pub const fn with_build_deadline(mut self, deadline: Duration) -> Self {
+        self.build_deadline = Some(deadline);
         self
     }
 
@@ -235,6 +243,25 @@ impl ApplicationBuilder {
         self.phases.clone()
     }
 
+    /// Reads every source's name once, each read bounded.
+    ///
+    /// A name that cannot be read inside the deadline degrades to the registration position. That
+    /// is **not** the silent fallback FR-022 prohibits: nothing about the configuration is being
+    /// guessed, no layer is being skipped, and the deadline was enforced. Only the *label* on a
+    /// diagnostic degrades — and refusing to assemble an application because an accessor was slow
+    /// would punish the author for a defect that has not yet affected anything they configured.
+    fn source_names(&self, deadline: Duration) -> Vec<String> {
+        self.config_sources
+            .iter()
+            .enumerate()
+            .map(|(position, source)| {
+                let handle = Arc::clone(source);
+                bounded_call(deadline, move || handle.name().to_owned())
+                    .unwrap_or_else(|_| format!("<at registration position {position}>"))
+            })
+            .collect()
+    }
+
     /// Runs `Load`, `Validate`, and `Register`.
     ///
     /// # Errors
@@ -245,39 +272,67 @@ impl ApplicationBuilder {
     /// - `Register`: a ceiling breach, an ambiguous capability, a missing dependency, and a cycle
     ///   each produce a distinct diagnostic; **0** cases reach `Boot` (SC-005).
     /// - [`BuildError::Entropy`] if the run identifier's entropy source fails.
-    pub fn build(self) -> Result<Application, BuildError> {
+    pub fn build(mut self) -> Result<Application, BuildError> {
         // The run identifier is generated **first**, because FR-043 requires every emitted record
         // to carry it and the very first phase span is emitted by `PhaseCursor::start`. Generating
         // it after `Load` would leave the records a startup failure produces unattributed — which
         // are the ones anybody actually reads.
-        let run_id = RunIdentifier::generate(self.entropy.as_ref())?;
+        // `EntropySource::fill` is author-supplied too, and it is the one callback with a
+        // *routine* reason to block: a source reading `/dev/random` on a freshly-booted machine
+        // with a shallow entropy pool waits, by design, for as long as it takes.
+        let deadline = self.build_deadline.unwrap_or(DEFAULT_BUILD_DEADLINE);
+        let entropy = core::mem::replace(&mut self.entropy, Box::new(OsEntropy::new()));
+        let run_id = bounded_call(deadline, move || RunIdentifier::generate(entropy.as_ref()))
+            .map_err(|failure| entropy_failure(failure, deadline))??;
 
         let mut cursor = PhaseCursor::start(self.phases.clone(), run_id);
-        let deadline = self.source_deadline.unwrap_or(DEFAULT_SOURCE_DEADLINE);
 
         // Load — in declaration order, because precedence is that order (FR-044) — and each call
         // bounded, because it runs author code the kernel cannot otherwise interrupt.
-        for source in &self.config_sources {
+        //
+        // `ConfigSource::name` is an author method too, so it is read **once, inside a bound**,
+        // and the answer reused. Calling it from the parent to label an error would be an
+        // unbounded call on the failure path — the path that runs precisely when the source is
+        // misbehaving — and calling it per phase would ask a misbehaving source twice.
+        let names = self.source_names(deadline);
+
+        for (source, name) in self.config_sources.iter().zip(&names) {
             let handle = Arc::clone(source);
-            bounded_call(deadline, source.name(), "load", move || handle.load())??;
+            bounded_call(deadline, move || handle.load())
+                .map_err(|failure| source_failure(failure, deadline, name, "load"))??;
         }
 
         // Validate.
         cursor.advance();
-        for source in &self.config_sources {
+        for (source, name) in self.config_sources.iter().zip(&names) {
             let handle = Arc::clone(source);
-            bounded_call(deadline, source.name(), "validate", move || {
-                handle.validate()
-            })??;
+            bounded_call(deadline, move || handle.validate())
+                .map_err(|failure| source_failure(failure, deadline, name, "validate"))??;
         }
 
-        // Register.
+        // Register — bounded for the same reason `Load` and `Validate` are, and it is the same
+        // reason: `Provider::id`, `provides`, and `dependencies` are **author-supplied methods**
+        // the resolver calls synchronously. They look like field reads, but "looks like a field
+        // read" is not a bound, and FR-025 prohibits an unbounded wait in any kernel-owned path
+        // regardless of how unlikely the author is to block in an accessor.
+        //
+        // `examined` is shared with the worker so that a provider which panics or hangs while
+        // being asked can still be named — by registration position, since asking for its `id` is
+        // exactly what failed.
         cursor.advance();
-        let (order, report) = self.registry.resolve()?;
+        let examined = Arc::new(AtomicU32::new(0));
+        let counter = Arc::clone(&examined);
+        let registry = self.registry;
+        let (registry, resolved) = bounded_call(deadline, move || {
+            let outcome = registry.resolve_tracking(&counter);
+            (registry, outcome)
+        })
+        .map_err(|failure| register_failure(failure, deadline, examined.load(Ordering::Relaxed)))?;
+        let (order, report) = resolved?;
 
         Ok(Application::new(
             cursor,
-            self.registry,
+            registry,
             order,
             report,
             run_id,
@@ -287,46 +342,163 @@ impl ApplicationBuilder {
     }
 }
 
-/// Runs one configuration-source call on a worker thread, waiting no longer than `deadline`.
+/// Why a bounded call produced no value.
 ///
-/// Returns `Ok(Ok(_))` when the call succeeded, `Ok(Err(_))` when it reported a failure, and
-/// `Err(_)` when it did not answer in time or died. See the module documentation for why this is a
-/// thread rather than a `tokio::time::timeout`, and what it costs.
+/// Deliberately **not** a [`KernelError`]. Every phase that bounds an author callback has to
+/// attribute the failure to *itself* — a hung provider declaration is not a configuration error —
+/// and returning a ready-made `KernelError` from here would force one phase's wording onto all of
+/// them. Each call site maps these three cases to its own diagnostic.
+#[derive(Debug)]
+enum BoundedFailure {
+    /// The host refused the worker thread.
+    SpawnRefused(std::io::Error),
+    /// The deadline elapsed with no answer.
+    Deadline,
+    /// The sender was dropped without sending, so the worker unwound: the call **panicked**.
+    Panicked,
+}
+
+/// Runs one synchronous author callback on a worker thread, waiting no longer than `deadline`.
+///
+/// See the module documentation for why this is a thread rather than a `tokio::time::timeout`,
+/// and what it costs.
 ///
 /// # Errors
 ///
-/// - [`KernelError::DeadlineExceeded`] naming the source and the call when the deadline elapses.
-/// - [`KernelError::Configuration`] naming the source when its thread died — which means the call
-///   **panicked**. Reported as a failure rather than allowed to unwind through `build`.
+/// Returns [`BoundedFailure`], which the caller converts into a phase-appropriate diagnostic.
 fn bounded_call<T: Send + 'static>(
+    deadline: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, BoundedFailure> {
+    bounded_call_with(spawn_worker, deadline, work)
+}
+
+/// Converts a bounded-call failure into an entropy diagnostic.
+///
+/// Never [`BuildError::Entropy`]: that variant means *the source said no*, which is a different
+/// fact from *the source never answered*. Collapsing them would report a hung `/dev/random` as a
+/// refusal it never made.
+fn entropy_failure(failure: BoundedFailure, deadline: Duration) -> KernelError {
+    let subject = "generate the run identifier from the entropy source".to_owned();
+    match failure {
+        BoundedFailure::SpawnRefused(cause) => KernelError::ResourceUnavailable {
+            resource: "an operating-system thread",
+            operation: subject,
+            cause: cause.to_string(),
+        },
+        BoundedFailure::Deadline => KernelError::DeadlineExceeded {
+            operation: subject,
+            deadline_ms: deadline_millis(deadline),
+        },
+        BoundedFailure::Panicked => KernelError::ResourceUnavailable {
+            resource: "entropy",
+            operation: subject,
+            cause: "the entropy source panicked while being called".to_owned(),
+        },
+    }
+}
+
+/// Converts a bounded-call failure into a `Load`/`Validate` diagnostic naming the source.
+fn source_failure(
+    failure: BoundedFailure,
     deadline: Duration,
     source: &str,
     call: &'static str,
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Result<T, KernelError> {
-    let (sender, receiver) = channel();
-
-    // The handle is deliberately dropped rather than joined. Joining a thread that never returns
-    // is the unbounded wait this function exists to remove.
-    drop(std::thread::spawn(move || {
-        // A send failure means the receiver already timed out and gave up. Nothing to report to,
-        // and nothing to do about it.
-        drop(sender.send(work()));
-    }));
-
-    match receiver.recv_timeout(deadline) {
-        Ok(value) => Ok(value),
-        Err(RecvTimeoutError::Timeout) => Err(KernelError::DeadlineExceeded {
+) -> KernelError {
+    match failure {
+        BoundedFailure::SpawnRefused(cause) => KernelError::ResourceUnavailable {
+            resource: "an operating-system thread",
+            operation: format!("{call} configuration source `{source}`"),
+            cause: cause.to_string(),
+        },
+        BoundedFailure::Deadline => KernelError::DeadlineExceeded {
             operation: format!("{call} configuration source `{source}`"),
             deadline_ms: deadline_millis(deadline),
-        }),
-        // The sender was dropped without sending, so the thread unwound: the call panicked.
-        Err(RecvTimeoutError::Disconnected) => Err(context::configuration(
+        },
+        BoundedFailure::Panicked => context::configuration(
             source,
             source,
             "a configuration source that returns",
             &context::Constraint::Rule("the source panicked while being called"),
-        )),
+        ),
+    }
+}
+
+/// Converts a bounded-call failure into a `Register` diagnostic.
+///
+/// `examined` is the registration position the resolver had reached, so a panicking or hanging
+/// provider is named by **where it was registered** even though its own `id` could not be asked
+/// for — asking is what failed.
+fn register_failure(failure: BoundedFailure, deadline: Duration, examined: u32) -> KernelError {
+    let subject = format!(
+        "declare the capabilities of the provider at registration position {examined} during \
+         Register"
+    );
+    match failure {
+        BoundedFailure::SpawnRefused(cause) => KernelError::ResourceUnavailable {
+            resource: "an operating-system thread",
+            operation: subject,
+            cause: cause.to_string(),
+        },
+        BoundedFailure::Deadline => KernelError::DeadlineExceeded {
+            operation: subject,
+            deadline_ms: deadline_millis(deadline),
+        },
+        BoundedFailure::Panicked => KernelError::ProviderInit {
+            provider: format!("<at registration position {examined}>"),
+            source: Box::new(crate::provider::Panicked::describing(
+                "the provider panicked while declaring its capabilities during Register",
+            )),
+        },
+    }
+}
+
+/// How a bounded call obtains its worker thread.
+///
+/// A function pointer rather than a direct call, because a test cannot make the operating system
+/// refuse a thread — not without `libc` and an `unsafe` `setrlimit`, and this workspace forbids
+/// both. This is the seam: the production path passes [`spawn_worker`], and a test passes a
+/// spawner that always refuses, which exercises the same code the real refusal would.
+type Spawner = fn(Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()>;
+
+/// Starts a worker thread and **deliberately drops its handle**.
+///
+/// [`std::thread::Builder::spawn`] rather than [`std::thread::spawn`]: the free function
+/// **panics** when the operating system refuses, which would take down a process that had every
+/// right to be told "no threads available" as an error. The builder form returns that refusal.
+///
+/// Dropping the handle is the no-join behaviour, unchanged: joining a thread that never returns is
+/// the unbounded wait the caller exists to remove. Naming the thread costs nothing and makes a
+/// leaked one identifiable in a debugger, which matters because leaking is a known outcome here.
+fn spawn_worker(work: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("renvor-config-source".to_owned())
+        .spawn(work)
+        .map(drop)
+}
+
+/// [`bounded_call`] with the spawner supplied, so the refusal path is reachable from a test.
+fn bounded_call_with<T: Send + 'static>(
+    spawn: Spawner,
+    deadline: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, BoundedFailure> {
+    let (sender, receiver) = channel();
+
+    if let Err(cause) = spawn(Box::new(move || {
+        // A send failure means the receiver already timed out and gave up. Nothing to report to,
+        // and nothing to do about it.
+        drop(sender.send(work()));
+    })) {
+        // Fail closed. The alternative — carrying on without the callback's answer — is the silent
+        // fallback FR-022 prohibits, and it would boot an application on something nobody read.
+        return Err(BoundedFailure::SpawnRefused(cause));
+    }
+
+    match receiver.recv_timeout(deadline) {
+        Ok(value) => Ok(value),
+        Err(RecvTimeoutError::Timeout) => Err(BoundedFailure::Deadline),
+        Err(RecvTimeoutError::Disconnected) => Err(BoundedFailure::Panicked),
     }
 }
 
@@ -552,7 +724,7 @@ mod tests {
         let started = std::time::Instant::now();
 
         let error = deterministic()
-            .with_source_deadline(Duration::from_millis(120))
+            .with_build_deadline(Duration::from_millis(120))
             .with_config_source(Arc::new(HangingSource))
             .build()
             .expect_err("a source that never returns must not hang the build");
@@ -596,7 +768,7 @@ mod tests {
         // POSITIVE CONTROL for both tests above: the bound discriminates rather than failing every
         // build. Without this, a deadline of zero would satisfy the hang test.
         let application = deterministic()
-            .with_source_deadline(Duration::from_millis(120))
+            .with_build_deadline(Duration::from_millis(120))
             .with_config_source(Source::ok())
             .build()
             .expect("a source that answers immediately is unaffected");
@@ -604,16 +776,16 @@ mod tests {
     }
 
     #[test]
-    fn the_source_deadline_has_a_default_that_is_overridable() {
+    fn the_build_deadline_has_a_default_that_is_overridable() {
         // The value is Renvor's choice, so what matters is that it is stated in one place and can
         // be replaced.
         assert_eq!(
-            super::DEFAULT_SOURCE_DEADLINE,
+            super::DEFAULT_BUILD_DEADLINE,
             Duration::from_secs(10),
             "shorter than the provider deadline: reading a file is not opening a pool"
         );
         deterministic()
-            .with_source_deadline(Duration::from_millis(1))
+            .with_build_deadline(Duration::from_millis(1))
             .build()
             .expect("an override is accepted");
     }
@@ -633,5 +805,114 @@ mod tests {
             .run_id()
             .encode();
         assert_ne!(first, different, "different entropy yields a different one");
+    }
+
+    #[test]
+    fn a_refused_worker_thread_is_reported_rather_than_panicking() {
+        // T113. `std::thread::spawn` panics when the operating system refuses a thread, and this
+        // module leaks one thread per hung source — so running out is a foreseeable consequence of
+        // the design, not a hypothetical. The refusal is reachable only through the spawner seam,
+        // because making the real OS refuse would need `libc` and an `unsafe` `setrlimit`.
+        fn always_refuses(_work: Box<dyn FnOnce() + Send + 'static>) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::OutOfMemory,
+                "simulated thread-table exhaustion",
+            ))
+        }
+
+        let deadline = Duration::from_secs(30);
+        let failure =
+            super::bounded_call_with(always_refuses, deadline, || Ok::<(), KernelError>(()))
+                .expect_err("a refused thread must be an error, not a panic");
+        let error = super::source_failure(failure, deadline, "application configuration", "load");
+
+        // Typed: its own category, because the host refusing a thread is neither a kernel defect
+        // nor a deadline that elapsed. Reporting it as either would print a false statement.
+        assert_eq!(error.category(), ErrorCategory::ResourceUnavailable);
+        assert!(
+            !error.is_kernel_defect(),
+            "an exhausted host is not a defect in Renvor"
+        );
+
+        // Attributed: the message names the source and the call, so an operator knows which one.
+        let rendered = error.to_string();
+        for expected in ["application configuration", "load", "thread"] {
+            assert!(
+                rendered.contains(expected),
+                "{expected} missing: {rendered}"
+            );
+        }
+        assert!(
+            rendered.contains("simulated thread-table exhaustion"),
+            "the operating system's own reason must survive: {rendered}"
+        );
+    }
+
+    #[test]
+    fn the_real_spawner_succeeds_and_the_deadline_still_bounds_it() {
+        // POSITIVE CONTROL for the test above, in both halves. Without the first assertion,
+        // `bounded_call_with` could be refusing everything; without the second, the seam could
+        // have quietly replaced the bounded wait with an unbounded one.
+        let value = super::bounded_call_with(super::spawn_worker, Duration::from_secs(30), || 7_u8)
+            .expect("the real spawner supplies a thread");
+        assert_eq!(value, 7, "the worker's result comes back");
+
+        let deadline = Duration::from_millis(10);
+        let failure = super::bounded_call_with(super::spawn_worker, deadline, || {
+            std::thread::sleep(Duration::from_secs(30));
+            0_u8
+        })
+        .expect_err("a source that outlives its deadline is cut off");
+        let error = super::source_failure(failure, deadline, "application configuration", "load");
+        assert_eq!(error.category(), ErrorCategory::DeadlineExceeded);
+    }
+
+    #[test]
+    fn every_bounded_failure_maps_to_a_distinct_diagnostic_at_each_phase() {
+        // T114. The point of `BoundedFailure` is that one phase's wording is not forced onto
+        // another's, so this asserts both mappings side by side rather than one in isolation.
+        let deadline = Duration::from_secs(1);
+        let cases = [
+            (
+                super::BoundedFailure::SpawnRefused(std::io::Error::other("refused")),
+                ErrorCategory::ResourceUnavailable,
+            ),
+            (
+                super::BoundedFailure::Deadline,
+                ErrorCategory::DeadlineExceeded,
+            ),
+            (
+                super::BoundedFailure::Panicked,
+                ErrorCategory::Configuration,
+            ),
+        ];
+        for (failure, expected) in cases {
+            let error = super::source_failure(failure, deadline, "a-source", "load");
+            assert_eq!(error.category(), expected, "{error}");
+            assert!(error.to_string().contains("a-source"), "{error}");
+        }
+
+        // The same three failures at Register produce Register's diagnostics, and the panic case
+        // is a PROVIDER failure rather than a configuration one — which is the whole reason
+        // `BoundedFailure` exists instead of a ready-made `KernelError`.
+        let register = [
+            (
+                super::BoundedFailure::SpawnRefused(std::io::Error::other("refused")),
+                ErrorCategory::ResourceUnavailable,
+            ),
+            (
+                super::BoundedFailure::Deadline,
+                ErrorCategory::DeadlineExceeded,
+            ),
+            (super::BoundedFailure::Panicked, ErrorCategory::ProviderInit),
+        ];
+        for (failure, expected) in register {
+            let error = super::register_failure(failure, deadline, 3);
+            assert_eq!(error.category(), expected, "{error}");
+            assert!(
+                error.to_string().contains('3'),
+                "the registration position must survive: {error}"
+            );
+        }
     }
 }

@@ -47,6 +47,79 @@ use crate::layer::decode::{decode_single, nest};
 /// key called `log_level`, while `SERVER__PORT` is `server.port`.
 pub const NESTING_SEPARATOR: &str = "__";
 
+/// Reads the process environment into a prefixed map, refusing rather than panicking.
+///
+/// # Why not `std::env::vars`
+///
+/// `std::env::vars` **panics** on the first entry whose name or value is not valid Unicode, and
+/// the entry that trips it need not be Renvor's — one stray variable set by any other program in
+/// the process's ancestry took the whole application down before it reached `Boot`. That is a
+/// panic in ordinary operation, which SC-004 allows **0** of, reached through no fault of the
+/// author's configuration. `vars_os` yields the same entries without deciding they must be
+/// Unicode, which moves the decision here where it can be made per-variable.
+///
+/// # What each case does
+///
+/// | Entry | Outcome |
+/// |---|---|
+/// | unrelated name, unrepresentable | **skipped** — somebody else's variable is not Renvor's problem |
+/// | prefixed name, unrepresentable | refused, naming the lossy form of the name |
+/// | prefixed name, unrepresentable value | refused, naming the key and **withholding the value** |
+///
+/// A name that is not Unicode cannot be compared exactly, so its lossy form decides whether it is
+/// ours. That direction is deliberate and fails closed: replacement characters can only ever pull
+/// **more** variables into the check, never fewer, so a prefixed variable cannot slip past by
+/// being unrepresentable.
+///
+/// # Errors
+///
+/// Returns [`KernelError::Configuration`] naming the variable. A value is **never** reproduced in
+/// the message: an environment variable is the most common place a credential lives, and an error
+/// that quotes one has published it to every log that catches the failure.
+pub fn read_process_environment(prefix: &str) -> Result<BTreeMap<String, String>, KernelError> {
+    let mut variables = BTreeMap::new();
+
+    for (name, value) in std::env::vars_os() {
+        let name = match name.into_string() {
+            Ok(name) => name,
+            Err(raw) => {
+                let lossy = raw.to_string_lossy().into_owned();
+                if lossy.starts_with(prefix) {
+                    return Err(configuration(
+                        lossy,
+                        SourceLayer::Environment.label(),
+                        "a variable name that is valid Unicode",
+                        &Constraint::Rule(
+                            "the variable's name is not valid Unicode; it is shown with \
+                             replacement characters, and its value is withheld",
+                        ),
+                    ));
+                }
+                continue;
+            }
+        };
+
+        if !name.starts_with(prefix) {
+            continue;
+        }
+
+        let Ok(value) = value.into_string() else {
+            return Err(configuration(
+                name,
+                SourceLayer::Environment.label(),
+                "a variable value that is valid Unicode",
+                &Constraint::Rule(
+                    "the variable's value is not valid Unicode and is withheld from this message",
+                ),
+            ));
+        };
+
+        variables.insert(name, value);
+    }
+
+    Ok(variables)
+}
+
 /// Reads the environment into a layer, decoding each variable against the schema.
 ///
 /// Only variables starting with `prefix` are considered. The prefix is stripped, the remainder is

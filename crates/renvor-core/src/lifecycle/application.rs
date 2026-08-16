@@ -57,7 +57,7 @@ pub const DEFAULT_PROVIDER_DEADLINE: Duration = Duration::from_secs(30);
 /// Shorter than the provider deadline on purpose — reading a file or an environment map is not
 /// opening a connection pool, so a source still working after ten seconds is stuck rather than
 /// slow.
-pub const DEFAULT_SOURCE_DEADLINE: Duration = Duration::from_secs(10);
+pub const DEFAULT_BUILD_DEADLINE: Duration = Duration::from_secs(10);
 
 /// A shared, readable record of the phases a run entered.
 ///

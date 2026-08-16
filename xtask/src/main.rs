@@ -476,14 +476,105 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !facade_feature_isolation_holds(root) {
         return false;
     }
+    if !lean_facade_compiles(root) {
+        return false;
+    }
     if !instability_wording_agrees(root) {
         return false;
     }
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, facade isolation, and instability wording all hold, each with a control",
+        "crate DAG, facade isolation, lean compile, and instability wording all hold, each with a control",
     );
+    true
+}
+
+/// Runs a cargo subcommand quietly and reports only whether it succeeded.
+///
+/// Separate from [`run`] because these are *probes*: one of them is expected to fail, and a probe
+/// that printed a step banner for its own expected failure would read as a broken run.
+fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
+    std::process::Command::new("cargo")
+        .args(args)
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// T111: the facade **compiles** without default features, for every target.
+///
+/// [`facade_feature_isolation_holds`] asks `cargo tree` what the graph resolves to. That is not
+/// the same question as whether the code builds, and the difference is not academic: the
+/// `configuration` example used `renvor::config` with no `required-features` declaration, so
+/// `--no-default-features --all-targets` failed to compile while every tree query stayed green.
+/// Resolving a graph is not compiling against it.
+fn lean_facade_compiles(root: &std::path::Path) -> bool {
+    // THE GATE. `--all-targets` is the load-bearing flag: without it, examples and tests are never
+    // built and the whole failure mode is invisible.
+    if !cargo_succeeds(
+        root,
+        &[
+            "check",
+            "--locked",
+            "-p",
+            "renvor",
+            "--no-default-features",
+            "--all-targets",
+        ],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo check --locked -p renvor --no-default-features --all-targets` FAILED — a target \
+             outside the `config` feature depends on it, or an example is missing its \
+             `required-features` declaration",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL 1: with default features the whole target set, examples included, compiles.
+    // Without this, deleting every example would satisfy the gate above perfectly.
+    if !cargo_succeeds(
+        root,
+        &["check", "--locked", "-p", "renvor", "--all-targets"],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo check --locked -p renvor --all-targets` failed, so the lean check above proves \
+             nothing about a build that works",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL 2: the `configuration` example is a real target that genuinely needs the
+    // feature. This is the one that must FAIL. If the example ever stopped using `renvor::config`,
+    // the gate above would still pass while having nothing left to guard, and only this notices.
+    if cargo_succeeds(
+        root,
+        &[
+            "check",
+            "--locked",
+            "-p",
+            "renvor",
+            "--no-default-features",
+            "--example",
+            "configuration",
+        ],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the `configuration` example builds WITHOUT the `config` feature, so its \
+             `required-features` declaration guards nothing and the lean-build gate is vacuous",
+        );
+        return false;
+    }
+
     true
 }
 

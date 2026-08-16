@@ -292,6 +292,55 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 ---
 
+## Phase 10: Pre-Shipping Corrections (T111–T132)
+
+**Why this phase exists.** A read-only pre-shipping audit on **2026-08-16**, run against the
+finished tree at `ef76f4e`, found defects the 11-step verification sequence does not cover. T001–T110
+were completed and verified as written; these corrections are **additional**, not a re-run, and the
+phase is **not complete** while any of them is open.
+
+**Do not read Phases 1–9 as complete-and-shipped.** They are complete-as-specified, on a branch
+that has not been integrated, with the corrections below outstanding.
+
+### A. Runtime and compile correctness
+
+- [x] T111 Declare `[[example]] required-features = ["config"]` for `crates/renvor/examples/configuration.rs`, and add a `lean_facade_compiles` gate to `xtask` step 7 running `cargo check --locked -p renvor --no-default-features --all-targets` with two controls — one that must pass, one that must **fail**. The existing `cargo tree` isolation check could never have caught this: resolving a graph is not compiling against it
+- [x] T112 Replace `std::env::vars()` with a fail-closed `read_process_environment` over `vars_os()` in `crates/renvor-config/src/layer/env.rs`; add `crates/renvor-config/tests/environment_bytes.rs` proving an unrelated non-Unicode entry is ignored, a prefixed one is refused **without reproducing its value**, and both `LayeredResolver` and `SchemaSource` stay panic-free, using real subprocess environments
+- [x] T113 Replace the infallible `std::thread::spawn` with `std::thread::Builder::spawn`, add `KernelError::ResourceUnavailable` (taxonomy 1.1.0 → 1.2.0), and add a spawner seam so the refusal path is reachable from a test. Deadline, panic containment, no-join, and the leaked-thread limitation are all preserved
+- [x] T114 Introduce `BoundedFailure` so each phase attributes its own bounded-call failure instead of inheriting the configuration phase's wording
+- [x] T115 Rewrite the wait-inventory gate in `crates/renvor-core/tests/deadlines.rs` to **discover** every file under `src/` and flag any that reaches author code without a bound, replacing the hardcoded three-file, `.await`-shaped scan. Mutation-tested: a new unbounded file fails the gate
+- [x] T116 Make all **21** C-L9 combinations execute and be asserted. Bound `Provider::dependencies` at `Register`, `ReadinessContributor::readiness` at `Ready`, and `EntropySource::fill`; make `Load`, `Validate`, `Register`, `Ready`, and `Drain` honour `Panic` and `Hang` instead of ignoring them. The kernel-owned callback inventory moves from **five to eight**
+- [x] T117 Document that `catch_unwind` contains only **unwinding** panics and cannot contain `panic = "abort"`, a double panic, `process::abort`, or a stack overflow — in `provider/contain.rs` and `health/contributor.rs`, and in the evidence ledger
+
+### B. Release and package contracts
+
+- [ ] T118 Reconcile the dependency rule across `specs/001-governance-foundation/spec.md`, `contracts/package-metadata.md`, and `RELEASING.md`: `{ path, version }` is permitted for publishable intra-workspace dependencies; **path-only** and **git** dependencies remain prohibited. Add an executable manifest check
+- [ ] T119 Correct `RELEASING.md`'s publication order to `renvor-core` → `renvor-config` and `renvor-testkit` → `renvor`, with `xtask` never published, and remove the stale one-package / no-dependency statement
+- [ ] T120 Fix `release-dry-run.yml`'s false "everything outside the checkout" claim: direct package and dry-run output to a target directory outside the checkout, collect archives from there, and replace the `git status`-only cleanliness control with one that can detect ignored generated files
+- [ ] T121 Sweep `README.md`, `SUPPORT.md`, `SECURITY.md`, `CONTRIBUTING.md`, `crates/renvor/README.md`, `crates/renvor/Cargo.toml`, and the documentation site for stale Phase 001 "version metadata only" claims
+
+### C. Verification and evidence integrity
+
+- [ ] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
+- [ ] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
+- [ ] T124 Update quickstart Gate 14 for the merged **W-004** authority — its four controls and three preconditions — and remove the obsolete "separately proposed waiver" text
+- [ ] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
+
+### D. W-005 and phase closure
+
+- [ ] T126 Correct the stale open items: the config facade re-export is no longer vacuous, and the `ConfigSource` item is superseded by US3
+- [ ] T127 Run the repository-local `speckit-analyze` against the finished artifacts and implementation; resolve every CRITICAL, HIGH, and MEDIUM finding and disposition every LOW one
+- [ ] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually
+- [ ] T129 Add a complete evidence map covering exactly **FR-001…FR-044** and **SC-001…SC-022**, each row naming concrete implementation, tests, and evidence, or visibly unmet
+- [ ] T130 Update the evidence status truthfully: implementation may be stated complete **conditional on integration to main**, and must not imply an unmerged branch is integrated or independently reviewed
+
+### E. Final validation and pull request
+
+- [ ] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
+- [ ] T132 Push the exact final commit to `refs/heads/feat/phase-002-core-kernel` with a non-force refspec and open one non-draft pull request into `main`, stating scope, validation, waiver status, and named limitations. **Stop before merging**
+
+---
+
 ## Dependencies
 
 ### Blocking order

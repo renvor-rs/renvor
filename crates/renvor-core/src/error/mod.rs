@@ -69,6 +69,8 @@ pub enum ErrorCategory {
     DeadlineExceeded,
     /// Work was submitted after shutdown began.
     ShuttingDown,
+    /// The host refused a resource the kernel asked for.
+    ResourceUnavailable,
     /// A defect in the kernel itself.
     Internal,
 }
@@ -76,9 +78,9 @@ pub enum ErrorCategory {
 impl ErrorCategory {
     /// Every category, for exhaustiveness tests.
     ///
-    /// C-E1 lists fourteen rows. A test asserts this array's length against that number, so
-    /// adding a category without updating the contract fails loudly.
-    pub const ALL: [Self; 14] = [
+    /// C-E1 lists fifteen rows as of taxonomy 1.2.0. A test asserts this array's length against
+    /// that number, so adding a category without updating the contract fails loudly.
+    pub const ALL: [Self; 15] = [
         Self::Configuration,
         Self::ConfigurationConflict,
         Self::StateDuplicate,
@@ -92,6 +94,7 @@ impl ErrorCategory {
         Self::Cancelled,
         Self::DeadlineExceeded,
         Self::ShuttingDown,
+        Self::ResourceUnavailable,
         Self::Internal,
     ];
 
@@ -112,6 +115,7 @@ impl ErrorCategory {
             Self::Cancelled => "cancelled",
             Self::DeadlineExceeded => "deadline_exceeded",
             Self::ShuttingDown => "shutting_down",
+            Self::ResourceUnavailable => "resource_unavailable",
             Self::Internal => "internal",
         }
     }
@@ -311,6 +315,26 @@ pub enum KernelError {
         operation: String,
     },
 
+    /// The host refused a resource the kernel asked for, and no author input caused it.
+    ///
+    /// **This is not [`Self::Internal`], and the difference is the whole reason it exists.** An
+    /// exhausted thread table or a process running against `RLIMIT_NPROC` is an environment
+    /// failure; reporting it as a kernel defect would tell an author their framework is broken
+    /// when their host is. That is the identical argument the builder module already makes for
+    /// entropy, applied to the second resource the kernel asks the operating system for.
+    ///
+    /// It is not [`Self::LimitExceeded`] either: that names a ceiling **Renvor declared**, and
+    /// there is no Renvor ceiling on operating-system threads.
+    #[error("the host could not supply {resource} needed to {operation}: {cause}")]
+    ResourceUnavailable {
+        /// What the host refused, e.g. `an operating-system thread`.
+        resource: &'static str,
+        /// What it was needed for, naming the source and the call so the failure is attributable.
+        operation: String,
+        /// The operating system's own reason, forwarded rather than paraphrased.
+        cause: String,
+    },
+
     /// The resolution work budget was exhausted — a defect in the kernel.
     ///
     /// **If an author sees this, the kernel is wrong, not their graph.** The budget is a constant
@@ -351,6 +375,7 @@ impl KernelError {
             Self::Cancelled { .. } => ErrorCategory::Cancelled,
             Self::DeadlineExceeded { .. } => ErrorCategory::DeadlineExceeded,
             Self::ShuttingDown { .. } => ErrorCategory::ShuttingDown,
+            Self::ResourceUnavailable { .. } => ErrorCategory::ResourceUnavailable,
             Self::Internal { .. } => ErrorCategory::Internal,
         }
     }
@@ -443,6 +468,11 @@ mod tests {
             KernelError::ShuttingDown {
                 operation: "enqueue".into(),
             },
+            KernelError::ResourceUnavailable {
+                resource: "an operating-system thread",
+                operation: "load configuration source `application configuration`".to_owned(),
+                cause: "cannot allocate memory".to_owned(),
+            },
             KernelError::Internal {
                 axis: BudgetAxis::ProviderExaminations,
                 observed: 9216,
@@ -452,11 +482,11 @@ mod tests {
     }
 
     #[test]
-    fn the_taxonomy_has_the_fourteen_categories_the_contract_lists() {
+    fn the_taxonomy_has_the_fifteen_categories_the_contract_lists() {
         assert_eq!(
             ErrorCategory::ALL.len(),
-            14,
-            "contract C-E1 revision 1.1.0 lists fourteen categories"
+            15,
+            "contract C-E1 revision 1.2.0 lists fifteen categories"
         );
         let mut names: Vec<&str> = ErrorCategory::ALL.iter().map(|c| c.as_str()).collect();
         names.sort_unstable();

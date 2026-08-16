@@ -25,7 +25,7 @@ use renvor_core::error::context::{Constraint, configuration};
 use toml::Table;
 
 use crate::layer::decode::decode_source;
-use crate::layer::env::read_environment;
+use crate::layer::env::{read_environment, read_process_environment};
 use crate::layer::file::FileLayer;
 use crate::layer::merge::{DecodedLayer, merge_layers};
 use crate::schema::ConfigSchema;
@@ -137,7 +137,10 @@ impl<T: ConfigSchema> LayeredResolver<T> {
         if let Some(prefix) = &self.env_prefix {
             let variables = match &self.env_override {
                 Some(supplied) => supplied.clone(),
-                None => std::env::vars().collect(),
+                // Fallible, and deliberately so: reading the real environment is the one place
+                // this resolver touches something it did not receive as an argument, and the
+                // standard library's Unicode-or-panic reader is not safe to use there.
+                None => read_process_environment(prefix)?,
             };
             // The environment layer decodes each variable as it reads it, so it arrives already
             // checked and needs no second pass.

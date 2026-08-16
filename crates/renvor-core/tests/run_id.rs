@@ -20,6 +20,7 @@
 //! ships with a green suite.
 
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 
 use renvor_core::ApplicationBuilder;
 use renvor_core::observe::{EntropySource, FixedEntropy, OsEntropy, RunIdentifier};
@@ -49,7 +50,12 @@ fn the_identifier_is_a_pure_function_of_the_entropy() {
     );
 
     // Vary the process's own environment, which carries hostname and much else.
-    let environment: BTreeMap<String, String> = std::env::vars().collect();
+    //
+    // `vars_os`, never `vars`: the Unicode-or-panic reader would take this test down over a
+    // variable set by whatever launched it, and a test that crashes on somebody else's
+    // environment is not evidence about run identifiers. Same reasoning as
+    // `renvor_config::layer::env::read_process_environment`.
+    let environment: BTreeMap<OsString, OsString> = std::env::vars_os().collect();
     assert!(
         !environment.is_empty(),
         "the environment is non-empty, so varying against it is meaningful"

@@ -15,9 +15,16 @@
 //!
 //! `catch_unwind` needs no `unsafe`, which matters here: this workspace declares
 //! `unsafe_code = "forbid"`, so an approach requiring it would not have been available.
+//!
+//! It also only catches panics that **unwind**. Under `panic = "abort"` there is nothing to catch
+//! and a broken contributor ends the process — see [`crate::provider::contain`] for the full
+//! statement of that limit, which applies identically here.
 
 use core::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::Arc;
+use std::sync::mpsc::{RecvTimeoutError, channel};
+use std::time::Duration;
 
 use crate::health::Readiness;
 
@@ -42,37 +49,129 @@ impl fmt::Debug for dyn ReadinessContributor {
     }
 }
 
+/// Why a verdict is not the contributor's own answer.
+///
+/// An enum rather than a set of booleans. Two independent flags would allow the impossible state
+/// "panicked **and** timed out", and an operator reading a report needs exactly one reason.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ContributorFault {
+    /// The contributor answered. The verdict is its own.
+    #[default]
+    None,
+    /// It panicked instead of answering.
+    Panicked,
+    /// It did not answer inside the readiness deadline, and is still running.
+    TimedOut,
+    /// The host refused a thread, so it was never asked at all.
+    NotAsked,
+}
+
+impl ContributorFault {
+    /// Whether the contributor is broken rather than merely reporting not-ready.
+    #[must_use]
+    pub const fn is_fault(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 /// What one contributor answered, and whether it answered at all.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContributorVerdict {
     /// Which contributor.
-    pub name: String,
-    /// What it reported, or [`Readiness::NotReady`] if it panicked.
-    pub readiness: Readiness,
-    /// Whether the answer came from a panic rather than from the contributor.
     ///
-    /// A separate field rather than a special `Readiness` variant: an operator reading a report
+    /// The contributor's own name when it supplied one, and its registration position when it
+    /// could not — asking for the name is one of the calls that can fail.
+    pub name: String,
+    /// What it reported, or [`Readiness::NotReady`] if it did not report.
+    pub readiness: Readiness,
+    /// Why the answer is not the contributor's own, if it is not.
+    ///
+    /// Separate from [`Self::readiness`] rather than a special `Readiness` variant: an operator
     /// needs "this check is broken" to look different from "this check says no", and folding them
     /// into one value would make a defect indistinguishable from a working negative answer.
-    pub panicked: bool,
+    pub fault: ContributorFault,
 }
 
-/// Asks one contributor, converting a panic into an attributed not-ready.
-pub(crate) fn ask(contributor: &dyn ReadinessContributor) -> ContributorVerdict {
-    let name = contributor.name().to_owned();
+impl ContributorVerdict {
+    /// Whether this contributor panicked rather than answering.
+    #[must_use]
+    pub const fn panicked(&self) -> bool {
+        matches!(self.fault, ContributorFault::Panicked)
+    }
+}
 
-    // `AssertUnwindSafe` because `&dyn ReadinessContributor` is a shared reference and the call
-    // takes `&self`: a panic cannot leave a partially-mutated value visible through it.
-    match catch_unwind(AssertUnwindSafe(|| contributor.readiness())) {
-        Ok(readiness) => ContributorVerdict {
+/// Asks one contributor on a worker thread, bounded by `deadline`.
+///
+/// # Why a thread, and not just `catch_unwind`
+///
+/// `catch_unwind` contains a panic and does nothing at all about a contributor that never returns
+/// — and a readiness probe that blocks for ever is the more likely of the two in production, since
+/// the usual body of a readiness check is a network round trip. FR-025 prohibits an unbounded wait
+/// in any kernel-owned path, and this is one. Same mechanism as the `Load` and `Validate` phases,
+/// for the same reason, with the same honest cost: **a hung contributor's thread is leaked.**
+///
+/// # `name()` is asked inside the guard, not outside it
+///
+/// An earlier version read `contributor.name()` before entering `catch_unwind`, so a contributor
+/// whose *name* panicked took the process down while the guard watched. Both calls now happen
+/// inside, and `position` supplies the identity when neither is available.
+pub(crate) fn ask(
+    contributor: &Arc<dyn ReadinessContributor>,
+    position: usize,
+    deadline: Duration,
+) -> ContributorVerdict {
+    let fallback = format!("<contributor at registration position {position}>");
+    let handle = Arc::clone(contributor);
+    let (sender, receiver) = channel();
+
+    let spawned = std::thread::Builder::new()
+        .name("renvor-readiness".to_owned())
+        .spawn(move || {
+            // Two guards, not one. `readiness` panicking is the likely case and `name` panicking
+            // is the pathological one; guarding them together would throw away a perfectly good
+            // name every time the likely case happened.
+            //
+            // `AssertUnwindSafe` because the handle is shared and both calls take `&self`: a panic
+            // cannot leave a partially-mutated value visible through it.
+            let named = catch_unwind(AssertUnwindSafe(|| handle.name().to_owned())).ok();
+            let answered = catch_unwind(AssertUnwindSafe(|| handle.readiness())).ok();
+            drop(sender.send((named, answered)));
+        });
+
+    if spawned.is_err() {
+        // Fail closed: an application whose readiness could not be established is not ready.
+        return ContributorVerdict {
+            name: fallback,
+            readiness: Readiness::NotReady,
+            fault: ContributorFault::NotAsked,
+        };
+    }
+
+    match receiver.recv_timeout(deadline) {
+        Ok((Some(name), Some(readiness))) => ContributorVerdict {
             name,
             readiness,
-            panicked: false,
+            fault: ContributorFault::None,
         },
-        Err(_) => ContributorVerdict {
-            name,
+        // Either call panicked. Fail closed on the readiness answer even when only `name` broke: a
+        // contributor that cannot say what it is called is not one to take a `Ready` from.
+        Ok((named, _)) => ContributorVerdict {
+            name: named.unwrap_or(fallback),
             readiness: Readiness::NotReady,
-            panicked: true,
+            fault: ContributorFault::Panicked,
+        },
+        Err(RecvTimeoutError::Timeout) => ContributorVerdict {
+            name: fallback,
+            readiness: Readiness::NotReady,
+            fault: ContributorFault::TimedOut,
+        },
+        // The worker unwound outside the guard, which the guard's placement makes unreachable.
+        // Reported as a panic rather than asserted: SC-004 allows 0 panics, and a diagnostic that
+        // is merely imprecise beats one that aborts the process.
+        Err(RecvTimeoutError::Disconnected) => ContributorVerdict {
+            name: fallback,
+            readiness: Readiness::NotReady,
+            fault: ContributorFault::Panicked,
         },
     }
 }

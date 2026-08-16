@@ -1,6 +1,6 @@
 ---
 description: "Phase 002 contract — kernel error categories, causal chaining, and redaction guarantees"
-version: "1.1.0"
+version: "1.2.0"
 status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise"
 ---
 
@@ -33,7 +33,31 @@ a message string is not an API; it is a defect waiting for a rewording.
 | `Cancelled` | a cancellation signal ended the operation | the phase reached |
 | `DeadlineExceeded` | a bounded wait elapsed | the deadline and the operation |
 | `ShuttingDown` | work submitted after shutdown began | the rejected operation |
+| `ResourceUnavailable` | the host refused a resource the kernel asked for | the resource, the operation, the host's own reason |
 | `Internal` | **resolution work budget exhausted** — a defect in the kernel | the counters observed |
+
+### Revision 1.2.0 — `ResourceUnavailable` added
+
+Added on **2026-08-16**, during T113, on the same footing as revision 1.1.0: implementation
+evidence, not review opinion.
+
+`Load` and `Validate` bound each author-supplied source call by running it on a worker thread, and
+a thread that never returns is **leaked** — the cost recorded as open item 15. Leaking threads
+means a long-lived process can genuinely run out of them, so the spawn itself has to be able to
+fail. `std::thread::spawn` **panics** when the operating system refuses; `std::thread::Builder::spawn`
+returns the refusal. Renvor uses the builder form, which produced an outcome with no category:
+
+| Alternative | Why it was rejected |
+|---|---|
+| Panic (`std::thread::spawn`) | SC-004 requires **0** panics in ordinary use, and exhaustion is foreseeable here rather than hypothetical |
+| Carry on without the source | A **silent fallback** — FR-022 — booting on configuration nobody read |
+| Report it as `Internal` | It is a **host** failure, not a Renvor defect, and `Internal` says the opposite |
+| Report it as `DeadlineExceeded` | **False**: no deadline elapsed; the wait never started |
+| Report it as `LimitExceeded` | That names a ceiling **Renvor declared**. Renvor declares no ceiling on OS threads |
+
+The category count moves from **14 to 15**. This is the identical argument the builder module
+already makes for `EntropySource` — an operating system that refuses a resource is not a broken
+framework — now applied to the second resource the kernel asks the host for.
 
 ### Revision 1.1.0 — `CapabilityDuplicate` added
 
@@ -50,7 +74,7 @@ not saying so was already prohibited by something the project had agreed:
 | Report it as `DependencyMissing` | The diagnostic would be **false**: the capability *is* provided, twice |
 | Report it as `Internal` | It is an author mistake, not a Renvor defect, and `Internal` says the opposite |
 
-The category count in this contract therefore moves from **13 to 14**. The `ErrorCategory::ALL`
+The category count in this contract moved from **13 to 14** at this revision. The `ErrorCategory::ALL`
 array and its length assertion moved with it, so a future edit that adds a category without
 updating this contract still fails loudly.
 

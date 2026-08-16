@@ -32,6 +32,32 @@
 //!
 //! The panic **still prints** through the process's panic hook. That is deliberate: containing a
 //! panic should not hide it, and the hook's output carries the backtrace this module cannot.
+//!
+//! # What this does NOT contain: `panic = "abort"`
+//!
+//! `catch_unwind` catches a panic that **unwinds**. It has nothing to catch under
+//! `panic = "abort"`, where a panic calls the abort handler and the process ends without any
+//! unwinding for a landing pad to intercept. A consumer who sets
+//!
+//! ```toml
+//! [profile.release]
+//! panic = "abort"
+//! ```
+//!
+//! gets **no** provider panic containment, and neither this module nor
+//! [`crate::health::contributor`] can give them any — the containment is a property of the
+//! unwinding runtime, not of Renvor. The same limit applies to every `catch_unwind` in the
+//! ecosystem; it is stated here because C-L9 and SC-009 are otherwise easy to read as an
+//! unconditional guarantee.
+//!
+//! Two further cases unwinding cannot reach, for completeness:
+//!
+//! - a **double panic** — panicking while a panic is already unwinding — aborts;
+//! - `std::process::abort` and a stack overflow are not panics at all.
+//!
+//! Renvor does not set `panic` in any profile, so the default (`unwind`) applies unless a consumer
+//! changes it. The claim this module supports is therefore: **a provider panic is contained
+//! wherever unwinding is the panic strategy**, which is the default and is what CI runs.
 
 use core::any::Any;
 use core::fmt;
@@ -57,6 +83,18 @@ impl Panicked {
     #[must_use]
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    /// A panic the kernel observed indirectly, described rather than caught.
+    ///
+    /// Used where the panic crossed a thread boundary and its payload is gone — a worker thread
+    /// that unwound leaves a dropped channel sender, not a payload. Reporting *that* as a panic
+    /// with an explanation is more truthful than reporting it as an ordinary failure.
+    #[must_use]
+    pub fn describing(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
     }
 
     /// Reads the message out of a panic payload.

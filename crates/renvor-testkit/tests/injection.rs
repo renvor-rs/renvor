@@ -78,18 +78,133 @@ async fn each_phase_fails_in_the_way_that_phase_fails() {
                 assert!(run.reached(LifecyclePhase::Boot));
                 assert!(!run.reached(LifecyclePhase::Ready), "Ready is not reached");
             }
-            ("ready", Outcome::Ready) => {
+            ("ready", Outcome::ReadyDegraded(_)) => {
                 assert!(run.reached(LifecyclePhase::Ready));
             }
-            ("drain", Outcome::DrainIncomplete(outstanding)) => {
-                assert_eq!(*outstanding, 1, "the held work is reported as outstanding");
-            }
+            // `Fail` at Drain means work that errors and returns. Its permit is released on the
+            // way out, so the drain COMPLETES — the incomplete drain is `Hang`, asserted below.
+            ("drain", Outcome::Stopped) => {}
             // A stop failure does not change the shutdown's drain outcome: the drain was clean and
             // the provider refused afterwards. Both facts survive, which is C-L4.
-            ("stop", Outcome::Stopped) => {}
+            ("stop", Outcome::Stopped) => {
+                assert_eq!(
+                    run.stop_failures.len(),
+                    1,
+                    "the stop failure must be reported even though shutdown completed"
+                );
+            }
             (_, other) => panic!("{phase} produced {other:?}, expected a {expected} failure"),
         }
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn all_twenty_one_behaviour_and_phase_combinations_execute_and_are_attributed() {
+    // T116 — C-L9 read literally. SC-009 says "7 of 7 phases injectable"; C-L9 says "with `Fail`,
+    // `Panic`, and `Hang` behaviours". That is **21** combinations, and this file previously
+    // asserted 11 of them: `Load`, `Validate`, `Register`, `Ready`, and `Drain` each took a
+    // `Behaviour` and ignored it, so 10 combinations were enum values with no code behind them.
+    //
+    // An ignored combination is not a covered one. Every row below runs, fires, and is asserted
+    // for the outcome that behaviour produces at that phase.
+    use renvor_core::ContributorFault;
+
+    let mut executed = 0_usize;
+
+    for point in FailureInjectionPoint::every_combination() {
+        let (phase, behaviour) = (point.phase(), point.behaviour());
+        let run = Harness::injecting(point).run().await;
+
+        assert!(run.fired, "{behaviour} at {phase} never fired");
+        assert!(
+            !matches!(run.outcome, Outcome::NotInjectable(_)),
+            "{behaviour} at {phase} reported not injectable: {:?}",
+            run.outcome
+        );
+
+        match (phase, behaviour, &run.outcome) {
+            // The three synchronous build phases: all three behaviours must stop the build, and
+            // 0 providers may reach Boot (SC-005).
+            (
+                LifecyclePhase::Load | LifecyclePhase::Validate | LifecyclePhase::Register,
+                _,
+                Outcome::BuildFailed(message),
+            ) => {
+                assert!(
+                    !run.reached(LifecyclePhase::Boot),
+                    "{behaviour} at {phase}: 0 providers may boot"
+                );
+                // Attribution: a hang is reported as a deadline, never as an ordinary refusal.
+                if behaviour == Behaviour::Hang {
+                    assert!(
+                        message.contains("deadline"),
+                        "{behaviour} at {phase} must be reported as a deadline: {message}"
+                    );
+                }
+            }
+            (LifecyclePhase::Boot, _, Outcome::BootFailed(message)) => {
+                assert!(run.reached(LifecyclePhase::Boot));
+                assert!(!run.reached(LifecyclePhase::Ready));
+                if behaviour == Behaviour::Hang {
+                    assert!(message.contains("deadline"), "{message}");
+                }
+            }
+            // Reaching Ready is the success condition, so the injection lands in health — and the
+            // three behaviours must remain **distinguishable** there, which is the whole reason
+            // `ContributorFault` is an enum rather than a boolean.
+            (LifecyclePhase::Ready, _, Outcome::ReadyDegraded(report)) => {
+                assert!(run.reached(LifecyclePhase::Ready));
+                let verdict = report
+                    .contributors
+                    .iter()
+                    .find(|verdict| {
+                        verdict.name == "injected-contributor" || verdict.fault.is_fault()
+                    })
+                    .unwrap_or_else(|| panic!("{behaviour} at {phase}: no verdict: {report:?}"));
+                let expected = match behaviour {
+                    Behaviour::Fail => ContributorFault::None,
+                    Behaviour::Panic => ContributorFault::Panicked,
+                    Behaviour::Hang => ContributorFault::TimedOut,
+                    // `Behaviour` is `#[non_exhaustive]`. A fourth behaviour must be given a
+                    // health attribution here rather than silently matching an existing one.
+                    other => panic!("{other} has no readiness attribution; add one"),
+                };
+                assert_eq!(
+                    verdict.fault, expected,
+                    "{behaviour} at {phase} was misattributed"
+                );
+                assert_eq!(report.readiness, renvor_core::Readiness::NotReady);
+            }
+            // Only `Hang` keeps its permit. `Fail` and `Panic` release it — the second by
+            // unwinding, which is the property `drain.rs` claims and nothing else tests.
+            (LifecyclePhase::Drain, Behaviour::Hang, Outcome::DrainIncomplete(outstanding)) => {
+                assert_eq!(*outstanding, 1, "the held work is reported as outstanding");
+            }
+            (LifecyclePhase::Drain, Behaviour::Fail | Behaviour::Panic, Outcome::Stopped) => {}
+            (LifecyclePhase::Stop, _, Outcome::Stopped) => {
+                assert_eq!(
+                    run.stop_failures.len(),
+                    1,
+                    "{behaviour} at {phase}: shutdown continues and reports the failure (C-L4)"
+                );
+                if behaviour == Behaviour::Hang {
+                    assert!(
+                        run.stop_failures[0].contains("deadline"),
+                        "{}",
+                        run.stop_failures[0]
+                    );
+                }
+            }
+            (_, _, other) => panic!("{behaviour} at {phase} produced an unexpected {other:?}"),
+        }
+
+        executed += 1;
+    }
+
+    assert_eq!(
+        executed, 21,
+        "C-L9 is 7 phases × 3 behaviours; every one must execute, not merely be enumerable"
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -211,7 +326,11 @@ async fn a_run_with_no_injection_reaches_ready_and_stops_cleanly() {
     .run()
     .await;
 
-    assert_eq!(run.outcome, Outcome::Ready);
+    assert!(
+        matches!(run.outcome, Outcome::ReadyDegraded(_)),
+        "{:?}",
+        run.outcome
+    );
     assert!(run.reached(LifecyclePhase::Ready));
     assert!(
         run.reached(LifecyclePhase::Load),

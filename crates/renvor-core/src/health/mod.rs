@@ -23,8 +23,9 @@ pub mod contributor;
 
 use core::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
-pub use contributor::{ContributorVerdict, ReadinessContributor};
+pub use contributor::{ContributorFault, ContributorVerdict, ReadinessContributor};
 
 /// Whether the process is alive.
 ///
@@ -93,10 +94,18 @@ impl ReadinessReport {
     pub fn panicking(&self) -> Vec<&ContributorVerdict> {
         self.contributors
             .iter()
-            .filter(|verdict| verdict.panicked)
+            .filter(|verdict| verdict.panicked())
             .collect()
     }
 }
+
+/// How long one readiness contributor may take before it is reported as timed out.
+///
+/// **This is Renvor's number, not a requirement's.** No artifact fixes it. Five seconds is chosen
+/// to sit below the interval of a typical container readiness probe, so a hung contributor is
+/// reported as hung rather than as a probe that never answered — but the value is Renvor's
+/// judgement and is recorded as such in `governance/phase-002-evidence.md`.
+pub const DEFAULT_READINESS_DEADLINE: Duration = Duration::from_secs(5);
 
 /// Liveness and readiness for one application.
 ///
@@ -107,11 +116,23 @@ pub struct HealthState {
     inner: Arc<Inner>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Inner {
     liveness: Mutex<Liveness>,
     draining: Mutex<bool>,
     contributors: Mutex<Vec<Arc<dyn ReadinessContributor>>>,
+    readiness_deadline: Mutex<Duration>,
+}
+
+impl Default for Inner {
+    fn default() -> Self {
+        Self {
+            liveness: Mutex::default(),
+            draining: Mutex::default(),
+            contributors: Mutex::default(),
+            readiness_deadline: Mutex::new(DEFAULT_READINESS_DEADLINE),
+        }
+    }
 }
 
 impl HealthState {
@@ -152,6 +173,30 @@ impl HealthState {
             .push(contributor);
     }
 
+    /// How long a contributor may take before it is reported as timed out.
+    #[must_use]
+    pub fn readiness_deadline(&self) -> Duration {
+        *self
+            .inner
+            .readiness_deadline
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Replaces the readiness deadline.
+    ///
+    /// Settable rather than fixed at construction because the right value depends on the probe
+    /// interval of whatever is asking, which the kernel does not know — and because a test that
+    /// had to wait [`DEFAULT_READINESS_DEADLINE`] to prove a contributor hangs would be a test
+    /// nobody runs.
+    pub fn set_readiness_deadline(&self, deadline: Duration) {
+        *self
+            .inner
+            .readiness_deadline
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = deadline;
+    }
+
     /// Marks the application as draining: readiness becomes not-ready, liveness is untouched.
     pub fn begin_draining(&self) {
         *self
@@ -187,7 +232,10 @@ impl HealthState {
 
         let verdicts: Vec<ContributorVerdict> = contributors
             .iter()
-            .map(|contributor| contributor::ask(contributor.as_ref()))
+            .enumerate()
+            .map(|(position, contributor)| {
+                contributor::ask(contributor, position, self.readiness_deadline())
+            })
             .collect();
 
         let draining = self.is_draining();
@@ -345,7 +393,7 @@ mod tests {
             report
                 .contributors
                 .iter()
-                .filter(|verdict| !verdict.panicked)
+                .filter(|verdict| !verdict.panicked())
                 .all(|verdict| verdict.readiness == Readiness::Ready),
             "a panic must not be blamed on the healthy contributors"
         );
