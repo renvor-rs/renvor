@@ -99,7 +99,12 @@ features = []
     println!("  Display  : {password}");
     println!("  Debug    : {password:?}");
     println!("  in a msg : the password is {password}");
-    println!("  expose() : {} characters", password.expose().len());
+    // `expose()` is the only route to the value, and this example deliberately does not call
+    // it. An earlier revision printed `expose().len()` to show that access is possible. A
+    // length is still a fact about the credential — and a static analyser reading this file
+    // cannot tell a length from the value itself, so the line read as a leak whether or not
+    // it was one. Neither the value nor anything derived from it is printed here.
+    println!("  expose() : access is explicit; the value is not printed");
 
     assert!(!format!("{password}{password:?}").contains("hunter2"));
 

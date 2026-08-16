@@ -41,10 +41,13 @@ Rust library workspace (ADR-0002). Crates live at `crates/<name>/`, **examples a
 `crates/renvor/examples/`** as Cargo example targets of the facade, governance records at
 `governance/`, decision records at `decisions/`.
 
-> **Corrected 2026-08-16 (T123).** This line said "examples at `examples/`", and quickstart Gate 12
-> was written against it while the examples were written as facade targets. The gate globbed a
-> directory that contains no `.rs` file, iterated zero times, and reported a pass. The convention
-> and the gate now both name the real location.
+> **Corrected 2026-08-16 (T123, amended T138).** This line said "examples at `examples/`", and
+> quickstart Gate 12 was written against it while the examples were written as facade targets. The
+> gate globbed a directory that contains no `.rs` file. The T123 wording then said the loop
+> "iterated zero times, and reported a pass"; T138 measured both shells and found otherwise — bash
+> left the glob literal and died at `cargo run --example '*'` with status 101, zsh refused the
+> unmatched glob outright with status 1. The gate **failed**; what was wrong was that a pass had
+> been recorded for it anyway. The convention and the gate now both name the real location.
 
 ---
 
@@ -327,23 +330,58 @@ that has not been integrated, with the corrections below outstanding.
 
 ### C. Verification and evidence integrity
 
-- [x] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
-- [x] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
+- [ ] T122 Regenerate `governance/phase-002-dependency-inventory.md` from the final `Cargo.lock` and live `cargo tree`, and make quickstart Gate 15 compare the documented inventory against the resolved graph, with a positive control
+- [ ] T123 Fix quickstart Gate 12 so it discovers `crates/renvor/examples/*.rs` and runs them as `renvor` examples; prove the gate fails when an example is not runnable
 - [x] T124 Update quickstart Gate 14 for the merged **W-004** authority — its four controls and three preconditions — and remove the obsolete "separately proposed waiver" text
-- [x] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
+- [ ] T125 Run every quickstart gate **0–15 individually** and record all sixteen outcomes in `governance/phase-002-evidence.md`, without collapsing 0–5, omitting 6–12, or mislabelling Gate 15
 
 ### D. W-005 and phase closure
 
 - [x] T126 Correct the stale open items: the config facade re-export is no longer vacuous, and the `ConfigSource` item is superseded by US3
 - [x] T127 Run the repository-local `speckit-analyze` against the finished artifacts and implementation; resolve every CRITICAL, HIGH, and MEDIUM finding and disposition every LOW one
-- [x] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually
+- [ ] T128 Satisfy all three counted **W-005** controls: one clean-context requirements advisory review and one separate clean-context security advisory review, both labelled **NON-INDEPENDENT** and **ADVISORY**, both returning enumerated findings or an explicit named "no findings" result, with every finding dispositioned individually — **REOPENED 2026-08-16.** The reviews ran and their deliverables are intact, but the *individual disposition* half was not met: 5 of 24 round-one MINOR findings had no row, security 2.2 had none, and nine of the re-review's 23 new findings — including two MAJOR security findings on public API — were absorbed into group rows. Closes with T139
 - [x] T129 Add a complete evidence map covering exactly **FR-001…FR-044** and **SC-001…SC-022**, each row naming concrete implementation, tests, and evidence, or visibly unmet
 - [x] T130 Update the evidence status truthfully: implementation may be stated complete **conditional on integration to main**, and must not imply an unmerged branch is integrated or independently reviewed
 
 ### E. Final validation and pull request
 
-- [x] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
-- [x] T132 Push the exact final commit to `refs/heads/feat/phase-002-core-kernel` with a non-force refspec and open one non-draft pull request into `main`, stating scope, validation, waiver status, and named limitations. **Stop before merging**
+- [ ] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
+- [ ] T132 Push the exact final commit to `refs/heads/feat/phase-002-core-kernel` with a non-force refspec and open one non-draft pull request into `main`, stating scope, validation, waiver status, and named limitations. **Stop before merging** — **REOPENED 2026-08-16.** The pull request is open at #19 and its base is unchanged; what is not final is its **head** and its **body**, both of which are superseded by Phase 11
+
+---
+
+## Phase 11: Post-Review Corrections (T133–T141)
+
+**Why this phase exists.** Phase 10 opened PR #19. Reviewing the open pull request found a second
+layer of defects that Phase 10's own corrections had introduced or left: six of the nine CodeQL
+alerts were pointing at real leak-on-failure diagnostics while the ledger called all nine false
+positives; the W-005 record grouped away 14 findings, two of them MAJOR security findings on public
+API that were still live; the dependency inventory's prose contradicted its own table; and Gate 12
+had been rewritten into a form that runs in bash and silently misbehaves in zsh.
+
+**The pattern this time is different from Phase 10's.** Phase 10 found *checks that never executed
+what they claimed*. Phase 11 finds *records that summarised away the thing they were recording* —
+a grouped disposition standing in for a missing row, a total copied from a reviewer's closing line
+instead of counted from its table, a comfortable verdict ("all false positives") applied to a set
+where it was true of three.
+
+### A. Runtime and compile correctness
+
+- [x] T133 Remove every secret-derived string from output and from assertion diagnostics: `crates/renvor/examples/configuration.rs` no longer prints `expose().len()`, and the redaction assertions in `crates/renvor-config/src/secret/mod.rs` and `crates/renvor-config/tests/leak_separator.rs` identify the failing check or route by index instead of by content. Prove it by **mutation**: break `Display` and break `Debug`, and require the failure output to contain **0** occurrences of the synthetic credential
+- [x] T139 Reconcile the **W-005** record against the four recovered review deliverables, enumerating all **61** findings individually with stable IDs, and fix the two MAJOR security findings that a group row had absorbed: **SV-N1**, the public `decode_single` aborting the process by stack overflow at 3,000 segments, and **SV-N2**, a FIFO blocking `FileLayer::read()` for ever in two variants a byte ceiling cannot bound. Both reproduced first, both closed with regression tests, and SV-N2's check-then-open residual named as open item 24
+
+### B. Verification and evidence integrity
+
+- [x] T134 Correct every live stale figure in `governance/phase-002-dependency-inventory.md`, and add **15f** to quickstart Gate 15: the summary rows, the prose totals, and the reach split are each derived from `cargo metadata` and from research §3's own candidate table, with three planted controls — a stale prose total, a wrong summary row, and a deleted row
+- [x] T138 Rewrite quickstart **Gate 12** so it runs identically in **bash 3.2 and zsh**, reading its discovery list from a file with `while IFS= read -r` rather than relying on word splitting that only bash performs; add a before/after `git status --porcelain` comparison with its own planted-leftover control; and correct the historical claim — measured in both shells — everywhere it appears: the gate comment, `examples/README.md`, this file's path convention, the evidence ledger's T123 row, and the Summary-of-gates table
+- [x] T135 Make `actionlint -no-color` exit **0** by splitting `$CRATES` with `read -ra` rather than by quoting it, which would have collapsed the list to one line and left the comparison passing on the wrong data. Verified with a positive control that re-introduces SC2086
+- [x] T137 Correct the release workflow's MSRV comment, which claimed the toolchain was "taken from rust-toolchain.toml rather than restated here" while passing `toolchain: "1.94.0"` — the reverse of the mechanism, and worse than no comment, because it told a reader updating the MSRV that this file needed no edit
+- [x] T136 Correct the CodeQL evidence in `governance/phase-002-evidence.md`: **#1–#3** are custom-sanitizer false positives, **#4–#9** were real diagnostic defects fixed in source, the raw-credential positive control is at **line 188** and was never flagged, and "no fix is available" was false. Record CodeQL as a **W-001 cleanliness gate** despite not being one of the four required status contexts
+
+### C. Final validation and closure
+
+- [ ] T140 Re-run the complete matrix on a clean tree at the final head: `cargo xtask verify` 11/11 on **1.94.0** and on **1.97.1**, `cargo test --workspace -- --test-threads=1`, the no-default-features all-target check on both toolchains, `cargo deny`'s four checks, `actionlint -no-color`, and quickstart gates **0–15 individually** — with Gate 12 additionally run under **both** shells — re-recording T125's table against the gate scripts as they now stand
+- [ ] T141 Wait for every check on the exact new head; dismiss **only** CodeQL alerts #1, #2, and #3 as `false positive`, individually and with a stated reason, after verifying that #4–#9 are gone, that no new alert exists, and that #1–#3 still point at the redacting implementation; resolve the nine review threads; and update PR #19's body to the verified final state. **Stop before merging**
 
 ---
 

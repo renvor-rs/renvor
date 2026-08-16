@@ -5,10 +5,20 @@
 
 ## Status
 
-**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T132** have
+**Implementation is complete, conditional on integration into `main`.** Tasks **T001–T139** have
 been executed on the branch `feat/phase-002-core-kernel`, which is **pushed and open as pull
-request #19**. `specs/002-core-kernel/tasks.md` is authoritative for which tasks are checked, and
-this ledger must never claim more than it does.
+request #19**. **T122, T123, T125, T128, T131, and T132 were reopened on 2026-08-16** and close
+with Phase 11; **T140 and T141 are open** — the final verification matrix and the CodeQL
+disposition, neither of which can be completed before the corrections they verify are pushed.
+`specs/002-core-kernel/tasks.md` is authoritative for which tasks are checked, and this ledger must
+never claim more than it does.
+
+> **Corrected a third time, 2026-08-16 (T139).** Reviewing the open pull request found a second
+> layer of defects, recorded in [Post-review corrections](#post-review-corrections-t133t141). Six
+> tasks that had been checked were **not** complete on their own terms — most sharply T128, whose
+> W-005 reviews genuinely ran but whose findings were not all individually dispositioned. The
+> boundary in this paragraph has now moved three times and been wrong at two of them, which is
+> itself the argument for the rule that `tasks.md` is authoritative and this sentence is not.
 
 > **Corrected twice, in opposite directions, and the second correction is the more interesting
 > one.** The W-005 requirements review (Q6-1) caught this paragraph claiming T001–T132 complete
@@ -41,6 +51,11 @@ Three things this ledger is **not** claiming, stated here so no reader has to in
 A pre-shipping audit on **2026-08-16** found defects that the 11-step verification sequence does
 not cover. They are recorded in [Pre-shipping corrections](#pre-shipping-corrections-t111t132)
 below, and T001–T110 must be read as *complete-as-specified*, not as *audited-and-shipped*.
+
+A second audit the same day, this time of the **open pull request**, found a further layer:
+[Post-review corrections](#post-review-corrections-t133t141). Six of Phase 10's own corrections
+were incomplete, and two MAJOR security findings on public API were still live behind a grouped
+disposition. T111–T132 must be read the same way T001–T110 is.
 
 This ledger records what was **executed and observed**, not what was intended. Where something was
 not done, it says so; where something failed, it says that too. A ledger that only records
@@ -699,9 +714,14 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 18 | A readiness probe now starts **one thread per contributor per call** | Bounding `ReadinessContributor::readiness` needs a thread, for the same reason `Load` does: a blocking call inside an async block never yields. An application probed once a second with twelve contributors creates twelve threads a second, all short-lived. Not measured under load | No — but a phase that adds a real probe endpoint should measure it |
 | 20 | `Drain × Panic` and `Drain × Fail` reach the kernel **identically** | Renvor has no join handle for an author's task, so the drain cannot distinguish a task that panicked from one that returned. The pair proves the work permit is released **by unwinding**, which is a `Drop` property, not a kernel branch | No — but C-L9's 21 combinations are 21 *injections*, not 21 distinct kernel paths, and that distinction is now stated rather than implied |
 | 23 | `MAX_OUTSTANDING_PROBES` has **no setter**, so an application whose contributors have all hung reports `NotAsked` until the process restarts | The application is genuinely broken at that point — 64 readiness workers have never returned — and reporting not-ready is correct. But an operator cannot raise or reset the budget | No |
-| 22 | **9 open CodeQL `rust/cleartext-logging` alerts** on PR #19 | All nine are false positives on the code that demonstrates and tests redaction — verified by running the example and observing **0** occurrences of the credential. Resolving the alert status needs a repository security-settings change, which this workflow is not authorized to make | **No** — CodeQL is not a required check, and all four required checks pass. But the PR shows a red check until a maintainer dismisses the alerts |
+| ~~22~~ | ~~**9 open CodeQL `rust/cleartext-logging` alerts** on PR #19, *"all nine false positives"*~~ | **CLOSED 2026-08-16 (T133, T136, T141), and the original entry was wrong.** Only **#1–#3** were false positives — the `Display`, `Debug`, and embedded-`Display` demonstrations, whose sanitiser CodeQL cannot model. **#4–#9 were real defects and are fixed in source**: #4 printed `expose().len()`, and #5–#9 were assertion diagnostics that would have printed the synthetic credential on a redaction regression. #1–#3 are dismissed individually as `false positive` with a stated reason. See the CodeQL section for the full correction, including that the raw-credential positive control is at line 188 and was never flagged | — |
 | 21 | `MAX_KEY_DEPTH` (32), `MAX_OUTSTANDING_PROBES` (64), and `DEFAULT_READINESS_DEADLINE` (5 s) are **Renvor's numbers** | Same shape as items 7, 11, and 17. Each bound is required — by FR-025, or by the measured stack-overflow and thread-leak findings — and no artifact names a value | No — a phase with production measurements should revisit all six together |
 | 19 | A hung readiness contributor **leaks its thread**, exactly as item 15 describes for configuration sources | Identical cause, identical impossibility: no Rust API can interrupt a blocked thread. The *wait* is bounded, and since the W-005 security review (finding 5.1) the *number of leaked threads* is bounded too, at `MAX_OUTSTANDING_PROBES` — but each leaked thread is permanent | No — the leak is capped rather than removed |
+| 24 | The FIFO refusal is **check-then-open** and therefore racy | SV-N2's fix rejects a non-regular file on a `stat`, which does not open the path — so a FIFO present at check time never reaches the blocking `open`. An attacker who can **replace** the path between the `stat` and the `open` can still present one. Closing that needs `O_NONBLOCK` at open time, which means a direct `libc` dependency and a new row in the FR-040 inventory | No — under `ApplicationBuilder::build` even the residual is contained: `source.load()` runs inside `bounded_call` and is reported as a timeout. A caller using `FileLayer::read()` directly, on a path an attacker can write, is exposed |
+| 25 | A configuration error message is **unbounded in length** | Round-1 finding 2.2 and SV-N3. A key is not a secret, so its content is safe to name — but a 1 MiB TOML key or a ~128 KiB environment variable name becomes an error string of that size in every log that catches the failure. SV-N1's own fix adds a call site with this property, since an over-deep key is long by construction | No — but a phase that adds structured logging should cap the rendered key |
+| 26 | "0 examples require a transport" rests on a **denylist**, not a proof | RV-N4. Gate 13a checks that no transport, database, or CLI package name appears in the resolved graph. That is what is available without a capability model; it cannot prove a future package is not a transport | No |
+| 27 | Gate 15's **15d has no positive control** | RV-N10. It is fail-closed through `pipefail` on its own pipeline, but nothing plants a row with an empty licence cell and requires the awk to catch it — the same shape as Q7-5, introduced by Q7-7's fix. T138 added three controls to 15f and none to 15d | No — but the file's own rule is that every zero-asserting check carries a control, and this one does not |
+| 28 | `MAX_OUTSTANDING_PROBES` is **not re-exported** from `health`'s root | SV-N4. Callers reach through `health::contributor::`, and the crate's own integration test does. The matching defect in `renvor-config` was fixed at T139 — `MAX_KEY_DEPTH` now sits at the crate root — so this is the remaining half of the same inconsistency | No |
 
 ## Pre-shipping corrections (T111–T132)
 
@@ -744,7 +764,7 @@ guarded **separately**, so only a contributor whose *name* panics degrades to a 
 | # | Defect | Why nothing caught it | Now caught by |
 |---|---|---|---|
 | T122 | The inventory's resolved-set table still carried the deleted `confique` tree; the direct/transitive split read 11/37 against a live 10/38; and the MSRV note named three dev-only packages when two remain and **both are production** | The summary counts were corrected when `confique` was deleted. The 54-row table beneath them was not | The table regenerated from `cargo metadata --locked`; **Gate 15 now compares the document against the live graph in both directions**, with a control that plants a package the graph does not contain |
-| T123 | Gate 12 globbed `examples/*.rs` from the repository root — **a directory that does not exist** — and ran zero examples | `for f in <no matches>` executes the body zero times and exits 0. The gate printed `GATE 12 PASS` having run nothing | Discovery under `crates/renvor/examples`, a minimum count, and a control that plants a failing example and requires the gate to reject it |
+| T123 | Gate 12 globbed `examples/*.rs` from the repository root and ran **zero** examples | **The T123 explanation was itself wrong, and T138 corrected it.** It said the directory did not exist and that `for f in <no matches>` runs the body zero times and exits 0. `examples/` *does* exist — tracked, holding `.gitkeep` and a README — with no `.rs` file in it; and an unmatched glob is not a no-op. bash leaves it literal, so the body ran **once** with `f=examples/*.rs` and `cargo run --example '*'` exited non-zero (script status **101**); zsh rejects the unmatched glob before the loop (status **1**). The gate **failed loudly in both shells**. The defect was that a pass was recorded for it regardless | Discovery under `crates/renvor/examples`, a minimum count, and a control that plants a failing example and requires the gate to reject it. T138 adds `while IFS= read -r` over a file (the old `for name in $EXAMPLES` word-split in bash but not in zsh, where it passed all three names as one argument), a before/after `git status --porcelain` comparison with its own planted-leftover control, and execution under **both** shells |
 | T124 | Gate 14d described the ADR-0007 authority as *"a separately proposed and separately approved waiver"* — future tense, written before W-004 existed — and matched status with `^status: accepted`, which the decision-record template **has never produced** | The gate had not been run against the record since the record was accepted | Rewritten for the merged W-004: ledger presence, `active` status, the exact reviewer string, all four counted controls, a recorded advisory result, and the honest denial of independence |
 | T125 | Gate 13f counted the facade's **own unit tests** as implementation items and reported 5 | `^\s*(pub )?(fn\|impl\|struct\|enum)` matches an indented `fn` inside `#[cfg(test)] mod tests` | The test module excluded, with **two** controls: the facade must re-export something, and the pattern must still match the test functions when run against the whole file |
 
@@ -830,57 +850,91 @@ delivery, this would have been the third occurrence of the same failure.
 
 ### Results
 
-| Review | Result | Findings |
+| Review | Result | Findings, counted from the enumerated rows |
 |---|---|---|
-| Requirements | **PERFORMED**, all seven questions answered | **1 CRITICAL, 7 MAJOR, 17 MINOR** |
-| Security | **PERFORMED**, all seven questions answered | **0 CRITICAL, 5 MAJOR, 7 MINOR** |
+| Requirements | **PERFORMED**, all seven questions answered | **1 CRITICAL, 7 MAJOR, 18 MINOR = 26** |
+| Security | **PERFORMED**, all seven questions answered | **0 CRITICAL, 5 MAJOR, 7 MINOR = 12** |
 
 Neither returned silence. Question 3 of the security checklist returned an explicit **NO FINDINGS**
 naming what was checked, which is a recorded result and not an absence.
 
-### CRITICAL — dispositioned
+> **Reconciled 2026-08-16 (T139), and two counts changed.** This section previously recorded
+> *"1 CRITICAL, 7 MAJOR, 17 MINOR"* for the requirements review, which is the total the review
+> deliverable states on its own last line. Its own **enumerated summary table has 26 rows**, of
+> which 18 are MINOR. The reviewer miscounted by one in its closing line, and this ledger copied
+> the closing line rather than counting the table. The figures above are now derived by counting
+> the rows, per the rule that a total must be mechanically derivable from the findings it totals.
+>
+> **Every finding is now listed individually below, with its own ID, severity, and disposition.**
+> The previous form grouped 19 of the 24 MINOR findings into four thematic rows and omitted the
+> other 5 entirely — requirements **Q4-2, Q4-3, Q4-4, Q6-3, Q7-6** appeared only inside a MAJOR
+> table or not at all, and security **2.2** appeared nowhere. A grouped disposition is a legitimate
+> way to explain a shared reason; it is not a legitimate substitute for a missing row, and here it
+> had become one.
+>
+> **The primary deliverables are the source.** All four review files were recovered and re-read
+> before this reconciliation, so nothing below is reconstructed from memory or inferred from the
+> previous summary. The IDs are the reviewers' own.
+>
+> **The re-review IDs collided and are now namespaced.** Both re-reviews numbered their new
+> findings `N1, N2, …` independently, so "N1" named two unrelated defects. They are **RV-N1…RV-N19**
+> (requirements) and **SV-N1…SV-N4** (security) from here on. The previous text hid the collision
+> by referring to "the security re-review's remaining four" without listing them — which is how two
+> MAJOR security findings came to have no individual disposition at all.
 
-| ID | Finding | Disposition |
-|---|---|---|
-| Q6-1 | This ledger's opening sentence claimed *"Every task T001–T132 has been executed and verified"*. T132 is the push and pull request, which had not happened and provably could not have — no upstream, no remote ref. T128 was the review reporting it | **FIXED.** The Status section now claims T001–T126 and names T127–T132 as in progress, with `tasks.md` authoritative. The claim was **prospective, stated as observed**, and it was the first sentence in the document |
+### Round 1, requirements — all 26 findings
 
-### Security MAJOR — all five fixed, each with a regression test
+Severities are the reviewer's. Locations are in the deliverable and are not repeated here.
 
-| ID | Finding | Disposition |
-|---|---|---|
-| 1.1 | `ResolvedConfig<T>` derived `Debug`, so every raw configuration value had a printing route. `SchemaSource` and `ConfigHandle` both hand-write `Debug` for exactly this reason — the careful impls guarded a door beside an open window | **FIXED.** Hand-written `Debug` emitting key count and attribution, never values. `tests/redaction.rs` asserts an unmarked credential does not appear and that attribution still does |
-| 2.1 | `Constraint::from_decoder` used `split_once`, which splits at the **first** `", expected "`. A value containing that literal put the first occurrence inside itself, so its tail was copied into the error. **Measured through the real stack**, both layers, top level and nested | **FIXED.** `rsplit_once` — the decoder appends its separator last — plus an `is_type_description` whitelist so a future library rewording cannot re-open it. Three tests, including the reviewer's exact payloads, and an end-to-end check through `renvor-config` |
-| 3.1 | A **single** environment variable named `RENVOR_A__A__…` with ~3,000 separators — a 9 KB name, far under the ~128 KiB an OS permits — **overflowed the stack and aborted**. Not catchable: an overflow is not a panic, and a worker thread does not help | **FIXED.** `MAX_KEY_DEPTH = 32`, checked before anything is nested. The regression test uses the measured 3,000 verbatim. The asymmetry the reviewer identified is the sharpest part: the file layer was protected **by `toml_parser`'s own recursion limit**, not by Renvor, and the environment layer inherited nothing |
-| 4.1 | The byte ceiling checked `metadata.len()` and then called `read_to_string`. A file may grow between the two, and a **FIFO or `/proc` entry reports zero and yields indefinitely** — a named pipe as a configuration path would have been read until memory ran out | **FIXED.** `Read::take` bounds the read by construction, one byte past the ceiling to tell "at the ceiling" from "truncated". A `#[cfg(unix)]` test creates a real FIFO with an endless writer and requires refusal |
-| 5.1 | A hung readiness contributor leaked **one thread per probe, without limit**. A probe runs on a timer somebody else controls, so the leak grows for as long as the process is monitored | **FIXED.** `MAX_OUTSTANDING_PROBES = 64`, with an RAII guard so a returning worker gives its slot back. The leak is not removed — nothing in Rust interrupts a blocked thread — it is **bounded**, which is the difference between a limitation and a denial of service |
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| Q1-1 | MINOR | FR-041 cites a prose section of this document; SC-019 cites an implementation property. Neither names a test or gate | **ACCEPTED.** Citation format, not missing evidence: both cited artifacts exist and the reviewer checked them |
+| Q1-2 | MINOR | Five evidence rows cite unit tests by module nickname rather than by path | **ACCEPTED.** The tests exist — 32 attributes across four modules, counted by the reviewer. A reader following any of them arrives at real evidence |
+| Q2-1 | **MAJOR** | FR-032 / SC-014's "no hidden global mutable state" was cited to Gate 12, which contained no such check | **FIXED.** Gate 12 greps the examples for `static mut`, `lazy_static!`, `once_cell`, `OnceLock`, `thread_local!` and the atomic/lock forms, with a control that plants a global and requires the pattern to fire |
+| Q2-2 | MINOR | FR-022 cites `tests/no_silent_fallback.rs` for the environment two-candidate decode; that file has no environment coverage. The real coverage is in uncited `renvor-config` tests | **ACCEPTED.** The behaviour is covered; the citation points at the wrong file |
+| Q3-1 | **MAJOR** | `Drain × Panic` and `Drain × Fail` execute identical kernel code — the harness catches the panic before `shutdown()` — so "all 21 are attributed" overstated the pair | **ACCEPTED AND CORRECTED, not fixed.** Renvor holds no join handle for an author's task, so there is no kernel-side observation to make. The pair proves the permit is released by unwinding, a `Drop` property nothing tested. Stated as a limit in the harness docs, in the test, and as **open item 20** |
+| Q3-2 | MINOR | Six combinations (Fail/Panic × Load/Validate/Register) are asserted identically as `BuildFailed(_)` though the kernel distinguishes them | **ACCEPTED.** The assertions are true and under-specific. Tightening them at the end of a phase risks encoding today's behaviour as a requirement |
+| Q3-3 | MINOR | `Register × Fail` yields `DependencyCycle` (self-provided capability), not the documented `DependencyMissing` | **ACCEPTED**, with Q3-2 |
+| Q3-4 | MINOR | The file's stated positive control does inject and never calls `shutdown()`; its name claims both | **ACCEPTED.** The control is real; its name over-describes it |
+| Q4-1 | **MAJOR** | `impl Debug for dyn ReadinessContributor` calls the author's `name()` unbounded, invisible to all three `deadlines.rs` checks | **FIXED as a named exclusion.** Bounding a `Debug` impl would be worse than the defect — it has no way to report a deadline except by writing into the output it is producing. A test enumerates every `impl fmt::Debug for dyn` and fails if one appears or moves unrecorded. No lifecycle phase formats an author's provider or contributor |
+| Q4-2 | MINOR | `impl Debug for dyn Provider` calls three author methods unbounded, exempted by an unenforced prose claim | **FIXED with Q4-1**, by the same enumeration test. *Previously filed in the MAJOR table; it is MINOR* |
+| Q4-3 | MINOR | The derived `Debug` on `ApplicationBuilder` invokes the author's `ConfigSource: fmt::Debug` impl unbounded, and `Debug` is not a tracked shape | **FIXED with Q4-1.** RV-N7 later found this disposition still overstated; see there. *Previously filed in the MAJOR table; it is MINOR* |
+| Q4-4 | MINOR | The discovery gate walked only `renvor-core/src`; `crates/renvor-config/src` was never scanned | **FIXED.** Both crates are walked. The answer is unchanged — 11 `renvor-config` files reach no author trait, because the crate *implements* `ConfigSource` rather than calling it — but it is now measured rather than unasked. *Previously filed in the MAJOR table; it is MINOR* |
+| Q5-1 | **MAJOR** | `tasks.md` marked T127 and T129 `[ ]` while this ledger presented both as complete; SC-013 cited a T131 record that did not exist | **FIXED.** The task list is authoritative and the ledger says so |
+| Q6-1 | **CRITICAL** | The opening sentence claimed *"Every task T001–T132 has been executed and verified"*. T132 is the push and pull request, which had not happened and provably could not have — no upstream, no remote ref | **FIXED.** The claim was prospective, stated as observed, and it was the first sentence in the document. RV-N1 later found the correction had gone stale in the opposite direction |
+| Q6-2 | MINOR | The open-items table is misordered (item 15 precedes struck item 14) and SC-013's "T131 record" citation resolves to nothing | **FIXED for the citation** — SC-013 now cites the T131 section that exists. **ACCEPTED for the ordering**: the numbering is chronological and renumbering would break every reference into it |
+| Q6-3 | MINOR | "16 of 16 pass" rests on an authenticated-`gh` claim whose exit status cannot be distinguished from the unverified branch | **ACCEPTED**, and RV-N10 raised the same shape against 15d. Recorded rather than restated as proof. *This finding had no row at all in the previous version* |
+| Q7-1 | **MAJOR** | Gate 12's Pass paragraph claims "0 examples require a transport, a port, or a database" and is labelled SC-014; the script checked exit status only | **FIXED.** The global-state half is now executed (Q2-1); the transport half is attributed to Gate 13a, which is what evidences it. RV-N4 notes what 13a can and cannot prove |
+| Q7-2 | MINOR | `grep -c` exits 1 on zero under `pipefail`, aborting before CONTROL 1's diagnostic can print | **FIXED at T138.** The count is now `$(grep -c . "$EXAMPLE_LIST" \|\| true)`, so CONTROL 1 reaches its own message |
+| Q7-3 | MINOR | 13b's alternation lists two packages no longer in the lockfile and omits four that are; the control does not test the spellings | **ACCEPTED.** Fail-closed today; recorded as known imprecision |
+| Q7-4 | MINOR | 13f's regex cannot match `impl<T>`, `pub(crate) fn`, `async fn`, `type`, `trait`, `const`, `static`, or `macro_rules!` | **ACCEPTED.** Currently exact for the forms present; recorded |
+| Q7-5 | **MAJOR** | 14c is a zero-asserting check with **no control**, and `grep -r` on a missing directory exits 2, which its `\|\|` branch read as "found nothing" | **FIXED.** The directory's existence is asserted, and a control plants a `docker/build-push-action` step and requires the pattern to match |
+| Q7-6 | MINOR | 14b's "NOT VERIFIED" branch exits 0, so the recorded gap never reaches the gate's verdict | **ACCEPTED.** The gap is printed and recorded; making an unverifiable network condition fail the gate would make the gate depend on network reachability. *This finding had no row at all in the previous version* |
+| Q7-7 | **MAJOR** | Gate 15's Pass paragraph claimed licence/MSRV/origin verification and duplicate recording; the parser captured name and version only, `--duplicates` went to `\|\| true`, and `features.txt` was deleted unread | **FIXED.** A per-column check requires every documented row to carry a non-empty licence, MSRV, origin, and reach; duplicates and feature output are printed. RV-N9 notes the feature half prints a count, not the content |
+| Q7-8 | MINOR | Gate 15's CONTROL 2 cannot fail given the gate reached it; it tests `diff`, not the extraction pipeline | **ACCEPTED.** It is weak rather than wrong; T138's 15f adds three controls that do exercise their pipeline |
+| Q7-9 | MINOR | Python codepoint ordering versus locale-dependent `sort -u`, with no `LC_ALL` in Setup | **ACCEPTED.** Fail-closed; it would misattribute a locale failure to inventory drift |
+| Q7-10 | MINOR | The Summary-of-gates table under-reports controls for Gate 12 and mislabels Gate 15 as non-zero-asserting | **FIXED at T138**, together with RV-N11, which found the same table still stale after the first fix |
 
-### Requirements MAJOR — dispositioned
+### Round 1, security — all 12 findings
 
-| ID | Finding | Disposition |
-|---|---|---|
-| Q2-1 / Q7-1 | FR-032 / SC-014's "no hidden global mutable state" was cited to Gate 12, which contained no such check | **FIXED.** Gate 12 now greps the examples for `static mut`, `lazy_static!`, `once_cell`, `OnceLock`, `thread_local!`, and friends, with a control that plants a global and requires the pattern to fire. The "0 examples require a transport" half is now attributed to **Gate 13a**, which is what actually evidences it |
-| Q3-1 | `Drain × Panic` and `Drain × Fail` reach the kernel identically — the harness catches the panic before `shutdown()` runs — so "all 21 are attributed" overstated the pair | **ACCEPTED AND CORRECTED, not fixed.** Renvor has no join handle for an author's task and therefore no kernel-side observation to make: a task that panicked is not something the drain can distinguish from one that returned. The pair proves the **permit is released by unwinding**, which is a `Drop` property `drain.rs` claimed and nothing tested. Now stated as a limit in the harness documentation, in the test, and as open item 20 |
-| Q4-1 | `impl fmt::Debug for dyn ReadinessContributor` calls the author's `name()` unbounded, invisible to all three `deadlines.rs` checks | **FIXED as a named exclusion.** Bounding a `Debug` impl would be worse than the defect — it has no way to report a deadline except by writing into the output it is producing. A new test enumerates every `impl fmt::Debug for dyn` and fails if one appears or moves without being recorded. **No lifecycle phase formats an author's provider or contributor**, so no bounded path is compromised |
-| Q4-2 / Q4-3 | `impl Debug for dyn Provider` and the derived `Debug` on `ApplicationBuilder` do the same | **DISPOSITIONED with Q4-1**, by the same test and the same reasoning |
-| Q4-4 | The discovery gate walked only `renvor-core/src`; `renvor-config/src` was never scanned, so SC-015 was evidenced for one of the two kernel crates | **FIXED.** Both crates are walked. The answer is unchanged — 11 `renvor-config` files reach no author trait, because it *implements* `ConfigSource` rather than calling it — but it is now a measured answer rather than an unasked question |
-| Q5-1 | `tasks.md` marked T127 and T129 `[ ]` while this ledger presented both as complete | **FIXED.** The task list is authoritative and the ledger now says so |
-| Q7-5 | Gate 14c is zero-asserting with **no control**, and `grep -r` on a missing directory exits 2, which its `||` branch read as "found nothing" | **FIXED.** The directory's existence is asserted, and a control plants a `docker/build-push-action` step and requires the pattern to match. It was the only zero-asserting gate in the file without a control |
-| Q7-7 | Gate 15's Pass paragraph claimed licence, MSRV, and origin were verified and duplicates recorded. The parser captured name and version only, `--duplicates` went to `\|\| true` and was discarded, and `features.txt` was deleted by the cleanup trap unread | **FIXED.** A per-column check requires every documented row to carry a non-empty licence, MSRV, origin, and reach; duplicates and feature output are printed |
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1.1 | **MAJOR** | `ResolvedConfig<T>` derived `Debug`, so every raw configuration value had a printing route | **FIXED**, then found incomplete by SV round 2 — four sibling types held the same data and kept deriving it. All five are hand-written and a set-wide test now covers the property |
+| 1.2 | MINOR | The zeroization guarantee is narrower than the C-C9 table implies | **ACCEPTED.** Recorded as a documented limit rather than restated as a stronger guarantee |
+| 2.1 | **MAJOR** | `Constraint::from_decoder` used `split_once`, so a value containing `", expected "` had its tail copied into the error; also enables log-line injection | **FIXED.** `rsplit_once` — the decoder appends its separator last — plus an `is_type_description` whitelist. Three tests including the reviewer's exact payloads, and an end-to-end check through `renvor-config`. Verified CLOSED in round 2 against 18 payloads × 2 layers and 15 decoder shapes |
+| 2.2 | MINOR | The key-only path forwards an unbounded decoder message verbatim | **ACCEPTED**, and re-raised as SV-N3, which measured the volume: a 1 MiB key becomes a 1 MiB error string. Content is permitted (keys are not secrets); volume is not bounded. **Open item 25.** *This finding had no row at all in the previous version* |
+| 3.1 | **MAJOR** | A single environment variable name with ~3,000 separators — 9 KB, far under the ~128 KiB an OS permits — overflowed the stack and **aborted**. Not catchable: an overflow is not a panic | **FIXED.** `MAX_KEY_DEPTH = 32`, checked before anything is nested. The asymmetry the reviewer identified is the sharpest part: the file layer was protected by `toml_parser`'s own recursion limit, not by Renvor. Verified CLOSED in round 2 against 9 attacks; SV-N1 then found the same overflow on the *public* path |
+| 3.2 | MINOR | Silent, deterministic within-layer key collision (`APP_password` beats `APP_PASSWORD`) | **ACCEPTED.** Deterministic and documented; changing it would change resolution semantics at the end of a phase |
+| 4.1 | **MAJOR** | The byte ceiling checked `metadata.len()` then called `read_to_string`. A FIFO or `/proc` entry reports zero and yields indefinitely | **FIXED.** `Read::take` bounds the read by construction. Verified CLOSED in round 2 **for the byte ceiling only** — SV-N2 then found the *time* half still unbounded |
+| 4.2 | MINOR | The depth bound is real, unowned, and misattributed by its own test comment | **ACCEPTED**, and re-raised as RV-N16 |
+| 5.1 | **MAJOR** | A hung readiness contributor leaked **one thread per probe, without limit** | **FIXED**, then **REGRESSED** by that fix and fixed again — see the regression section below. The leak is not removed; nothing in Rust interrupts a blocked thread. It is **bounded**, which is the difference between a limitation and a denial of service |
+| 6.1 | MINOR | The panic-containment limitation list omits destructor panics, panic hooks, OOM, and provider-spawned threads | **ACCEPTED**, folded into **open item 16** |
+| 7.1 | MINOR | The build-time code-execution disclosure names the one proc macro that left and none of the four that stayed | **ACCEPTED**, recorded against the inventory |
+| 7.2 | MINOR | The inventory contradicts itself on the package count: T033 asserted the FR-040 gate over 55 packages while the graph is 48 | **FIXED at T138**, and only there. This was previously dispositioned as *"the same superseded 55 already corrected at T122"* — which was **wrong**: T122 corrected the summary row and left the prose at 55 in three places. Gate 15's new 15f check now reads the prose and fails on a stale total |
 
-### MINOR — dispositioned
-
-The 24 MINOR findings across both reviews fall into four groups, dispositioned as groups because
-the disposition is the same within each and listing 24 near-identical rows would obscure that.
-
-| Group | Findings | Disposition |
-|---|---|---|
-| Evidence-map citations that name a module rather than a path, or cite a document section rather than a test | Q1-1, Q1-2, Q2-2, Q6-2 | **ACCEPTED, not individually rewritten.** Every cited artifact exists and was checked by the reviewer; the imprecision is in the citation format. Recorded rather than churned, because a reader following any of them arrives at real evidence |
-| Assertions weaker than the kernel's own behaviour — six build-phase combinations asserted as `BuildFailed(_)` though the kernel distinguishes them; `Register × Fail` yields `DependencyCycle` rather than the documented `DependencyMissing` | Q3-2, Q3-3, Q3-4 | **ACCEPTED.** The assertions are true and under-specific. Tightening them is worthwhile and is **not** done here: it changes test expectations at the end of a phase, and the risk of encoding today's behaviour as a requirement outweighs the precision gained |
-| Gate scripts whose patterns or ordering could be tightened — `grep -c` exiting 1 under `pipefail`, a stale package alternation in 13b, 13f's regex not matching `impl<T>` or `async fn`, locale-dependent `sort`, the summary table's control counts | Q7-2, Q7-3, Q7-4, Q7-8, Q7-9, Q7-10 | **ACCEPTED.** None is a false pass today — each is either fail-closed or currently exact. Recorded as known imprecision in the gate scripts rather than fixed in the closing hours of a phase |
-| Documented limits that are narrower or wider than their prose implies — zeroization scope, within-layer key collision, the depth bound's misattributed test, the panic-escape list, the proc-macro disclosure, the inventory's own count | 1.2, 3.2, 4.2, 6.1, 7.1, 7.2 | **ACCEPTED, and two folded into open items.** 6.1's additional panic escapes are recorded in open item 16; 7.2's count is the same superseded 55 already corrected at T122 and noted on ADR-0007 |
-
-**No finding at HIGH or above was refused.** The single CRITICAL and all twelve MAJOR findings are
-either fixed with a regression test or accepted with the reason stated and an open item raised.
+**No finding at HIGH or above was refused in round 1.** The single CRITICAL and all twelve MAJOR
+findings are either fixed with a regression test or accepted with the reason stated and an open
+item raised.
 
 ## T128 (continued) — W-005 verification re-review
 
@@ -891,10 +945,18 @@ were re-run against `bf70553`, scoped to **attacking the fixes** rather than rep
 
 Both **NON-INDEPENDENT and ADVISORY**, both delivered to disk, both returned enumerated findings.
 
-| Re-review | Original findings | New findings |
+| Re-review | Original findings | New findings, counted from the enumerated rows |
 |---|---|---|
-| Requirements | **6 CLOSED**, 0 not closed, 0 regressed | 2 CRITICAL, 3 MAJOR, 6 MINOR |
-| Security | **3 CLOSED**, 1 **REGRESSED**, 1 closed on the byte ceiling only | 4 |
+| Requirements | **6 CLOSED**, 0 not closed, 0 regressed | **19** — RV-N1…RV-N19 |
+| Security | **3 CLOSED**, **1 NOT CLOSED**, **1 REGRESSED** (4.1's CLOSED is qualified: byte ceiling only) | **4** — SV-N1…SV-N4 |
+
+> **Reconciled 2026-08-16 (T139), and both rows changed.** The requirements row previously read
+> "2 CRITICAL, 3 MAJOR, 6 MINOR", which totals **11** against a re-review whose own last line says
+> **19 NEW FINDINGS** — RV-N5, RV-N6, RV-N7, RV-N9, RV-N10, RV-N11 and the three reproduced MAJORs
+> RV-N12, RV-N13, RV-N14 had no row. The security row recorded "3 CLOSED, 1 REGRESSED, 1 closed on
+> the byte ceiling only" and **dropped the NOT CLOSED verdict entirely**: finding 1.1 was returned
+> NOT CLOSED because four sibling types still printed the credential. Both are corrected against
+> the deliverables.
 
 **This is the pass that earned its cost.** It found a regression I introduced while fixing a
 finding, and a fix that closed the type it was pointed at while four siblings kept the defect.
@@ -940,23 +1002,52 @@ All four are now hand-written. The new test enumerates **every public type that 
 configuration value** and asserts the property across the set, because C-E3 is a claim about a set
 and fixing the member somebody named does not establish it.
 
-### The two CRITICALs, both about drift
+### Round 2, requirements — all 19 new findings
 
-| ID | Finding | Disposition |
-|---|---|---|
-| N1 | The Status paragraph, rewritten to fix Q6-1, went stale in the **opposite** direction — two later commits checked T131 and T132 without revisiting it, so it under-claimed | **FIXED**, with both corrections recorded. A status line naming a moving boundary must be re-read every time the boundary moves; twice it was not |
-| N2 | The T132 section recorded head `2cd0530` and a diff total, uncaveated, while T131's section carried exactly that caveat | **FIXED.** The section now states which head it observed and that conclusions were re-confirmed later |
+The reviewer labelled RV-N12…RV-N19 with severities and left RV-N1…RV-N11 unlabelled. Where the
+column below says *(assigned here)*, the severity is **this ledger's judgement, not the
+reviewer's**, and is marked so rather than presented as the reviewer's own.
 
-### Remaining new findings, dispositioned
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| RV-N1 | **CRITICAL** *(assigned here)* | The Status paragraph, rewritten to fix Q6-1, went stale in the **opposite** direction — `4d8711c` fixed it, then `2cd0530` checked T131 and `bf70553` checked T132 without revisiting it, so it under-claimed | **FIXED**, with both corrections recorded. A status line naming a moving boundary must be re-read every time the boundary moves; twice it was not |
+| RV-N2 | **CRITICAL** *(assigned here)* | The T132 section recorded head `2cd0530` and a diff total uncaveated, while T131's section carried exactly that caveat | **FIXED.** The section states which head it observed and that conclusions were re-confirmed later |
+| RV-N3 | **MAJOR** *(assigned here)* | The new global-state pattern missed `static X: AtomicUsize` and `static X: Mutex<…>` — the idiomatic forms since `Mutex::new` became `const` — while its Pass paragraph claimed the broader property. **The same commit had added a `static _: AtomicUsize` to the kernel** | **FIXED.** The alternation covers them and the control plants an `AtomicUsize`. The kernel static it would have caught is gone, removed by the RV-N13 fix |
+| RV-N4 | MINOR *(assigned here)* | "0 examples require a transport" is attributed to Gate 13a, which is a **denylist** of ten package names rather than a proof | **ACCEPTED.** A denylist is what is available without a capability model. Recorded rather than restated as proof. **Open item 26** |
+| RV-N5 | MINOR *(assigned here)* | The `impl Debug for dyn` enumeration is **file-granular, not impl-granular**: the loop pushes each path once, so a second such impl in an already-listed file is invisible | **ACCEPTED.** Two impls in one file would evade the count while remaining in a recorded file. Recorded as a known limit of the enumeration. *This finding had no row in the previous version* |
+| RV-N6 | MINOR *(assigned here)* | The match is an exact literal: `impl std::fmt::Debug for dyn Foo` and `impl Debug for dyn Foo` both evade it | **ACCEPTED.** The workspace writes one form and `rustfmt` keeps it; recorded rather than made into a parser. *No row in the previous version* |
+| RV-N7 | MINOR *(assigned here)* | The recorded method descriptions are never asserted against anything and can rot; and Q4-3's disposition overstates what the test covers, since a **derived** `Debug` is not an `impl … for dyn` at all | **ACCEPTED, and Q4-3's disposition corrected above** to say the test covers the `dyn` impls and not the derive. *No row in the previous version* |
+| RV-N8 | MINOR *(assigned here)* | "The set is eight" appears in three places; only the test carried the `Debug` exclusion | **FIXED.** The module documentation and the FR-025 evidence row say **eight lifecycle callbacks**, with the exclusion named |
+| RV-N9 | MINOR *(assigned here)* | Gate 15's enabled-feature clause prints only the line **count**; `features.txt` is still deleted unread. The fix records the output's size instead of its content | **ACCEPTED.** Smaller than Q7-7 but the same shape. The file is written and counted; printing 277 lines of feature graph into every gate run buys less than it costs. Recorded. *No row in the previous version* |
+| RV-N10 | MINOR *(assigned here)* | 15d is a **new zero-asserting check with no positive control** — the same shape as Q7-5, introduced by Q7-7's fix | **ACCEPTED.** 15d is fail-closed through `pipefail` on its own pipeline, but nothing plants an incomplete row. T138's 15f adds three planted controls to Gate 15; 15d itself still has none. **Open item 27.** *No row in the previous version* |
+| RV-N11 | MINOR *(assigned here)* | The Summary-of-gates table was not updated for the controls the Q7-5/Q7-7 fixes added | **FIXED at T138**, together with Q7-10. *No row in the previous version* |
+| RV-N12 | **MAJOR** | The readiness-ceiling fix makes the **shipped test suite order-dependent** and breaks `--test-threads=1`. Reproduced | **FIXED** — see the regression section above. `--test-threads=1` now passes and is run as part of every verification |
+| RV-N13 | **MAJOR** | The ceiling is **process-global**, not per-application, and this is not disclosed: one application's hung contributor permanently refuses every other application's probes in the same process. Reproduced | **FIXED.** The counter moved into `HealthState`, so the budget is per application and the coupling cannot exist |
+| RV-N14 | **MAJOR** | The ceiling is **not atomically enforced** — `load()` then `fetch_add` with an allocation between — while being documented as a hard bound. Reproduced at 4096-way concurrency: 64, then 65, then 67 workers entered | **FIXED.** Slots are claimed with `fetch_update`, so the documented bound is the real one. A 256-way concurrency test asserts it, with a control requiring the ceiling to actually be approached |
+| RV-N15 | MINOR | The FIFO regression test **silently skips** where `mkfifo` is absent, against the project's own fail-closed rule | **FIXED at T138.** `mkfifo(1)` is POSIX and required on every platform the `cfg(unix)` block compiles for, so its absence now fails the test as a broken environment |
+| RV-N16 | MINOR | The depth ceiling is hard-coded in its own error message, and the test asserts the literal | **ACCEPTED.** Recorded with the phase's other chosen bounds; the literal and the constant would need a format-time interpolation the message text does not currently take |
+| RV-N17 | MINOR | The end-to-end leak test covers one of the two layers the finding was measured on | **ACCEPTED.** The unit tests cover the stripping function on both; the end-to-end path is exercised on the environment layer, which is the attacker-controlled one |
+| RV-N18 | MINOR | A comment in `hostile.rs` still states the superseded rationale | **FIXED at T138** — that comment block was rewritten wholesale when the FIFO test grew to cover all three variants |
+| RV-N19 | MINOR | T125's gate table predates the gate rewrites it is cited as evidence for | **FIXED at T140.** T125's table is re-run and re-recorded against the final gate scripts |
 
-| ID | Finding | Disposition |
-|---|---|---|
-| N3 | The new global-mutable-state pattern missed `static X: AtomicUsize` and `static X: Mutex<…>` — the idiomatic forms — while its Pass paragraph claimed the broader property. **The same commit had added a `static _: AtomicUsize` to the kernel** | **FIXED.** The alternation now covers them, and the control plants an `AtomicUsize`. The kernel static it would have caught is gone, removed by the N13 fix |
-| N4 | "0 examples require a transport" is attributed to Gate 13a, which is a **denylist** of package names rather than a proof | **ACCEPTED.** A denylist is what is available without a capability model. Recorded rather than restated as proof |
-| N8 | "The set is eight" appears in three places; only the test carried the `Debug` exclusion | **FIXED.** The module documentation and the FR-025 evidence row now say **eight lifecycle callbacks**, with the exclusion named |
-| N15–N19, and the security re-review's remaining four | The FIFO test skips silently where `mkfifo` is absent; the depth ceiling is hard-coded in its own message; the end-to-end leak test covers one of two layers; a stale comment; T125's table predates the rewrites it evidences | **ACCEPTED.** None is a false pass. Recorded as known imprecision |
+### Round 2, security — all 4 new findings
 
-**No finding at HIGH or above was refused, in either round.**
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| SV-N1 | **MAJOR** | The depth guard is on the caller, not on the recursion. `MAX_KEY_DEPTH` was enforced in `read_environment`; the recursion it protects is reached by the **public** `decode_single`, which a 3,000-segment key drove to `fatal runtime error: stack overflow`, exit 134 | **FIXED at T139**, not accepted. Reproduced first from **outside** the crate against the published API, then closed by checking the depth at the public boundary. The reviewer suggested putting the ceiling in `nest`; `nest` is an iterative `pop` loop, and the depth is consumed by `try_into`'s descent and by the nested table's recursive `Drop`, so bounding the constructor would have protected nothing. A regression test uses the measured 3,000 verbatim, with a positive control at the ceiling. `MAX_KEY_DEPTH` is now re-exported from the crate root, because a limit a caller can hit and cannot name is one they discover by crashing |
+| SV-N2 | **MAJOR** | The file read is bounded in bytes and **unbounded in time**. Two variants reproduce and were still blocked at 35 s: a FIFO with **no writer** blocks in `File::open` before any ceiling is reached, and a **slow writer** holding the descriptor open leaves `read_to_end` waiting for an EOF that never comes. FR-025 prohibits an unbounded wait in a kernel-owned path | **FIXED at T139**, not accepted, **with a named residual**. A path that is not a regular file is now refused on the `metadata` already read — a `stat`, which does not open the path, so the refusal happens *before* the blocking open. The FIFO test now covers all three variants (no writer, slow writer, flooding writer) on a worker thread under a 10-second timeout, so a hang is a failure rather than a test that never returns, plus a regular-file positive control. **RESIDUAL: this is check-then-open.** An attacker who can replace the path between the `stat` and the `open` can still present a FIFO and block. Closing that needs `O_NONBLOCK` at open time, hence a direct `libc` dependency and a new FR-040 inventory row — a scope change this phase does not take. **Open item 24** |
+| SV-N3 | MINOR | The key-only path forwards an unbounded message: a 1 MiB TOML key or a ~128 KiB environment variable name becomes an error string of that size in every log that catches the failure. Content is permitted (keys are not secrets); volume is not | **ACCEPTED. Open item 25.** The same shape as round-1 finding 2.2. Note that SV-N1's fix **adds a call site with this property** — its diagnostic names the offending key, and an over-deep key is long by construction |
+| SV-N4 | MINOR | `MAX_OUTSTANDING_PROBES` is not re-exported from `health`'s root, so callers reach through `health::contributor::`; the crate's own integration test does exactly that | **ACCEPTED** for `renvor-core`. The equivalent defect in `renvor-config` was **FIXED at T139** as part of SV-N1: `MAX_KEY_DEPTH` now sits at the crate root beside `MAX_FILE_BYTES` and `NESTING_SEPARATOR`. **Open item 28** |
+
+**Both MAJOR security findings from round 2 are now fixed rather than accepted.** They previously
+had no individual disposition at all: they were inside a row reading *"N15–N19, and the security
+re-review's remaining four … ACCEPTED. None is a false pass."* That row was wrong twice over — it
+named the wrong review's IDs, and both SV-N1 and SV-N2 **were** live defects on public API. The
+sentence "No finding at HIGH or above was refused, in either round" was therefore true only because
+the two findings that would have contradicted it had been absorbed into a group.
+
+**No finding at HIGH or above is refused, in either round, as of T139** — and this is now a claim
+about 61 individually enumerated findings (26 + 12 + 19 + 4) rather than about 37 claimed ones.
 
 ## Complete requirement evidence map (T129)
 
@@ -1163,14 +1254,19 @@ planted file in `target/` was caught by the `find`-based diff **and** confirmed 
 `CARGO_TARGET_DIR` resolved outside the checkout, five crates packaged, and
 `aborting upload due to dry run` appeared **four** times — four crates staged, **0 published**.
 
-### CodeQL: 9 high `rust/cleartext-logging` alerts, all false positives
+### CodeQL: 9 high `rust/cleartext-logging` alerts — *as observed at `2cd0530`*
+
+> **AMENDED 2026-08-16 (T136). The analysis below was recorded at this head and was wrong on two
+> points of fact.** It is kept because it is what was observed and concluded at the time; the
+> corrections follow it, and the resolution is recorded in the final section of this document.
+> Nothing here describes the current state.
 
 | Location | What CodeQL saw |
 |---|---|
 | `crates/renvor/examples/configuration.rs:99–102` (4) | a value named `password` flowing into `println!` |
 | `crates/renvor-config/src/secret/mod.rs:155–157, 179, 183` (5) | a secret flowing into `format!`, inside `#[cfg(test)]` |
 
-**Measured, not argued.** Running the flagged example produces:
+**Measured, not argued.** Running the flagged example produced:
 
 ```text
   Display  : [redacted]
@@ -1179,29 +1275,206 @@ planted file in `target/` was caught by the `find`-based diff **and** confirmed 
   expose() : 7 characters
 ```
 
-The credential appears **0** times in the example's output. Line 102 prints the value's *length*,
-never the value, and line 104 asserts the absence. The five in `secret/mod.rs` are the tests that
-**prove** redaction — including line 183, the positive control that formats the raw test constant
-deliberately, to show the search string is findable when present.
+The credential appeared **0** times in the example's output.
 
-**CodeQL is right about the dataflow and wrong about the consequence.** A value derived from a
-field named `password` does reach `println!`; it passes through `Secret<T>`'s redacting `Display`
-on the way, and CodeQL does not model that a `Display` impl can sanitise. The alerts land on the
-code whose entire purpose is to demonstrate the opposite of what they allege.
+**CodeQL is right about the dataflow and wrong about the consequence** — for three of the nine.
+A value derived from a field named `password` does reach `println!`; it passes through
+`Secret<T>`'s redacting `Display` on the way, and CodeQL does not model that a `Display` impl can
+sanitise.
 
-### Why this is reported rather than resolved
+### The two errors in the paragraph above, corrected at T136
 
-No fix is available inside this workflow's authorization:
+**Error 1 — "all nine are false positives" was wrong for six of them.**
 
-| Option | Why not |
+| Alert | Line | Verdict at T136 |
+|---|---|---|
+| #1 | `configuration.rs:99` | **False positive.** `Display` renders `[redacted]` |
+| #2 | `configuration.rs:100` | **False positive.** `Debug` renders the key and `[redacted]` |
+| #3 | `configuration.rs:101` | **False positive.** Embedded formatting uses the same `Display` |
+| #4 | `configuration.rs:102` | **REAL, in the sense that matters.** It printed `password.expose().len()`. A length is not the value, but it *is* a fact about the credential, and a static analyser reading the file cannot tell a length from the value. **Fixed in source**: the line prints a fixed message and nothing derived from the secret |
+| #5–#7 | `secret/mod.rs:155–157` | **REAL as diagnostics.** Each was `assert!(…, "{rendered}")`. On a pass they print nothing; on a *redaction regression* the panic message is the leaked string. The one run that proves a leak exists would have been the run that published it. **Fixed in source**: fixed diagnostics naming which check failed |
+| #8 | `secret/mod.rs:179` | **REAL as a diagnostic.** `"a field route leaked the value: {rendered}"` — same shape. **Fixed in source**: `"field route {n} leaked the value"`, identifying the route by index |
+| #9 | `secret/mod.rs:183` | **REAL as a diagnostic.** `assert!(rendered.contains(REDACTED), "{rendered}")`. **Fixed in source**: a fixed message |
+
+Calling all nine false positives was the comfortable reading. Six were genuine defects in test and
+example *diagnostics* — not leaks on the passing path, but leaks on the failing one, which is worse
+because that is the path a person reads.
+
+**Error 2 — the positive control is at line 188, not line 183.** The paragraph above described
+line 183 as "the positive control that formats the raw test constant deliberately". Line 183 was
+`assert!(rendered.contains(REDACTED), "{rendered}")`. The actual raw-credential control is
+**line 188**, `assert!(format!("{CREDENTIAL:?}").contains(CREDENTIAL))` — and CodeQL never flagged
+it, because it has no format argument for the taint tracker to follow. The line that was defended
+as a deliberate control was in fact one of the six defects, and the line that really is a
+deliberate control was never in the alert list at all.
+
+**A corollary worth stating: the nine were a floor, not a ceiling.** `assert_eq!` generates its
+panic message from both operands, so `assert_eq!(secret().to_string(), REDACTED)` leaks on
+regression exactly as `"{rendered}"` does — and CodeQL flagged none of those, because it models
+explicit format arguments and not macro-generated ones. Three such assertions were found and fixed
+by reading, not by the scanner.
+
+### "No fix is available" was also wrong
+
+The previous version of this section headed a table *"Why this is reported rather than resolved:
+no fix is available inside this workflow's authorization."* Six of the nine had a fix available in
+source the whole time, and it was a small one. The table's four rows were answers to the question
+*how do we make the alerts go away*; the right question was *is each alert pointing at something*.
+
+What survives of that table is narrower and still true: for #1–#3 there is no source fix that does
+not destroy the evidence.
+
+| Option for #1–#3 | Why not |
 |---|---|
-| Dismiss the alerts as false positives | A repository **security-settings** change, which the maintainer's authorization for this workflow explicitly excludes |
-| Add a CodeQL config file excluding tests and examples | CodeQL runs here via **default setup**, which honours no in-repository config. Switching to advanced setup is a settings change, and excluding tests and examples wholesale would weaken the scan for everything else |
-| Restructure the example so no raw `String` exists | Would need `Deserialize` for `Secret<T>`, which the crate does **not** implement — deliberately, since `Serialize` is forbidden by C-C9. Adding it is new public API and belongs in its own decision, not in a check-fixing commit |
-| Delete or weaken the demonstrations | The example and those five tests are the evidence for **FR-018, FR-021, SC-007, and SC-016**. Removing them to satisfy a static analyser would trade real evidence for a green square |
+| Restructure the example so no raw `String` exists | Would need `Deserialize` for `Secret<T>`, which the crate does **not** implement — deliberately, since `Serialize` is forbidden by C-C9. New public API belongs in its own decision |
+| Delete or weaken the demonstrations | The example is the evidence for **FR-018, FR-021, SC-007, and SC-016**. Removing it to satisfy a static analyser trades real evidence for a green square |
+| Add a CodeQL config file excluding examples | CodeQL runs here via **default setup**, which honours no in-repository config |
 
-**Recorded as open item 22.** The redaction requirements remain evidenced by tests that pass; what
-is unresolved is the *alert status*, not the *behaviour*.
+So #1–#3 are dismissed as false positives, individually and with a stated reason, and #4–#9 are
+fixed in source.
+
+**CodeQL is treated as a W-001 cleanliness gate.** It is not one of the four required status
+contexts — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` are — and it is tempting to
+treat a non-required red check as cosmetic. W-001 requires the checks to be *clean*, not merely
+*passing where required*, and six of these nine were pointing at real defects, which is the
+argument against treating any of them as cosmetic. The alerts are worked to zero.
+
+## Post-review corrections (T133–T141)
+
+A second audit on **2026-08-16**, this time of the **open pull request** at `a7643c5`, found a
+layer of defects that Phase 10's corrections had introduced or left standing. Six previously
+checked tasks were reopened.
+
+**Phase 10's pattern was a check that never executed what it claimed. Phase 11's is a record that
+summarised away the thing it was recording.** Four instances, and they are the same mistake:
+
+| Where | The summary | What it replaced |
+|---|---|---|
+| W-005 MINOR dispositions | four thematic group rows | 24 findings, of which **5 had no row at all** |
+| W-005 re-review | "the security re-review's remaining four … ACCEPTED" | **two MAJOR findings still live on public API** |
+| Requirements review total | "1 CRITICAL, 7 MAJOR, 17 MINOR", copied from the reviewer's closing line | its own table, which has **18** MINOR rows |
+| CodeQL | "all nine are false positives" | three false positives and **six real diagnostic defects** |
+
+None of these is a lie about an outcome. Each is a summary that was easier to write than the thing
+it stood for, and in every case the harder version was available — the review deliverables were on
+disk the whole time, the reviewer's own table was one scroll below its own total, and the six
+CodeQL alerts each pointed at a line that would print a credential on a test failure.
+
+### A — the CodeQL sinks, and what the mutation test showed (T133)
+
+Alerts #4–#9 were fixed by removing secret-derived output. The proof is a **mutation test**, not a
+reading: `Display` was broken to render the value, then `Debug` was, and the suite was run each
+time.
+
+| Mutation | Tests that failed | Occurrences of the credential in the output |
+|---|---|---|
+| `Debug` renders the value | `debug_names_the_key_and_redacts_the_value`, `every_route_…` | **0** |
+| `Display` renders the value | `display_renders_the_placeholder`, `every_route_…`, `serialization_is_refused_…` | **0** |
+
+Failures are reported as *which check failed* — `"Debug omitted the placeholder"`, `"field route 1
+leaked the value"` — never as *what leaked*.
+
+**Three further leaks were found by reading that the scanner did not flag**, all `assert_eq!`:
+`assert_eq!(secret().to_string(), REDACTED)`, `assert_eq!(secret().expose(), CREDENTIAL)`, and
+`assert_eq!(reported, 0)`'s siblings. `assert_eq!` builds its panic message from both operands, so
+the obvious way to write a redaction test is itself the leak. CodeQL models explicit format
+arguments and not macro-generated ones, which is why the nine alerts were a **floor** on this
+defect class rather than a ceiling.
+
+The example now prints `expose() : access is explicit; the value is not printed` and calls
+`expose()` nowhere. A length is not the value, but it is a fact about it, and a static analyser
+reading the file cannot tell one from the other.
+
+### B — two MAJOR security findings that a group row had absorbed (T139)
+
+Both were reproduced before being fixed, and one was reproduced from **outside the crate**, against
+the published API, in a scratch package taking `renvor-config` as a path dependency:
+
+| ID | Reproduced | Fix | Residual |
+|---|---|---|---|
+| SV-N1 | `decode_single` with a 3,000-segment key: `fatal runtime error: stack overflow`, exit 134 | depth checked at the public boundary; `MAX_KEY_DEPTH` re-exported from the crate root | none |
+| SV-N2 | a FIFO with **no writer** blocks in `File::open`; a **slow writer** blocks in `read_to_end`. Both still blocked at 35 s | a non-regular path is refused on the `metadata` already read — a `stat` never opens the path, so the refusal precedes the blocking open | **open item 24**: check-then-open is racy |
+
+The reviewer proposed putting SV-N1's ceiling in `nest`. That would have protected nothing: `nest`
+is a `pop` loop and is iterative. The depth is consumed by `try_into`'s recursive descent and again
+by the nested table's recursive `Drop`, so the guard belongs at the entry point, not at the
+constructor. Recorded because the difference is easy to miss and the wrong fix would have passed
+review.
+
+The FIFO test now covers **all three** variants on a worker thread under a 10-second timeout — a
+hang is not an assertion failure, it is a test that never returns, so the bound has to be in the
+harness — with a regular-file positive control proving the refusal discriminates. It also no longer
+skips silently when `mkfifo` is absent (RV-N15): `mkfifo(1)` is POSIX, so its absence is a broken
+environment and is reported as one.
+
+### C — Gate 12 was bash-only, and the history of why was wrong (T138)
+
+The gate discovered its examples into a scalar and iterated with `for name in $EXAMPLES`. Measured:
+
+| Shell | Iterations | Consequence |
+|---|---|---|
+| bash 3.2 | 3, one per example | works |
+| zsh 5.9 | **1**, with all three names glued into one string | `cargo run --example` fails on the argument |
+
+The comment two lines above it explained that `mapfile` was avoided *for portability*. The
+replacement was bash-only in a different way, in a repository whose default shell is zsh.
+
+**And the recorded history of the original defect was wrong in the flattering direction.** It said
+the glob matched a directory that does not exist and that the loop ran zero times and passed:
+
+| Claim | Measured |
+|---|---|
+| "a directory that does not exist" | `examples/` exists, is tracked, holds `.gitkeep` and a README. It holds no `.rs` file |
+| "the loop body never executed once" | bash leaves an unmatched glob **literal**; the body ran once with `f=examples/*.rs` |
+| "the gate reported a pass having run nothing" | `cargo run --example '*'` exited non-zero; the script died with **101** in bash and **1** in zsh |
+
+The gate **failed loudly, in both shells**. Locating the fault in the shell was more comfortable
+than locating it where it was: a pass had been recorded for a script that could not run to
+completion.
+
+### C2 — the wait-inventory gate fired on a comment, and that was a defect in the gate (T139)
+
+SV-N2's fix added a comment to `renvor-config/src/layer/file.rs` explaining that
+`ApplicationBuilder::build` runs `source.load()` inside `bounded_call`. `deadlines.rs` matches
+**text**, so it read that prose as a call into author code and demanded the file bound something.
+
+The tempting fix is to reword the comment. That is hiding from the check. The gate now strips
+line comments before matching, and the correction was mutation-tested **in both directions**:
+
+| Planted in `renvor-config/src/gate_probe.rs` | Gate |
+|---|---|
+| `pub fn probe(source: &dyn ConfigSource) { let _ = source.load(); }` — a real call | **FIRES**: "holds a handle to author-implemented code, bounds nothing itself" |
+| `// A caller runs source.load() inside bounded_call;` — the same token, in a comment | **passes** |
+
+The strip makes the gate **stricter**, not laxer, in both directions: a bounding construct that
+appears only in a comment no longer satisfies the check either. A real call survives, because a
+real call is not preceded on its line by `//`. Both probes were removed and the tree verified
+clean afterwards.
+
+### D — the dependency inventory disagreed with its own table (T134)
+
+The table was correct and live-verified. The **prose** around it said 55 external packages in three
+places after the figure became 48, and one summary row labelled the 38 transitive packages
+"evaluated by nobody" — a different set, differing by `zeroize`, which research §3 evaluated as
+`secrecy`'s dependency. 37 and 38 are both right and measure different things; the document used
+one label for both.
+
+Gate 15's new **15f** derives every figure from `cargo metadata` and from research §3's own
+candidate table, then requires the document to state it. A missing row fails as loudly as a wrong
+one. Three planted controls — a stale prose total, a wrong summary row, a deleted row — are each
+required to be caught.
+
+### E — the workflow-quality defects (T135, T137)
+
+`actionlint -no-color` exited 1 on SC2086: `printf '%s\n' $CRATES` relied on word splitting.
+**Quoting it would have been the wrong fix** — the whole list would print as one line and the
+sorted comparison below would go on "passing" while comparing something else. `read -ra` splits
+deliberately. A positive control re-introduces the unquoted form and confirms actionlint still
+detects it.
+
+The release workflow's MSRV comment claimed the toolchain was "taken from rust-toolchain.toml
+rather than restated here" while passing `toolchain: "1.94.0"` — the reverse of the mechanism. It
+now says what is true, including that **nothing verifies** the three declaration sites agree.
 
 ## Publication status
 

@@ -293,6 +293,22 @@ fn kernel_sources() -> Vec<(String, String)> {
                     .next()
                     .expect("split always yields one part")
                     .to_owned();
+                // COMMENTS ARE NOT CODE, and this gate matches text.
+                //
+                // Found by this gate firing on itself, in the useful direction: T139 added a
+                // comment to `renvor-config/src/layer/file.rs` explaining that a caller runs
+                // `source.load()` inside `bounded_call`, and the gate read that prose as a call
+                // into author code and demanded the file bound something. A file that merely
+                // *describes* a callback is not a file that *makes* one.
+                //
+                // Stripping makes the gate stricter, not laxer, in both directions: a bounding
+                // construct that appears only in a comment no longer satisfies the check either.
+                // A real call survives, because a real call is not preceded on its line by `//`.
+                let production = production
+                    .lines()
+                    .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let relative = path
                     .strip_prefix(&core)
                     .map(|rest| format!("renvor-core/{}", rest.to_string_lossy()))

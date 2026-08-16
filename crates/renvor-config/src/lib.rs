@@ -25,7 +25,10 @@ pub mod schema;
 pub mod secret;
 pub mod source;
 
-pub use layer::env::NESTING_SEPARATOR;
+// `MAX_KEY_DEPTH` joins the other two ceilings at the root because it is now reachable through
+// `layer::decode::decode_single`, which is public. A limit a caller can hit and cannot name is a
+// limit they have to discover by crashing (W-005 security re-review SV-N1, SV-N4).
+pub use layer::env::{MAX_KEY_DEPTH, NESTING_SEPARATOR};
 pub use layer::file::{FileLayer, MAX_FILE_BYTES};
 pub use layer::merge::{DecodedLayer, Merged};
 pub use resolver::{LayeredResolver, LayeredResolverBuilder};

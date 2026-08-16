@@ -104,6 +104,35 @@ impl FileLayer {
             Err(_) => return Err(self.failure(&Constraint::Rule("the file could not be read"))),
         };
 
+        // W-005 security re-review SV-N2. The byte ceiling below and the `take` in `read_bounded`
+        // bound how many BYTES are read. Neither bounds how long the read WAITS, and finding 4.1's
+        // fix left two variants that wait for ever — both reproduced, both still blocked when the
+        // reviewer killed them at 35 seconds of wall clock:
+        //
+        //   * **no writer.** `File::open` on a FIFO blocks until a writer appears. The open never
+        //     returns, so nothing downstream of it can bound anything.
+        //   * **slow writer.** A writer that sends six bytes and holds the descriptor open leaves
+        //     `read_to_end` waiting for an EOF that never arrives. `take` caps bytes, not waiting.
+        //
+        // The refusal is placed HERE, on the metadata already read above, because `metadata` is a
+        // `stat` and does not open the path — so it returns immediately on a FIFO and this check
+        // happens *before* the blocking open. A configuration source is a regular file; a pipe, a
+        // socket, or a character device arriving here is a misconfiguration or an attack, and
+        // neither has earned an unbounded wait.
+        //
+        // RESIDUAL, stated rather than implied: this is check-then-open, so an attacker who can
+        // replace the path between the `stat` and the `open` can still present a FIFO and block
+        // us. Closing that needs `O_NONBLOCK` at open time, which means a direct `libc` dependency
+        // and a new row in the FR-040 inventory — a scope change this phase does not take. Named
+        // open item 24. Under `ApplicationBuilder::build` even the residual is contained:
+        // `source.load()` runs inside `bounded_call`, so it is reported as a timeout.
+        if !metadata.is_file() {
+            return Err(self.failure(&Constraint::Rule(
+                "the path is not a regular file; a pipe, socket, or device can block a read \
+                 indefinitely, and a byte ceiling does not bound waiting",
+            )));
+        }
+
         // Checked before reading, so an oversized file is usually never opened at all. Checking
         // after would make the ceiling a report rather than a limit (C-C10).
         if metadata.len() > self.max_bytes {

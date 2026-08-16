@@ -10,10 +10,20 @@ description: "Phase 002 quickstart — runnable, fail-closed validation gates pr
 > **This is a validation guide, not an implementation guide.** Each gate states what to run and
 > what result proves the criterion. Implementation belongs in `tasks.md` and the implement stage.
 
-> **Nothing here mutates anything.** No gate publishes, tags, pushes, deploys, or edits a tracked
-> file. Registry and release checks are **read-only**. Revision 1 asked the operator to edit and
-> restore `deny.toml`; that is gone — a gate that mutates repository policy and relies on the
-> operator restoring it can leave the repository altered when it fails midway.
+> **No gate changes tracked content or any external state.** None publishes, tags, pushes, deploys,
+> or edits a tracked file; registry and release checks are **read-only**. Revision 1 asked the
+> operator to edit and restore `deny.toml`; that is gone — a gate that mutates repository policy
+> and relies on the operator restoring it can leave the repository altered when it fails midway.
+>
+> **Some gates do create untracked probe files, briefly.** That is how their positive controls
+> work: a control that proves a check can fail has to give it something to fail on. Gate 12 plants
+> `crates/renvor/examples/gate12-control.rs`, `crates/renvor/globals-probe.txt`, and a leftover
+> probe; Gate 14 plants `.github/workflows/gate14c-control.yml`. Those are the only two gates that
+> write inside the checkout — Gates 1 and 15 build theirs under `mktemp -d`. Every one is removed
+> by an explicit `rm` **and** by a `trap ... EXIT` that fires on an early exit, and Gate 12
+> additionally compares `git status --porcelain` before and after and fails if the two differ.
+> This paragraph previously read "Nothing here mutates anything", which was untrue of the checkout
+> and is the kind of blanket assurance that stops a reader looking.
 
 ## Setup — run this first, once per shell
 
@@ -268,29 +278,62 @@ error; **0** panics, **0** unbounded memory or time. Per principle IX this bound
 
 ```bash
 set -euo pipefail
+
+# The repository state BEFORE this gate runs. Two of the controls below deliberately create
+# untracked files inside the checkout; this snapshot is what proves they are gone again.
+GATE12_BEFORE="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-before.XXXXXX")"
+GATE12_AFTER="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-after.XXXXXX")"
+EXAMPLE_LIST="$(mktemp "${TMPDIR:-/tmp}/renvor-gate12-list.XXXXXX")"
+git status --porcelain > "$GATE12_BEFORE"
+echo "repository state captured before the gate: $(grep -c . "$GATE12_BEFORE" || true) entries"
+
 cargo test --workspace --doc
 
-# Examples live in the FACADE crate, not at the repository root, and they are run as
-# `-p renvor` targets. The earlier form of this gate globbed `examples/*.rs` from the root —
-# a directory that does not exist — so the loop body never executed once and the gate
-# reported a pass having run nothing.
-# No `mapfile`: it is a bash 4 builtin, and macOS ships bash 3.2. A gate the maintainer
-# cannot run locally is a gate only CI ever runs. Word-splitting is safe here because a
-# Rust example's file stem is an identifier and cannot contain whitespace.
+# Examples live in the FACADE crate, not at the repository root, and they run as `-p renvor`
+# targets.
+#
+# CORRECTED 2026-08-16 (T138). The comment here previously said the original glob matched a
+# directory that does not exist, that the loop body never executed once, and that the gate
+# reported a pass having run nothing. All three were wrong, and the replacements below were
+# measured rather than reasoned:
+#
+#   * `examples/` DOES exist at the repository root. It is tracked, holding `.gitkeep` and a
+#     README pointing at the real location. What it holds no copy of is a `.rs` file, which
+#     is why the glob matched nothing.
+#   * bash without `nullglob` leaves an unmatched glob LITERAL, so the body ran exactly once
+#     with `f=examples/*.rs`. `basename` reduced that to `*`, and `cargo run --example '*'`
+#     exited non-zero — "does not support glob patterns on target selection". Under `set -e`
+#     the script terminated with status **101**.
+#   * zsh never reached the body at all: an unmatched glob is a hard error there
+#     ("zsh: no matches found: examples/*.rs"), status **1**.
+#
+# So the original gate FAILED, loudly, in both shells. Calling it a vacuous pass was a more
+# flattering error than the real one, because it located the fault in the shell. The real
+# fault was that a Pass paragraph recorded "every example compiles, runs, and uses no global
+# mutable state" for a script that could not run to completion — evidence written from what
+# the script was meant to do rather than from what it did.
+#
+# Discovery is written to a FILE and read with `while read`. `for name in $EXAMPLES` word-
+# splits a newline-separated scalar in bash but NOT in zsh, where the identical line passes
+# the whole list as one argument and `cargo run --example` fails on it. No `mapfile` either:
+# that is a bash 4 builtin and macOS ships bash 3.2.
 EXAMPLE_DIR=crates/renvor/examples
-EXAMPLES=$(find "$EXAMPLE_DIR" -maxdepth 1 -name '*.rs' -exec basename {} .rs \; | sort)
-COUNT=$(printf '%s\n' "$EXAMPLES" | grep -c .)
+find "$EXAMPLE_DIR" -maxdepth 1 -name '*.rs' -exec basename {} .rs \; | sort > "$EXAMPLE_LIST"
+COUNT=$(grep -c . "$EXAMPLE_LIST" || true)
 
 # CONTROL 1: discovery found the examples. A glob that matches nothing must not pass.
 if [ "$COUNT" -lt 3 ]; then
   echo "FAIL 12 — discovery found $COUNT example(s) in $EXAMPLE_DIR"; exit 1
 fi
-echo "discovered $COUNT examples: $(printf '%s ' $EXAMPLES)"
+echo "discovered $COUNT examples:"; sed 's/^/  /' "$EXAMPLE_LIST"
 
-for name in $EXAMPLES; do
+# Redirected FROM A FILE, not piped into. A `while` loop on the right-hand side of a pipe
+# runs in a subshell in both shells, and an `exit 1` there would end the subshell only.
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
   echo "--- running example: $name"
   cargo run --quiet -p renvor --example "$name"
-done
+done < "$EXAMPLE_LIST"
 
 # CONTROL 2: the gate fails when an example is not runnable. Plants an example that exits
 # non-zero, confirms the runner reports it, and removes it. Without this, a `cargo run` whose
@@ -323,19 +366,60 @@ rm -f "$EXAMPLE_DIR/../globals-probe.txt"
 echo "control: the global-state pattern fires on a planted global"
 
 cargo test --workspace --all-targets
+
+# --- 12e: the gate left the repository exactly as it found it ---
+#
+# Controls 2 and 3 write real files into the checkout — `crates/renvor/examples/
+# gate12-control.rs` and `crates/renvor/globals-probe.txt`. Both are removed above, by an
+# explicit `rm` and by a trap that fires even on an early exit. This is what turns "they are
+# removed" from an intention into a checked fact.
+git status --porcelain > "$GATE12_AFTER"
+if ! diff -u "$GATE12_BEFORE" "$GATE12_AFTER"; then
+  echo "FAIL 12 — this gate changed the repository state; a probe file was left behind"; exit 1
+fi
+echo "repository state is unchanged: every probe file this gate created has been removed"
+
+# CONTROL 4: the state comparison can fail. Two empty `git status` outputs compare equal, so
+# without this a leftover-detector that had stopped working would read as a clean checkout.
+touch "$EXAMPLE_DIR/gate12-leftover-probe.txt"
+git status --porcelain > "$GATE12_AFTER.planted"
+if diff -q "$GATE12_BEFORE" "$GATE12_AFTER.planted" > /dev/null; then
+  rm -f "$EXAMPLE_DIR/gate12-leftover-probe.txt"
+  echo "FAIL 12 control — a planted leftover file was NOT detected"; exit 1
+fi
+rm -f "$EXAMPLE_DIR/gate12-leftover-probe.txt" "$GATE12_AFTER.planted"
+echo "control: a leftover probe file is detected"
+
+git status --porcelain > "$GATE12_AFTER"
+diff -q "$GATE12_BEFORE" "$GATE12_AFTER" > /dev/null \
+  || { echo "FAIL 12 — the control's own probe file was not cleaned up"; exit 1; }
+rm -f "$GATE12_BEFORE" "$GATE12_AFTER" "$EXAMPLE_LIST"
 echo "GATE 12 PASS"
 ```
 
 **Pass**: **every** example is discovered, compiles, and runs to a zero exit; the discovery finds at
-least three; an example that cannot run **fails the gate**; and **no example uses global mutable
-state** — each of the four proven by a control rather than assumed.
+least three; an example that cannot run **fails the gate**; **no example uses global mutable
+state**; and the gate **leaves the repository exactly as it found it** — each of the five proven by
+a control rather than assumed.
+
+**Runs unchanged in bash 3.2 and in zsh**, and is verified in both. The two shells disagree about
+unquoted expansion in a way that decides this gate: bash word-splits `$EXAMPLES` into three names,
+zsh passes one newline-separated string, and `cargo run --example` rejects the second. The list is
+therefore written to a file and read with `while IFS= read -r`, redirected from that file rather
+than piped into the loop, so a failure inside the loop cannot be swallowed by a subshell.
 
 **"0 examples require a transport, a port, or a database" is evidenced by Gate 13a, not here.** No
 transport, database, or CLI package exists anywhere in the resolved workspace graph, so no example
 can require one. This gate runs the examples; 13a is what makes their independence a fact rather
 than an observation about three files somebody read.
 
-CI runs the same sequence on both `1.94.0` and current stable.
+**CI does not run this gate.** CI runs one command, `cargo xtask verify`, on both `1.94.0` and
+current stable. That command **compiles** every example three times over — clippy `--all-targets`,
+and `cargo check -p renvor --all-targets` with and without default features — but it **executes
+none of them**, and it runs none of the four controls above. A previous version of this line said
+"CI runs the same sequence on both `1.94.0` and current stable", which read as though the controls
+were covered upstream. Running the examples, and proving the checks can fail, happens **here** and
+nowhere else; the gate is part of the release checklist for that reason.
 
 ---
 
@@ -665,17 +749,180 @@ cargo tree --workspace --duplicates > "$WORK/duplicates.txt" 2>&1 || true
 echo "duplicate-version findings:"; cat "$WORK/duplicates.txt"
 cargo tree --workspace --edges features --prefix none > "$WORK/features.txt"
 echo "enabled-feature lines: $(wc -l < "$WORK/features.txt")"
+
+# --- 15f: the NARRATIVE totals, not only the table ---
+#
+# 15c compares the resolved-set TABLE against the graph. The prose around that table is not a
+# table, and until 2026-08-16 it disagreed with both: the summary still said 55 external
+# packages after the figure became 48, and one summary row attached the label "evaluated by
+# nobody" to the TRANSITIVE count — a different set, differing by `zeroize`, which research §3
+# did evaluate. A gate that reads only the table cannot see either mistake.
+#
+# Every figure below is derived from `cargo metadata` and from research §3's own candidate
+# table, then REQUIRED to appear in the document. Nothing is transcribed, and a row that has
+# gone missing fails exactly as loudly as a row that is wrong.
+cat > "$WORK/narrative.py" <<'NARRATIVE'
+import json, re, sys
+
+work, inventory_path, research_path = sys.argv[1], sys.argv[2], sys.argv[3]
+meta = json.load(open(work + "/meta.json"))
+member_ids = set(meta["workspace_members"])
+local = {p["name"] for p in meta["packages"] if p["id"] in member_ids}
+external = [p for p in meta["packages"] if p["id"] not in member_ids]
+declared = {d["name"] for p in meta["packages"] if p["id"] in member_ids
+            for d in p["dependencies"] if d["name"] not in local}
+
+# research §3's candidate table, READ from research.md rather than restated here. Restating it
+# would make this check agree with a copy of the research instead of with the research.
+section = (open(research_path).read()
+           .split("## 3. Direct-dependency candidate evaluation")[1].split("\n## ")[0])
+candidates = set()
+for line in section.splitlines():
+    if line.startswith("| ") and "`" in line and "Crate" not in line:
+        found = re.findall(r"`([a-z0-9_-]+)`", line.split("|")[1])
+        if found:
+            candidates.add(found[0])
+if len(candidates) < 5:
+    sys.exit("FAIL 15f control — research section 3's candidate table was not read (%d found)"
+             % len(candidates))
+
+derived = {
+    "external":    len(external),
+    "direct":      len([p for p in external if p["name"] in declared]),
+    "transitive":  len([p for p in external if p["name"] not in declared]),
+    "unevaluated": len([p for p in external if p["name"] not in candidates]),
+    "candidates":  len(candidates),
+}
+
+document = open(inventory_path).read()
+failures = []
+
+
+def claimed(label, pattern):
+    """The figure the document states for `label`. A MISSING row is a failure, not a skip."""
+    hit = re.search(pattern, document)
+    if hit is None:
+        failures.append("%s - the row/sentence stating this figure is ABSENT" % label)
+        return None
+    return int(hit.group(1))
+
+
+def require(label, pattern, expected):
+    got = claimed(label, pattern)
+    if got is not None and got != expected:
+        failures.append("%s - document says %d, graph says %d" % (label, got, expected))
+
+
+# --- the summary table ---
+require("summary: external packages",
+        r"\| External packages in the lockfile graph \| \*\*(\d+)\*\*", derived["external"])
+require("summary: directly chosen",
+        r"\| Directly chosen, declared in a workspace manifest \| \*\*(\d+)\*\*", derived["direct"])
+require("summary: arrived transitively",
+        r"\| Arrived \*\*transitively\*\*[^|]*\| \*\*(\d+)\*\*", derived["transitive"])
+require("summary: never individually evaluated",
+        r"\| Never \*\*individually evaluated\*\*[^|]*\| \*\*(\d+)\*\*", derived["unevaluated"])
+
+# The reach split is checked against the TABLE's own reach column rather than re-derived, so
+# this gate cannot pass by agreeing with a second, differently-drawn definition of "the graph a
+# consumer resolves". What it enforces is that the two halves account for every resolved row.
+production = claimed("summary: reachable over normal edges",
+                     r"\| . reachable over \*\*normal\*\* edges[^|]*\| \*\*(\d+)\*\*")
+devonly = claimed("summary: dev-only",
+                  r"\| . \*\*dev-only\*\*[^|]*\| \*\*(\d+)\*\*")
+if production is not None and devonly is not None:
+    if production + devonly != derived["external"]:
+        failures.append("summary: reach split %d + %d does not account for %d resolved rows"
+                        % (production, devonly, derived["external"]))
+    rows = re.findall(r"^\| `[^`]+` \| [^|]+\| [^|]+\| [^|]+\| [^|]+\| ([^|]+)\|",
+                      document, re.M)
+    table_prod = len([r for r in rows if "production" in r])
+    table_dev = len([r for r in rows if "dev-only" in r])
+    if (table_prod, table_dev) != (production, devonly):
+        failures.append("summary says %d production / %d dev-only; the table below it has "
+                        "%d / %d" % (production, devonly, table_prod, table_dev))
+
+# --- the PROSE. This is what the table-only comparison could not see. ---
+require("prose: N of 48 entered without an individual evaluation",
+        r"\*\*(\d+) of \d+ external packages entered the graph", derived["unevaluated"])
+require("prose: ...of N external packages",
+        r"\*\*\d+ of (\d+) external packages entered the graph", derived["external"])
+require("prose: research evaluated N",
+        r"It evaluated \*\*(\d+)\*\*", derived["candidates"])
+require("prose: ...; N resolve",
+        r"It evaluated \*\*\d+\*\*; \*\*(\d+)\*\* resolve", derived["external"])
+require("prose: every one of the N",
+        r"Every one of the (\d+) has a declared licence", derived["external"])
+
+# --- the stale-total guard ---
+#
+# The requires above pin the figures this gate knows the shape of. This catches the ones it does
+# not: ANY sentence anywhere in the document that states a package total. A superseded total may
+# still appear - the revision note depends on it - but only on a line that says it is superseded.
+TOTAL_CLAIM = re.compile(
+    r"(?:\*\*)?(\d+)(?:\*\*)?\s+(?:external|resolved)\s+packages"
+    r"|(?:\*\*)?(\d+)(?:\*\*)?\s+resolve\b"
+    r"|Every one of the (?:\*\*)?(\d+)"
+    r"|all (?:\*\*)?(\d+)(?:\*\*)?\s+(?:external|resolved)")
+HISTORICAL = re.compile(r"\bwas\b|previously|superseded|pre-`|Corrected|corrected|until 20"
+                        r"|revision below|no longer|used to")
+LIVE = {derived["external"], derived["transitive"], derived["unevaluated"]}
+claims = 0
+for line in document.splitlines():
+    for hit in TOTAL_CLAIM.finditer(line):
+        number = int(next(g for g in hit.groups() if g is not None))
+        claims += 1
+        if number not in LIVE and not HISTORICAL.search(line):
+            failures.append("a package total of %d is stated as current fact, and the graph "
+                            "resolves %d: %s" % (number, derived["external"], line.strip()))
+# CONTROL: a scan that matches nothing reports no stale totals, which is indistinguishable from
+# a clean document. The threshold is the count this document is known to contain.
+if claims < 3:
+    failures.append("control - the package-total scan matched %d claims; it is not working"
+                    % claims)
+
+if failures:
+    for f in failures:
+        print("FAIL 15f - " + f)
+    sys.exit(1)
+print("15f: summary rows, prose totals, and the reach split all agree with the resolved graph")
+print("     external=%(external)d direct=%(direct)d transitive=%(transitive)d "
+      "unevaluated=%(unevaluated)d candidates=%(candidates)d" % derived)
+NARRATIVE
+
+RESEARCH=specs/002-core-kernel/research.md
+python3 "$WORK/narrative.py" "$WORK" "$INVENTORY" "$RESEARCH" \
+  || { echo "FAIL 15 — the inventory's prose disagrees with the graph it describes"; exit 1; }
+
+# CONTROLS 3-5. Three distinct ways the narrative can go wrong, each planted and each required
+# to be caught. Without these, "15f passed" would be a claim about a script nobody ran against a
+# document that was already correct.
+sed 's/Every one of the 48 has/Every one of the 55 has/' "$INVENTORY" > "$WORK/t-prose.md"
+sed 's/by research §3 | \*\*37\*\*/by research §3 | **38**/'  "$INVENTORY" > "$WORK/t-row.md"
+grep -v 'Never \*\*individually evaluated\*\*' "$INVENTORY"     > "$WORK/t-missing.md"
+for tampered in t-prose t-row t-missing; do
+  if python3 "$WORK/narrative.py" "$WORK" "$WORK/$tampered.md" "$RESEARCH" > /dev/null 2>&1; then
+    echo "FAIL 15f control — the planted defect in $tampered was NOT detected"; exit 1
+  fi
+  echo "control: 15f rejects $tampered"
+done
 echo "GATE 15 PASS"
 ```
 
 **Pass**: the documented inventory and the resolved graph are **identical, in both directions** —
 no stale row, no unevaluated package — **every documented row carries a non-empty licence, MSRV,
-origin, and reach**, checked column by column; `cargo deny` is clean against the real lockfile; and
-the duplicate-version and enabled-feature output is **printed**, not discarded.
+origin, and reach**, checked column by column; **every figure in the summary table and in the prose
+is derived from the graph and from research §3 rather than transcribed**, with a missing figure
+failing as loudly as a wrong one; `cargo deny` is clean against the real lockfile; and the
+duplicate-version and enabled-feature output is **printed**, not discarded.
 
-Every clause above is now executed by the script. Three of them were prose until 2026-08-16: the
+Every clause above is now executed by the script. Four of them were prose until 2026-08-16: the
 per-column evidence check did not exist, the duplicate output went to `|| true` and was thrown
-away, and the feature file was written and then deleted by the cleanup trap without being read.
+away, the feature file was written and then deleted by the cleanup trap without being read, and
+**nothing read the narrative at all** — 15c compared the resolved-set table and stopped there, so
+three sentences went on stating a total of 55 after the graph resolved 48, and a summary row went
+on labelling the 38 transitive packages "evaluated by nobody" when 37 is that set. 15f and its
+three planted controls are what closed that.
 
 **This gate previously compared nothing.** It counted resolved packages, printed the count, and ran
 `cargo deny`; the inventory document was never opened. A row for a package that had left the graph,
@@ -701,7 +948,14 @@ paragraph above says.
 | 9 | SC-019 | yes | — |
 | 10 | FR-029 | yes | install-after-build proves nothing was installed |
 | 11 | FR-038 | yes | fuzz/property corpus |
-| 12 | SC-013, SC-014 | yes | — |
+| 12 | SC-013, SC-014 | yes | **4 controls**: discovery minimum, a failing example, a planted global, a planted leftover file |
 | 13 | SC-010 + crate DAG | yes | **5 controls, one per sub-check** |
-| 14 | SC-011, FR-034, ADR-0007 | yes | `serde` returns 200; non-200/404 is a FAIL |
-| 15 | FR-040 | no | fails on missing evidence |
+| 14 | SC-011, FR-034, ADR-0007 | yes | 14a `serde` returns 200 (non-200/404 is a FAIL); 14c plants a `docker/build-push-action` step |
+| 15 | **yes** — FR-040 | yes | **5 controls**: both sides read, a planted package, and three planted narrative defects |
+
+> **Corrected 2026-08-16 (T138).** This table was stale in three rows, which W-005 re-review RV-N11
+> and original finding Q7-10 both raised: Gate 12 was shown with no control while it had three,
+> Gate 14 named only 14a's, and Gate 15 was labelled "no" for zero-assertion when 15d and 15f both
+> assert counts. A summary that under-reports controls is worse than one that omits them, because a
+> reader checking whether the file honours its own "every zero-asserting gate carries a control"
+> rule reads this table and concludes it does not.

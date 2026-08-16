@@ -73,8 +73,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The exact supported toolchain, taken from rust-toolchain.toml rather than restated
-      # here. A second declaration site is a second thing to forget when the MSRV moves.
+      # The declared MSRV, RESTATED here.
+      #
+      # CORRECTED 2026-08-16 (T137). This comment previously claimed the version was "taken
+      # from rust-toolchain.toml rather than restated here". It is not: passing `toolchain:`
+      # to this action overrides the file entirely, so the literal below IS the second
+      # declaration site the old comment said did not exist. The claim was the reverse of
+      # the mechanism, which is worse than no comment — it told a reader updating the MSRV
+      # that this file needed no edit.
+      #
+      # Stated as it actually is: NOTHING currently verifies that this literal, the
+      # `channel` in rust-toolchain.toml, and `rust-version` in Cargo.toml agree. Moving the
+      # MSRV means editing all three by hand, and a run that edits only two will not fail
+      # here. Omitting this input entirely would make the action read rust-toolchain.toml
+      # and remove the drift, at the cost of a rehearsal that follows the file wherever it
+      # goes. Neither is free; the current state is the restatement, unchecked.
       - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
         with:
           toolchain: "1.94.0"
@@ -165,7 +178,12 @@ jobs:
       - name: Assert the publishable set is exactly the intended crates
         run: |
           set -euo pipefail
-          expected=$(printf '%s\n' $CRATES | sort | tr '\n' ' ')
+          # `printf '%s\n' $CRATES` relied on unquoted word splitting to put one crate per
+          # line (SC2086). Simply quoting it would emit the whole list as ONE line, so the
+          # sorted comparison below would still "pass" while comparing something else — the
+          # weakening this fix exists to avoid. `read -ra` splits deliberately instead.
+          read -ra crate_list <<< "$CRATES"
+          expected=$(printf '%s\n' "${crate_list[@]}" | sort | tr '\n' ' ')
           actual=$(cargo metadata --locked --format-version 1 \
             | python3 -c 'import json,sys; m=json.load(sys.stdin); ids=set(m["workspace_members"]);
           print(" ".join(sorted(p["name"] for p in m["packages"]

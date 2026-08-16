@@ -291,63 +291,148 @@ fn generated_environments_never_panic() {
     }
 }
 
-/// W-005 security finding 4.1 — a file whose reported length is a lie.
+/// W-005 security finding 4.1, and its re-review follow-up SV-N2 — a file whose reported length is
+/// a lie, and a read whose bytes are bounded while its **waiting** is not.
 ///
-/// A FIFO reports `len() == 0` and then yields as many bytes as the reader takes, so the metadata
-/// check waves it through and the read decides the outcome. Before the bounded read, this consumed
-/// memory until the process died; now it is refused at the ceiling.
+/// A FIFO reports `len() == 0` and then yields as many bytes as the reader takes. 4.1's fix bounded
+/// the bytes with `Read::take`, which closed the memory half. The re-review then found two variants
+/// that still waited for ever, and this test covers **all three**:
+///
+/// | Variant | Before | Now |
+/// |---|---|---|
+/// | flooding writer | memory until the process died, then refused at the ceiling | refused, no read |
+/// | **no writer at all** | `File::open` blocked for ever — the ceiling was never reached | refused, no open |
+/// | **slow writer holding the descriptor** | `read_to_end` waited for an EOF that never came | refused, no open |
+///
+/// The refusal is now the file *type*, decided on a `stat` that never opens the path — which is
+/// why the two blocking variants terminate. `TIMEOUT` is what makes the claim testable: a hang is
+/// not an assertion failure, it is a test that never returns, so each variant runs on a worker and
+/// the main thread refuses to wait longer than the bound.
 ///
 /// `#[cfg(unix)]` because a FIFO is a unix concept. Linux is the claimed platform and Ubuntu CI is
 /// the authority; this also runs on the maintainer's macOS workstation.
 #[cfg(unix)]
 #[test]
-fn a_fifo_whose_length_reports_zero_is_bounded_by_the_read_rather_than_the_metadata() {
+fn a_fifo_is_refused_by_type_before_any_read_can_block() {
+    use std::sync::mpsc;
+
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
     let directory = std::env::temp_dir().join(format!("renvor-fifo-{}", std::process::id()));
     std::fs::create_dir_all(&directory).expect("a temporary directory");
-    let path = directory.join("config.toml");
 
-    // `mkfifo` via the shell: creating one needs `libc`, and this workspace forbids `unsafe`.
-    let made = std::process::Command::new("mkfifo")
-        .arg(&path)
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false);
-    if !made {
-        eprintln!("skipping: mkfifo unavailable");
-        let _ = std::fs::remove_dir_all(&directory);
-        return;
-    }
+    // Each variant gets its own FIFO. Reusing one would let a writer left over from a previous
+    // variant satisfy the next one's open, which is exactly the confound being tested for.
+    let make_fifo = |name: &str| {
+        let path = directory.join(name);
+        // `mkfifo` via the shell: creating one needs `libc`, and this workspace forbids `unsafe`.
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        // W-005 re-review RV-N15: this used to print "skipping: mkfifo unavailable" and return,
+        // which reports a hostile-input test that never ran as a pass. `mkfifo(1)` is POSIX and
+        // present on every platform this `cfg(unix)` block compiles for, so its absence is a
+        // broken environment and is reported as one.
+        assert!(
+            made,
+            "mkfifo(1) is POSIX and required on this platform; a missing one is a broken test \
+             environment, not a reason to report a pass"
+        );
+        let reported = std::fs::metadata(&path).expect("the fifo exists").len();
+        assert_eq!(
+            reported, 0,
+            "a fifo reports no length; that is the whole point"
+        );
+        path
+    };
 
-    // The metadata check sees zero, so it cannot be what refuses this.
-    let reported = std::fs::metadata(&path).expect("the fifo exists").len();
-    assert_eq!(
-        reported, 0,
-        "a fifo reports no length; that is the whole point"
-    );
+    // Runs `read()` on a worker so a hang shows up as a timeout rather than as a test that never
+    // finishes. The worker is deliberately not joined on the timeout path: if it is blocked in
+    // `open`, nothing can interrupt it, and joining would reproduce the hang in the harness.
+    let read_within_timeout = |path: std::path::PathBuf, variant: &'static str| {
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = FileLayer::required(&path).with_max_bytes(4096).read();
+            // The category travels with the message: `KernelError` is not sent across the
+            // channel, so the assertion has to carry what it needs to check.
+            let _ = sender.send(
+                outcome
+                    .map(|_| ())
+                    .map_err(|error| (error.category(), error.to_string())),
+            );
+        });
+        match receiver.recv_timeout(TIMEOUT) {
+            Ok(outcome) => outcome,
+            Err(_) => panic!("{variant}: read() did not return within {TIMEOUT:?} — it is waiting"),
+        }
+    };
 
-    // A writer that keeps producing. It ends when the reader stops, which is what proves the
-    // reader stopped.
-    let writer = std::thread::spawn({
-        let path = path.clone();
+    // Variant 1: no writer. `File::open` on this would block for ever.
+    let no_writer = make_fifo("no-writer.toml");
+    let error = read_within_timeout(no_writer, "no writer")
+        .expect_err("a fifo is not a configuration file");
+
+    // Variant 2: a slow writer that sends a little and never closes. `read_to_end` on this would
+    // wait for an EOF that never arrives.
+    let slow = make_fifo("slow-writer.toml");
+    let slow_writer = std::thread::spawn({
+        let path = slow.clone();
+        move || {
+            if let Ok(mut pipe) = std::fs::OpenOptions::new().write(true).open(&path) {
+                let _ = pipe.write_all(b"a = 1\n");
+                std::thread::sleep(TIMEOUT);
+            }
+        }
+    });
+    let slow_error =
+        read_within_timeout(slow, "slow writer").expect_err("a fifo is not a configuration file");
+
+    // Variant 3: the original flooding writer from 4.1.
+    let flooding = make_fifo("flooding-writer.toml");
+    let flooding_writer = std::thread::spawn({
+        let path = flooding.clone();
         move || {
             if let Ok(mut pipe) = std::fs::OpenOptions::new().write(true).open(&path) {
                 let block = vec![b'a'; 64 * 1024];
-                // Stops on EPIPE once the bounded read gives up.
                 while pipe.write_all(&block).is_ok() {}
             }
         }
     });
+    let flooding_error = read_within_timeout(flooding, "flooding writer")
+        .expect_err("an endless stream must be refused, not consumed");
 
-    let error = FileLayer::required(&path)
+    for (variant, (category, message)) in [
+        ("no writer", &error),
+        ("slow writer", &slow_error),
+        ("flooding writer", &flooding_error),
+    ] {
+        assert_eq!(*category, ErrorCategory::Configuration, "{variant}");
+        assert!(
+            message.contains("not a regular file"),
+            "{variant}: the refusal must name the file type, not the byte ceiling: {message}"
+        );
+    }
+
+    // POSITIVE CONTROL. Every assertion above is about a refusal, and a `read()` that refused
+    // everything unconditionally would satisfy all of them. A real regular file in the same
+    // directory, read by the same call, must still succeed.
+    let regular = directory.join("regular.toml");
+    std::fs::write(&regular, b"a = 1\n").expect("a regular file");
+    let table = FileLayer::required(&regular)
         .with_max_bytes(4096)
         .read()
-        .expect_err("an endless stream must be refused, not consumed");
-    assert_eq!(error.category(), ErrorCategory::Configuration);
+        .expect("a regular file is still readable")
+        .expect("and it is present");
     assert!(
-        error.to_string().contains("4096"),
-        "the ceiling must be named: {error}"
+        table.contains_key("a"),
+        "the control must actually parse: {table:?}"
     );
 
-    drop(writer.join());
+    // Both writers exit on EPIPE or on their own sleep; neither is joined, because a writer
+    // blocked on `open` for a reader that never came cannot be woken.
+    drop(slow_writer);
+    drop(flooding_writer);
     let _ = std::fs::remove_dir_all(&directory);
 }

@@ -36,6 +36,8 @@ use renvor_core::error::context::{Constraint, configuration};
 use serde::de::DeserializeOwned;
 use toml::{Table, Value};
 
+use super::env::MAX_KEY_DEPTH;
+
 /// What the error message names in place of a per-key declared type.
 ///
 /// See the module documentation: the precise expectation is in the constraint text, because the
@@ -92,6 +94,30 @@ pub fn decode_single<P: DeserializeOwned>(
     value: &Value,
     layer: &SourceLayer,
 ) -> Result<(), KernelError> {
+    // W-005 security re-review SV-N1. The depth ceiling that closed the original 3.1 finding was
+    // placed in `read_environment`, one layer above — so it guarded the SHIPPED path and left
+    // this one, which is `pub` and documented, reaching the same structures unguarded. Called
+    // directly with a 3000-segment key it aborted the process: `fatal runtime error: stack
+    // overflow`, exit 134, reproduced before this check was written.
+    //
+    // The guard belongs at the public boundary rather than in `nest`, because `nest` is not where
+    // the recursion is. `nest` is a `pop` loop and is iterative; the depth is consumed by
+    // `try_into`'s recursive descent and again by the nested table's recursive `Drop`. Bounding
+    // the constructor would have protected nothing.
+    let depth = key.split('.').count();
+    if depth > MAX_KEY_DEPTH {
+        return Err(configuration(
+            key,
+            layer.label(),
+            "a key nested no deeper than the ceiling",
+            &Constraint::Rule(
+                "the key is nested deeper than 32 levels; decoding and then dropping a structure \
+                 that deep recurses far enough to overflow the stack, which no Rust guard can \
+                 catch",
+            ),
+        ));
+    }
+
     let table = nest(key, value.clone());
     table.try_into::<P>().map(|_: P| ()).map_err(|error| {
         configuration(
@@ -173,7 +199,7 @@ fn locate_failure<P: DeserializeOwned>(
 
 #[cfg(test)]
 mod tests {
-    use super::{decode_single, decode_source, nest};
+    use super::{MAX_KEY_DEPTH, decode_single, decode_source, nest};
     use renvor_core::ErrorCategory;
     use renvor_core::config_port::SourceLayer;
     use serde::Deserialize;
@@ -270,6 +296,46 @@ mod tests {
         // POSITIVE CONTROL: the same call succeeds for a value of the declared type.
         decode_single::<Partial>("port", &Value::Integer(8080), &SourceLayer::Environment)
             .expect("8080 is a u16");
+    }
+
+    #[test]
+    fn a_deeply_nested_key_is_refused_here_too_rather_than_overflowing_the_stack() {
+        // W-005 security re-review SV-N1, as a regression test.
+        //
+        // Finding 3.1's ceiling was placed in `read_environment`, so it guarded the shipped path
+        // and left THIS one — `decode_single` is `pub`, in a `pub mod`, and documented. Called
+        // directly with the same 3,000-segment key it aborted the process: `fatal runtime error:
+        // stack overflow`, exit 134. Measured against the public API from outside the crate
+        // before this check was written.
+        //
+        // 3,000 is the measured crashing depth, used verbatim rather than rounded, so this
+        // reproduces the original scenario. An abort is not catchable, so reaching the assertions
+        // at all is what proves the process survived; the assertions prove it was *refused*.
+        let deep = vec!["a"; 3000].join(".");
+        let error =
+            decode_single::<Partial>(&deep, &Value::String("1".into()), &SourceLayer::Environment)
+                .expect_err("a key deeper than the ceiling must be refused");
+        assert!(
+            error.to_string().contains("32 levels"),
+            "the ceiling must be named: {error}"
+        );
+
+        // POSITIVE CONTROL: the bound discriminates rather than refusing nesting on sight. A key
+        // exactly AT the ceiling must get past the depth check and be judged on its type — so a
+        // decode error here, and not a depth error, is what proves the check let it through.
+        let at_ceiling = vec!["a"; MAX_KEY_DEPTH].join(".");
+        let message = decode_single::<Partial>(
+            &at_ceiling,
+            &Value::String("1".into()),
+            &SourceLayer::Environment,
+        )
+        .err()
+        .map(|error| error.to_string())
+        .unwrap_or_default();
+        assert!(
+            !message.contains("32 levels"),
+            "a key at the ceiling was refused by the depth check: {message}"
+        );
     }
 
     #[test]

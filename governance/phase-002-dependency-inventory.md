@@ -22,10 +22,22 @@ reproduce the design document's blind spots.
 | — reachable over **normal** edges (what a consumer resolves) | **45** |
 | — **dev-only** (test machinery; never in a consumer's graph) | **3** |
 | Directly chosen, declared in a workspace manifest | **10** |
-| Arrived **transitively**, evaluated by nobody until the inventory | **38** |
+| Arrived **transitively** (declared in no workspace manifest) | **38** |
+| Never **individually evaluated** by research §3 | **37** |
 | Packages with **no declared licence** | **0** |
 | Packages whose MSRV exceeds **1.94.0** | **0** |
 | `cargo deny check licenses advisories bans sources` | **all four pass** |
+
+**Why 38 and 37 are both right, and why the row above used to say only one of them.** They measure
+different things and differ by exactly one package. *Transitive* means "declared in no workspace
+manifest" — 38 rows. *Never individually evaluated* means "absent from research §3's candidate
+table" — 37 rows. The difference is **`zeroize`**, which research §3 evaluated explicitly (as
+`secrecy`'s dependency) but which no manifest of ours declares. Until 2026-08-16 this table carried
+one row reading *"Arrived transitively, evaluated by nobody until the inventory | 38"*, which
+attached the second label to the first measure and so overstated the unevaluated set by one. Every
+figure in this section is reproduced by the Gate 15 comparison in
+[`quickstart.md`](../specs/002-core-kernel/quickstart.md), which now reads the prose as well as the
+table.
 
 ## Revision — 2026-08-16, after the configuration proof gate failed
 
@@ -58,9 +70,10 @@ place rather than trimmed to match today's graph: a licence policy that is narro
 dependency leaves has to be widened again every time one arrives, and each widening is a decision
 nobody reviews.
 
-**37 of 48 external packages entered the graph without an individual evaluation.** That is the
-normal condition of any Rust project and is precisely what FR-040 exists to surface, so it is
-recorded as a measured fact rather than framed as a problem discovered.
+**37 of 48 external packages entered the graph without an individual evaluation** — 48 resolved
+rows, minus the 11 of research §3's 12 candidates that are still in the graph. That is the normal
+condition of any Rust project and is precisely what FR-040 exists to surface, so it is recorded as
+a measured fact rather than framed as a problem discovered.
 
 ## T031 — `cargo deny check licenses advisories bans sources`
 
@@ -218,7 +231,7 @@ the research.
 
 | Question | Answer |
 |---|---|
-| Did research §3 evaluate every package that ships? | **No.** It evaluated **12**; **55** resolve |
+| Did research §3 evaluate every package that ships? | **No.** It evaluated **12**; **48** resolve, and **11** of the 12 are among them (`confique` was deleted when its proof gate failed) |
 | Was research §3 *wrong* about anything it did evaluate? | **No.** Every direct candidate's version, licence, and MSRV matches the lockfile |
 | Did any transitive package introduce a licence absent from the direct set? | **Yes — two.** `Zlib` (`foldhash`) and `Unicode-3.0` (`unicode-ident`) appear nowhere among the direct candidates |
 | Did anything catch those two? | **Yes — `deny.toml`, not the research table.** Both licences were already on Phase 001's allow list |
@@ -230,7 +243,7 @@ scales with the number of packages a human chose; a policy check scales with the
 actually resolve. Phase 002 needed both, and only one of them could have found `foldhash`.
 
 **The phase is not failed by T033.** T033 requires failure if *any* resolved package lacks the
-evidence FR-040 demands. Every one of the 55 has a declared licence, a resolvable version from the
+evidence FR-040 demands. Every one of the 48 has a declared licence, a resolvable version from the
 committed lockfile, and a clean advisory check. The gate passes on evidence, not on absence of
 looking.
 

@@ -143,23 +143,38 @@ mod tests {
         Secret::new("database.password", CREDENTIAL.to_owned())
     }
 
+    // Every assertion below carries a **fixed** diagnostic. The obvious `assert_eq!` and
+    // `"{rendered}"` forms name the offending string in the panic message, so the one run that
+    // proves a redaction regression exists would be the run that prints the credential to the
+    // test log. A regression has to be reported by which check failed, never by what leaked.
     #[test]
     fn display_renders_the_placeholder() {
-        assert_eq!(secret().to_string(), REDACTED);
+        assert!(
+            secret().to_string() == REDACTED,
+            "Display did not render the placeholder"
+        );
     }
 
     #[test]
     fn debug_names_the_key_and_redacts_the_value() {
         // Scenario 7: redacted in every path, and **the field name remains visible**.
         let rendered = format!("{:?}", secret());
-        assert!(rendered.contains("database.password"), "{rendered}");
-        assert!(rendered.contains(REDACTED), "{rendered}");
-        assert!(!rendered.contains(CREDENTIAL), "{rendered}");
+        assert!(
+            rendered.contains("database.password"),
+            "Debug dropped the key"
+        );
+        assert!(rendered.contains(REDACTED), "Debug omitted the placeholder");
+        assert!(!rendered.contains(CREDENTIAL), "Debug leaked the value");
     }
 
     #[test]
     fn the_value_is_reachable_only_through_one_conspicuous_method() {
-        assert_eq!(secret().expose(), CREDENTIAL);
+        // `assert_eq!` would name both operands in its panic message, and one of them is the
+        // credential. The comparison is the same; only the diagnostic changes.
+        assert!(
+            secret().expose() == CREDENTIAL,
+            "expose() did not return the stored value"
+        );
         assert_eq!(secret().key(), "database.password");
     }
 
@@ -175,12 +190,17 @@ mod tests {
             secret.redacted_field().to_owned(), // a plain field
         ];
 
-        for rendered in &routes {
+        // The index identifies which route failed without reproducing what it rendered. The
+        // array above is the index's legend: 0 is Display, 1 is Debug, 2 is the plain field.
+        for (route, rendered) in routes.iter().enumerate() {
             assert!(
                 !rendered.contains(CREDENTIAL),
-                "a field route leaked the value: {rendered}"
+                "field route {route} leaked the value"
             );
-            assert!(rendered.contains(REDACTED), "{rendered}");
+            assert!(
+                rendered.contains(REDACTED),
+                "field route {route} omitted the placeholder"
+            );
         }
 
         // POSITIVE CONTROL: the search string is findable when present, so the three assertions

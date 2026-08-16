@@ -32,10 +32,16 @@ impl ConfigSchema for Settings {
 #[test]
 fn a_separator_bearing_value_does_not_leak_through_the_real_stack() {
     // W-005 security finding 2.1, end to end rather than at the unit boundary.
-    for payload in [
+    // Payloads are identified by index rather than by content. Naming the offending string in
+    // the diagnostic would mean the one run that proves a leak exists is the run that prints
+    // the leaked value into the test log — the same defect this test is here to catch.
+    for (payload_index, payload) in [
         "s3cr3t-token-abc123\", expected u16",
         "hunter2, expected LEAKED-TAIL",
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let env: BTreeMap<String, String> = [("RENVOR_PORT".to_owned(), payload.to_owned())]
             .into_iter()
             .collect();
@@ -46,9 +52,16 @@ fn a_separator_bearing_value_does_not_leak_through_the_real_stack() {
             .resolve()
             .expect_err("a string is not a u16");
         let rendered = error.to_string();
-        for secret in ["s3cr3t-token-abc123", "LEAKED-TAIL", "hunter2"] {
-            assert!(!rendered.contains(secret), "LEAKED via env: {rendered}");
+        for (needle_index, secret) in ["s3cr3t-token-abc123", "LEAKED-TAIL", "hunter2"]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                !rendered.contains(secret),
+                "payload {payload_index} leaked needle {needle_index} \
+                 through the environment layer"
+            );
         }
-        println!("env  ok: {rendered}");
+        println!("env  ok: payload {payload_index}");
     }
 }
