@@ -169,7 +169,12 @@ impl InjectingSource {
         behave(self.behaviour, &self.fired, what);
         Err(configuration(
             "injected.key",
-            SourceLayer::File("injected-source".into()).label(),
+            // `SourceLayer::file`, not the variant. The label here is a compile-time literal and
+            // could not have been unbounded, so this changes no behaviour — it is changed so that
+            // **every** production construction of a file layer goes through the bounding
+            // constructor with no exceptions. A single "this one is fine" is how the last three
+            // rounds of review found a defect class surviving in the files nobody pointed at.
+            SourceLayer::file("injected-source").label(),
             "an injected failure",
             &Constraint::Rule("this failure was injected by the test harness"),
         ))
