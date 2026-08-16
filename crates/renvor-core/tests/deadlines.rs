@@ -3,18 +3,30 @@
 //! # What "0 unbounded waits" can and cannot be proven by
 //!
 //! A test cannot enumerate every future the kernel might ever await. What it *can* do is close the
-//! set: the kernel awaits foreign code in exactly **three** places, and each is checked here.
+//! set — and **an earlier version of this file closed the wrong set.**
 //!
-//! | Kernel-owned wait | Bounded by | Test |
-//! |---|---|---|
-//! | A provider initialising | the provider deadline | `a_hanging_provider_does_not_hang_boot` |
-//! | A provider stopping | the provider deadline | `a_hanging_stop_does_not_hang_shutdown` |
-//! | In-flight work draining | the drain budget | `a_drain_never_waits_past_its_budget` |
+//! It enumerated *three* waits and called the set complete. It was searching for `.await`, and a
+//! **synchronous** call that never returns is not an await: `Load` and `Validate` call
+//! author-supplied code from a non-async `build`, and both were unbounded. The gap was found by
+//! building the failure-injection harness, not by re-reading this file. The set is **five**:
 //!
-//! Then `the_kernel_never_awaits_a_provider_without_a_deadline` reads the kernel's own source and
-//! fails if any of those calls loses its wrapper. Behaviour tests prove the bounds work **today**;
-//! the source check is what notices when a future edit removes one, because the behaviour test for
-//! a removed bound does not fail — it hangs, and a hung test looks like a slow CI machine.
+//! | Kernel-owned wait | Kind | Bounded by | Test |
+//! |---|---|---|---|
+//! | A configuration source loading | **synchronous** | the source deadline | `builder::a_hanging_source_is_bounded_rather_than_blocking_the_process` |
+//! | A configuration source validating | **synchronous** | the source deadline | same mechanism, same call site |
+//! | A provider initialising | async | the provider deadline | `a_hanging_provider_does_not_hang_boot` |
+//! | A provider stopping | async | the provider deadline | `a_hanging_stop_does_not_hang_shutdown` |
+//! | In-flight work draining | async | the drain budget | `a_drain_never_waits_past_its_budget` |
+//!
+//! The lesson is recorded rather than quietly fixed: **the shape of the search decided the shape
+//! of the answer**. A scan for `.await` can only ever find awaits, and reporting its result as
+//! "every kernel-owned wait" was a claim the scan could not support.
+//!
+//! Then `the_kernel_never_waits_on_foreign_code_without_a_deadline` reads the kernel's own source
+//! and fails if any of those calls loses its wrapper. Behaviour tests prove the bounds work
+//! **today**; the source check is what notices when a future edit removes one, because the
+//! behaviour test for a removed bound does not fail — it hangs, and a hung test looks like a slow
+//! CI machine.
 //!
 //! Every test runs under `start_paused`, so a thirty-second deadline costs **0** real seconds
 //! (FR-031). A suite that took thirty seconds to prove a thirty-second deadline would be disabled
@@ -133,12 +145,14 @@ async fn a_drain_never_waits_past_its_budget() {
 }
 
 #[test]
-fn the_kernel_never_awaits_a_provider_without_a_deadline() {
-    // The check that survives a future edit. Both call sites into author-supplied code must be
-    // wrapped; a bare `.await` on either is an unbounded wait in a kernel-owned path.
+fn the_kernel_never_waits_on_foreign_code_without_a_deadline() {
+    // The check that survives a future edit, covering **all five** call sites into author-supplied
+    // code — the two synchronous ones included, which the earlier version of this test missed.
     let boot = include_str!("../src/lifecycle/application.rs");
     let stop = include_str!("../src/lifecycle/rollback.rs");
+    let builder = include_str!("../src/lifecycle/builder.rs");
 
+    // Async: a bare `.await` on a provider is an unbounded wait.
     for (name, source, bare) in [
         ("boot", boot, "provider.initialise(&mut context).await"),
         ("rollback", stop, "provider.stop().await"),
@@ -149,8 +163,21 @@ fn the_kernel_never_awaits_a_provider_without_a_deadline() {
         );
     }
 
-    // POSITIVE CONTROL: both call sites exist and both are inside a `timeout`, so the absence
-    // above means "wrapped" rather than "the call was deleted and the scan found nothing".
+    // Synchronous: a direct `source.load()` or `source.validate()` in `build` is the same defect
+    // wearing different syntax. Both must go through the bounded call.
+    let production = builder
+        .split("#[cfg(test)]")
+        .next()
+        .expect("split always yields one part");
+    for bare in ["source.load()?", "source.validate()?"] {
+        assert!(
+            !production.contains(bare),
+            "`build` calls a configuration source without a deadline: found `{bare}`"
+        );
+    }
+
+    // POSITIVE CONTROL: every call site exists and every one is wrapped, so the absences above
+    // mean "bounded" rather than "the call was deleted and the scan found nothing".
     assert!(
         boot.contains("tokio::time::timeout(") && boot.contains("provider.initialise("),
         "the boot call site moved; this test is checking a file that no longer boots providers"
@@ -158,6 +185,44 @@ fn the_kernel_never_awaits_a_provider_without_a_deadline() {
     assert!(
         stop.contains("tokio::time::timeout(") && stop.contains("provider.stop()"),
         "the stop call site moved; this test is checking a file that no longer stops providers"
+    );
+    assert!(
+        production.contains("bounded_call(deadline, source.name(), \"load\"")
+            && production.contains("bounded_call(deadline, source.name(), \"validate\""),
+        "the configuration call sites moved; this test is checking a file that no longer loads them"
+    );
+}
+
+#[test]
+fn the_enumerated_set_of_kernel_owned_waits_is_still_five() {
+    // The set is closed by counting the call sites into author-supplied code, so a **sixth** one
+    // added later fails here rather than silently escaping the enumeration above. That is the
+    // failure mode this file already suffered once, when the set was three and should have been
+    // five.
+    let sources = [
+        include_str!("../src/lifecycle/application.rs"),
+        include_str!("../src/lifecycle/rollback.rs"),
+        include_str!("../src/lifecycle/builder.rs"),
+    ];
+
+    let bounded: usize = sources
+        .iter()
+        .map(|source| {
+            let production = source
+                .split("#[cfg(test)]")
+                .next()
+                .expect("split always yields one part");
+            production.matches("tokio::time::timeout(").count()
+                + production.matches("bounded_call(deadline,").count()
+        })
+        .sum();
+
+    assert_eq!(
+        bounded, 4,
+        "expected 4 bounding call sites covering 5 waits — provider initialise, provider stop, \
+         and one `bounded_call` for each of load and validate; the drain's own bound lives in \
+         drain.rs. A different count means a wait was added or removed without updating the \
+         enumeration in this file's documentation"
     );
 }
 

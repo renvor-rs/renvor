@@ -176,7 +176,7 @@ fn application(
             3;
             32
         ])))
-        .with_config_source(Box::new(source))
+        .with_config_source(Arc::new(source))
         .with_provider(provider);
 
     (builder, handle, started)
@@ -226,7 +226,7 @@ async fn scenario_2_a_required_key_absent_everywhere_fails_before_register() {
             3;
             32
         ])))
-        .with_config_source(Box::new(source))
+        .with_config_source(Arc::new(source))
         .with_provider(provider);
     let phases = builder.phase_log();
 

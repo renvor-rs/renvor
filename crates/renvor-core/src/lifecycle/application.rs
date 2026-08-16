@@ -49,6 +49,15 @@ use crate::state::TypedStateMap;
 /// symmetry rather than a measured figure, and it is author-overridable.
 pub const DEFAULT_PROVIDER_DEADLINE: Duration = Duration::from_secs(30);
 
+/// How long a single configuration source is given to load or to validate.
+///
+/// **Renvor's choice, not the specification's**, for the same reason as
+/// [`DEFAULT_PROVIDER_DEADLINE`]: FR-025 and C-L7 require the bound to exist and name no value.
+/// Shorter than the provider deadline on purpose — reading a file or an environment map is not
+/// opening a connection pool, so a source still working after ten seconds is stuck rather than
+/// slow.
+pub const DEFAULT_SOURCE_DEADLINE: Duration = Duration::from_secs(10);
+
 /// A shared, readable record of the phases a run entered.
 ///
 /// Cloneable and cheap: the builder hands one out before starting, and the same underlying record

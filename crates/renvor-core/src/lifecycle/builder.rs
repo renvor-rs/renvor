@@ -11,6 +11,32 @@
 //! have started, since the only code that starts one lives in [`Application::boot`], which this
 //! function has not reached.
 //!
+//! # `Load` and `Validate` are bounded, and how
+//!
+//! Both phases call **author-supplied code**, and `build` is synchronous — so a configuration
+//! source reading a hung network mount would block the process for ever. FR-025 and C-L7 prohibit
+//! exactly that, and an earlier version of this file was in breach: the defect was found by
+//! building the failure-injection harness, not by reading the requirement.
+//!
+//! `tokio::time::timeout` cannot fix it. A blocking call inside an async block never yields, so
+//! the timer never gets to fire; bounding a *synchronous* call needs a second thread whatever
+//! else changes. Making `build` async would therefore have churned every call site **and still**
+//! needed `spawn_blocking` underneath.
+//!
+//! So [`bounded_call`] runs each source call on its own thread and waits on a channel with
+//! [`std::sync::mpsc::Receiver::recv_timeout`]. The signature does not change, and the kernel's
+//! wait is bounded.
+//!
+//! **The honest cost**: a thread that never returns is **leaked**. It cannot be cancelled — no
+//! Rust API can interrupt a blocked thread — so the process keeps one stuck thread per hung
+//! source. That is strictly better than the alternative, which was keeping the *whole application*
+//! stuck, and it is stated here rather than discovered.
+//!
+//! **The unplanned benefit**: a source that **panics** kills only its own thread, dropping the
+//! channel sender. The wait ends with a disconnect rather than an unwind through `build`, so a
+//! panicking configuration source is a **failure** instead of a process abort — which is what
+//! C-L9 asks for, obtained here as a property of the mechanism rather than as a second feature.
+//!
 //! # Why entropy failure is not a `KernelError`
 //!
 //! [`crate::error::KernelError`]'s `Internal` category means *a defect in Renvor*. An operating
@@ -24,12 +50,15 @@
 //! the worse diagnostic.
 
 use core::fmt;
+use std::sync::Arc;
+use std::sync::mpsc::{RecvTimeoutError, channel};
 use std::time::Duration;
 
 use crate::config_port::ConfigSource;
-use crate::error::{ErrorCategory, KernelError};
+use crate::error::{ErrorCategory, KernelError, context};
 use crate::lifecycle::application::{
-    Application, DEFAULT_PROVIDER_DEADLINE, PhaseCursor, PhaseLog,
+    Application, DEFAULT_PROVIDER_DEADLINE, DEFAULT_SOURCE_DEADLINE, PhaseCursor, PhaseLog,
+    deadline_millis,
 };
 use crate::lifecycle::drain::DEFAULT_DRAIN_BUDGET;
 use crate::observe::{EntropySource, EntropyUnavailable, OsEntropy, RunIdentifier};
@@ -113,10 +142,13 @@ impl std::error::Error for BuildError {
 /// (FR-044): it decides precedence, and a set would silently discard it.
 #[derive(Debug)]
 pub struct ApplicationBuilder {
-    config_sources: Vec<Box<dyn ConfigSource>>,
+    /// `Arc` rather than `Box` because each source is handed to a worker thread for the duration
+    /// of its bounded call, and a thread needs an owned `'static` handle.
+    config_sources: Vec<Arc<dyn ConfigSource>>,
     registry: ProviderRegistry,
     drain_budget: Option<Duration>,
     provider_deadline: Option<Duration>,
+    source_deadline: Option<Duration>,
     entropy: Box<dyn EntropySource>,
     phases: PhaseLog,
 }
@@ -136,6 +168,7 @@ impl ApplicationBuilder {
             registry: ProviderRegistry::new(),
             drain_budget: None,
             provider_deadline: None,
+            source_deadline: None,
             entropy: Box::new(OsEntropy::new()),
             phases: PhaseLog::new(),
         }
@@ -143,7 +176,7 @@ impl ApplicationBuilder {
 
     /// Appends a configuration source. Order is precedence order (FR-044).
     #[must_use]
-    pub fn with_config_source(mut self, source: Box<dyn ConfigSource>) -> Self {
+    pub fn with_config_source(mut self, source: Arc<dyn ConfigSource>) -> Self {
         self.config_sources.push(source);
         self
     }
@@ -172,6 +205,16 @@ impl ApplicationBuilder {
     #[must_use]
     pub const fn with_provider_deadline(mut self, deadline: Duration) -> Self {
         self.provider_deadline = Some(deadline);
+        self
+    }
+
+    /// Overrides how long each configuration source is given to load or to validate.
+    ///
+    /// FR-025 and C-L7 require the bound to exist; no artifact names a value, so the default is
+    /// Renvor's choice and is overridable — see [`DEFAULT_SOURCE_DEADLINE`].
+    #[must_use]
+    pub const fn with_source_deadline(mut self, deadline: Duration) -> Self {
+        self.source_deadline = Some(deadline);
         self
     }
 
@@ -210,16 +253,22 @@ impl ApplicationBuilder {
         let run_id = RunIdentifier::generate(self.entropy.as_ref())?;
 
         let mut cursor = PhaseCursor::start(self.phases.clone(), run_id);
+        let deadline = self.source_deadline.unwrap_or(DEFAULT_SOURCE_DEADLINE);
 
-        // Load — in declaration order, because precedence is that order (FR-044).
+        // Load — in declaration order, because precedence is that order (FR-044) — and each call
+        // bounded, because it runs author code the kernel cannot otherwise interrupt.
         for source in &self.config_sources {
-            source.load()?;
+            let handle = Arc::clone(source);
+            bounded_call(deadline, source.name(), "load", move || handle.load())??;
         }
 
         // Validate.
         cursor.advance();
         for source in &self.config_sources {
-            source.validate()?;
+            let handle = Arc::clone(source);
+            bounded_call(deadline, source.name(), "validate", move || {
+                handle.validate()
+            })??;
         }
 
         // Register.
@@ -238,6 +287,49 @@ impl ApplicationBuilder {
     }
 }
 
+/// Runs one configuration-source call on a worker thread, waiting no longer than `deadline`.
+///
+/// Returns `Ok(Ok(_))` when the call succeeded, `Ok(Err(_))` when it reported a failure, and
+/// `Err(_)` when it did not answer in time or died. See the module documentation for why this is a
+/// thread rather than a `tokio::time::timeout`, and what it costs.
+///
+/// # Errors
+///
+/// - [`KernelError::DeadlineExceeded`] naming the source and the call when the deadline elapses.
+/// - [`KernelError::Configuration`] naming the source when its thread died — which means the call
+///   **panicked**. Reported as a failure rather than allowed to unwind through `build`.
+fn bounded_call<T: Send + 'static>(
+    deadline: Duration,
+    source: &str,
+    call: &'static str,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, KernelError> {
+    let (sender, receiver) = channel();
+
+    // The handle is deliberately dropped rather than joined. Joining a thread that never returns
+    // is the unbounded wait this function exists to remove.
+    drop(std::thread::spawn(move || {
+        // A send failure means the receiver already timed out and gave up. Nothing to report to,
+        // and nothing to do about it.
+        drop(sender.send(work()));
+    }));
+
+    match receiver.recv_timeout(deadline) {
+        Ok(value) => Ok(value),
+        Err(RecvTimeoutError::Timeout) => Err(KernelError::DeadlineExceeded {
+            operation: format!("{call} configuration source `{source}`"),
+            deadline_ms: deadline_millis(deadline),
+        }),
+        // The sender was dropped without sending, so the thread unwound: the call panicked.
+        Err(RecvTimeoutError::Disconnected) => Err(context::configuration(
+            source,
+            source,
+            "a configuration source that returns",
+            &context::Constraint::Rule("the source panicked while being called"),
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ApplicationBuilder, BuildError, DEFAULT_DRAIN_BUDGET, DEFAULT_PROVIDER_DEADLINE};
@@ -245,6 +337,7 @@ mod tests {
     use crate::error::{ErrorCategory, KernelError};
     use crate::lifecycle::LifecyclePhase;
     use crate::observe::{EntropySource, EntropyUnavailable, FixedEntropy};
+    use std::sync::Arc;
     use std::time::Duration;
 
     /// A source that succeeds, fails to load, or fails to validate — one knob each, so a test
@@ -257,22 +350,22 @@ mod tests {
     }
 
     impl Source {
-        fn ok() -> Box<dyn ConfigSource> {
-            Box::new(Self {
+        fn ok() -> Arc<dyn ConfigSource> {
+            Arc::new(Self {
                 layer: SourceLayer::Defaults,
                 load_fails: false,
                 validate_fails: false,
             })
         }
-        fn unreadable() -> Box<dyn ConfigSource> {
-            Box::new(Self {
+        fn unreadable() -> Arc<dyn ConfigSource> {
+            Arc::new(Self {
                 layer: SourceLayer::File("missing.toml".into()),
                 load_fails: true,
                 validate_fails: false,
             })
         }
-        fn invalid() -> Box<dyn ConfigSource> {
-            Box::new(Self {
+        fn invalid() -> Arc<dyn ConfigSource> {
+            Arc::new(Self {
                 layer: SourceLayer::Environment,
                 load_fails: false,
                 validate_fails: true,
@@ -317,6 +410,36 @@ mod tests {
     impl EntropySource for RefusingEntropy {
         fn fill(&self, _destination: &mut [u8]) -> Result<(), EntropyUnavailable> {
             Err(EntropyUnavailable::new("the sandbox blocks getrandom"))
+        }
+    }
+
+    /// A source that never returns from `load`, standing in for a hung network mount.
+    #[derive(Debug)]
+    struct HangingSource;
+
+    impl ConfigSource for HangingSource {
+        fn name(&self) -> &str {
+            "hanging-source"
+        }
+        fn load(&self) -> Result<(), KernelError> {
+            // Deliberately unbounded and uninterruptible: no Rust API can cancel this thread,
+            // which is exactly the situation the deadline exists for.
+            loop {
+                std::thread::park();
+            }
+        }
+    }
+
+    /// A source that panics instead of answering.
+    #[derive(Debug)]
+    struct PanickingSource;
+
+    impl ConfigSource for PanickingSource {
+        fn name(&self) -> &str {
+            "panicking-source"
+        }
+        fn load(&self) -> Result<(), KernelError> {
+            panic!("this configuration source is deliberately broken");
         }
     }
 
@@ -419,6 +542,80 @@ mod tests {
             .build()
             .expect_err("an invalid value fails");
         assert_eq!(kernel.category(), Some(ErrorCategory::Configuration));
+    }
+
+    #[test]
+    fn a_hanging_source_is_bounded_rather_than_blocking_the_process() {
+        // FR-025 and C-L7. Before this bound existed, `build` blocked for ever here — the defect
+        // was found by building the failure-injection harness, and this is the test that would
+        // have found it first.
+        let started = std::time::Instant::now();
+
+        let error = deterministic()
+            .with_source_deadline(Duration::from_millis(120))
+            .with_config_source(Arc::new(HangingSource))
+            .build()
+            .expect_err("a source that never returns must not hang the build");
+
+        assert_eq!(error.category(), Some(ErrorCategory::DeadlineExceeded));
+        let rendered = error.to_string();
+        assert!(rendered.contains("hanging-source"), "names it: {rendered}");
+        assert!(rendered.contains("load"), "names the call: {rendered}");
+        assert!(rendered.contains("120"), "names the deadline: {rendered}");
+
+        // Reaching this at all is the assertion; the timing bound catches a deadline that is
+        // honoured in name only.
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the build took {:?}, so the deadline is not being enforced",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_panicking_source_is_a_failure_rather_than_a_process_abort() {
+        // Obtained as a property of the mechanism rather than as a second feature: the source's
+        // thread unwinds, dropping the channel sender, so the wait ends with a disconnect instead
+        // of an unwind through `build`. Reaching the assertions proves the panic was contained.
+        let error = deterministic()
+            .with_config_source(Arc::new(PanickingSource))
+            .build()
+            .expect_err("a panicking source must fail the build");
+
+        assert_eq!(error.category(), Some(ErrorCategory::Configuration));
+        let rendered = error.to_string();
+        assert!(rendered.contains("panicking-source"), "{rendered}");
+        assert!(
+            rendered.contains("panicked"),
+            "and says what happened: {rendered}"
+        );
+    }
+
+    #[test]
+    fn a_prompt_source_is_untouched_by_the_deadline() {
+        // POSITIVE CONTROL for both tests above: the bound discriminates rather than failing every
+        // build. Without this, a deadline of zero would satisfy the hang test.
+        let application = deterministic()
+            .with_source_deadline(Duration::from_millis(120))
+            .with_config_source(Source::ok())
+            .build()
+            .expect("a source that answers immediately is unaffected");
+        assert_eq!(application.phase(), LifecyclePhase::Register);
+    }
+
+    #[test]
+    fn the_source_deadline_has_a_default_that_is_overridable() {
+        // The value is Renvor's choice, so what matters is that it is stated in one place and can
+        // be replaced.
+        assert_eq!(
+            super::DEFAULT_SOURCE_DEADLINE,
+            Duration::from_secs(10),
+            "shorter than the provider deadline: reading a file is not opening a pool"
+        );
+        deterministic()
+            .with_source_deadline(Duration::from_millis(1))
+            .build()
+            .expect("an override is accepted");
     }
 
     #[test]

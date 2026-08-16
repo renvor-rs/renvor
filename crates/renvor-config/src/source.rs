@@ -34,7 +34,9 @@ use crate::schema::ConfigSchema;
 
 /// A [`ConfigSource`] backed by the layered resolver.
 ///
-/// Registered with `ApplicationBuilder::with_config_source`. The resolved value is read afterwards
+/// Registered with `ApplicationBuilder::with_config_source`, which takes an `Arc` because the
+/// kernel hands each source to a worker thread for the duration of its bounded call. The resolved
+/// value is read afterwards
 /// through the [`ConfigHandle`] this hands out.
 pub struct SchemaSource<T: ConfigSchema + Send + 'static> {
     name: String,

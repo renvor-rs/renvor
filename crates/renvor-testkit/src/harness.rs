@@ -8,32 +8,33 @@
 //!
 //! | Phase | What is injected | Bounded by |
 //! |---|---|---|
-//! | `Load` | a configuration source that fails to read | **nothing — see below** |
-//! | `Validate` | a configuration source that rejects a value | **nothing — see below** |
+//! | `Load` | a configuration source that fails to read | the source deadline |
+//! | `Validate` | a configuration source that rejects a value | the source deadline |
 //! | `Register` | a provider depending on a capability nobody offers | the work budget (counted, not timed) |
 //! | `Boot` | a provider that fails, panics, or never returns | the provider deadline |
 //! | `Ready` | liveness driven to `Dead` once `Ready` is reached | n/a — reaching `Ready` is the success condition |
 //! | `Drain` | in-flight work that outlives the drain budget | the drain budget |
 //! | `Stop` | a provider that fails or never returns while stopping | the provider deadline |
 //!
-//! # Two gaps this harness found, reported rather than papered over
+//! # Two gaps this harness found. One is fixed; one is still open.
 //!
-//! **1. `Load` and `Validate` are unbounded.** They call author-supplied code
-//! *synchronously*, and `ApplicationBuilder::build` is not `async`, so there is no deadline around
-//! either. A configuration source reading a hung network mount blocks the process indefinitely.
+//! **1. `Load` and `Validate` were unbounded — now fixed.** They call author-supplied code
+//! *synchronously*, and `ApplicationBuilder::build` is not `async`, so there was no deadline
+//! around either: a configuration source reading a hung network mount blocked the process
+//! indefinitely. `tests/deadlines.rs` enumerated "three kernel-owned waits" and missed these two,
+//! because it searched for `.await` and a synchronous call that never returns is not an await.
 //!
-//! `tests/deadlines.rs` enumerates "three kernel-owned waits" and bounds each. It missed these two
-//! because it looked for `.await` — and a synchronous call that never returns is not an await. The
-//! claim there is correct about what it checked and **incomplete about the set**; both are recorded
-//! in `governance/phase-002-evidence.md`.
+//! Both are now bounded by a worker thread and `recv_timeout`, and the enumeration is corrected to
+//! **five**. A panicking configuration source is contained by the same mechanism.
 //!
-//! **2. A panicking provider is not contained.** [`Behaviour::Panic`] at `Boot` or `Stop` unwinds
-//! through the kernel and ends the process. Catching it needs one of two things Renvor does not
-//! have: a `'static` future (ruled out by `InitContext` borrowing the state map) or
+//! **2. A panicking *provider* is still not contained.** [`Behaviour::Panic`] at `Boot` or `Stop`
+//! unwinds through the kernel and ends the process. Catching it needs one of two things Renvor does
+//! not have: a `'static` future (ruled out by `InitContext` borrowing the state map) or
 //! `futures::FutureExt::catch_unwind` (a new dependency in a phase whose inventory is a recorded
-//! gate). Readiness contributors **are** contained, because they are synchronous.
+//! gate). Readiness contributors and configuration sources **are** contained, because both are
+//! reached synchronously.
 //!
-//! Neither gap is worked around here. [`Harness::run`] refuses a `Panic` point with a diagnostic
+//! That gap is not worked around here. [`Harness::run`] refuses a `Panic` point with a diagnostic
 //! that says which requirement is unmet, which is the failing-loudly this project prefers to a
 //! harness that appears to cover something it does not.
 
@@ -258,7 +259,7 @@ impl Harness {
             .with_drain_budget(self.drain_budget);
 
         if matches!(phase, LifecyclePhase::Load | LifecyclePhase::Validate) {
-            builder = builder.with_config_source(Box::new(InjectingSource {
+            builder = builder.with_config_source(std::sync::Arc::new(InjectingSource {
                 phase,
                 fired: Arc::clone(&fired),
             }));

@@ -519,6 +519,59 @@ Worth recording because the check behaved exactly as designed: it refused to int
 unexpected status as a pass. A check that treated "not 200" as "not published" would have reported
 success for the wrong reason.
 
+## Open item 12 closed — `Load` and `Validate` are now bounded
+
+**Status**: SC-015 holds. Workspace tests **262 → 267**.
+
+### The fix is a thread, not an async signature
+
+The obvious fix was to make `ApplicationBuilder::build` async and wrap each source call in
+`tokio::time::timeout`. **That would not have worked.** A blocking call inside an async block never
+yields, so the timer never gets to fire — bounding a *synchronous* call needs a second thread
+whatever else changes, and making `build` async would have churned every call site **and still**
+needed `spawn_blocking` underneath.
+
+So each source call runs on its own thread and the kernel waits with
+`std::sync::mpsc::Receiver::recv_timeout`. The signature is unchanged; nine call sites moved from
+`Box<dyn ConfigSource>` to `Arc<dyn ConfigSource>`, because a worker thread needs an owned handle.
+
+### The cost, stated rather than discovered
+
+**A thread that never returns is leaked.** No Rust API can interrupt a blocked thread, so the
+process keeps one stuck thread per hung source. That is strictly better than the alternative — the
+*whole application* stuck — and it is worse than nothing, so it is recorded here rather than
+omitted. Open item 15.
+
+### An unplanned benefit: panic containment on these two phases
+
+A source that **panics** kills only its own thread, dropping the channel sender. The wait ends with
+`RecvTimeoutError::Disconnected` rather than an unwind through `build`, so a panicking
+configuration source is a **failure** instead of a process abort.
+
+That is C-L9's `Panic` behaviour, obtained as a property of the mechanism rather than as a second
+feature — and it narrows open item 13, which now covers **providers only**. Configuration sources
+and readiness contributors are both contained, because both are reached synchronously.
+
+### The correction to my own earlier claim
+
+`tests/deadlines.rs` enumerated **three** kernel-owned waits and called the set complete. It was
+searching for `.await`, and **a synchronous call that never returns is not an await**. The set is
+five:
+
+| Kernel-owned wait | Kind | Bounded by |
+|---|---|---|
+| A configuration source loading | **synchronous** | the source deadline |
+| A configuration source validating | **synchronous** | the source deadline |
+| A provider initialising | async | the provider deadline |
+| A provider stopping | async | the provider deadline |
+| In-flight work draining | async | the drain budget |
+
+**The shape of the search decided the shape of the answer.** A scan for `.await` can only ever find
+awaits; reporting its result as "every kernel-owned wait" was a claim the scan could not support.
+The file now checks the synchronous call sites too, and a new test **counts the bounding call
+sites** so a sixth wait added later fails there rather than silently escaping the enumeration —
+which is exactly how the set came to be wrong the first time.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |
@@ -534,8 +587,9 @@ success for the wrong reason.
 | 9 | An author writes a **second, all-optional struct** per schema | Decode-per-source needs an all-optional decode target and Renvor has no derive macro. A proc-macro of its own is custom infrastructure under FR-035 needing its own accepted record | No |
 | 10 | `expected_type` is reported **inside the constraint text**, not as its own field, for file and environment layers | `KernelError::Configuration::expected_type` is `&'static str` so it cannot carry a value (C-E3); the adapter has no schema description to read a per-key type from. All three facts C-C3 requires are in the message | No |
 | 11 | `MAX_FILE_BYTES` is **1 MiB by Renvor's choice** | C-C10 requires the bound; no artifact names a value. Overridable per file | No |
-| 12 | **SC-015 does not hold**: `Load` and `Validate` call author code synchronously with no deadline | `ApplicationBuilder::build` is not `async`. Bounding them needs `spawn_blocking` plus an async build, which changes the surface every US1 test uses | **Yes — this is an unmet success criterion**, not a nicety |
-| 13 | **C-L9's `Panic` behaviour is not injectable** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency | **Yes — SC-009 is met for phases, not for all three behaviours** |
+| ~~12~~ | ~~SC-015 does not hold~~ | **CLOSED**: both bounded by a worker thread and `recv_timeout`; the enumeration is corrected from three waits to five, with a counting test so a sixth cannot escape it | — |
+| 13 | **C-L9's `Panic` behaviour is not injectable for _providers_** at `Boot` or `Stop` | Containing a panic across an `await` needs a `'static` future (ruled out by `InitContext` borrowing state) or a new dependency. **Narrowed 2026-08-16**: configuration sources and readiness contributors *are* contained, both being reached synchronously | **Yes — SC-009 is met for phases, and for all three behaviours everywhere except provider initialise and stop** |
+| 15 | A configuration source that never returns **leaks its worker thread** | No Rust API can interrupt a blocked thread. The kernel's *wait* is bounded, which is what FR-025 requires; the thread is not, and cannot be | No — but an application that hits it repeatedly will accumulate threads |
 | ~~14~~ | ~~SC-013 partially met~~ | **CLOSED**: the full 11-step sequence ran on both 1.94.0 and 1.97.1, 0 skipped, with toolchain propagation verified by probe | — |
 
 ## Publication status
