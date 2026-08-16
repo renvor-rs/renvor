@@ -342,7 +342,7 @@ that has not been integrated, with the corrections below outstanding.
 
 ### E. Final validation and pull request
 
-- [ ] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
+- [x] T131 Re-run the full matrix on the clean tree: `cargo xtask verify` 11/11 on 1.94.0 and on pinned stable, the no-default-features all-target checks, quickstart gates 0–15, `cargo deny`'s four checks, every commit signature, and confirmation of 0 crates, tags, releases, and Phase 003 work
 - [ ] T132 Push the exact final commit to `refs/heads/feat/phase-002-core-kernel` with a non-force refspec and open one non-draft pull request into `main`, stating scope, validation, waiver status, and named limitations. **Stop before merging**
 
 ---

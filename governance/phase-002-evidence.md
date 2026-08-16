@@ -966,6 +966,48 @@ that gap. A reader who needs FR-035 satisfied without a waiver should treat it a
 strategy, which is the default and is what CI runs. Under `panic = "abort"` it does not hold and
 cannot — see open item 16.
 
+## T131 — final verification, on the clean tree
+
+Run on **2026-08-16** against commit **`4d8711c`**, with the working tree empty before and after —
+both recorded in the run's own log, because a verification run that edits the tree it is verifying
+is void, and this has happened once in this phase.
+
+| Check | Toolchain | Result |
+|---|---|---|
+| `cargo xtask verify` | 1.94.0 (pinned) | **11 of 11**, exit 0 |
+| `cargo xtask verify` | 1.97.1 (current stable) | **11 of 11**, exit 0 |
+| `cargo check --locked -p renvor --no-default-features --all-targets` | 1.94.0 | exit 0 |
+| `cargo check --locked -p renvor --no-default-features --all-targets` | 1.97.1 | exit 0 |
+| `cargo deny check licenses advisories bans sources` | — | **advisories ok, bans ok, licenses ok, sources ok** |
+| Quickstart gates 0–15, individually | 1.94.0 | **16 of 16** — see T125 |
+| Workspace tests | both | 27 targets, 0 failing |
+| `HEAD` before and after | — | `4d8711c` both times |
+| Working tree before and after | — | empty both times |
+
+**0 failing. 0 silently skipped.** Every step's result is printed by the runner and counted; a step
+that could not run is a failure by construction (FR-023), not a skip.
+
+### What this run does and does not cover
+
+It covers the **code and gates as of `4d8711c`**. The commit that records this table is
+documentation-only and changes no code, no manifest, and no gate — but it is, strictly, not the
+commit that was verified locally. That gap is closed by **CI on the pull request**, which runs the
+same `cargo xtask verify` entry point against the actual final head on Ubuntu, the claimed platform.
+
+Stating it this way rather than claiming the final commit was locally verified: a ledger that
+records a run against a commit that did not exist when the run happened is the same class of
+prospective claim the W-005 review caught at Q6-1.
+
+### Scope and publication, re-verified at the same commit
+
+| Statement | How it was checked |
+|---|---|
+| **0** crates published | Sparse index, 4 of 4 phase crates return 404, with a control returning 200 for `serde` |
+| **0** tags | `git tag --list` empty; `gh api repos/renvor-rs/renvor/tags` returns 0 |
+| **0** releases | `gh release list` empty, with an authenticated `gh` |
+| **Phase 003 not begun** | `specs/` contains `001-governance-foundation` and `002-core-kernel` only; 0 branches naming 003 |
+| Commit signatures | Every commit authored in this branch verifies `G`. The one `E` is GitHub's own web-flow merge commit for PR #18, whose key is not in the local keyring |
+
 ## Publication status
 
 **0 crates published, 0 tags, 0 releases** (FR-034). `publish = true` is a manifest attribute
