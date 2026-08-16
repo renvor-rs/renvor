@@ -35,6 +35,7 @@ use std::collections::BTreeMap;
 
 use renvor_core::KernelError;
 use renvor_core::config_port::SourceLayer;
+use renvor_core::error::context::{Constraint, configuration};
 use serde::de::DeserializeOwned;
 use toml::{Table, Value};
 
@@ -94,11 +95,13 @@ fn decode_variable<P: DeserializeOwned>(key: &str, text: &str) -> Result<Value, 
     }
 
     // Neither form fits the declared type. Reported, never reinterpreted as unset.
-    Err(last_error.unwrap_or_else(|| KernelError::Configuration {
-        key: key.to_owned(),
-        constraint: "the value could not be decoded".to_owned(),
-        layer: SourceLayer::Environment.label().to_owned(),
-        expected_type: "a value matching the declared schema",
+    Err(last_error.unwrap_or_else(|| {
+        configuration(
+            key,
+            SourceLayer::Environment.label(),
+            "a value matching the declared schema",
+            &Constraint::Rule("the value could not be decoded in any accepted form"),
+        )
     }))
 }
 

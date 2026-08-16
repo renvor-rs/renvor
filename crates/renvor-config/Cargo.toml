@@ -54,6 +54,14 @@ toml = { version = "1.1.4", default-features = false, features = ["parse", "serd
 # "available features: serde" and nothing else.
 secrecy = { version = "0.10.3", default-features = false }
 
+# Instrumentation only, and specifically the `Value` trait: a structured tracing field is a
+# SEPARATE output path from `Display` (contract C-C9), because a subscriber that formats fields
+# itself never calls `Display`. Like `renvor-core`, this crate NEVER installs a global subscriber.
+#
+# `zeroize` is deliberately NOT declared: `secrecy` re-exports it, and a second version
+# requirement here could drift from the one `secrecy` resolves.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
 

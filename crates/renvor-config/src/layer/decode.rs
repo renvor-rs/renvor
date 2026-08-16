@@ -8,25 +8,31 @@
 //! `serde_path_to_error` crate.
 //!
 //! Renvor does it without the dependency, and gets a better shape for it. The fast path is a
-//! single `deserialize` over the whole source. **Only when that fails** does [`locate_failure`]
-//! run, bisecting the source one branch at a time until it finds the smallest sub-tree that still
+//! single `deserialize` over the whole source. **Only when that fails** does a bisection
+//! run, narrowing the source one branch at a time until it finds the smallest sub-tree that still
 //! fails. The cost is paid exactly once, on the path that is already about to return an error, and
 //! it produces a dotted key path rather than a serde-internal one.
 //!
-//! # The expected type is reported inside the constraint, and that is a known limitation
+//! # The decoder's message is stripped before it becomes a constraint
 //!
-//! [`renvor_core::KernelError::Configuration`] carries `expected_type` as a `&'static str`,
-//! deliberately: a `String` there could be made to carry a configuration *value*, which C-E3
-//! forbids. The adapter has no schema description, so it cannot name the declared type of a
-//! specific key as a static — it can only report what `serde` said, which always includes
-//! `expected <type>`, and that lands in the constraint text.
+//! **`serde` quotes the offending value in its message**, measured rather than assumed:
+//! deserializing `port = "hunter2"` into a `u16` reports `invalid type: string "hunter2", expected
+//! u16`. Forwarding that into an error puts a possibly-secret configuration value into every
+//! output form, which C-E3 allows **0** of.
 //!
-//! All three facts C-C3 requires are therefore in the message; two of them are in dedicated
-//! fields and the third is in the constraint. This is recorded as an open item rather than
-//! presented as a clean pass.
+//! So no error here is built by hand. Every one goes through
+//! [`renvor_core::error::context::Constraint::from_decoder`], which keeps the expectation and the
+//! shape and discards everything the decoder may have quoted. The `Configuration` variant is
+//! `#[non_exhaustive]`, so this is not a convention — building the error any other way does not
+//! compile from outside `renvor-core`.
+//!
+//! The expected type still reaches the message through the constraint rather than through the
+//! dedicated `expected_type` field, because the adapter has no schema description to read a
+//! per-key type from. That remains a recorded open item.
 
 use renvor_core::KernelError;
 use renvor_core::config_port::SourceLayer;
+use renvor_core::error::context::{Constraint, configuration};
 use serde::de::DeserializeOwned;
 use toml::{Table, Value};
 
@@ -35,6 +41,19 @@ use toml::{Table, Value};
 /// See the module documentation: the precise expectation is in the constraint text, because the
 /// adapter has no schema description to read a per-key type from.
 const SCHEMA_EXPECTATION: &str = "a value matching the declared schema";
+
+/// The structural shape of a TOML value, for a constraint that must not name its contents.
+const fn shape_of(value: &Value) -> &'static str {
+    match value {
+        Value::Table(_) => "a table",
+        Value::Array(_) => "an array",
+        Value::String(_) => "a string",
+        Value::Integer(_) => "an integer",
+        Value::Float(_) => "a float",
+        Value::Boolean(_) => "a boolean",
+        Value::Datetime(_) => "a datetime",
+    }
+}
 
 /// Decodes one source against `P`, the schema's all-optional form.
 ///
@@ -49,13 +68,13 @@ pub fn decode_source<P: DeserializeOwned>(
     match table.clone().try_into::<P>() {
         Ok(_) => Ok(()),
         Err(error) => {
-            let (key, detail) = locate_failure::<P>(table, String::new(), &error);
-            Err(KernelError::Configuration {
+            let (key, constraint) = locate_failure::<P>(table, String::new(), &error);
+            Err(configuration(
                 key,
-                constraint: detail,
-                layer: layer.label().to_owned(),
-                expected_type: SCHEMA_EXPECTATION,
-            })
+                layer.label(),
+                SCHEMA_EXPECTATION,
+                &constraint,
+            ))
         }
     }
 }
@@ -74,15 +93,14 @@ pub fn decode_single<P: DeserializeOwned>(
     layer: &SourceLayer,
 ) -> Result<(), KernelError> {
     let table = nest(key, value.clone());
-    table
-        .try_into::<P>()
-        .map(|_: P| ())
-        .map_err(|error| KernelError::Configuration {
-            key: key.to_owned(),
-            constraint: error.message().to_owned(),
-            layer: layer.label().to_owned(),
-            expected_type: SCHEMA_EXPECTATION,
-        })
+    table.try_into::<P>().map(|_: P| ()).map_err(|error| {
+        configuration(
+            key,
+            layer.label(),
+            SCHEMA_EXPECTATION,
+            &Constraint::from_decoder(error.message(), shape_of(value)),
+        )
+    })
 }
 
 /// Builds `{a: {b: {c: value}}}` from the dotted path `a.b.c`.
@@ -115,7 +133,7 @@ fn locate_failure<P: DeserializeOwned>(
     table: &Table,
     prefix: String,
     fallback: &toml::de::Error,
-) -> (String, String) {
+) -> (String, Constraint) {
     for (key, value) in table {
         let path = if prefix.is_empty() {
             key.clone()
@@ -134,7 +152,10 @@ fn locate_failure<P: DeserializeOwned>(
                 return (deeper, detail);
             }
         }
-        return (path, error.message().to_owned());
+        return (
+            path,
+            Constraint::from_decoder(error.message(), shape_of(value)),
+        );
     }
 
     // Every branch decoded on its own, so the failure is a property of the source as a whole —
@@ -146,7 +167,7 @@ fn locate_failure<P: DeserializeOwned>(
         } else {
             prefix
         },
-        fallback.message().to_owned(),
+        Constraint::from_decoder(fallback.message(), "a table"),
     )
 }
 

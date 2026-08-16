@@ -30,6 +30,8 @@
 //! variant, and the doc comment says plainly what seeing it means: the kernel is wrong, not the
 //! author's graph.
 
+pub mod context;
+
 use crate::lifecycle::LifecyclePhase;
 use crate::provider::graph::BudgetAxis;
 
@@ -149,6 +151,13 @@ pub enum KernelError {
     ///
     /// Carries the key, the violated constraint, the source layer, and the expected type. It
     /// deliberately carries **no field for the offending value** (C-E3).
+    ///
+    /// `#[non_exhaustive]` so no crate outside `renvor-core` can build it with a struct literal:
+    /// adapters must come through [`context::configuration`], which takes a
+    /// [`context::Constraint`] that cannot hold a value. Without that, an adapter could forward a
+    /// decoder message quoting the offending value straight into `constraint` — which is exactly
+    /// what measurement found the first adapter doing.
+    #[non_exhaustive]
     #[error(
         "configuration key `{key}` from layer `{layer}` is invalid: expected {expected_type}, {constraint}"
     )]

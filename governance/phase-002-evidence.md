@@ -250,6 +250,71 @@ coverage-guided fuzzer would. It is entered as open item 8 rather than presented
 The generator carries its own positive control: it must produce **some** documents the stack
 accepts and **not all** of them, or one of the two paths it claims to exercise is untested.
 
+## User Story 4 — a real leak, found in code written the same day
+
+**Status**: T075–T083 complete. Workspace tests **207 → 228**, all passing.
+
+### The defect
+
+`serde` **quotes the offending value in its error message**. Measured, not assumed:
+
+```text
+deserializing  port = "hunter2-do-not-print"  into a u16 reports:
+    invalid type: string "hunter2-do-not-print", expected u16
+```
+
+The configuration adapter written earlier this phase forwarded that message straight into
+`KernelError::Configuration`'s `constraint` field — which meant **a secret configuration value
+reached every output form of the error**. C-E3 allows **0**.
+
+The error type had been designed so that *no field can hold a configuration value*, and that was
+recorded as redaction "enforced by construction". **It was not enough, and the earlier claim was
+too strong**: a field cannot hold a value, but a *message* can, and the adapter supplied the
+message. The gap existed for the length of three commits.
+
+### How it is closed — two mechanisms, because either alone is a rule
+
+| # | Mechanism | Why the other is insufficient alone |
+|---|---|---|
+| 1 | `Constraint` **cannot carry a value**: every variant holds shapes, bounds, or a `&'static str`. The single `String`-carrying variant is reachable only through `Constraint::from_decoder`, which strips the value | Without mechanism 2, an adapter could keep formatting its own string and the type would have no say |
+| 2 | `KernelError::Configuration` is **`#[non_exhaustive]`**, so no crate outside `renvor-core` can build it with a struct literal | Without mechanism 1, the mandatory constructor would still accept an arbitrary `String` |
+
+`from_decoder` **fails closed**: a message matching neither the key-only shapes nor
+`", expected …"` is **discarded entirely** and replaced with the structural shapes. A decoder
+message nobody anticipated loses information rather than leaking.
+
+The fix touched **seven** construction sites across `renvor-config`, and the compiler found every
+one of them — which is the difference between mechanism 2 and a code-review note.
+
+### The control that would have caught it, and now does
+
+`crates/renvor-config/tests/redaction.rs` runs a redacting type and a **deliberately leaking**
+one through the identical harness. The leaking control must leak through **every** form, or the
+harness is not exercising them all. Two further tests come at it from the other end: one asserts a
+decoder message quoting the credential produces a clean error, and one drives the **whole adapter**
+with a secret-shaped environment value and asserts nothing leaks.
+
+### `tracing::Value` is sealed, and the honest answer is not an impl
+
+C-C9 assigns the structured-field path to Renvor, and the obvious move is
+`impl tracing::Value for Secret<T>`. **That trait is sealed** — Renvor cannot implement it.
+
+What secures the path instead is that **every route into a tracing field bottoms out in `Display`,
+`Debug`, or a primitive** (`%value`, `?value`, `field::display`, `field::debug`), and all three of
+this type's routes render the placeholder. There is no fourth route, so there is nothing left for
+an impl to protect. `Secret::redacted_field` exists for explicitness at the call site, not as a
+substitute for an impl that cannot exist.
+
+### Two smaller things
+
+- **A self-reading test found its own needle.** The serialization test searched its own source for
+  `impl SerializableSecret` and matched the assertion's own text. The needles are now assembled
+  from fragments so the literal never appears in the file. Every other source-scanning test in this
+  phase scans only the pre-`#[cfg(test)]` half and was never exposed to this.
+- **`Constraint::TooLarge` carries bytes, not characters.** Reusing `TooLong { maximum }` for a
+  file-size ceiling would have reported a byte count in a message that says "characters" — a number
+  that does not mean what it says.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |

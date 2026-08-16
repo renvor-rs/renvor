@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use renvor_core::KernelError;
 use renvor_core::config_port::SourceLayer;
+use renvor_core::error::context::{Constraint, configuration};
 use toml::Table;
 
 /// The largest configuration file the loader will read, in bytes.
@@ -96,42 +97,45 @@ impl FileLayer {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 if self.required {
-                    return Err(self.failure("the file does not exist"));
+                    return Err(self.failure(&Constraint::Rule("the file does not exist")));
                 }
                 return Ok(None);
             }
-            Err(error) => return Err(self.failure(&format!("the file is unreadable: {error}"))),
+            Err(_) => return Err(self.failure(&Constraint::Rule("the file could not be read"))),
         };
 
         // Checked before reading, so an oversized file is never brought into memory. Checking
         // after would make the ceiling a report rather than a limit (C-C10).
         if metadata.len() > self.max_bytes {
-            return Err(self.failure(&format!(
-                "the file is {} bytes, over the {} byte ceiling",
-                metadata.len(),
-                self.max_bytes
-            )));
+            // Lengths, not contents: the size of an oversized file is a shape fact and safe to
+            // report, while a single byte of it would not be.
+            return Err(self.failure(&Constraint::TooLarge {
+                maximum_bytes: self.max_bytes,
+            }));
         }
 
         let text = std::fs::read_to_string(&self.path)
-            .map_err(|error| self.failure(&format!("the file could not be read: {error}")))?;
+            .map_err(|_| self.failure(&Constraint::Rule("the file could not be read")))?;
 
+        // A parse error's message describes syntax and position, but a `toml` error also renders
+        // the offending line. The message is therefore dropped rather than forwarded — the file
+        // is named, and the author can open it.
         text.parse::<Table>()
             .map(Some)
-            .map_err(|error| self.failure(&format!("the file is not valid TOML: {error}")))
+            .map_err(|_| self.failure(&Constraint::Rule("the file is not valid TOML")))
     }
 
     /// Builds a diagnostic naming this file.
     ///
     /// The **file** is the key here, not a configuration key: C-L2 says a `Load` failure names the
     /// source that could not be read, and at this point no key has been reached.
-    fn failure(&self, constraint: &str) -> KernelError {
-        KernelError::Configuration {
-            key: self.path.display().to_string(),
-            constraint: constraint.to_owned(),
-            layer: self.source_layer().label().to_owned(),
-            expected_type: "a readable TOML document",
-        }
+    fn failure(&self, constraint: &Constraint) -> KernelError {
+        configuration(
+            self.path.display().to_string(),
+            self.source_layer().label(),
+            "a readable TOML document",
+            constraint,
+        )
     }
 }
 
@@ -230,6 +234,10 @@ mod tests {
             .read()
             .expect_err("the file is over its ceiling");
         assert!(error.to_string().contains("ceiling"), "{error}");
+        assert!(
+            error.to_string().contains("64"),
+            "the ceiling is named: {error}"
+        );
 
         // POSITIVE CONTROL: the same file loads when the ceiling permits it, so the refusal is
         // about the ceiling rather than about the file.

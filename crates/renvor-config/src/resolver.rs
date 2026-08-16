@@ -21,6 +21,7 @@ use std::collections::BTreeMap;
 
 use renvor_core::KernelError;
 use renvor_core::config_port::{Attribution, ConfigResolver, ResolvedConfig, SourceLayer};
+use renvor_core::error::context::{Constraint, configuration};
 use toml::Table;
 
 use crate::layer::decode::decode_source;
@@ -161,15 +162,14 @@ impl<T: ConfigSchema> ConfigResolver for LayeredResolver<T> {
         // Assembly. Every source has already been decoded and every conflict already refused, so
         // the only failure left here is a required key that nobody supplied — which C-C11 requires
         // to fail naming the key, with 0 silent substitutions of a zero value or an empty string.
-        let value = merged
-            .table
-            .try_into::<T>()
-            .map_err(|error| KernelError::Configuration {
-                key: missing_key(&error).unwrap_or_else(|| "<schema>".to_owned()),
-                constraint: error.message().to_owned(),
-                layer: "all layers".to_owned(),
-                expected_type: "a complete configuration",
-            })?;
+        let value = merged.table.try_into::<T>().map_err(|error| {
+            configuration(
+                missing_key(&error).unwrap_or_else(|| "<schema>".to_owned()),
+                "all layers",
+                "a complete configuration",
+                &Constraint::from_decoder(error.message(), "the merged configuration"),
+            )
+        })?;
 
         Ok(ResolvedConfig::new(value, attribution))
     }

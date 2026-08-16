@@ -220,15 +220,15 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 **Independent Test**: Construct an error carrying a secret-bearing value; confirm the secret appears in no output form while the error remains identifiable.
 
-- [ ] T075 [P] [US4] Write redaction tests in `crates/renvor-config/tests/redaction.rs` exercising **every** output path — `Display`, `Debug`, error message, error context, structured log fields, span fields, and serialization (FR-018, FR-021, SC-007)
-- [ ] T076 [P] [US4] Add the **positive-control leaking wrapper** to `crates/renvor-config/tests/redaction.rs` — a type that deliberately does not redact and **must** be detected, proving the assertions can fire (SC-007)
-- [ ] T077 [US4] Implement the Renvor `Secret<T>` boundary type in `crates/renvor-config/src/secret/mod.rs` wrapping `secrecy` for access control and zeroization (FR-018)
-- [ ] T078 [US4] Implement `Display` for `Secret<T>` in `crates/renvor-config/src/secret/mod.rs` — the underlying crate provides **none**, so this path is entirely Renvor's (FR-018, FR-021)
-- [ ] T079 [US4] Refuse serialization for `Secret<T>` in `crates/renvor-config/src/secret/mod.rs` by deliberately not implementing the crate's opt-in serialisation marker (FR-018)
-- [ ] T080 [US4] Constrain error construction in `crates/renvor-core/src/error/context.rs` so a raw configuration value cannot enter a message or context map — only key, constraint, layer, and expected type (FR-021)
-- [ ] T081 [P] [US4] Write the opaque-state test in `crates/renvor-core/tests/redaction.rs` that registers a **credential-bearing value without marking it secret** and fails if its contents appear anywhere (SC-016)
-- [ ] T082 [US4] Implement type-name-only emission for registered state in `crates/renvor-core/src/state/mod.rs` (FR-037b)
-- [ ] T083 [US4] Implement causal-chain preservation and category inspection in `crates/renvor-core/src/error/mod.rs` (FR-019, FR-020)
+- [x] T075 [P] [US4] Write redaction tests in `crates/renvor-config/tests/redaction.rs` exercising **every** output path — `Display`, `Debug`, error message, error context, structured log fields, span fields, and serialization (FR-018, FR-021, SC-007)
+- [x] T076 [P] [US4] Add the **positive-control leaking wrapper** to `crates/renvor-config/tests/redaction.rs` — a type that deliberately does not redact and **must** be detected, proving the assertions can fire (SC-007)
+- [x] T077 [US4] Implement the Renvor `Secret<T>` boundary type in `crates/renvor-config/src/secret/mod.rs` wrapping `secrecy` for access control and zeroization (FR-018)
+- [x] T078 [US4] Implement `Display` for `Secret<T>` in `crates/renvor-config/src/secret/mod.rs` — the underlying crate provides **none**, so this path is entirely Renvor's (FR-018, FR-021)
+- [x] T079 [US4] Refuse serialization for `Secret<T>` in `crates/renvor-config/src/secret/mod.rs` by deliberately not implementing the crate's opt-in serialisation marker (FR-018)
+- [x] T080 [US4] Constrain error construction in `crates/renvor-core/src/error/context.rs` so a raw configuration value cannot enter a message or context map — only key, constraint, layer, and expected type (FR-021)
+- [x] T081 [P] [US4] Write the opaque-state test in `crates/renvor-core/tests/redaction.rs` that registers a **credential-bearing value without marking it secret** and fails if its contents appear anywhere (SC-016)
+- [x] T082 [US4] Implement type-name-only emission for registered state in `crates/renvor-core/src/state/mod.rs` (FR-037b)
+- [x] T083 [US4] Implement causal-chain preservation and category inspection in `crates/renvor-core/src/error/mod.rs` (FR-019, FR-020)
 
 **Checkpoint**: no output path leaks a secret or opaque state, proven by a control that can detect a leak.
 

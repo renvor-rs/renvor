@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use renvor_core::KernelError;
 use renvor_core::config_port::{ConfigResolver, ConfigSource, ResolvedConfig};
+use renvor_core::error::context::{Constraint, configuration};
 
 use crate::resolver::LayeredResolver;
 use crate::schema::ConfigSchema;
@@ -102,12 +103,12 @@ impl<T: ConfigSchema + Send + 'static> ConfigSource for SchemaSource<T> {
         if guard.is_some() {
             return Ok(());
         }
-        Err(KernelError::Configuration {
-            key: self.name.clone(),
-            constraint: "validate ran before load, so nothing was resolved".to_owned(),
-            layer: self.name.clone(),
-            expected_type: "a resolved configuration",
-        })
+        Err(configuration(
+            self.name.clone(),
+            self.name.clone(),
+            "a resolved configuration",
+            &Constraint::Rule("validate ran before load, so nothing was resolved"),
+        ))
     }
 }
 
@@ -146,16 +147,14 @@ impl<T> ConfigHandle<T> {
     /// from `build` itself.
     pub fn with<R>(&self, read: impl FnOnce(&ResolvedConfig<T>) -> R) -> Result<R, KernelError> {
         let guard = self.resolved.lock().unwrap_or_else(PoisonError::into_inner);
-        guard
-            .as_ref()
-            .map(read)
-            .ok_or_else(|| KernelError::Configuration {
-                key: "<configuration>".to_owned(),
-                constraint: "nothing has been resolved yet — read this after `build` succeeds"
-                    .to_owned(),
-                layer: "all layers".to_owned(),
-                expected_type: "a resolved configuration",
-            })
+        guard.as_ref().map(read).ok_or_else(|| {
+            configuration(
+                "<configuration>",
+                "all layers",
+                "a resolved configuration",
+                &Constraint::Rule("nothing has been resolved yet — read this after `build`"),
+            )
+        })
     }
 
     /// Whether configuration has been resolved.

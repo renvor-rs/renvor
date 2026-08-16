@@ -22,6 +22,7 @@
 pub mod layer;
 pub mod resolver;
 pub mod schema;
+pub mod secret;
 pub mod source;
 
 pub use layer::env::NESTING_SEPARATOR;
@@ -29,4 +30,5 @@ pub use layer::file::{FileLayer, MAX_FILE_BYTES};
 pub use layer::merge::{DecodedLayer, Merged};
 pub use resolver::{LayeredResolver, LayeredResolverBuilder};
 pub use schema::ConfigSchema;
+pub use secret::{REDACTED, Secret};
 pub use source::{ConfigHandle, SchemaSource};
