@@ -166,8 +166,13 @@ impl<T> ResolvedConfig<T> {
 /// failure*, not about values; `renvor-config` supplies typed decoding through [`ConfigResolver`].
 /// Inventing a placeholder value type here to look more complete would be a shape nobody measured.
 pub trait ConfigSource: Send + Sync + fmt::Debug {
-    /// Which layer this source contributes.
-    fn layer(&self) -> SourceLayer;
+    /// A stable name for diagnostics.
+    ///
+    /// A **name**, not a [`SourceLayer`]. An earlier draft of this trait returned a layer, which
+    /// quietly assumed every participant in `Load` maps to exactly one layer — and the first real
+    /// implementation, a resolver spanning defaults, two files, and the environment, does not. A
+    /// method that would have had to lie about that is worse than one that returns less.
+    fn name(&self) -> &str;
 
     /// Reads the source. Called during `Load`, in declaration order.
     ///

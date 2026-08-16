@@ -57,17 +57,5 @@ secrecy = { version = "0.10.3", default-features = false }
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
 
-# `confique` is ON PROBATION (research D6) and is a DEV-dependency deliberately, not a normal one.
-#
-# The eight-obligation proof gate must be able to exercise it, which requires it on the graph —
-# but obligations 4 and 6 carry known negative primary-source evidence, so it may well not survive
-# the gate. Keeping it dev-only means the *production* dependency graph never carries a crate that
-# has not yet passed. It is promoted to `[dependencies]` only if the gate passes; if the gate
-# fails, it is deleted rather than demoted, and the recorded serde+toml fallback is implemented.
-#
-# `toml` only. `yaml` and `json5` are excluded so FR-015's three-source-kind limit is STRUCTURAL —
-# a prohibition that cannot be violated by writing code beats one that can.
-confique = { version = "0.4.0", default-features = false, features = ["toml"] }
-
 [lints]
 workspace = true

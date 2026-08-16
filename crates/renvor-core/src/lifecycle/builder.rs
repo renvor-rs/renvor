@@ -279,8 +279,8 @@ mod tests {
     }
 
     impl ConfigSource for Source {
-        fn layer(&self) -> SourceLayer {
-            self.layer.clone()
+        fn name(&self) -> &str {
+            self.layer.label()
         }
         fn load(&self) -> Result<(), KernelError> {
             if self.load_fails {
