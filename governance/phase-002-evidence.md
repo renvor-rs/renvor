@@ -315,6 +315,32 @@ substitute for an impl that cannot exist.
   file-size ceiling would have reported a byte count in a message that says "characters" — a number
   that does not mean what it says.
 
+## User Story 5 — health and readiness, proven by disagreement
+
+**Status**: T084–T088 complete. Workspace tests **228 → 240**, all passing.
+
+FR-026 is easy to satisfy on paper — expose two methods, derive one from the other, and never write
+a test that could tell. So independence is asserted by **driving the two answers apart in both
+directions**:
+
+| Case | Liveness | Readiness | Why it matters |
+|---|---|---|---|
+| Draining (FR-027) | **Alive** | **NotReady** | A drain reported as not-alive invites a restart in the middle of the shutdown it is completing |
+| Liveness set to `Dead` | **Dead** | **Ready** | Operationally nonsensical, and **reachable** — which is the proof that nothing in the readiness path reads liveness |
+
+The second row is the one that catches a derived implementation: deriving readiness from liveness
+would still permit the first row.
+
+**A panicking contributor is caught, named, and does not take the process down.** Both obvious
+implementations fail FR-028: letting the panic propagate makes the health check the outage, and
+catching it to report the whole set as not-ready tells an operator nothing about *which* of twelve
+checks broke. `ContributorVerdict` carries `panicked` as a **separate field** rather than a special
+`Readiness` variant, because "this check is broken" and "this check says no" call for different
+responses and folding them would make a defect indistinguishable from a working negative answer.
+
+`catch_unwind` requires no `unsafe`, which mattered: this workspace declares
+`unsafe_code = "forbid"`, so an approach needing it would not have been available.
+
 ## Named open items
 
 | # | Item | Why it is open | Blocking? |

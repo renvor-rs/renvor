@@ -127,6 +127,9 @@ pub use renvor_core::{
     CancelScope, EntropySource, OsEntropy, ProviderScope, RunIdentifier, TypedStateMap,
 };
 
+// Health and readiness — two questions with two answers (FR-026).
+pub use renvor_core::{HealthState, Liveness, Readiness, ReadinessContributor, ReadinessReport};
+
 // The configuration *port*. The implementation is behind the `config` feature below; this is the
 // shape the kernel speaks, and it carries no parser.
 pub use renvor_core::config_port::{ConfigSource, SourceLayer};

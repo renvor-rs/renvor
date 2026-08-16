@@ -30,6 +30,7 @@ use std::time::Duration;
 
 use crate::cancel::CancelScope;
 use crate::error::KernelError;
+use crate::health::HealthState;
 use crate::lifecycle::LifecyclePhase;
 use crate::lifecycle::drain::{DrainOutcome, WorkGate};
 use crate::lifecycle::rollback::{BootFailure, RollbackReport, roll_back};
@@ -226,6 +227,7 @@ pub struct Application {
     initialised: Vec<InitialisedProvider>,
     cancel: CancelScope,
     work: WorkGate,
+    health: HealthState,
     run_id: RunIdentifier,
     drain_budget: Duration,
     provider_deadline: Duration,
@@ -253,6 +255,7 @@ impl Application {
             initialised: Vec::new(),
             cancel: CancelScope::root(),
             work: WorkGate::new(),
+            health: HealthState::new(),
             run_id,
             drain_budget,
             provider_deadline,
@@ -330,6 +333,15 @@ impl Application {
         self.provider_deadline
     }
 
+    /// Liveness and readiness for this application.
+    ///
+    /// Cloneable, so a probe handler in a later phase's transport can hold one while the
+    /// application runs.
+    #[must_use]
+    pub const fn health(&self) -> &HealthState {
+        &self.health
+    }
+
     /// The gate that admits in-flight work and refuses it once shutdown begins.
     ///
     /// Public because FR-006's guarantee is about *the author's* work, not the kernel's: a
@@ -380,7 +392,13 @@ impl Application {
             // unbounded wait in the kernel's own boot loop, and cancellation does not fix it —
             // a provider that ignores its scope ignores it forever.
             let outcome = {
-                let mut context = InitContext::new(&id, &mut self.state, guard.scope(), &self.work);
+                let mut context = InitContext::new(
+                    &id,
+                    &mut self.state,
+                    guard.scope(),
+                    &self.work,
+                    &self.health,
+                );
                 match tokio::time::timeout(
                     self.provider_deadline,
                     provider.initialise(&mut context),
@@ -446,6 +464,12 @@ impl Application {
             self.shutdown_done = true;
 
             self.cursor.skip_to(LifecyclePhase::Drain);
+
+            // FR-027: readiness goes negative **before** the drain begins, so nothing new is
+            // routed here while outstanding work finishes. Liveness is untouched — an orchestrator
+            // that restarted the process now would abort the shutdown it is waiting for.
+            self.health.begin_draining();
+
             let drain = self.work.drain(self.drain_budget).await;
 
             self.cursor.skip_to(LifecyclePhase::Stop);

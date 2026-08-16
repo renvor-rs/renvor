@@ -33,6 +33,7 @@ use core::pin::Pin;
 
 use crate::cancel::CancelScope;
 use crate::error::{BoxedCause, KernelError};
+use crate::health::{HealthState, ReadinessContributor};
 use crate::lifecycle::drain::{WorkGate, WorkPermit};
 use crate::provider::graph::{MAX_EDGES, MAX_PROVIDERS};
 use crate::state::TypedStateMap;
@@ -135,6 +136,7 @@ pub struct InitContext<'a> {
     state: &'a mut TypedStateMap,
     cancel: &'a CancelScope,
     work: &'a WorkGate,
+    health: &'a HealthState,
 }
 
 impl<'a> InitContext<'a> {
@@ -145,12 +147,14 @@ impl<'a> InitContext<'a> {
         state: &'a mut TypedStateMap,
         cancel: &'a CancelScope,
         work: &'a WorkGate,
+        health: &'a HealthState,
     ) -> Self {
         Self {
             provider,
             state,
             cancel,
             work,
+            health,
         }
     }
 
@@ -182,6 +186,21 @@ impl<'a> InitContext<'a> {
     #[must_use]
     pub const fn work(&self) -> &WorkGate {
         self.work
+    }
+
+    /// Registers this provider's opinion about whether the application should receive work.
+    ///
+    /// A provider that owns a connection pool is the thing that knows whether it is usable, so
+    /// this is where readiness contributions belong rather than in a central registry somebody has
+    /// to keep in step with the provider set (FR-028).
+    pub fn register_readiness(&self, contributor: std::sync::Arc<dyn ReadinessContributor>) {
+        self.health.register(contributor);
+    }
+
+    /// The application's health state.
+    #[must_use]
+    pub const fn health(&self) -> &HealthState {
+        self.health
     }
 
     /// Registers a value in the application's typed state.

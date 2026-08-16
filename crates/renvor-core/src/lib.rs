@@ -14,6 +14,7 @@
 pub mod cancel;
 pub mod config_port;
 pub mod error;
+pub mod health;
 pub mod lifecycle;
 pub mod observe;
 pub mod provider;
@@ -22,6 +23,7 @@ pub mod state;
 pub use cancel::{CancelScope, ProviderScope};
 pub use config_port::{ConfigResolver, ConfigSource, ResolvedConfig, SourceLayer};
 pub use error::{ErrorCategory, KernelError};
+pub use health::{HealthState, Liveness, Readiness, ReadinessContributor, ReadinessReport};
 pub use lifecycle::{
     Application, ApplicationBuilder, BootFailure, BuildError, DrainOutcome, LifecyclePhase,
     PhaseLog, RollbackReport, ShutdownReport, WorkGate, WorkPermit,

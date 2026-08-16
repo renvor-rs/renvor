@@ -240,11 +240,11 @@ passed. Only the failing one contributes custom infrastructure to ADR-0007.
 
 **Independent Test**: Drive the application to a state where it is alive but not ready and confirm the two answers differ.
 
-- [ ] T084 [P] [US5] Write health/readiness disagreement tests in `crates/renvor-core/tests/health.rs` including the Drain state (SC-008) (FR-026)
-- [ ] T085 [P] [US5] Write the panicking-contributor test in `crates/renvor-core/tests/health.rs` asserting it is caught, treated as not-ready, and identified
-- [ ] T086 [US5] Implement `HealthState` with independent `Liveness` and `Readiness` in `crates/renvor-core/src/health/mod.rs`, with neither derived from the other (FR-026)
-- [ ] T087 [US5] Implement `ReadinessContributor` registration and individual identification in `crates/renvor-core/src/health/contributor.rs` (FR-028)
-- [ ] T088 [US5] Wire Drain to set readiness not-ready while liveness stays alive in `crates/renvor-core/src/lifecycle/drain.rs` (FR-027)
+- [x] T084 [P] [US5] Write health/readiness disagreement tests in `crates/renvor-core/tests/health.rs` including the Drain state (SC-008) (FR-026)
+- [x] T085 [P] [US5] Write the panicking-contributor test in `crates/renvor-core/tests/health.rs` asserting it is caught, treated as not-ready, and identified
+- [x] T086 [US5] Implement `HealthState` with independent `Liveness` and `Readiness` in `crates/renvor-core/src/health/mod.rs`, with neither derived from the other (FR-026)
+- [x] T087 [US5] Implement `ReadinessContributor` registration and individual identification in `crates/renvor-core/src/health/contributor.rs` (FR-028)
+- [x] T088 [US5] Wire Drain to set readiness not-ready while liveness stays alive in `crates/renvor-core/src/lifecycle/drain.rs` (FR-027)
 
 **Checkpoint**: health and readiness are provably independent.
 
