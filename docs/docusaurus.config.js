@@ -34,6 +34,51 @@ const config = {
 
   future: {
     v4: true,
+
+    // ONE faster feature disabled, deliberately and narrowly.
+    //
+    // # What went wrong
+    //
+    // `v4: true` above is set for its v4 semantics. It ALSO sets `fasterByDefault: true`
+    // (`@docusaurus/core/lib/server/configValidation.js`, `DEFAULT_FUTURE_V4_CONFIG_TRUE`), which
+    // silently enables the whole faster suite — `rspackBundler`, `swcJsLoader`, `swcJsMinimizer`,
+    // `swcHtmlMinimizer`, `lightningCssMinimizer`. Several of those are npm packages whose real
+    // implementation is a **platform-specific native binary shipped as an OPTIONAL dependency**.
+    //
+    // npm omits optional dependencies non-deterministically, and on 2026-08-17 it did:
+    // `verify (stable)` failed with `Cannot find module` inside `@swc/html/binding.js`, while
+    // `verify (1.94.0)` built the SAME commit successfully ninety seconds earlier in a sibling
+    // job. Same tree, same command, different outcome — a required check that fails on
+    // environment rather than on content.
+    //
+    // # Reproduced, not assumed
+    //
+    // Moving `node_modules/@swc/html-<platform>` aside reproduces the exact CI error locally, and
+    // restoring it makes the build pass again. That reproduction is what both candidate fixes
+    // below were tested against.
+    //
+    // # Why this fix and not the broader one
+    //
+    // `faster: false` also works, and removes EVERY native binary from the build. It was rejected
+    // after measurement: it switches the bundler from rspack back to webpack, which emits
+    // `*.LICENSE.txt` sidecars carrying third-party licence banners. Those banners contain
+    // `http://` URLs — lunrjs.com, tartarus.org, ricostacruz.com — and verification step 10 runs
+    // `lychee --require-https`, so the broader fix traded a flaky build failure for **5
+    // deterministic link-check failures**. A fix that moves the failure is not a fix.
+    //
+    // Disabling only `swcHtmlMinimizer` leaves the bundler and the emitted artifact set
+    // byte-for-byte as they were — 0 `LICENSE.txt` sidecars, link check clean — and drops the one
+    // dependency that actually broke. Measured cost: build unchanged at 11 s; `index.html`
+    // 11,356 to 11,767 bytes, because HTML is minified by terser instead of swc.
+    //
+    // # What this does NOT fix
+    //
+    // `rspackBundler` and `lightningCssMinimizer` remain enabled and remain backed by native
+    // optional binaries, so the same npm behaviour could break the build through a different
+    // package. **The flake class is reduced, not eliminated**, and that is recorded here rather
+    // than left for the next person to rediscover at 3 a.m. Eliminating it needs a deterministic
+    // optional-dependency install, which is a separate change.
+    faster: { swcHtmlMinimizer: false },
   },
 
   i18n: {
