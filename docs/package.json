@@ -6,6 +6,8 @@
   "scripts": {
     "docusaurus": "docusaurus",
     "check:image-inputs": "node scripts/check-image-inputs.mjs",
+    "test:image-inputs": "node scripts/check-image-inputs.test.mjs",
+    "test": "node scripts/check-image-inputs.test.mjs",
     "prestart": "node scripts/check-image-inputs.mjs",
     "start": "docusaurus start",
     "prebuild": "node scripts/check-image-inputs.mjs",

@@ -3,7 +3,7 @@
   "version": "3.0.0-renvor.1",
   "private": true,
   "description": "Local no-op replacement for image-size. Installed via an npm override so the real package - every published version of which carries unfixed high-severity DoS advisories - never enters this tree. Throws on use; the site embeds no images, so it is never called.",
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "type": "commonjs",
   "main": "./index.cjs",
   "module": "./index.mjs",
