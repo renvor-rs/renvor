@@ -2,6 +2,26 @@
   AUTHORITATIVE PUBLIC COPY of the ratified Renvor Constitution.
   This file is the discoverable copy referenced by all public documentation (spec FR-012).
   Amendments follow the process in the Governance section below.
+
+  This file is the ONLY copy of the constitution tracked in this repository. A working copy
+  also exists at `.specify/memory/constitution.md` for the specification tooling; `.specify/`
+  is gitignored, so that copy is local-only and is NOT the canonical mirror. Keep the two
+  identical from the `# Renvor Constitution` heading onward; this file wins on any difference.
+
+  AMENDMENT HISTORY
+
+  2026-08-17 — 1.0.0 to 2.0.0 (MAJOR). Authority: ADR-0010, superseding ADR-0001.
+    Change: principles VII and XIII name the executable's commands normatively. `renover new`
+      becomes `renvor new`; `renover add` becomes `renvor add`. Three normative sentences
+      changed. No principle was added, removed, reordered, or otherwise redefined.
+    Why MAJOR: the Governance section below defines MAJOR as "removes or redefines a governing
+      principle or COMPATIBILITY PROMISE". The installed executable's name is a compatibility
+      promise — it is the string a user types and a shell resolves — and this redefines it.
+      PATCH is excluded because required behavior changes: a conforming implementation must now
+      install a differently named binary. MINOR is excluded because nothing was added.
+    Ratified date preserved at 2026-08-11. Last Amended set to 2026-08-17.
+    Not changed: `.renvor/` and `RENVOR_`, which derive from the product name rather than the
+      executable name, and which ADR-0010 does not alter.
 -->
 
 # Renvor Constitution
@@ -54,7 +74,7 @@ Browser bearer and refresh credentials MUST NOT be stored in `localStorage` or `
 
 ### VII. Deterministic and Safe Generation
 
-`renover new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling.
+`renvor new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling.
 
 Next.js, Yew, Dioxus, and Leptos MUST each offer plain CSS, SCSS, and Tailwind CSS as explicit styling choices. All three are first-party profiles with equivalent functionality, accessibility, auth flows, theme support, and verification. Only selected styling dependencies and files may be generated.
 
@@ -104,7 +124,7 @@ Renvor MUST identify unshipped capabilities as planned and MUST NOT imply they a
 
 ### XIII. Independent Installable Packages
 
-Renvor MUST support separately developed, separately versioned packages published as normal crates on crates.io and installed into an existing compatible application with `renover add`. Official packages MUST live outside the core workspace, use only public extension contracts, and own their repository, release, support, security, documentation, and crates.io lifecycle.
+Renvor MUST support separately developed, separately versioned packages published as normal crates on crates.io and installed into an existing compatible application with `renvor add`. Official packages MUST live outside the core workspace, use only public extension contracts, and own their repository, release, support, security, documentation, and crates.io lifecycle.
 
 Package installation MUST be a declarative, previewable, transactional source change followed by dependency resolution, formatting, build, tests, and an explicit migration/deployment plan. It MUST NOT inject native code into an already running process, mutate a live production database, execute arbitrary remote scripts, overwrite user changes, or hide added permissions and Tauri capabilities.
 
@@ -130,7 +150,7 @@ The separately published `renvor-rbac` crate is the first official reference pac
 
 - Each official package MUST have a separate repository, crates.io package identity, owners, release history, support policy, security contact, continuous integration, documentation, and semantic version.
 - crates.io is the canonical source for installable Renvor package crates. A discovery catalog MAY index compatibility and evidence but MUST NOT replace registry integrity verification.
-- `renover add` MUST install a package into an existing compatible Renvor application's source and manifests, then verify the project. It MUST NOT hot-load code into a live Rust process.
+- `renvor add` MUST install a package into an existing compatible Renvor application's source and manifests, then verify the project. It MUST NOT hot-load code into a live Rust process.
 - Package assets embedded in a crate MUST be listed by package inspection and treated as untrusted until validated. JavaScript dependencies declared by a frontend companion MUST use the selected frontend's normal registry and lockfile.
 - Core and package versions MUST remain independent. Every package MUST declare and test its supported Renvor range.
 - Official packages MUST use the same dependency, license, provenance, SBOM, advisory, trusted-publishing, and release-review controls as core crates.
@@ -179,4 +199,4 @@ Constitution versions follow semantic versioning:
 
 Every phase review and release review MUST include a constitution check. Exceptions are allowed only through a time-bounded written waiver naming the violated rule, reason, compensating controls, owner, expiry, and removal plan. Security release blockers cannot be waived for a public release.
 
-**Version:** 1.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-11
+**Version:** 2.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-17

@@ -1,6 +1,15 @@
 # Contract: Public Identity
 
-**Feature**: `specs/001-governance-foundation` | **Status**: **Confirmed 2026-08-11** — every row of the Name Availability Record reads `available` or `owned-by-project` | **Satisfies**: FR-001 – FR-006, FR-048, FR-049, FR-052
+**Feature**: `specs/001-governance-foundation` | **Status**: **Confirmed 2026-08-11**, **amended 2026-08-17 by ADR-0010** — every row of the Name Availability Record reads `available` or `owned-by-project` | **Satisfies**: FR-001 – FR-006, FR-048, FR-049, FR-052
+
+> **Amended 2026-08-17 — the executable is `renvor`.** ADR-0010 supersedes ADR-0001 and
+> unifies the product, facade-crate, and executable spellings. The rows and binding rules
+> below carry the current values; the superseded `renover` values, and the reasoning that
+> chose them, are preserved in ADR-0001 and in `governance/name-availability.md` §Superseded.
+> This amendment is the "superseding ADR and impact analysis" that the Consumers section at
+> the foot of this contract requires. Nothing else in this contract changed: `Renvor`,
+> `renvor`, `renvor-cli`, `renvor-rs`, `.renvor/`, `RENVOR_`, and `renvor.dev` are all
+> unaffected.
 
 This is the contract every later phase, document, template, and example must conform to. It was provisional until every row of `governance/name-availability.md` reached `available` or `owned-by-project`; that condition was met at **T022 on 2026-08-11**, so the values below are now confirmed.
 
@@ -14,8 +23,9 @@ This is the contract every later phase, document, template, and example must con
 | Package name prefix | `renvor-` | crates.io search — 0 crates contain "renvor" | `available` | Verified only |
 | Facade package | `renvor` | crates.io — HTTP 404 | `available` | Verified only |
 | CLI package | `renvor-cli` | crates.io — HTTP 404 (`renvor_cli` also free) | `available` | Verified only |
-| Installed executable | `renover` | 6 registries + public Rust manifests + local PATH | `available` (**bounded**) | Verified only |
-| Primary command | `renover new` | — (derived) | derived | Derived |
+| Installed executable | `renvor` | 8 probes, each with a positive control — see ADR-0010 §Name-availability evidence | `available` (**bounded**), re-verified **2026-08-17** | Verified only |
+| Primary command | `renvor new` | — (derived) | derived | Derived |
+| Package command | `renvor add` | — (derived) | derived | Derived |
 | Project state directory | `.renvor/` | — (derived) | derived | Derived |
 | Environment prefix | `RENVOR_` | — (derived) | derived | Derived |
 | Hosting organization | **`renvor-rs`** | GitHub — `/users` and `/orgs` both 404, no redirect | `available` | **To be claimed at T024** |
@@ -28,7 +38,7 @@ Full evidence — exact URLs, UTC timestamps, and observations — is in `govern
 
 ### Two qualifications on the confirmed values
 
-1. **`renover` clearance is bounded, not exhaustive.** No global registry of executable names exists. Six package registries, public Rust manifests, and the local `PATH` were checked; other Linux distributions, BSD ports, Windows package managers, and privately distributed binaries were not. See the scope table in `governance/name-availability.md`.
+1. **`renvor` clearance is bounded, not exhaustive.** No global registry of executable names exists. Five package registries, Debian sources, public Rust manifests, and the local `PATH` were checked on **2026-08-17**, each with a positive control; other Linux distributions, BSD ports, Windows package managers, and privately distributed binaries were not. One probe — public Rust manifests — is further bounded: GitHub code search does not index this repository, so its `0` result bounds rather than proves absence. See ADR-0010 §Name-availability evidence and the scope table in `governance/name-availability.md`.
 
 2. **`Renvor` has not been trademark-cleared.** This contract previously named a trademark/common-law search as the verification method for the product-name row. That search was outside the authorised scope of the verification pass and has **not** been performed. The row is recorded as derived, not as cleared, and the gap is tracked as residual risk R-4.
 
@@ -38,7 +48,7 @@ A pre-existing GitHub **user** account holds the global login `Renvor` (id 20644
 
 ## Binding rules
 
-1. **The executable is `renover`, not `renvor`.** The product name and the command differ by design. Every document, test, example, help text, and error message uses `renover` when referring to the command. ADR-0001 must state why the distinction exists, so it reads as intentional rather than as a typo that ossified.
+1. **The executable is `renvor`.** The product, the facade crate, and the command share one spelling. Every document, test, example, help text, and error message uses `renvor` when referring to the command. `cargo install renvor-cli` installs a binary named `renvor`; the package name and the binary name differ, which is declared in that crate's manifest when Phase 003 creates it. **This rule previously required the opposite** — the executable was `renover`, deliberately distinct — and ADR-0010 records why that was reversed.
 
 2. **No frozen reference before confirmation.** Manifests, templates, documentation, and examples may not be treated as final while any row is unconfirmed (FR-004). **This condition was satisfied on 2026-08-11**, so references may now be frozen against the values above — subject to the 2026-09-10 expiry. The repository may exist publicly before this point; its *first content push* may not (FR-052).
 

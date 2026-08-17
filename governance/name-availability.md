@@ -1,5 +1,22 @@
 # Name Availability Record
 
+> ## Amended 2026-08-17 — the executable name changed to `renvor` (ADR-0010)
+>
+> **Everything already in this file is preserved unedited.** It is dated evidence from
+> 2026-08-11 and remains the record of what was verified then. The `renover` rows below are
+> **historical**: they record a name this project verified and then chose to stop using. They
+> are not instruction, and `renover` is no longer an active Renvor name.
+>
+> The re-verification for the new executable name is in
+> **[§Re-verification 2026-08-17 — executable `renvor`](#re-verification-2026-08-17--executable-renvor)**
+> at the foot of this file, added rather than substituted so both passes stay comparable.
+>
+> **Risk movement:** **R-3** (bounded clearance of `renover`) is **retired** — the name it
+> qualified is no longer used. Its replacement, the bounded clearance of `renvor`, is recorded
+> as **R-3a**. **R-2** (`renovate` confusability) is **reduced but still open**: the typed
+> string moves from Levenshtein 3 to 4 from `renovate`.
+
+
 **Status**: Complete — all ten rows verified 2026-08-11 (T016–T021). **T022 stop gate: PASSED.**
 **Satisfies**: spec FR-001 – FR-006, FR-048, FR-049
 **Schema**: `specs/001-governance-foundation/data-model.md` §Name Availability Record
@@ -57,7 +74,7 @@ Recorded for completeness: `GET /repos/renvor/renvor` returns **301**, resolving
 repository id 447414226, now `MetiuMicin/Discord-Test` — a stale rename redirect on that
 account, unrelated to this project and touching no path the project will use.
 
-## Executable name — bounded search scope for `renover`
+## Executable name — bounded search scope for `renover` *(historical — superseded 2026-08-17)*
 
 **There is no global registry of executable names.** Any claim of exhaustiveness would be
 false. What was actually checked, and therefore what the `available` status means:
@@ -98,3 +115,58 @@ These belong in `governance/phase-001-evidence.md` §6 with owners (T083).
 - No row was filled in by inference. Each names a location actually consulted, an exact
   URL, a UTC timestamp, and the person who consulted it.
 - All rows expire **2026-09-10** and are re-verified before the first content push.
+
+
+## Re-verification 2026-08-17 — executable `renvor`
+
+**Added by ADR-0010. This does not replace the 2026-08-11 pass above; it sits beside it.**
+
+Checked by Ahmed Anbar at **2026-08-17T08:45:34Z**, using the same eight probes, **each paired
+with a positive control**. The 2026-08-11 pass had no controls; that is the one methodological
+difference between the two, and it is an improvement rather than a discrepancy.
+
+| # | Source checked | Target `renvor` | Positive control | Control result |
+|---|---|---|---|---|
+| 1 | crates.io package name | HTTP **404** | `serde` | HTTP 200 |
+| 2 | Homebrew formula | HTTP **404** | `git` | HTTP 200 |
+| 3 | Homebrew cask | HTTP **404** | `firefox` | HTTP 200 |
+| 4 | npm registry | HTTP **404** | `react` | HTTP 200 |
+| 5 | PyPI | HTTP **404** | `requests` | HTTP 200 |
+| 6 | Debian sources | **0** exact, **0** other | `bash` | 1 exact, 20 other |
+| 7 | Public Rust manifests | **0** | `serde filename:Cargo.toml` | **829,440** |
+| 8 | This machine's `PATH` | not present | `ls` | present |
+
+Also re-verified the same day: `renvor-cli` → **HTTP 404**, `renvor_cli` → **HTTP 404**.
+
+### What the controls caught
+
+**Probe 7's first run was invalid, and only the control revealed it.** Target and control both
+returned `0`. A `0` control is impossible for `serde`, so the run was investigated rather than
+recorded: GitHub's code-search API had returned **HTTP 403 — rate limit exceeded**, which the
+tooling had surfaced as an empty result set. The probe was re-run after the limit reset and the
+control then returned 829,440. **Without the control, a rate-limit error would have been
+recorded as evidence of availability.**
+
+**Probe 7 is additionally bounded, and this bound was also found rather than assumed.** GitHub
+code search returns **0** for `renvor filename:Cargo.toml`, yet `renvor-rs/renvor` is public and
+contains **four** such manifests (`renvor`, `renvor-core`, `renvor-config`, `renvor-testkit`).
+The index therefore does not cover this repository, so probe 7's `0` **bounds** absence rather
+than proving it. An independent second source (grep.app) returned no results either, which
+corroborates without removing the bound.
+
+### Scope — unchanged, and still bounded
+
+**There is still no global registry of executable names.** Explicitly out of scope, not checked,
+and not claimed: Linux distributions other than Debian, BSD ports, Windows package managers,
+language ecosystems beyond Rust/npm/PyPI, private or internal tooling, and any binary
+distributed outside a package manager. A collision in those spaces remains possible.
+
+### Risk rows updated
+
+| Risk | State after 2026-08-17 |
+|---|---|
+| **R-2** — confusability with `renovate` | **Open, reduced.** The typed string moves from Levenshtein **3** (`renover`) to **4** (`renvor`). ADR-0001 itself argued that a distance-3 pair was worse than a distance-4 one; ADR-0010 applies that argument to the executable |
+| **R-3** — bounded clearance of `renover` | **Retired.** The name is no longer used by this project |
+| **R-3a** — bounded clearance of `renvor` | **Open.** Same bound, same reason, now attached to the name actually in use. Owner: Ahmed Anbar. Ongoing |
+| **R-4** — no trademark search for `Renvor` | **Open, unchanged.** ADR-0010 does not alter the product name and performs no trademark search |
+| **R-5** — `renvor.dev` renewal | **Open, unchanged.** Expires 2027-08-11 |

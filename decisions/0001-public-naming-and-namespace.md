@@ -3,10 +3,38 @@
 | Field | Value |
 |---|---|
 | **ID** | 0001 |
-| **State** | `accepted` |
+| **State** | `superseded` |
 | **Reviewer** | `Ahmed Anbar — self-review under W-002` |
 | **Review date** | 2026-08-12 |
-| **Superseded by** | — |
+| **Superseded by** | **ADR-0010** *(2026-08-17)* |
+
+> ## Superseded 2026-08-17 by ADR-0010 — the executable is now `renvor`
+>
+> **The installed executable is `renvor`, not `renover`.** The primary command is
+> `renvor new` and the package command is `renvor add`. See
+> `decisions/0010-unify-product-and-executable-name.md`.
+>
+> **Everything below this notice is preserved verbatim as historical evidence.** It records
+> what was decided on 2026-08-12 and why, and it is cited by
+> `governance/phase-001-evidence.md` and by T026. It is **not** current instruction. No
+> sentence below has been edited to agree with the newer decision — superseding a record
+> does not entitle anyone to rewrite what it said, and Phase 001 evidence that cites this
+> record must stay checkable against the text that was actually accepted.
+>
+> **What ADR-0010 kept:** the product name `Renvor`, the facade crate `renvor`, the CLI
+> package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and `RENVOR_` — all
+> unchanged, and all still decided by the record below. **What ADR-0010 changed:** the
+> installed executable and its command names, and nothing else.
+>
+> **Why**, in one line: ADR-0001 rejected renaming the *product* to `Renover` because
+> `Renover`/`renovate` is a closer pair than `Renvor`/`renovate` — measured Levenshtein 3
+> against 4 — and then left the *executable*, the string users actually type, at the closer
+> spelling. ADR-0010 applies ADR-0001's own argument consistently, at a moment when no
+> executable has shipped and the change costs nothing.
+>
+> The residual risks recorded below have moved: **R-2** (`renovate` confusability) is
+> reduced rather than merely re-accepted, and **R-3** (bounded `renover` clearance) is
+> retired, because the name it qualified is no longer used.
 
 ## Context
 

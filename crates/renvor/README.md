@@ -30,11 +30,12 @@ you cannot yet serve anything with one.
 **Nothing is published, and every API is explicitly unstable.** This crate does not exist on
 crates.io. Its surface will change once the first real transport adapter exercises it.
 
-## The command is `renover`, not `renvor`
+## The command is `renvor`
 
-The product is **Renvor**. The installed executable is **`renover`**. The difference is
-deliberate and permanent; it is not a typographical error. See
-[ADR-0001](https://github.com/renvor-rs/renvor/blob/main/decisions/0001-public-naming-and-namespace.md).
+The product, this crate, and the installed executable share one spelling: **`renvor`**.
+`cargo install renvor-cli` installs a binary named `renvor`. See
+[ADR-0010](https://github.com/renvor-rs/renvor/blob/main/decisions/0010-unify-product-and-executable-name.md),
+which supersedes ADR-0001.
 
 ## Supported Rust versions
 

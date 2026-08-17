@@ -40,7 +40,7 @@ A maintainer needs to know, with dated evidence, that every public name Renvor i
 1. **Given** the public identity contract lists a product name, crate prefix, facade crate, CLI package, executable name, project state directory, and environment prefix, **When** the maintainer completes name verification, **Then** every one of those items plus the hosting organization/repository and the documentation domain has a dated evidence entry with a definite status.
 2. **Given** a required crate name is already occupied by another party, **When** verification records that status, **Then** the feature is blocked, an explicit naming decision is requested, and no alternative name is adopted automatically.
 3. **Given** verification is incomplete for any single name, **When** a maintainer attempts to freeze public references or publish anything, **Then** the action is refused and the reason names the unverified item.
-4. **Given** the product is named `Renvor` while the installed executable is `renover`, **When** a reviewer reads the accepted naming decision record, **Then** the distinction is explained deliberately and every document, test, and example uses the executable name consistently.
+4. **Given** the product is named `Renvor` while the installed executable is `renover`, **When** a reviewer reads the accepted naming decision record, **Then** the distinction is explained deliberately and every document, test, and example uses the executable name consistently. *(Historical: this scenario was written and satisfied while the executable was `renover`. ADR-0010 unified the names on 2026-08-17 — the executable is now `renvor` and there is no distinction left to explain. The scenario is preserved as the Phase 001 acceptance criterion it was, not rewritten.)*
 
 ---
 
@@ -275,7 +275,7 @@ From a clean checkout, a maintainer runs the release rehearsal. It packages a pl
 ## Out of Scope
 
 - Any runtime framework capability: application kernel, typed state, provider registry, lifecycle, configuration, error taxonomy, health and readiness, or tracing bootstrap (Phase 002).
-- The `renover` executable, the interactive project wizard, templates, and local runtime commands (Phase 003).
+- The `renover` executable *(renamed `renvor` on 2026-08-17 by ADR-0010)*, the interactive project wizard, templates, and local runtime commands (Phase 003).
 - HTTP routing, middleware, validation, problem details, and API description (Phases 004–005).
 - Persistence, migrations, authentication, authorization, frontend, desktop, and installable-package machinery (Phases 006 onward).
 - Actually publishing any package to a public registry. The release path is rehearsed without publication; the repository itself is public from creation, which is in scope.

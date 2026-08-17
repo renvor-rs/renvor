@@ -19,7 +19,7 @@ Renvor will be a cohesive, package-first Rust application framework with explici
 Renvor must let a team move from a blank directory to a production-shaped application while retaining control of every important boundary.
 
 ```text
-renover new
+renvor new
     |
     +-- API only ---------------- REST and later GraphQL
     |
@@ -64,14 +64,14 @@ The same domain and application services must serve every selected transport and
 | Crate prefix | `renvor-` |
 | Main facade crate | `renvor` |
 | CLI package | `renvor-cli` |
-| Installed executable | `renover` |
-| Primary project command | `renover new` |
+| Installed executable | `renvor` |
+| Primary project command | `renvor new` |
 | Project state directory | `.renvor/` |
 | Environment prefix | `RENVOR_` |
 
 Phase 001 must verify the GitHub organization/repository names, crates.io crate names, documentation domain, and executable name before public references are frozen. If a name is unavailable, work stops for an explicit naming decision. No alternative name is selected automatically.
 
-An ADR must explain the intentional distinction between the Renvor product name and the `renover` executable. Tests and documentation must use the executable name consistently.
+An ADR must record the executable-name decision and the alternatives it rejects. **ADR-0010 supersedes ADR-0001**: the product, the facade crate, and the executable now share one spelling, `renvor`, and `cargo install renvor-cli` installs a binary named `renvor`. ADR-0001 previously required a *distinction* to be explained, because the executable was then named `renover`; that requirement is retired with the name. Tests and documentation must use the executable name consistently.
 
 ## 5. Release train
 
@@ -134,7 +134,7 @@ Every completed phase must link:
 
 ```mermaid
 flowchart TD
-    CLI["renover CLI"] --> GEN["Transactional project generator"]
+    CLI["renvor CLI"] --> GEN["Transactional project generator"]
     GEN --> APP["Generated application workspace"]
 
     REST["REST adapter"] --> USE["Application services"]
@@ -208,7 +208,7 @@ crates/
 ├── renvor-graphql/            # optional GraphQL adapter
 ├── renvor-testing/            # test harness and fixtures
 ├── renvor-macros/             # narrowly scoped procedural macros
-└── renvor-cli/                # `renover` executable and templates
+└── renvor-cli/                # `renvor` executable and templates
 ```
 
 Crates may be consolidated if package research shows that a boundary adds no independent contract. Splitting crates for naming alone is forbidden.
@@ -289,7 +289,7 @@ The initial database test targets SHOULD include supported PostgreSQL 17 and 18 
 
 ### 9.1 Primary experience
 
-Running `renover new` starts an interactive wizard. Supplying a project name, such as `renover new commerce`, skips only the name question.
+Running `renvor new` starts an interactive wizard. Supplying a project name, such as `renvor new commerce`, skips only the name question.
 
 Prompt order:
 
@@ -312,7 +312,7 @@ Prompt order:
 Every prompt has a non-interactive flag. Interactive and non-interactive paths use the same validated configuration model.
 
 ```bash
-renover new commerce \
+renvor new commerce \
   --target full-stack \
   --transport rest \
   --orm seaorm \
@@ -346,33 +346,33 @@ For every frontend, `--styling` accepts `css`, `scss`, or `tailwind`. The wizard
 Backend 1.0:
 
 ```text
-renover new
-renover doctor
-renover dev
-renover check
-renover generate resource
-renover generate migration
-renover generate auth
-renover migrate
-renover seed
-renover routes
-renover openapi
-renover docker up|down|status|logs
+renvor new
+renvor doctor
+renvor dev
+renvor check
+renvor generate resource
+renvor generate migration
+renvor generate auth
+renvor migrate
+renvor seed
+renvor routes
+renvor openapi
+renvor docker up|down|status|logs
 ```
 
 Package ecosystem 4.0:
 
 ```text
-renover add <package>
-renover remove <package>
-renover update [package]
-renover package inspect <package>
-renover package list
-renover package doctor
-renover package new
-renover package validate
-renover package pack
-renover package publish [--dry-run]
+renvor add <package>
+renvor remove <package>
+renvor update [package]
+renvor package inspect <package>
+renvor package list
+renvor package doctor
+renvor package new
+renvor package validate
+renvor package pack
+renvor package publish [--dry-run]
 ```
 
 Command names, exit codes, stdout/stderr behavior, `--help`, JSON output, cancellation, and error messages are public contracts. Destructive database commands require explicit confirmation and non-interactive acknowledgement flags.
@@ -541,7 +541,7 @@ The canonical metadata format MUST be specified in Phase 027. Prefer standard Ca
 
 ### 15.2 Installation lifecycle
 
-`renover add <package>` MUST:
+`renvor add <package>` MUST:
 
 1. Resolve the package and verify registry checksums, provenance where available, license, Renvor compatibility, MSRV, and selected application matrix.
 2. Read declarative metadata without running package code.
@@ -553,9 +553,9 @@ The canonical metadata format MUST be specified in Phase 027. Prefer standard Ca
 8. Report the required migration and deployment steps. Installation MUST NOT mutate a live production database automatically.
 9. Roll back owned source changes when verification fails and report the root cause.
 
-For example, `renover add renvor-rbac` resolves the published `renvor-rbac` crate from crates.io, verifies its package metadata, and installs it into the existing Renvor project in the current directory. A version requirement MAY be supplied explicitly. The command MUST refuse a directory that is not a compatible Renvor project.
+For example, `renvor add renvor-rbac` resolves the published `renvor-rbac` crate from crates.io, verifies its package metadata, and installs it into the existing Renvor project in the current directory. A version requirement MAY be supplied explicitly. The command MUST refuse a directory that is not a compatible Renvor project.
 
-`renover update` MUST preview compatibility, migrations, configuration changes, and breaking changes before modifying the project. `renover remove` MUST identify dependents and data ownership; destructive schema/data removal requires a separate explicit action, while `--keep-data` preserves package data by default. Package commands MUST support `--dry-run`, non-interactive confirmation flags, stable JSON output, and deterministic exit codes.
+`renvor update` MUST preview compatibility, migrations, configuration changes, and breaking changes before modifying the project. `renvor remove` MUST identify dependents and data ownership; destructive schema/data removal requires a separate explicit action, while `--keep-data` preserves package data by default. Package commands MUST support `--dry-run`, non-interactive confirmation flags, stable JSON output, and deterministic exit codes.
 
 The CLI MUST preserve manual application changes. If a package cannot be installed or upgraded without an ambiguous merge, it stops and presents the conflicting paths; it MUST NOT choose a merge automatically.
 
@@ -693,7 +693,7 @@ The production documentation site, its repository, its domain, and the rule that
 Required sections by 1.0:
 
 - installation and toolchain support;
-- `renover new` interactive and non-interactive guides;
+- `renvor new` interactive and non-interactive guides;
 - architecture and request lifecycle;
 - REST, errors, validation, OpenAPI, pagination, and versioning;
 - direct SQLx and SeaORM guides for PostgreSQL and MySQL;
@@ -706,7 +706,7 @@ Required sections by 1.0:
 
 Version 2 adds GraphQL guidance. Version 3 adds one complete guide for every frontend, CSS/SCSS/Tailwind selection guidance for every frontend, shared-contract generation, Tauri hardening, signing, updating, and full-stack deployment.
 
-Version 4 adds the package SDK, metadata reference, separate repository template, extension contracts, `renover add/remove/update/package` reference, crates.io publishing guide, compatibility and trust model, package author testing guide, incident response, and the complete independently published `renvor-rbac` guide.
+Version 4 adds the package SDK, metadata reference, separate repository template, extension contracts, `renvor add/remove/update/package` reference, crates.io publishing guide, compatibility and trust model, package author testing guide, incident response, and the complete independently published `renvor-rbac` guide.
 
 ## 19. Publishing and release operations
 
@@ -773,7 +773,7 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Depends on:** 002.
 
-**Deliverables:** `renover` executable; interactive `new` wizard; equivalent flags; `renvor.toml` schema; transactional renderer; template versioning; dry-run/JSON output; doctor/check/dev commands; clean local HTTPS design; container commands; initial API-only skeleton.
+**Deliverables:** `renvor` executable; interactive `new` wizard; equivalent flags; `renvor.toml` schema; transactional renderer; template versioning; dry-run/JSON output; doctor/check/dev commands; clean local HTTPS design; container commands; initial API-only skeleton.
 
 **Acceptance:** cancellation and injected rendering failures leave no partial destination; interactive and flag configurations serialize identically; unsupported combinations fail before writes; generated skeleton formats, compiles, tests, and starts; local TLS trust changes are explicit and never happen silently.
 
@@ -977,7 +977,7 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Depends on:** 027.
 
-**Deliverables:** `renover add`, `remove`, `update`, `package new`, `validate`, `pack`, `publish`, `inspect`, `list`, and `doctor`; crates.io resolution/publication; dry-run/JSON contracts; transactional source changes; conflict detection; migration/deployment planning; rollback; package lock updates; separate-package publication guide.
+**Deliverables:** `renvor add`, `remove`, `update`, `package new`, `validate`, `pack`, `publish`, `inspect`, `list`, and `doctor`; crates.io resolution/publication; dry-run/JSON contracts; transactional source changes; conflict detection; migration/deployment planning; rollback; package lock updates; separate-package publication guide.
 
 **Acceptance:** a clean existing project installs a published fixture crate, rebuilds, tests, and runs; dirty/conflicting projects are preserved; verification failure restores owned source changes; removal keeps data by default; no remote script executes; a non-Renvor or incompatible project fails before writes.
 
@@ -987,7 +987,7 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Deliverables:** independent repository and crates.io crate; RBAC model and policy adapter; four-row persistence support; migrations; generators; commands; optional REST/GraphQL surfaces; optional frontend companions for all four frontends and three styling profiles; audit events; documentation; security review; independent release workflow.
 
-**Acceptance:** `renover add renvor-rbac` installs the crates.io package into representative existing API, full-stack, and Tauri projects; grant/revoke/tenant-isolation/cache-invalidation tests pass across claimed rows; frontend management surfaces cannot bypass server authorization; update and non-destructive removal paths pass; package provenance and public documentation verify independently of the core repository.
+**Acceptance:** `renvor add renvor-rbac` installs the crates.io package into representative existing API, full-stack, and Tauri projects; grant/revoke/tenant-isolation/cache-invalidation tests pass across claimed rows; frontend management surfaces cannot bypass server authorization; update and non-destructive removal paths pass; package provenance and public documentation verify independently of the core repository.
 
 ### Phase 030 — Package ecosystem 4.0 stabilization
 
@@ -1032,7 +1032,7 @@ The installed command names use hyphens. Each block follows the required order: 
 #### Phase 003 — Interactive CLI, templates, and local runtime
 
 ```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/003-interactive-cli" Specify Phase 003 from PLAN.md as one independently verifiable feature. Create the renover executable and transactional project generator. Implement renover new with interactive questions and equivalent flags, validated renvor.toml, dry-run and JSON output, template versioning, doctor/check/dev commands, API-only skeleton, container controls, and explicit clean local HTTPS. Cancellation or failure must leave no partial project.
+/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/003-interactive-cli" Specify Phase 003 from PLAN.md as one independently verifiable feature. Create the renvor executable and transactional project generator. Implement renvor new with interactive questions and equivalent flags, validated renvor.toml, dry-run and JSON output, template versioning, doctor/check/dev commands, API-only skeleton, container controls, and explicit clean local HTTPS. Cancellation or failure must leave no partial project.
 /speckit-clarify Resolve every wizard question and default, exit codes, JSON schemas, destination collision policy, atomic-write behavior across operating systems, template trust, offline behavior, local domain and TLS ownership, container command scope, and exposed presets by release.
 /speckit-plan Evaluate clap, inquire, indicatif, and MiniJinja against the verified snapshot; design one validated configuration model for prompts and flags, deterministic embedded templates, staging and rollback, command contracts, local HTTPS trust boundaries, and generated-project tests.
 /speckit-checklist Create a formal requirements checklist for prompt/flag parity, unsupported combinations, cancellation, dry-run accuracy, destination safety, secret handling, deterministic output, local TLS consent, container failures, help text, and machine-readable results.
@@ -1318,7 +1318,7 @@ The installed command names use hyphens. Each block follows the required order: 
 #### Phase 025 — Unified full-stack generator and matrix hardening
 
 ```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/025-fullstack-generator" Specify Phase 025 from PLAN.md as one independently verifiable feature. Complete the v3 renover new wizard and flags for backend, frontend, styling, render mode and Tauri; generate unified workspaces, version manifests, contract regeneration and recoverable upgrades; and prove every advertised frontend/styling row plus a risk-based pairwise database/ORM/auth/target matrix.
+/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/025-fullstack-generator" Specify Phase 025 from PLAN.md as one independently verifiable feature. Complete the v3 renvor new wizard and flags for backend, frontend, styling, render mode and Tauri; generate unified workspaces, version manifests, contract regeneration and recoverable upgrades; and prove every advertised frontend/styling row plus a risk-based pairwise database/ORM/auth/target matrix.
 /speckit-clarify Resolve final wizard order and defaults, version manifest and compatibility rules, contract regeneration ownership, workspace orchestration, upgrade conflict/recovery, exhaustive versus pairwise coverage, high-risk dedicated rows, frontend package manager behavior, and unsupported-combination messages.
 /speckit-plan Design the final validated configuration and template composition, upgrade/recovery model, matrix-covering strategy, contract/version checks and orchestration, then plan dry-run equivalence, every frontend/style auth E2E, pairwise backend/target coverage, and secret/dependency isolation tests.
 /speckit-checklist Create a formal requirements checklist for prompt/flag parity, every frontend/style row, pairwise matrix justification, high-risk rows, version/contracts, upgrades and recovery, dry-run accuracy, dependency isolation, auth parity, unsupported errors, docs, and evidence.
@@ -1357,7 +1357,7 @@ The installed command names use hyphens. Each block follows the required order: 
 #### Phase 028 — Existing-project package lifecycle
 
 ```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/028-package-lifecycle" Specify Phase 028 from PLAN.md as one independently verifiable feature. Implement renover add, remove, update, package new, validate, pack, publish, inspect, list and doctor for separately published crates.io packages. Provide registry verification, dry-run/JSON contracts, transactional source changes, conflict detection, package locks, migration/deployment plans, rollback, non-destructive removal, and publication guidance.
+/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/028-package-lifecycle" Specify Phase 028 from PLAN.md as one independently verifiable feature. Implement renvor add, remove, update, package new, validate, pack, publish, inspect, list and doctor for separately published crates.io packages. Provide registry verification, dry-run/JSON contracts, transactional source changes, conflict detection, package locks, migration/deployment plans, rollback, non-destructive removal, and publication guidance.
 /speckit-clarify Resolve package coordinates and version syntax, crates.io resolution and offline cache, trust/provenance evidence, confirmation and JSON contracts, conflict handling, reversible patch model, dirty project policy, migration execution boundary, data retention, frontend manifests, publication bootstrap, and exit codes.
 /speckit-plan Design metadata-only resolution before code execution, registry and compatibility verification, transactional edits that preserve staged/user work, package lock updates, validation/build tests, migration/deployment reporting, removal/update recovery, and crates.io bootstrap then trusted publishing.
 /speckit-checklist Create a formal requirements checklist for every package command, existing-project detection, crates.io verification, dry-run/JSON parity, no scripts, conflicts, rollback, dirty work, locks, migrations, data preservation, frontend/Tauri changes, publishing, errors, and evidence.

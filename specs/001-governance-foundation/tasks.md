@@ -5,6 +5,14 @@ description: "Phase 001 task list — governance, names, toolchain, and reposito
 
 # Tasks: Governance, Names, Toolchain, and Repository Security Foundation
 
+> **Naming note added 2026-08-17.** Occurrences of **`renover`** below are **historical**.
+> ADR-0010 superseded ADR-0001 on 2026-08-17 and renamed the installed executable to
+> **`renvor`**; the primary command is `renvor new` and the package command is `renvor add`.
+> Nothing below has been edited to agree with that change — this is dated evidence, and
+> rewriting it would make the record disagree with what was actually verified and approved on
+> the dates shown.
+
+
 **Input**: Design documents from `/specs/001-governance-foundation/`
 
 **Prerequisites**: [plan.md](./plan.md), [spec.md](./spec.md), [research.md](./research.md), [data-model.md](./data-model.md), [contracts/](./contracts/), [quickstart.md](./quickstart.md)

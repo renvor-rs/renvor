@@ -1,5 +1,13 @@
 # Phase 001 Evidence Pack
 
+> **Naming note added 2026-08-17.** Occurrences of **`renover`** below are **historical**.
+> ADR-0010 superseded ADR-0001 on 2026-08-17 and renamed the installed executable to
+> **`renvor`**; the primary command is `renvor new` and the package command is `renvor add`.
+> Nothing below has been edited to agree with that change — this is dated evidence, and
+> rewriting it would make the record disagree with what was actually verified and approved on
+> the dates shown.
+
+
 **Status**: **Phase 001 closure candidate** — **108 completed, 1 waived, 1 cancelled, 4 transferred (114 total)**. **Counted by task ID and explicit status marker, not by counting checkboxes** — see "How to count the tasks in this file" in `specs/001-governance-foundation/tasks.md`. **Waived**: **T088** (`WAIVED / NOT MET` under **W-003** — no independent human review of Phase 001 has occurred). **Cancelled**: **T114** (GitLab cutover abandoned; its recovery requirements were never met). **Transferred and still non-completed**: **T102**, **T108**, **T109**, **T111** — the four deployment gates, each with a named destination. **All six decision records accepted** (ADR-0001…ADR-0006), each reviewed as a **non-independent** self-review under W-002. Governance checklist 79/79. Verification passes on both toolchains with exit 0. The release procedure is documented and rehearsed without publishing (§3z); **no crate, package, container image, release, or tag has been published, and no site has been deployed** — *(verified read-only 2026-08-15: `crates.io` sparse index returns HTTP 404 for `renvor`, `renvor-cli`, and `renover` with `serde` returning 200 as a control; all four repositories hold zero releases and zero tags; no repository contains an image-publishing workflow; and `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` each resolve to a shared origin returning HTTP 404 with no Renvor content. `renvor-rs/renvor-infra` **source** was published as a public repository on 2026-08-15, which is not an artifact publication. **GHCR was not independently enumerated** — the available token lacks `read:packages` and anonymous GHCR returns HTTP 403 without distinguishing absent from private — so the no-image statement rests on the absence of any publishing workflow or run, not on a registry listing.)* **Zero tasks remain open.** **Phase 001 is not, and must not be described as, independently reviewed**, and **no Renvor 1.0 claim is made or implied**.
 **Satisfies**: spec FR-042, FR-043; PLAN.md §6.2
 **Schema**: `specs/001-governance-foundation/data-model.md`

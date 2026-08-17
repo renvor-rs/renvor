@@ -48,11 +48,14 @@
 //! It closes when the conditions in the specification's API-instability end gate are met, which
 //! cannot happen before Phase 004 has exercised the kernel through a real transport.
 //!
-//! ## The command is `renover`
+//! ## The command is `renvor`
 //!
-//! The product is **Renvor**. The installed executable is **`renover`**. The
-//! difference is deliberate and permanent — see `decisions/0001-public-naming-and-namespace.md`.
-//! It is not a typographical error.
+//! The product, this crate, and the installed executable share one spelling: **`renvor`**.
+//! `cargo install renvor-cli` installs a binary named `renvor` — the package name and the
+//! binary name differ, as they do for `ripgrep`/`rg`.
+//!
+//! This replaces an earlier decision that named the executable `renover`. See
+//! `decisions/0010-unify-product-and-executable-name.md`, which supersedes ADR-0001.
 //!
 //! ## Support
 //!
@@ -84,13 +87,14 @@ pub const MSRV: &str = "1.94.0";
 
 /// The name of the executable installed by `renvor-cli`.
 ///
-/// Present so that documentation, tests, and diagnostics reference one constant
-/// rather than repeating a string that readers mistake for a misspelling.
+/// Present so that documentation, tests, and diagnostics reference one constant rather than
+/// repeating a literal. The package and the binary it installs are deliberately named
+/// differently, which is why this constant is not simply the crate name.
 ///
 /// ```
-/// assert_eq!(renvor::EXECUTABLE, "renover");
+/// assert_eq!(renvor::EXECUTABLE, "renvor");
 /// ```
-pub const EXECUTABLE: &str = "renover";
+pub const EXECUTABLE: &str = "renvor";
 
 // ---------------------------------------------------------------------------------------------
 // The User Story 1 surface: assembling an application, and finding out why one refused to start.
@@ -157,10 +161,13 @@ mod tests {
     }
 
     #[test]
-    fn executable_differs_from_the_product_name() {
-        // Guards the ADR-0001 decision against a well-meaning "spelling fix".
-        assert_eq!(EXECUTABLE, "renover");
-        assert_ne!(EXECUTABLE, "renvor");
+    fn executable_matches_the_product_name() {
+        // ADR-0010 unified the two spellings. This previously asserted the opposite — that
+        // `EXECUTABLE` must NOT equal "renvor" — to guard ADR-0001's deliberate split against
+        // a well-meaning "spelling fix". That guard is inverted rather than deleted, so the
+        // constant still cannot drift silently in either direction.
+        assert_eq!(EXECUTABLE, "renvor");
+        assert_ne!(EXECUTABLE, "renover");
     }
 
     #[test]
