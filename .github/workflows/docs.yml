@@ -45,6 +45,25 @@ jobs:
           npm ci
           npm run build
 
+      # The image-input guard is the ONLY control that can fail a build over an image:
+      # the vendored image-size replacement throws, but mdx-loader catches that and
+      # continues, so a bypass ships a dimensionless image in a build reporting success
+      # (measured; see ADR-0009). The build step above exercises only the guard's passing
+      # path, where a guard broken to always exit 0 is indistinguishable from a working
+      # one. These controls plant each caught form and require a refusal.
+      - name: Image-input guard controls
+        working-directory: docs
+        run: npm run test:image-inputs
+
+      # npm-side advisory gate. cargo-deny covers Rust only, and dependency-review runs
+      # on pull_request alone, so before this step a newly published advisory against any
+      # npm dependency reached no gate at all. `moderate` rather than `high` because
+      # governance/dependency-advisory-policy.md requires a written, time-bounded
+      # exception even at Medium.
+      - name: npm advisories
+        working-directory: docs
+        run: npm audit --audit-level=moderate
+
       # --root-dir is required. The built site uses root-relative links, and without
       # it every internal link resolves as broken against the local filesystem.
       - name: Link check
