@@ -5,10 +5,19 @@
 
 ## Status
 
-**Implementation is complete, conditional on integration into `main`.** The branch
-`feat/phase-002-core-kernel` is **pushed and open as pull request #19**.
-`specs/002-core-kernel/tasks.md` is authoritative for which tasks are checked, and this ledger must
-never claim more than it does.
+**Phase 002 is integrated and accepted.** Pull request #19 was squash-merged into `main` on
+**2026-08-17T07:23:53Z** as **`8abc0f4168300f04b86e01b0dc0a4bfff2a15af9`**, from the reviewed head
+`fae251c0482c11b6e23cca5fc929c65ff4188b98`. Full post-merge measurements are in
+[Integration](#integration--pull-request-19-merged-2026-08-17). `specs/002-core-kernel/tasks.md`
+remains authoritative for which tasks are checked, and this ledger must never claim more than it
+does.
+
+> **This line was `complete, conditional on integration into main` until the merge actually
+> happened.** It was changed in a **separate, evidence-only pull request opened from the merged
+> `main`** — not inside PR #19 — because the facts it now states (a merge commit, a tree equality, a
+> recomputed alert count) did not exist while PR #19 was open. A pull request cannot truthfully
+> record its own merge. That sequencing is the whole reason T158 stayed unchecked through a merge in
+> which every other Phase 002 task was closed.
 
 **This paragraph deliberately no longer names the open set.** It named it three times and was wrong
 twice — the third occurrence was found by the W-005 requirements delta review (D6-1), which
@@ -44,12 +53,14 @@ moves, and the fix that keeps failing is remembering to update it. Read `tasks.m
 
 Three things this ledger is **not** claiming, stated here so no reader has to infer them:
 
-1. **The branch is not integrated.** It is unmerged. Nothing in this document should be read as a
-   statement about `main`.
+1. **Integration is not release.** The branch is merged into `main`; nothing is published, deployed,
+   or tagged, and Phase 002's API is explicitly unstable under FR-036.
 2. **No independent review has occurred.** Phase 002 closes under **W-005**, which waives *who
-   reviews* and waives nothing about *what must be true*. Every review recorded here is
-   **NON-INDEPENDENT and ADVISORY**, and saying otherwise anywhere would be false.
-3. **Nothing is published.** 0 crates, 0 tags, 0 releases.
+   reviews* and waives nothing about *what must be true*; its decision records close under **W-004**
+   (ADR-0007) and **W-006** (ADR-0009). Every review recorded here is **NON-INDEPENDENT and
+   ADVISORY**, and saying otherwise anywhere would be false. **All three waivers remain active**,
+   with their expiry dates and re-review obligations unchanged by integration.
+3. **Nothing is published.** 0 crates, 0 tags, 0 releases, 0 deployments.
 
 A pre-shipping audit on **2026-08-16** found defects that the 11-step verification sequence does
 not cover. They are recorded in [Pre-shipping corrections](#pre-shipping-corrections-t111t132)
@@ -2391,3 +2402,108 @@ regression, and a phase that has spent five rounds on "records that overstate wh
 should not quietly drop the one measurement that disagreed with the others. **No Rust source
 changed in this batch**, which is consistent with the diagnosis but is not what established it —
 the worktree comparison is.
+
+---
+
+## Integration — pull request 19 merged 2026-08-17
+
+**T158.** Every value below was **measured after the merge**, none predicted. This section exists in
+a separate pull request from the one it describes, because the facts it records did not exist while
+that pull request was open.
+
+### The merge
+
+| Fact | Value |
+|---|---|
+| Pull request | **#19 — MERGED** |
+| `mergedAt` | **2026-08-17T07:23:53Z** |
+| Merge actor | **AhmedAnbar** |
+| Reviewed source head | `fae251c0482c11b6e23cca5fc929c65ff4188b98` |
+| Integration commit | **`8abc0f4168300f04b86e01b0dc0a4bfff2a15af9`** |
+| Method | **squash**, guarded with `--match-head-commit`; no admin override, no auto-merge, no merge queue, no custom merge text, no branch deletion |
+| `main` before → after | `19605e9026bf8dbcb95e17967023664f82c7bdb9` → `8abc0f4168300f04b86e01b0dc0a4bfff2a15af9` |
+| Parents of the integration commit | **1** — `19605e90…`, the previous `main`, as a squash requires |
+| Source branch | **retained** at `fae251c…`, not deleted |
+
+### Tree equality and signature
+
+| Check | Result |
+|---|---|
+| Reviewed source tree | `a5734b96ae5911879bc6dc2bc53c9a0aa6714a9b` |
+| Integration tree | `a5734b96ae5911879bc6dc2bc53c9a0aa6714a9b` |
+| **Trees identical** | **yes** — the merge introduced no content the review did not see |
+| Signature (GitHub) | **`verified = true`, reason `valid`** |
+| Branch protection | intact — required contexts `verify (1.94.0)`, `verify (stable)`, `security`, `docs`; `enforce_admins = true`, and no bypass was used |
+
+*(A local `git log --format=%G?` prints `E` for this commit. That is not a failed verification: the
+squash commit is signed by GitHub's own key, which this repository's `governance/allowed-signers`
+does not list because it lists **contributor** SSH keys. The authoritative check for a
+platform-created commit is the API field above, which reports `verified: true`.)*
+
+### Post-merge checks on `main`
+
+**10 success, 1 skipped.**
+
+| Result | Checks |
+|---|---|
+| success | `verify (1.94.0)`, `verify (stable)`, `security`, `docs`, `platform` ×4 (macOS and Windows × 1.94.0 and stable), `Analyze (rust)`, `Analyze (actions)` |
+| skipped | `dependency-review` — **event-inapplicable by design**: it diffs a pull request's dependency graph against its base and is gated on `github.event_name == 'pull_request'`, so it has nothing to diff on a push to `main` |
+
+### Dependabot, recomputed against the new `main`
+
+This is the condition T157 was rewritten to move here, because it is **only measurable after the
+merge**: GitHub computes Dependabot alerts from the default branch, so a fix delivered *by* a merge
+cannot close them *before* it.
+
+| Alert | Severity | State | `fixed_at` |
+|---|---|---|---|
+| `image-size` ×2 (`GHSA-w3rx-r6r6-pgpr`, `GHSA-5p2g-fcmc-qvqq`) | **high** | **fixed** | 2026-08-17T07:23:58Z |
+| `uuid` | medium | **fixed** | 2026-08-17T07:23:57Z |
+| `serialize-javascript` ×2 | high, medium | fixed (2026-08-12) | — |
+
+**Open alerts: 0. Open Critical/High: 0. Dismissed: 0.** Every alert closed as **`fixed`** — by
+removal from the resolved graph for `image-size`, by upgrade for `uuid` — and **not one was
+dismissed, waived, or suppressed**. Recomputation completed **five seconds** after `mergedAt`, so
+the prediction recorded in T157 held exactly: the counter described `main`, and it moved when `main`
+did.
+
+**Verified in the live-`main` lockfile**, not merely in the alert feed:
+
+```
+node_modules/image-size      resolved=vendor/image-size-disabled   link=true   (no version, no tarball)
+vendor/image-size-disabled   version=3.0.0-renvor.1
+node_modules/uuid            version=11.1.1
+```
+
+Vulnerable `image-size` tarball entries on `main`: **0**.
+
+### Nothing else was created
+
+| Assertion | Measured |
+|---|---|
+| Published crates (`renvor`, `renvor-core`, `renvor-config`, `renvor-testkit`, `renvor-macros`) | **0** — all five return HTTP 404 |
+| Tags / releases / deployments | **0 / 0 / 0** |
+| Open CodeQL alerts on `main` | **0** |
+| Phase 003 artifacts | **none** — `specs/` on `main` holds exactly `001-governance-foundation` and `002-core-kernel` |
+| DNS or server changes | **none made** |
+
+### What integration does and does not settle
+
+**Settled**: the reviewed tree is on `main`, byte-identical to what was reviewed; the two unfixable
+High advisories are closed by removal rather than by waiver; every mechanical gate passes on the
+integration commit.
+
+**Not settled, and unchanged by integration:**
+
+- **W-001**, **W-002**, **W-003**, **W-004**, **W-005**, and **W-006** all remain **active**. Merging
+  a pull request does not discharge a waiver.
+- **No independent human review of Phase 002, ADR-0007, or ADR-0009 has occurred.** All three must
+  receive one before any public release, and the first qualified independent reviewer closes W-004,
+  W-005, and W-006 by re-reviewing each in full.
+- **The per-phase waiver guard stays breached** at three explicit reviewed exceptions in Phase 002
+  against an expected two, and **Phase 003 is one waiver away from tripping the trend guard** — a
+  release blocker absent dated, tracked reviewer-recruitment progress.
+- **Every named limitation stays open**, including the six retained at T153 and open item 32, the
+  absence of JavaScript static analysis on this repository.
+
+**Phase 002 is accepted. It is not released, and it is not independently reviewed.**
