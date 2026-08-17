@@ -40,7 +40,9 @@
   were resolved in `spec.md` §Clarifications, and each resolution **narrowed** scope rather than
   expanding it:
   - **Q1** — the wizard asks only what this phase can honour (FR-005a); later-phase flags are
-    reserved and rejected by name (FR-005b).
+    reserved and rejected by name (FR-005b). **Reclassified 2026-08-17 by `/speckit-analyze`
+    finding C1**: this is **non-compliance with constitution principle VII**, not a narrowing.
+    Recorded in `spec.md` §Known non-compliance; the waiver question is the maintainer's.
   - **Q2** — local HTTPS ships the **consent boundary only**. No certificate is issued and no trust
     store is modified (FR-036). This is a recorded narrowing of `PLAN.md`'s deliverable.
   - **Q3** — templates are embedded; **no archive is read** (FR-040), so archive hardening leaves
@@ -62,7 +64,10 @@ preference, and stating it as "the supported toolchains" would make it unverifia
 
 ### Carried into planning, not silently dropped
 
-Three scope narrowings are now specification text and must appear in the phase's completion record
+**Two scope narrowings** are now specification text and must appear in the phase's completion record
 so that `PLAN.md` §20's Phase 003 deliverables are not later read as fully delivered: **no
-certificate issuance**, **no archive support**, and **a wizard shorter than `PLAN.md` §9.1's
-fifteen prompts**.
+certificate issuance** and **no archive support**.
+
+**A third item is a constitution non-compliance rather than a narrowing** and must appear in the
+completion record under that heading: the wizard does not ask for the nine choices principle VII
+requires. See `spec.md` §Known non-compliance.

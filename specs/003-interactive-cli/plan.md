@@ -19,10 +19,15 @@ prompt/flag interface that resolves to **one** validated configuration value, a 
 template set, a file manifest that serves dry-run, pre-move verification, and reproducibility alike,
 and a machine-readable output contract.
 
-**Three deliverables from `PLAN.md` §20 are deliberately narrower here than the plan's wording, each
-settled in the clarification session and each recorded so the phase is not later read as having
-delivered them**: no certificate is issued and no trust store is touched; no archive is read; and the
-wizard asks fewer than `PLAN.md` §9.1's fifteen prompts.
+**Two deliverables from `PLAN.md` §20 are deliberately narrower here than the plan's wording**, each
+settled in the clarification session and recorded so the phase is not later read as having delivered
+them: no certificate is issued and no trust store is touched, and no archive is read.
+
+**The third is not a narrowing and is no longer described as one.** The wizard asks fewer than
+`PLAN.md` §9.1's fifteen prompts, and constitution principle VII says it **MUST** ask for nine of
+them. That is **non-compliance with a MUST**, recorded as such in
+[`spec.md` §Known non-compliance](spec.md), with the waiver question referred to the maintainer.
+Calling it a narrowing was the first draft's framing and it was too soft.
 
 ## Technical Context
 
@@ -62,7 +67,7 @@ Evaluated before design, and re-evaluated after it. Both passes recorded.
 | **IV — Deterministic lifecycle and failure** | No silent fallback; failures stop the operation with actionable diagnostics; retries bounded | **Pass.** FR-016 forbids the copy fallback; exit code `1` keeps unclassified failures visible; D2 selects a prompt library on the strength of its *typed* cancellation rather than an inferred one |
 | **V — Contract-first compatibility** | CLI commands define flags, exit codes, stdout/stderr, JSON, cancellation | **Pass.** FR-002 makes them contracts and [`contracts/`](contracts/) defines them before implementation |
 | **VI — Security and fail-closed defaults** | Input validated; bounded work; secrets never in output; security failures fail closed | **Pass with the D6 gate.** FR-039/FR-041/FR-042 carry it; the path boundary is checked rather than structural, which is the weakening D6 records |
-| **VII — Deterministic and safe generation** | Wizard and flags resolve to the same validated configuration; no partial destination; deterministic output | **Pass, with a stated narrowing.** VII names prompts this phase does not ask, because the subsystems behind them do not exist. FR-005a/FR-005b make that explicit rather than silent |
+| **VII — Deterministic and safe generation** | Wizard and flags resolve to the same validated configuration; no partial destination; deterministic output | **FAIL on one clause, pass on the rest — and recorded as a failure, not a narrowing.** VII requires the wizard to ask for nine things whose subsystems do not exist yet; FR-005a asks for none of them. Every other VII clause is satisfied. See `spec.md` §Known non-compliance. **The waiver question is referred to the maintainer and is not decided here** |
 | **IX — Testing** | Property or fuzz coverage at hostile boundaries | **Pass.** The path-safety corpus and template-bound tests are that coverage, each with a positive control |
 | **XII — Honest limitations** | Limits stated, not glossed | **Pass.** Three narrowings, one blocking ADR, and the Windows rename limit are all in the record |
 
@@ -140,6 +145,7 @@ one product boundary, and the template set is data rather than an API.
 
 ## Gates carried out of this plan
 
+0. **Constitution principle VII is not satisfied** by this phase's wizard clause. Referred to the maintainer as a governance ruling; **not** decided in the specification and **not** dismissed as a narrowing.
 1. **ADR required for D6** before the path-containment component merges. Blocking.
 2. **Dependency inventory from the real `Cargo.lock`**, not from `research.md` (FR-044, SC-015).
 3. **Platform claims follow CI**, and the Windows rename limit is documented rather than equated to

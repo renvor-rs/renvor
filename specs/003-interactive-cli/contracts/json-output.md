@@ -70,6 +70,8 @@ meaning, is a breaking change requiring a `schemaVersion` bump.
 | `placement_failed` | 3 | The final move could not be performed atomically |
 | `internal` | 1 | **Unclassified. A defect** |
 
+**There is no row for exit `0`**, and that is not an omission: this is the registry of *failures*, and success carries no error code. `0` is defined in [`command-surface.md`](command-surface.md).
+
 ## Redaction
 
 FR-041 applies here in full. The JSON path is not exempt from redaction because it is

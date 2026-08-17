@@ -44,19 +44,19 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ### The decision-record gate
 
-- [ ] T009 Write `decisions/0011-path-containment-without-capability-handles.md` recording the D6 decision: **hand-composed path containment selected over `cap-std` 4.0.2**. It MUST name the package evaluated, its concrete shortcomings for this use (whole-generator adoption required, transitive tree to inventory), the ownership cost of the alternative, the **explicit statement that a checked boundary is weaker than a capability boundary**, and an exit strategy
+- [ ] T009 Write `decisions/0011-path-containment-without-capability-handles.md` recording the D6 decision: **hand-composed path containment selected over `cap-std` 4.0.2**. It MUST name the package evaluated, its concrete shortcomings for this use (whole-generator adoption required, transitive tree to inventory), the ownership cost of the alternative, the **explicit statement that a checked boundary is weaker than a capability boundary**, and an exit strategy (FR-045)
 - [ ] T010 Record in `decisions/0011-…md` the alternatives **rejected with reasons**: `cap-std` (rejected on adoption scope, not on quality), `normpath` + `dunce` (retained as supporting, not sufficient alone), and `path-clean` (**rejected: purely lexical, cannot detect a symlink escape; last released 2023-02-24**)
 - [ ] T011 Obtain and record, in `decisions/0011-path-containment-without-capability-handles.md`, two clean-context advisory reviews of ADR-0011 — one architecture, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing either enumerated findings or an explicit written "no findings" statement naming what was checked. **A review that returns nothing is recorded as NOT PERFORMED, never as passed**
 - [ ] T012 Disposition every ADR-0011 finding individually (fixed, or refused with a stated reason) in `decisions/0011-path-containment-without-capability-handles.md`
-- [ ] T013 Record the waiver position for ADR-0011 in `governance/waivers.md`: **neither W-004 nor W-005 authorises accepting it** — W-004 covers ADR-0007 alone and W-005 is phase-level and authorises accepting no decision record. State plainly whether a new waiver is required and, if so, that it is the **fourth** explicit exception and exceeds the ledger's own expected maximum
+- [ ] T013 Record the waiver position for ADR-0011 in `governance/waivers.md`: **neither W-004 nor W-005 authorises accepting it** — W-004 covers ADR-0007 alone and W-005 is phase-level and authorises accepting no decision record. State plainly whether a new waiver is required and, if so, number it correctly: it would be **W-007 overall** and the **first exception in Phase 003**, which is **within** the ledger's stated maximum of *two per phase*. **Do not repeat the earlier draft's claim that it is the "fourth" exception exceeding the maximum — that conflated the overall waiver count with the per-phase one, and a governance record that cries wolf is as damaging as one that under-reports.** Record the cross-phase trend separately: seven waivers for the same single-maintainer review gap is a trend even when no single phase exceeds its maximum
 - [ ] T014 **GATE**: confirm ADR-0011 is `accepted` with T011–T013 on the record. **`crates/renvor-cli/src/paths.rs` MUST NOT merge before this task is complete**
 
 ### Failing-first transactional harness
 
 - [ ] T015 Write `crates/renvor-cli/tests/transaction.rs` cancellation coverage: drive the wizard to **each** prompt in turn and cancel there, asserting exit `4` and a destination that does not exist. Parameterise over prompts so adding a prompt without covering it fails the suite
-- [ ] T016 Write injected-failure coverage in `crates/renvor-cli/tests/transaction.rs`: fail at **each** protocol step (stage, render, manifest, verify, place) against **both** an absent destination and a pre-existing empty one, byte-comparing the pre-existing case before and after
+- [ ] T016 Write injected-failure coverage in `crates/renvor-cli/tests/transaction.rs`: fail at **each mutating** protocol step of contract C-5 — `stage`, `render`, `manifest`, `verify`, `place` — against **both** an absent destination and a pre-existing empty one. **C-5 defines seven steps; `validate` and `report` are excluded deliberately and the reason is stated here rather than left to inference**: `validate` writes nothing, so it has no post-condition to violate, and `report` runs after placement has already succeeded, byte-comparing the pre-existing case before and after
 - [ ] T017 Add the **positive control** to `crates/renvor-cli/tests/transaction.rs`: an un-injected run into the same fixtures succeeds and produces a project. Without it, a harness that refuses everything satisfies T015 and T016
-- [ ] T018 Write concurrency coverage in `crates/renvor-cli/tests/transaction.rs`: two runs targeting one destination, asserting **at most one succeeds** and the other reports `destination_not_empty` — never a corrupt tree
+- [ ] T018 Write concurrency coverage in `crates/renvor-cli/tests/transaction.rs`: two runs targeting one destination, asserting **at most one succeeds** and the other reports `destination_not_empty` — never a corrupt tree (FR-013, FR-015)
 - [ ] T019 Write residue coverage in `crates/renvor-cli/tests/transaction.rs`: kill a run mid-render and assert the staging directory is **beside** the destination, never inside it, and is identifiable as Renvor's
 
 ### Failing-first hostile corpus
@@ -87,13 +87,13 @@ builds; cancel at each prompt and assert the destination is absent.
 - [ ] T030 [US1] Map `InquireError::OperationCanceled` and `OperationInterrupted` to exit `4` in `crates/renvor-cli/src/config/prompts.rs`, distinct from every failure code
 - [ ] T031 [US1] Implement the review screen in `crates/renvor-cli/src/config/prompts.rs` listing resolved selections, paths to be created, warnings, and **the exact equivalent non-interactive command** (FR-009)
 - [ ] T032 [US1] Ensure declining confirmation still prints the equivalent command in `crates/renvor-cli/src/config/prompts.rs`, so the answers are not lost (US1 acceptance scenario 3)
-- [ ] T033 [US1] Implement staging in `crates/renvor-cli/src/generate/staging.rs`: a uniquely named directory **inside the destination's parent**, never the system temporary directory (contract C-5)
+- [ ] T033 [US1] Implement staging in `crates/renvor-cli/src/generate/staging.rs`: a uniquely named directory **inside the destination's parent**, never the system temporary directory (contract C-5) (FR-011)
 - [ ] T034 [US1] Implement bounded rendering in `crates/renvor-cli/src/generate/render.rs` with strict-undefined behaviour and an **allow-listed** filter and function set (FR-026, FR-027, FR-028)
 - [ ] T035 [US1] Implement `FileManifest` in `crates/renvor-cli/src/generate/manifest.rs`: sorted by path, SHA-256 per file, symbolic links not followed (invariants I-9, I-11)
 - [ ] T036 [US1] Implement pre-move verification in `crates/renvor-cli/src/generate/place.rs`: run the generated project's own fmt, clippy, build, test, and start **while it is still in staging** (FR-030)
 - [ ] T037 [US1] Implement placement in `crates/renvor-cli/src/generate/place.rs` as a **single rename**, failing with `placement_failed` rather than falling back to a copy (FR-016)
-- [ ] T038 [US1] Implement `ProjectManifest` writing in `crates/renvor-cli/src/generate/manifest.rs`, recording **only honoured choices** plus generator and template versions (invariant I-12)
-- [ ] T039 [US1] Create the embedded API-only template set under `crates/renvor-cli/templates/` with a version constant, producing a project that formats, compiles, tests, and starts
+- [ ] T038 [US1] Implement `ProjectManifest` writing in `crates/renvor-cli/src/generate/manifest.rs`, recording **only honoured choices** plus generator and template versions (invariant I-12) (FR-017, FR-018)
+- [ ] T039 [US1] Create the embedded API-only template set under `crates/renvor-cli/templates/` with a version constant, producing a project that formats, compiles, tests, and starts (FR-024)
 - [ ] T040 [US1] Wire `renvor new` in `crates/renvor-cli/src/commands/new.rs` to the protocol order of contract C-5
 - [ ] T041 [US1] Make T015–T019 pass — `crates/renvor-cli/tests/transaction.rs` green, including the T017 positive control
 
@@ -123,7 +123,7 @@ builds; cancel at each prompt and assert the destination is absent.
 
 **Independent test**: T020–T023 pass, including the positive control.
 
-- [ ] T049 [US5] Implement `DestinationPath` in `crates/renvor-cli/src/paths.rs` with the eight validation rules of [`data-model.md`](data-model.md) §5, each returning a `details.rule` naming which rule rejected
+- [ ] T049 [US5] Implement `DestinationPath` in `crates/renvor-cli/src/paths.rs` with the eight validation rules of [`data-model.md`](data-model.md) §5, each returning a `details.rule` naming which rule rejected (FR-014, FR-039)
 - [ ] T050 [US5] Implement canonicalisation-based containment in `crates/renvor-cli/src/paths.rs`: the canonical destination must be inside the canonical parent (symlink-escape rejection)
 - [ ] T051 [US5] Implement platform-reserved-name rejection in `crates/renvor-cli/src/paths.rs`, enumerating the names rather than describing the class
 - [ ] T052 [US5] Ensure rejection precedes **any** creation, including the staging directory, in `crates/renvor-cli/src/commands/new.rs` (CHK020)
@@ -139,13 +139,13 @@ builds; cancel at each prompt and assert the destination is absent.
 **Independent test**: gate 6 and gate 7 of [`quickstart.md`](quickstart.md).
 
 - [ ] T055 [US3] Implement `--dry-run` in `crates/renvor-cli/src/commands/new.rs` producing the manifest with **zero** writes at the destination (FR-020)
-- [ ] T056 [US3] Produce the dry-run and real manifests from **one** code path in `crates/renvor-cli/src/generate/manifest.rs` (invariant I-10), so SC-006's exact match is structural
-- [ ] T057 [US3] Implement the JSON envelope in `crates/renvor-cli/src/output/json.rs` per contract C-2: integer `schemaVersion`, `status`, `command`, and `result` xor `error`
-- [ ] T058 [US3] Implement the error-code registry in `crates/renvor-cli/src/output/codes.rs` with every code of contract C-2 mapped to exactly one exit code
+- [ ] T056 [US3] Produce the dry-run and real manifests from **one** code path in `crates/renvor-cli/src/generate/manifest.rs` (invariant I-10), so SC-006's exact match is structural (FR-021)
+- [ ] T057 [US3] Implement the JSON envelope in `crates/renvor-cli/src/output/json.rs` per contract C-2: integer `schemaVersion`, `status`, `command`, and `result` xor `error` (FR-022)
+- [ ] T058 [US3] Implement the error-code registry in `crates/renvor-cli/src/output/codes.rs` with every code of contract C-2 mapped to exactly one exit code (FR-003)
 - [ ] T059 [US3] Ensure failure **also** emits one valid JSON document in `crates/renvor-cli/src/main.rs` — the case that matters most, and the one most often missed
 - [ ] T060 [US3] Enforce stream discipline in `crates/renvor-cli/src/output/mod.rs`: results to `stdout`, everything human to `stderr` (FR-004)
 - [ ] T061 [US3] Handle a prematurely closed `stdout` in `crates/renvor-cli/src/output/mod.rs` without panicking
-- [ ] T062 [US3] Write `crates/renvor-cli/tests/cli/` trycmd contract files covering `--help` structure, every exit code, and the `stdout`/`stderr` split
+- [ ] T062 [US3] Write `crates/renvor-cli/tests/cli/` trycmd contract files covering `--help` structure, every exit code, and the `stdout`/`stderr` split (FR-002)
 - [ ] T063 [US3] Write `insta` snapshots of every JSON document shape in `crates/renvor-cli/tests/cli.rs`
 
 ---
@@ -188,18 +188,19 @@ builds; cancel at each prompt and assert the destination is absent.
 - [ ] T079 [P] Implement and document the four template bounds in `crates/renvor-cli/src/generate/render.rs`: recursion depth, total output bytes, output file count, single-file bytes — each with a **stated value**
 - [ ] T080 [P] Write `crates/renvor-cli/tests/bounds.rs`, one test per bound, asserting `bound_exceeded` with `details.bound` and `details.limit` and an untouched destination
 - [ ] T081 [P] Write `crates/renvor-cli/tests/offline.rs` running every local flow with networking unavailable (SC-011)
-- [ ] T082 [P] Write `crates/renvor-cli/tests/generated.rs` asserting the skeleton formats, compiles, tests, and starts (SC-005) and that two generations from identical inputs produce identical manifests (SC-016)
+- [ ] T082 [P] Write `crates/renvor-cli/tests/generated.rs` asserting the skeleton formats, compiles, tests, and starts (SC-005) and that two generations from identical inputs produce identical manifests (SC-016) (FR-029, FR-031)
 - [ ] T083 Produce the complete resolved dependency inventory in `governance/phase-003-dependency-inventory.md` from the **actual `Cargo.lock`**, not from [`research.md`](research.md), cross-checked with `cargo tree` (FR-044, SC-015)
 - [ ] T084 Record advisories, licences, and MSRV for every resolved transitive dependency in `governance/phase-003-dependency-inventory.md`
 - [ ] T085 [P] Write rustdoc for every public item in `crates/renvor-cli/src/`, and run `cargo doc` with warnings denied
 - [ ] T086 [P] Document the command surface, exit codes, and JSON contract in `docs/docs/` so the public contract is published, not only specified
-- [ ] T087 Record the **three scope narrowings** in `governance/phase-003-evidence.md` — no certificate issuance, no archive support, a wizard shorter than `PLAN.md` §9.1's fifteen prompts — so `PLAN.md` §20 is not later read as fully delivered (CHK058–CHK063)
+- [ ] T087 Record in `governance/phase-003-evidence.md` the **two scope narrowings** (no certificate issuance, no archive support) **and, separately and under its own heading, the constitution principle VII non-compliance** (the wizard does not ask for the nine choices VII requires), so `PLAN.md` §20 is not later read as fully delivered and the VII gap is not filed as a mere narrowing (CHK058–CHK063)
 - [ ] T088 Record the complete FR-001…FR-048 and SC-001…SC-016 evidence mapping in `governance/phase-003-evidence.md`, so a gap appears as an empty cell rather than as an absence nobody looked for
 - [ ] T089 Work through all 69 items of `checklists/{requirements,generation-safety,contracts}.md` and record each verdict
 - [ ] T090 Run `cargo xtask verify` on **both** 1.94.0 and current stable and record both results in `governance/phase-003-evidence.md` (SC-014)
 - [ ] T091 Record in `governance/phase-003-evidence.md` which platforms `.github/workflows/ci.yml` actually exercised, and **claim no platform CI did not run** (SC-014)
 - [ ] T092 Obtain, and record in `governance/phase-003-evidence.md`, two clean-context advisory reviews of the phase — one requirements, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings" statement naming what was checked
 - [ ] T093 Disposition every review finding individually in `governance/phase-003-evidence.md`
+- [ ] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it**
 - [ ] T094 Record in `governance/phase-003-evidence.md` that the **independent human requirements and security review remains open**, that advisory reviews are not independent, and that this phase does **not** assume a waiver is available (FR-046)
 
 ---

@@ -52,6 +52,36 @@ fail-closed defaults).
   reserved so that an unclassified failure is distinguishable from a classified one, because an
   unclassified failure is a defect rather than an outcome.
 
+## Known non-compliance with Constitution principle VII
+
+**This is stated as non-compliance, not as a narrowing.** The clarification session called the
+shorter wizard a "narrowing", and that framing was too soft: constitution v2.0.0 principle VII says
+
+> *"The wizard **MUST** ask for target, transport, persistence model, database, auth starter,
+> frontend, compatible render mode, styling profile where applicable, desktop option, capabilities,
+> and local tooling."*
+
+FR-005a asks for **none of the first nine**, because no subsystem behind them exists — Phase 004 is
+the first transport, and persistence, auth, and frontends come later still. Asking would produce a
+manifest recording choices the generator did not honour, which breaks FR-031 and is its own
+violation.
+
+So the position is:
+
+| | |
+|---|---|
+| **What is true** | Phase 003 ships a `renvor new` that does **not** satisfy principle VII's wizard clause |
+| **Why** | The subsystems the clause names do not exist yet. Compliance is not deferrable by effort; it is blocked by sequence |
+| **What is NOT claimed** | That principle VII is satisfied, that the gap is minor, or that "narrowing" makes it compliant |
+| **What satisfies it** | The phase that completes the wizard once the subsystems exist — `PLAN.md` §20 Phase 025, the unified full-stack generator |
+| **Who decides the waiver question** | **The maintainer.** The constitution permits exceptions only through a time-bounded written waiver naming the violated rule. Whether one is required here — or whether a partially implemented command is simply not yet subject to the clause — is a governance ruling, and this specification does not make it |
+
+**Principle VII's other clauses ARE satisfied**: both interfaces resolve to one validated
+configuration; generation validates before writing, stages in an owned directory, verifies, and
+commits atomically; cancellation and failure leave the destination unchanged; existing files are
+never overwritten; and `--dry-run` produces an accurate manifest without writes. The gap is the
+wizard's question set, and only that.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Create a project by answering questions (Priority: P1)
