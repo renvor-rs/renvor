@@ -27,7 +27,7 @@ for what was true on their own dates.**
 | Image | `ghcr.io/renvor-rs/renvor-site@sha256:56446da7c16e155396114e185206837710eee1587d3b58ef8e5ecca96ddb84af` |
 | Reconciled by | Flux v2.9.4 — only `kustomize-controller` and `source-controller`, both image `v1.9.4` |
 | Reconciler identity | `flux-system/renvor-reconciler` — **not** cluster-admin |
-| Namespaces | `renvor-site` (2 replicas) and `renvor-site-staging` (1 replica) |
+| Namespaces | `renvor-site` (2 pods) and `renvor-site-staging` (1 pod) — counted live |
 | Registry credential in the cluster | **none.** No `imagePullSecret` exists on any ServiceAccount or Pod in either namespace |
 
 The **same digest** runs in both namespaces, and it is the digest whose provenance, SBOMs, and
@@ -93,31 +93,57 @@ with `serviceAccountName: renvor-reconciler`.
 `kustomize-controller` to `cluster-admin`, and that binding is retained, because Kubernetes
 impersonation requires the impersonator to already hold the rights it delegates. What is constrained
 is **what the public repository can cause the controller to do**: repository-driven applies run as
-`renvor-reconciler`, which may write ten resource types in two namespaces, may read no Secret in any
-namespace, and is denied every cluster-scoped resource.
+`renvor-reconciler`, which may **write 10** resource types in two namespaces — `certificates`,
+`deployments`, `ingressroutes`, `issuers`, `limitranges`, `middlewares`, `networkpolicies`,
+`resourcequotas`, `serviceaccounts`, `services` — may additionally **read** exactly two more,
+`pods` and `replicasets`, which `wait: true` health checks require, may read no Secret in any
+namespace, and is denied every cluster-scoped resource. Counted from the live Role, not from the
+manifest that produced it.
 
 A malicious or mistaken commit to the public repository is contained by that boundary. **A
 compromise of the `kustomize-controller` process itself is not.** Hard multi-tenancy would require a
 separate cluster, and this project does not have one.
 
-## 4 — Co-tenants, unchanged
+## 4 — Co-tenants
 
-Renvor is a guest on a shared single-node k3s cluster. Observed 2026-08-17, counts only:
+Renvor is a guest on a shared single-node k3s cluster. Pod counts, before and after the deployment:
 
-| Namespace | Pods |
+| Namespace | 2026-08-17T08:38:49Z (before) | 2026-08-17T21:0xZ (after) |
+|---|---|---|
+| `codexhub` | ≥755 | 768 |
+| `attaa` | ≥161 | 168 |
+| `cert-manager` | ≥96 | 99 |
+| `portfolio` | ≥93 | 95 |
+| `kube-system` | not separately captured | 5 |
+| `gitlab` | not separately captured | 0 |
+
+The cluster's single node reports `MemoryPressure=False DiskPressure=False PIDPressure=False
+Ready=True`. *(The node's hostname is deliberately omitted. Phase 001 limitation **R-17** records
+that this repository already publishes more operational detail about this shared third-party host
+than its own minimisation standard allows; a first draft of this file named the node, and that name
+appears nowhere else on `main`. Adding it would have widened an exposure the project has already
+flagged as needing narrowing, to buy nothing — the condition flags are the fact worth recording.)*
+
+**These counts went up, and that is stated rather than smoothed.** The "before" figures are lower
+bounds: the capture was truncated at thirty rows and grouped by phase, so `Running` pods in the
+smaller namespaces are not included. The observable increase is in `Completed`, `Evicted`, and
+`ContainerStatusUnknown` pods — these namespaces accumulate terminated pods continuously, and 524
+evictions were already recorded on this node before any Renvor object existed.
+
+**So "co-tenants unchanged" is not claimed from these numbers, because these numbers do not
+establish it.** What is established, and by what:
+
+| Claim | Evidence |
 |---|---|
-| `codexhub` | 768 |
-| `attaa` | 168 |
-| `cert-manager` | 99 |
-| `portfolio` | 95 |
-| `kube-system` | 5 |
-| `gitlab` | 0 |
+| Repository-driven reconciliation cannot write in any co-tenant namespace | `SubjectAccessReview` against `system:serviceaccount:flux-system:renvor-reconciler`, denied for every non-Renvor namespace |
+| Renvor created objects only in `renvor-site`, `renvor-site-staging`, and the hand-applied bootstrap in `flux-system` | the applied manifests, and `targetNamespace` on both Kustomizations |
+| Renvor installs no distribution, adds no second ingress controller, and upgrades nothing | it uses the existing Traefik 3.6.13 and cert-manager v1.20.2 through their public APIs, and creates only namespaced objects |
+| TLS is issued by a namespace-scoped `Issuer`, not a `ClusterIssuer` | `apps/renvor-site/overlays/production/issuer.yaml` — editing a cluster-wide issuer would put every other certificate on this shared host at risk of a Renvor mistake |
 
-Node `srv1186371`: `MemoryPressure=False DiskPressure=False PIDPressure=False Ready=True`.
-
-No unrelated workload was created, modified, restarted, or deleted. Renvor installs no distribution,
-adds no second ingress controller, and upgrades nothing; it uses the existing Traefik and
-cert-manager through their public APIs and creates only namespaced objects.
+An earlier draft of this section asserted that "no unrelated workload was created, modified,
+restarted, or deleted". **That was an overclaim** — it is a statement about everything that happened
+on a busy shared host over thirteen hours, and pod counts cannot support it. The narrower claims
+above are the ones the evidence actually carries.
 
 ## 5 — Required checks on `renvor-infra`: a missed deadline, corrected late
 
@@ -171,9 +197,11 @@ Their status after this deployment:
 **Substance met contemporaneously; the gate itself was never run as a gate. Recorded as
 resolved-late, NOT as a gate that ran.**
 
-A full read-only audit of the shared host was performed on **2026-08-17, beginning 08:37Z** — before
-any Renvor object existed on the cluster and before the first `kubectl apply` at **13:13Z**. It
-covered the subject matter T102 names: k3s and kubelet versions, node capacity, allocatable and
+A full read-only audit of the shared host was performed on **2026-08-17, beginning 08:37:14Z** —
+before any Renvor object existed on the cluster. The **first** Renvor object was created at
+**18:02:14Z**, which is the cluster's own `creationTimestamp` on the `renvor-site`,
+`renvor-site-staging`, and `flux-system` namespaces, not a reading of a command log. The gap is
+therefore **9 h 25 min**. It covered the subject matter T102 names: k3s and kubelet versions, node capacity, allocatable and
 conditions; Traefik and cert-manager versions and endpoints; cluster-wide pod phase counts and
 per-namespace distribution; eviction reasons; `kubectl top nodes`; host memory, disk and inode
 usage; the CNI and a direct probe of NetworkPolicy *enforcement* rather than merely its API
@@ -181,9 +209,14 @@ presence; existing GitOps controllers; warning events; systemd timers; and a sea
 backup process.
 
 **What was not done**: it was not executed *as* T102, no contemporaneous T102 record was written,
-and the interval between the audit and the first apply was roughly four and a half hours rather
-than immediate. T102's own text warns that the host is shared with workloads "whose facts change
-without notice", which is exactly why the gate says *immediately*.
+and **9 h 25 min is not "immediately before"** by any reading. T102's own text warns that this host
+is shared with workloads "whose facts change without notice", which is exactly why the gate says
+*immediately*.
+
+*(An earlier draft of this section put the gap at "roughly four and a half hours", derived from the
+first mention of `kubectl apply` in the working log. **That was wrong** — the match was prose inside
+a commit message, not a command. The figure above is taken from the cluster's own object
+timestamps, which cannot be misread that way.)*
 
 **Therefore**: the audit's substance is on the record and is cited above; the **process gate was
 missed** and is recorded as such. No claim is made that T102 ran.
