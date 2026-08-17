@@ -52,11 +52,11 @@ export default function Home() {
                 <strong>Do not adopt Renvor for anything yet.</strong> Nothing is stable,
                 and no compatibility promise applies before a <code>0.1.0</code> release.
               </p>
-              <h2>The command is <code>renover</code></h2>
+              <h2>The command is <code>renvor</code></h2>
               <p>
-                The product is <strong>Renvor</strong>. The installed executable is{' '}
-                <strong><code>renover</code></strong>. The difference is deliberate and
-                permanent — it is not a typographical error.
+                The product, the facade crate, and the installed executable share one
+                spelling: <strong><code>renvor</code></strong>. Installing{' '}
+                <code>renvor-cli</code> will install a binary named <code>renvor</code>.
               </p>
             </div>
           </div>

@@ -1,5 +1,13 @@
 # Web Properties Migration Plan
 
+> **Naming note added 2026-08-17.** Occurrences of **`renover`** below are **historical**.
+> ADR-0010 superseded ADR-0001 on 2026-08-17 and renamed the installed executable to
+> **`renvor`**; the primary command is `renvor new` and the package command is `renvor add`.
+> Nothing below has been edited to agree with that change — this is dated evidence, and
+> rewriting it would make the record disagree with what was actually verified and approved on
+> the dates shown.
+
+
 **Status**: Partly executed, **nothing deployed**. All four repositories exist, are public on
 GitHub, and are canonical there. `renvor-rs/renvor-site` has commits;
 `renvor-rs/renvor-docs` is **commit-empty**; `renvor-rs/renvor-infra` **has one commit**,

@@ -54,7 +54,7 @@ Browser bearer and refresh credentials MUST NOT be stored in `localStorage` or `
 
 ### VII. Deterministic and Safe Generation
 
-`renover new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling.
+`renvor new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling.
 
 Next.js, Yew, Dioxus, and Leptos MUST each offer plain CSS, SCSS, and Tailwind CSS as explicit styling choices. All three are first-party profiles with equivalent functionality, accessibility, auth flows, theme support, and verification. Only selected styling dependencies and files may be generated.
 
@@ -104,7 +104,7 @@ Renvor MUST identify unshipped capabilities as planned and MUST NOT imply they a
 
 ### XIII. Independent Installable Packages
 
-Renvor MUST support separately developed, separately versioned packages published as normal crates on crates.io and installed into an existing compatible application with `renover add`. Official packages MUST live outside the core workspace, use only public extension contracts, and own their repository, release, support, security, documentation, and crates.io lifecycle.
+Renvor MUST support separately developed, separately versioned packages published as normal crates on crates.io and installed into an existing compatible application with `renvor add`. Official packages MUST live outside the core workspace, use only public extension contracts, and own their repository, release, support, security, documentation, and crates.io lifecycle.
 
 Package installation MUST be a declarative, previewable, transactional source change followed by dependency resolution, formatting, build, tests, and an explicit migration/deployment plan. It MUST NOT inject native code into an already running process, mutate a live production database, execute arbitrary remote scripts, overwrite user changes, or hide added permissions and Tauri capabilities.
 
@@ -130,7 +130,7 @@ The separately published `renvor-rbac` crate is the first official reference pac
 
 - Each official package MUST have a separate repository, crates.io package identity, owners, release history, support policy, security contact, continuous integration, documentation, and semantic version.
 - crates.io is the canonical source for installable Renvor package crates. A discovery catalog MAY index compatibility and evidence but MUST NOT replace registry integrity verification.
-- `renover add` MUST install a package into an existing compatible Renvor application's source and manifests, then verify the project. It MUST NOT hot-load code into a live Rust process.
+- `renvor add` MUST install a package into an existing compatible Renvor application's source and manifests, then verify the project. It MUST NOT hot-load code into a live Rust process.
 - Package assets embedded in a crate MUST be listed by package inspection and treated as untrusted until validated. JavaScript dependencies declared by a frontend companion MUST use the selected frontend's normal registry and lockfile.
 - Core and package versions MUST remain independent. Every package MUST declare and test its supported Renvor range.
 - Official packages MUST use the same dependency, license, provenance, SBOM, advisory, trusted-publishing, and release-review controls as core crates.
@@ -179,4 +179,4 @@ Constitution versions follow semantic versioning:
 
 Every phase review and release review MUST include a constitution check. Exceptions are allowed only through a time-bounded written waiver naming the violated rule, reason, compensating controls, owner, expiry, and removal plan. Security release blockers cannot be waived for a public release.
 
-**Version:** 1.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-11
+**Version:** 2.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-17

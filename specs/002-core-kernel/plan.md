@@ -97,7 +97,7 @@ Constitution v1.0.0, ratified 2026-08-11.
 | IV Deterministic lifecycle | yes | PASS | PASS | FR-001…FR-009, FR-042; reverse **actual initialisation** order; FR-039(c) forbids reporting a cycle by budget exhaustion. **D6 records confique's empty-env `Ok(None)` as a silent fallback** and makes rejecting it a proof obligation |
 | V Contract-first compatibility | partial | PASS | PASS | [contracts/](./contracts/) written before implementation. OpenAPI, RFC 9457, GraphQL, CLI clauses **not applicable** |
 | VI Security, privacy, fail-closed | yes | PASS | PASS | FR-037…FR-041; **D2 — Renvor owns every output path `secrecy` does not cover, including `Display`, which `secrecy` does not implement at all**; FR-038 fails closed; run identifier uses OS randomness |
-| VII Deterministic generation | no | N/A | N/A | `renover` is Phase 003 |
+| VII Deterministic generation | no | N/A | N/A | `renover` is Phase 003 — *renamed `renvor` 2026-08-17, ADR-0010* |
 | VIII Feature and platform isolation | yes | PASS | PASS | `confique` `toml` only; `petgraph` minimal features; `tokio` without `net`/`fs`/`process`; `test-util` dev-only; **the crate DAG below is the proof, and its limit is stated** |
 | IX Real-boundary verification | yes | PASS | PASS | Failure injection at **7 of 7** phases; property/fuzz on TOML; **a 1024-node linear chain test for the recursive `tarjan_scc`**, so the stack claim is evidence |
 | X Documentation is a release artifact | yes | PASS | PASS | `missing_docs = "warn"`; examples compile and run; FR-036 requires the instability statement in the surface's own published documentation |

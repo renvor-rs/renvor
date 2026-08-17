@@ -54,7 +54,8 @@ again — a silent failure on our side should not cost you your report.
 
 ## Scope
 
-**In scope:** the `renvor` crate, the `renvor-cli` crate and its `renover` executable, the
+**In scope:** the `renvor` crate, the `renvor-cli` crate and the `renvor` executable it
+installs, the
 build and release automation in `.github/workflows/`, and this repository's supply chain.
 
 **Out of scope:** vulnerabilities in third-party dependencies (report those upstream,
@@ -65,8 +66,8 @@ claim about the application built on top of it.
 ## Current status — read this before relying on it
 
 **Renvor is pre-release and unpublished.** **Nothing has been published to any registry** —
-`renvor`, `renvor-cli`, and `renover` are all absent from crates.io — so no version of Renvor
-can currently reach a user's dependency graph.
+`renvor` and `renvor-cli` are both absent from crates.io — so no version of Renvor can
+currently reach a user's dependency graph.
 
 The repository contains a working **transport-independent kernel** as of Phase 002. It
 **accepts no untrusted input over any network**: it has no transport, no listener, and no

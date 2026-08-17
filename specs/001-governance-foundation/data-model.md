@@ -17,7 +17,7 @@ One row per public name Renvor intends to occupy.
 | Field | Type | Rules |
 |---|---|---|
 | `item` | enum | One of: product name, package prefix, facade package, CLI package, executable, state directory, environment prefix, hosting organization, hosting repository, documentation domain |
-| `intended_value` | string | The exact string being claimed, e.g. `renvor`, `renover`, `.renvor/`, `RENVOR_` |
+| `intended_value` | string | The exact string being claimed, e.g. `renvor`, `renover`, `.renvor/`, `RENVOR_`. *(`renover` is retained as a historical example: ADR-0010 renamed the executable to `renvor` on 2026-08-17.)* |
 | `location_checked` | string | Where availability was observed — registry URL, organization URL, registrar lookup |
 | `date_checked` | date | ISO 8601. Required. |
 | `status` | enum | `available` \| `owned-by-project` \| `held-by-other` \| `ambiguous` |

@@ -42,16 +42,18 @@ The three identity constants remain:
 | --- | --- | --- |
 | `renvor::VERSION` | `&str` | The crate version from the manifest |
 | `renvor::MSRV` | `&str` | `"1.94.0"` |
-| `renvor::EXECUTABLE` | `&str` | `"renover"` |
+| `renvor::EXECUTABLE` | `&str` | `"renvor"` |
 
 ```rust
 assert_eq!(renvor::MSRV, "1.94.0");
-assert_eq!(renvor::EXECUTABLE, "renover");
+assert_eq!(renvor::EXECUTABLE, "renvor");
 ```
 
 `EXECUTABLE` exists so documentation, tests, and diagnostics reference one constant rather
-than repeating a string readers mistake for a misspelling. A unit test asserts it is not
-`"renvor"`, which guards the naming decision against a well-meaning "spelling fix".
+than repeating a literal. The CLI package and the binary it installs are deliberately named
+differently — `cargo install renvor-cli` installs `renvor` — which is why this constant is
+not simply the crate name. A unit test pins its value in both directions, so it cannot drift
+silently.
 
 ## Prose and API stay at the same version
 

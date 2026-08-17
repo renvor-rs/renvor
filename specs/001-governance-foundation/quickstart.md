@@ -73,6 +73,9 @@ idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
 [ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
   || { echo "FAIL: control crate did not return 200 — registry check is not working"; exit 1; }
 
+# `renover` is retained deliberately: ADR-0010 renamed the executable to `renvor` on
+# 2026-08-17, and this loop keeps checking the abandoned name so the record still shows
+# it was never published either. The recorded result below is `404 x3`.
 for name in renvor renvor-cli renover; do
   code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
   case "$code" in
@@ -288,6 +291,9 @@ idx() { printf 'https://index.crates.io/%s/%s/%s' "${1:0:2}" "${1:2:2}" "$1"; }
 
 [ "$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx serde)")" = 200 ] \
   || { echo "FAIL: control crate did not return 200 — cannot prove the negative"; exit 1; }
+# `renover` is retained deliberately: ADR-0010 renamed the executable to `renvor` on
+# 2026-08-17, and this loop keeps checking the abandoned name so the record still shows
+# it was never published either. The recorded result below is `404 x3`.
 for name in renvor renvor-cli renover; do
   code=$(curl -s -o /dev/null -m 10 -A "$UA" -w '%{http_code}' "$(idx "$name")")
   [ "$code" = 404 ] || { echo "FAIL: $name returned $code, expected 404"; exit 1; }

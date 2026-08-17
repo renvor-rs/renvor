@@ -25,20 +25,22 @@
 
 Renvor is a Rust framework, currently in Phase 002 of its development programme.
 
-## The command is `renover`
+## The command is `renvor`
 
-The product is **Renvor**. The installed executable is **`renover`**.
+The product, the facade crate, and the installed executable all share one spelling:
+**`renvor`**. `cargo install renvor-cli` will install a binary named `renvor`.
 
-That difference is deliberate and permanent — it is **not** a typographical error. The
-reasoning, along with the alternatives that were rejected, is recorded in
-[ADR-0001](decisions/0001-public-naming-and-namespace.md).
+An earlier decision named the executable `renover`, deliberately distinct from the product.
+That is no longer the case: [ADR-0010](decisions/0010-unify-product-and-executable-name.md)
+supersedes [ADR-0001](decisions/0001-public-naming-and-namespace.md) and records why,
+including the alternatives that were rejected.
 
 | Thing | Name |
 |---|---|
 | Product, framework, organization | `Renvor` |
 | Facade crate | `renvor` |
 | CLI crate | `renvor-cli` |
-| **Executable you type** | **`renover`** |
+| **Executable you type** | **`renvor`** |
 | Project state directory | `.renvor/` |
 | Environment prefix | `RENVOR_` |
 
@@ -97,11 +99,16 @@ Licensed under either of
 
 at your option.
 
-### The Renvor mark is not covered by that grant
+### The Renvor marks are not covered by that grant
 
-**`assets/renvor-mark-v7.svg` — the Renvor mark shown at the top of this file — is a brand
-asset and is NOT licensed under `MIT OR Apache-2.0`.** It is present so this repository can
-identify itself, and for no other purpose.
+**The brand assets in `assets/` are NOT licensed under `MIT OR Apache-2.0`.** They are
+present so this repository can identify itself, and for no other purpose:
+
+| File | Role |
+|---|---|
+| `assets/renvor-lockup-v21-light.svg` | The v21 lockup shown at the top of this file on a light background |
+| `assets/renvor-lockup-v21-dark.svg` | The same lockup for a dark background |
+| `assets/renvor-mark-v7.svg` | The superseded v7 mark. **Retained deliberately**: `governance/phase-001-evidence.md` and ADR-0006 record its presence in this repository as dated evidence, and deleting it would make a checkable claim uncheckable |
 
 The dual licence above covers Renvor's **source and documentation**. It does not grant any
 right to use, reproduce, or modify the mark. **No implied trademark or brand licence is
@@ -109,7 +116,7 @@ granted**, and the presence of the file in a permissively licensed repository mu
 read as one.
 
 **Usage terms were decided on 2026-08-12 (T098): all rights reserved, under a written brand
-usage policy.** The mark, the names **Renvor** and **`renover`**, and Renvor's wordmarks,
+usage policy.** The mark, the name **Renvor**, and Renvor's wordmarks,
 illustrations, and visual identity are excluded from the code licences above.
 
 **Permitted without asking**: truthful nominative references ("built with Renvor",

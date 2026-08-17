@@ -30,23 +30,23 @@ Phase 004's work.
 exercises the surface and its feedback has been applied. **Do not adopt Renvor for anything
 yet** — no compatibility promise applies before a `0.1.0` release.
 
-## The command is `renover`
+## The command is `renvor`
 
-The product is **Renvor**. The installed executable is **`renover`**.
-
-That difference is deliberate and permanent. It is **not** a typographical error.
+The product, the facade crate, and the installed executable share one spelling: **`renvor`**.
+`cargo install renvor-cli` will install a binary named `renvor`.
 
 | Thing | Name |
 | --- | --- |
 | Product, framework, organization | `Renvor` |
 | Facade crate | `renvor` |
 | CLI crate | `renvor-cli` |
-| Executable you type | **`renover`** |
+| Executable you type | **`renvor`** |
 | Project state directory | `.renvor/` |
 | Environment prefix | `RENVOR_` |
 
-The reasoning, with the alternatives that were rejected, is recorded in decision record
-ADR-0001 in the repository.
+An earlier decision, ADR-0001, named the executable `renover` — deliberately distinct from
+the product name. **ADR-0010 supersedes it**, and records the reasoning and the rejected
+alternatives. Both records are in the repository.
 
 ## Where to go next
 

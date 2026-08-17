@@ -393,7 +393,8 @@ assert the resulting rollback order, with no network or filesystem dependency.
 
 ## Out of Scope
 
-HTTP, Axum, and Tower adapters; persistence, SQLx, and SeaORM; the `renover` CLI and project
+HTTP, Axum, and Tower adapters; persistence, SQLx, and SeaORM; the `renover` CLI *(renamed
+`renvor` on 2026-08-17 by ADR-0010, after this specification was accepted)* and project
 generation; authentication and authorization enforcement; frontend and desktop output;
 deployment of any kind; publication of any crate, package, image, release, or tag; and any
 change to the four transferred deployment gates.
