@@ -143,10 +143,27 @@ establish it.** What is established, and by what:
 
 | Claim | Evidence |
 |---|---|
-| Repository-driven reconciliation cannot write in any co-tenant namespace | `SubjectAccessReview` against `system:serviceaccount:flux-system:renvor-reconciler`, denied for every non-Renvor namespace |
+| Repository-driven reconciliation cannot write in any co-tenant namespace | `SubjectAccessReview` against `system:serviceaccount:flux-system:renvor-reconciler` — **re-run live on 2026-08-17 while writing this record**, see §4.1 |
 | Renvor created objects only in `renvor-site`, `renvor-site-staging`, and the hand-applied bootstrap in `flux-system` | the applied manifests, and `targetNamespace` on both Kustomizations |
 | Renvor installs no distribution, adds no second ingress controller, and upgrades nothing | it uses the existing Traefik 3.6.13 and cert-manager v1.20.2 through their public APIs, and creates only namespaced objects |
 | TLS is issued by a namespace-scoped `Issuer`, not a `ClusterIssuer` | `apps/renvor-site/overlays/production/issuer.yaml` — editing a cluster-wide issuer would put every other certificate on this shared host at risk of a Renvor mistake |
+
+### 4.1 The boundary, re-proven rather than cited
+
+`kubectl auth can-i` is not used here: it gives a **false positive** on subresources — `create
+serviceaccounts/token` answers *yes* against a plain `serviceaccounts` rule while the authoritative
+`SubjectAccessReview` answers `allowed=false`. Every result below is a `SubjectAccessReview`.
+
+| Probe | Result |
+|---|---|
+| `secrets` × 8 verbs (`get list watch create update patch delete` and each namespace) across `renvor-site`, `renvor-site-staging`, `flux-system`, `kube-system`, `cert-manager`, `gitlab`, `codexhub`, `attaa`, `portfolio`, `default` | **80 / 80 denied** |
+| `create` on `namespaces`, `nodes`, `customresourcedefinitions`, `clusterroles`, `clusterrolebindings` | **5 / 5 denied** |
+| **Positive control** — `create deployments` in `renvor-site` | **allowed** |
+| **Negative control** — `create deployments` in `gitlab` | **denied** |
+
+The two controls matter: without the first, a boundary that denied *everything* — including the
+work it is supposed to do — would satisfy every denial above and be indistinguishable from a
+correct one.
 
 An earlier draft of this section asserted that "no unrelated workload was created, modified,
 restarted, or deleted". **That was an overclaim** — it is a statement about everything that happened
