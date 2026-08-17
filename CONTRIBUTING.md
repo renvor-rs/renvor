@@ -2,9 +2,10 @@
 
 Thank you for considering a contribution.
 
-**Renvor is pre-release.** The framework ships no runtime capability yet; the current
-work is the project foundation — governance, naming, toolchain, and repository security.
-If you are looking for a feature to implement, there is not one yet.
+**Renvor is pre-release and unpublished.** Phase 002 delivered a working
+transport-independent kernel — lifecycle, provider resolution, layered configuration, health,
+and failure injection. It has no transport yet, so it cannot serve a request. Every API is
+explicitly unstable and expected to change once the first transport adapter exercises it.
 
 ## Before you start
 

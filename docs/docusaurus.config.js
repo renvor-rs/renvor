@@ -11,7 +11,7 @@ import { themes as prismThemes } from 'prism-react-renderer';
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'Renvor',
-  tagline: 'A Rust framework — pre-release, no runtime capability yet',
+  tagline: 'A Rust framework — pre-release, unpublished, and explicitly unstable',
   favicon: 'img/favicon.ico',
 
   url: 'https://renvor.dev',
@@ -80,7 +80,7 @@ const config = {
       announcementBar: {
         id: 'pre_release',
         content:
-          'Renvor is pre-release and ships no runtime capability. Do not adopt it yet.',
+          'Renvor is pre-release, unpublished, and has no transport yet. Every API is unstable. Do not adopt it yet.',
         backgroundColor: '#8a1f11',
         textColor: '#ffffff',
         isCloseable: false,

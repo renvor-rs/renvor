@@ -1,0 +1,17 @@
+# Lower-precedence file.
+#
+# NOTE ON TOML SCOPING: every bare key below sits BEFORE the first table header on purpose.
+# In TOML, a bare key written after `[limits]` belongs to `limits`, not to the document root —
+# an earlier version of these fixtures appended `tags` at the end and silently produced
+# `limits.tags`, which made the array obligation read a default instead of the fixture.
+port = 8080
+name = "base"
+tags = ["a", "b", "c"]
+
+[server]
+host = "base-host"
+threads = 4
+timeout_ms = 1000
+
+[limits]
+retries = [1, 2, 3]

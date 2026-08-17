@@ -1,0 +1,92 @@
+# Typed, layered configuration (spec FR-015…FR-018, FR-038, FR-044) and the Renvor secret
+# boundary type (FR-037a).
+#
+# This crate exists so that `renvor-core` does not have to carry a parser, a derive macro, or a
+# secret type. A consumer taking `renvor-core` directly — or `renvor` with
+# `default-features = false` — resolves none of them. That claim is asserted at T101/T102 with a
+# positive control, because an isolation claim nobody tested is an isolation hope.
+#
+# `publish = true`: see the note in crates/renvor-core/Cargo.toml and research D13.
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-config"
+description = "Typed, layered configuration and secret redaction for the Renvor framework: built-in defaults, TOML files, and environment variables with source attribution."
+documentation = "https://docs.rs/renvor-config"
+readme = "README.md"
+keywords = ["renvor", "configuration", "toml"]
+categories = ["config"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# Typed decoding (research D7). `derive` is required for the schema declarations FR-015 implies.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+# The ONLY document format this phase accepts. FR-015 permits exactly three source kinds, and
+# TOML is the only file format among them.
+toml = { version = "1.1.4", default-features = false, features = ["parse", "serde"] }
+
+# Access control and zeroization only. Renvor owns the OUTPUT contract — `Display`, error
+# messages, error context, tracing fields, and serialization — because this crate supplies none
+# of them and implements no `Display` at all (research D2, contract C-C9).
+#
+# Its ONLY optional feature is `serde`, and it is deliberately NOT enabled: contract C-C9 requires
+# serialization of a secret to be refused, so opting into the crate's serialization support would
+# work directly against the requirement. Verified against the resolver, which reports
+# "available features: serde" and nothing else.
+secrecy = { version = "0.10.3", default-features = false }
+
+# Instrumentation only, and specifically the `Value` trait: a structured tracing field is a
+# SEPARATE output path from `Display` (contract C-C9), because a subscriber that formats fields
+# itself never calls `Display`. Like `renvor-core`, this crate NEVER installs a global subscriber.
+#
+# `zeroize` is deliberately NOT declared: `secrecy` re-exports it, and a second version
+# requirement here could drift from the one `secrecy` resolves.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+# `O_NONBLOCK` only — one integer constant, used with `std`'s own
+# `OpenOptionsExt::custom_flags` so no `unsafe` and no FFI call appears in Renvor's source
+# (this workspace declares `unsafe_code = "forbid"`).
+#
+# # Why this adds nothing to the resolved graph
+#
+# `libc` was ALREADY resolved before this line existed, arriving transitively as
+# `renvor-core -> getrandom 0.4.3 -> libc 0.2.189`. Declaring it directly promotes an existing
+# node; it does not add one. The alternative considered was `rustix`, which offers a safe
+# `open`/`fstat` pair but brings `bitflags`, `errno`, and `linux-raw-sys` with it — three new
+# packages, three new licences to clear, and three more things to inventory under FR-040, to
+# obtain a constant `libc` already exposes.
+#
+# # Why it is target-gated
+#
+# `O_NONBLOCK` is a POSIX flag. Windows has no FIFO opened by ordinary path in this sense, and
+# `libc` does not define the constant there, so a bare dependency would fail to compile. The
+# TOCTOU half of T143's fix — taking metadata from the OPEN DESCRIPTOR rather than re-resolving
+# the pathname — is platform-independent and applies on Windows too; only the non-blocking open
+# is unix-specific.
+[target.'cfg(unix)'.dependencies]
+libc = { version = "0.2.189", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true

@@ -29,20 +29,24 @@ export default function Home() {
   return (
     <Layout
       title={siteConfig.title}
-      description="Renvor is a Rust framework. It is pre-release and ships no runtime capability yet.">
+      description="Renvor is a Rust framework. It is pre-release, unpublished, and has no transport adapter yet.">
       <HomepageHeader />
       <main>
         <div className="container margin-vert--lg">
           <div className="row">
             <div className="col col--8 col--offset-2">
-              <h2>Renvor does not work yet</h2>
+              <h2>Renvor cannot serve a request yet</h2>
               <p>
-                The <code>renvor</code> crate exposes three constants and nothing else —
-                and it is <strong>not published</strong>, so there is no way to install
-                it. What exists today is the project foundation — governance,
-                verified names, a pinned toolchain, a licence policy, and a fail-closed
-                verification sequence — built before any code, so the first line of
-                functionality lands into a project that can already verify itself.
+                <strong>Nothing is published</strong>, so there is no way to install
+                Renvor. What exists today is a working transport-independent kernel:
+                a seven-phase application lifecycle, provider dependency resolution,
+                layered configuration with secret redaction, enforced deadlines on
+                every call into your code, and independent liveness and readiness.
+              </p>
+              <p>
+                It has <strong>no transport</strong> — no HTTP server, no database
+                adapter, no CLI. You can start and stop an application; you cannot
+                serve anything with one.
               </p>
               <p>
                 <strong>Do not adopt Renvor for anything yet.</strong> Nothing is stable,

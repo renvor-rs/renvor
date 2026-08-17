@@ -17,7 +17,21 @@ Every package intended for publication declares all of the following. A missing 
 | `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly |
 | `include` or `exclude` | Explicit — the shipped file set is stated, never inferred |
 
-**Prohibited**: any git or path dependency in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
+**Prohibited**: a **git** dependency, or a **path-only** dependency, in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
+
+> **Corrected 2026-08-16 (T118).** This line previously read "any git or path dependency", which is
+> stricter than FR-040 and stricter than reality. FR-040's words are *path-**only*** dependency, and
+> the difference is the whole mechanism by which a multi-crate workspace publishes at all:
+>
+> | Form | Publishable? | Why |
+> |---|---|---|
+> | `{ git = "…" }` | **No** | crates.io rejects it; nothing pins what was built |
+> | `{ path = "../x" }` | **No** | Nothing tells the registry which version to resolve — this is the *path-only* case FR-040 names |
+> | `{ path = "../x", version = "0.0.0" }` | **Yes** | cargo rewrites it to the version requirement at publish time and **drops the path** |
+>
+> The facade has carried `{ path, version }` since Phase 002 and was compliant throughout; the
+> contract text was not. Read literally, the old wording made the workspace unpublishable by rule
+> while it was publishable in fact.
 
 ## Rehearsal procedure
 
@@ -25,12 +39,38 @@ Run from a clean checkout. Performs **zero** publish operations.
 
 | Step | Command | Proves |
 |---|---|---|
-| 1 | `cargo package -p renvor --list` | The exact file set that would ship |
-| 2 | Inspect that list | No secret, local configuration, build output, or unintended asset (FR-039) |
-| 3 | `cargo package -p renvor` | The artifact builds |
-| 4 | `cargo publish --dry-run -p renvor` | Full publish verification without network write |
-| 5 | Compute `sha256` of the artifact | Checksum recorded in evidence |
+| 1 | `cargo package -p <crate> --list`, per publishable crate | The exact file set that would ship |
+| 2 | Inspect each list | No secret, local configuration, build output, or unintended asset (FR-039) |
+| 3 | `cargo package --workspace` | The artifacts build |
+| 4 | `cargo publish --dry-run --workspace` | Full publish verification without network write |
+| 5 | Compute `sha256` of each artifact | Checksums recorded in evidence |
 | 6 | Query the live registry | **Zero** versions exist — absence of publication proven, not assumed (SC-010) |
+
+> **Amended 2026-08-16 (Phase 002).** Steps 1, 3, and 4 read `-p renvor` until Phase 002. The
+> publishable set grew from **1 crate to 4** — `renvor-core`, `renvor-config`, `renvor-testkit`,
+> and the facade `renvor` — and the single-crate form then stopped working *at all*, rather than
+> merely covering less:
+>
+> ```text
+> $ cargo publish -p renvor --dry-run
+> error: failed to prepare local package for uploading
+> Caused by:
+>   no matching package named `renvor-config` found
+>   location searched: crates.io index
+> ```
+>
+> The facade now depends on crates that are not on the registry, and `--dry-run` resolves
+> dependencies from the registry. **Marking those crates publishable does not fix it** — the
+> failure is about registry *presence*, not about the `publish` flag. `cargo publish --dry-run
+> --workspace` does work, because cargo stages the workspace members into a temporary registry and
+> verifies the whole chain; it requires every member of the chain to be publishable, which is why
+> the three new crates are `publish = true`.
+>
+> This is a consequence of ADR-0002's own provision that *"later phases add implementation crates
+> behind it"*, so it is an amendment to the procedure rather than a change of decision. `xtask`
+> remains `publish = false` and is excluded automatically — asserted, not assumed, by a positive
+> control in `release-dry-run.yml`. Evidence: `specs/002-core-kernel/research.md` §D13
+> (four-case experiment); proposed **ADR-0008**.
 
 Step 6 is the one people skip. Proving a negative requires looking; "we didn't run publish" is an assertion, while "the registry reports no versions" is evidence.
 

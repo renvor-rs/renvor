@@ -24,11 +24,11 @@ const EXIT_OK: i32 = 0;
 const EXIT_STEP_FAILED: i32 = 1;
 /// A required toolchain is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
-/// The working tree was dirty after an otherwise successful run (step 10).
+/// The working tree was dirty after an otherwise successful run (step 11).
 const EXIT_DIRTY_TREE: i32 = 3;
 
 /// Total number of steps in the sequence, used only for progress output.
-const TOTAL_STEPS: usize = 10;
+const TOTAL_STEPS: usize = 11;
 
 /// A tool the sequence needs, how to detect it, and how to install it.
 struct Tool {
@@ -50,7 +50,7 @@ const REQUIRED: &[Tool] = &[
         program: "git",
         probe: &["--version"],
         name: "git",
-        purpose: "secret scanning and working-tree cleanliness, steps 7 and 10",
+        purpose: "secret scanning and working-tree cleanliness, steps 8 and 11",
         install: "https://git-scm.com/downloads",
     },
     Tool {
@@ -204,13 +204,23 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 7: secret scan ----
+    // ---- Step 7: architecture invariants ----
+    //
+    // Five claims the project makes that are otherwise only assertions in prose. Each is checked
+    // against the RESOLVED graph, a real compile, the actual manifests, or the actual document
+    // text — and each carries a positive control: a query that must find what the first query must
+    // not, so a check that silently stopped working is caught rather than reported as a pass.
+    if !architecture_invariants(&root) {
+        return EXIT_STEP_FAILED;
+    }
+
+    // ---- Step 8: secret scan ----
     // `gitleaks detect` was REMOVED in Gitleaks 8.x. The history scanner is now
     // `gitleaks git`, and the working-tree scanner is `gitleaks dir`. Both run:
     // the history scan cannot see uncommitted files, and the directory scan cannot
     // see deleted-but-committed ones. Neither substitutes for the other.
     if !run(
-        7,
+        8,
         "secret scan (history)",
         "gitleaks",
         &["git", ".", "--no-banner"],
@@ -220,7 +230,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        7,
+        8,
         "secret scan (working tree)",
         "gitleaks",
         &["dir", ".", "--no-banner"],
@@ -230,11 +240,11 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 8: documentation site ----
+    // ---- Step 9: documentation site ----
     let docs = root.join("docs");
     if !docs.join("package.json").is_file() {
         step_fail(
-            8,
+            9,
             "documentation site",
             "docs/package.json not found — the documentation package is missing",
         );
@@ -245,7 +255,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        8,
+        9,
         "documentation site (install)",
         "npm",
         &["ci"],
@@ -255,7 +265,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
     if !run(
-        8,
+        9,
         "documentation site (build)",
         "npm",
         &["run", "build"],
@@ -265,7 +275,7 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 9: link check over the BUILT output ----
+    // ---- Step 10: link check over the BUILT output ----
     //
     // `--root-dir` is required, not optional: the built site uses root-relative links
     // (`/docs/intro`). Without it lychee cannot resolve a single one against the local
@@ -277,7 +287,7 @@ fn verify() -> i32 {
     let link_root = docs.join("build");
     let link_root = link_root.to_string_lossy().to_string();
     if !run(
-        9,
+        10,
         "link check",
         "lychee",
         &[
@@ -295,16 +305,16 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 10: working-tree cleanliness ----
+    // ---- Step 11: working-tree cleanliness ----
     // This is what proves the ignore rules are correct rather than merely present.
     match dirty_entries(&root) {
         Err(message) => {
-            step_fail(10, "working-tree cleanliness", &message);
+            step_fail(11, "working-tree cleanliness", &message);
             EXIT_STEP_FAILED
         }
         Ok(entries) if entries.is_empty() => {
             step_ok(
-                10,
+                11,
                 "working-tree cleanliness",
                 "no untracked or modified files",
             );
@@ -314,7 +324,7 @@ fn verify() -> i32 {
         }
         Ok(entries) => {
             step_fail(
-                10,
+                11,
                 "working-tree cleanliness",
                 "the working tree is not clean",
             );
@@ -453,4 +463,613 @@ fn workspace_root() -> std::path::PathBuf {
         .parent()
         .expect("xtask manifest directory always has a parent")
         .to_path_buf()
+}
+
+/// Step 7: the crate DAG, the facade's feature isolation, that the lean facade **compiles**, that
+/// no publishable package carries an unresolvable dependency, and the SC-022 wording agreement.
+///
+/// Kept in one step because all five share a shape: **a claim, and a control that proves the check
+/// can fail**. Splitting them would multiply the progress output without adding information.
+fn architecture_invariants(root: &std::path::Path) -> bool {
+    if !crate_dag_holds(root) {
+        return false;
+    }
+    if !facade_feature_isolation_holds(root) {
+        return false;
+    }
+    if !lean_facade_compiles(root) {
+        return false;
+    }
+    if !publishable_dependencies_are_resolvable(root) {
+        return false;
+    }
+    if !instability_wording_agrees(root) {
+        return false;
+    }
+    step_ok(
+        7,
+        "architecture invariants",
+        "crate DAG, facade isolation, lean compile, publishable dependencies, and instability \
+         wording all hold, each with a control",
+    );
+    true
+}
+
+/// Runs a cargo subcommand quietly and reports only whether it succeeded.
+///
+/// Separate from [`run`] because these are *probes*: one of them is expected to fail, and a probe
+/// that printed a step banner for its own expected failure would read as a broken run.
+fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
+    std::process::Command::new("cargo")
+        .args(args)
+        .current_dir(root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// T111: the facade **compiles** without default features, for every target.
+///
+/// [`facade_feature_isolation_holds`] asks `cargo tree` what the graph resolves to. That is not
+/// the same question as whether the code builds, and the difference is not academic: the
+/// `configuration` example used `renvor::config` with no `required-features` declaration, so
+/// `--no-default-features --all-targets` failed to compile while every tree query stayed green.
+/// Resolving a graph is not compiling against it.
+fn lean_facade_compiles(root: &std::path::Path) -> bool {
+    // THE GATE. `--all-targets` is the load-bearing flag: without it, examples and tests are never
+    // built and the whole failure mode is invisible.
+    if !cargo_succeeds(
+        root,
+        &[
+            "check",
+            "--locked",
+            "-p",
+            "renvor",
+            "--no-default-features",
+            "--all-targets",
+        ],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo check --locked -p renvor --no-default-features --all-targets` FAILED — a target \
+             outside the `config` feature depends on it, or an example is missing its \
+             `required-features` declaration",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL 1: with default features the whole target set, examples included, compiles.
+    // Without this, deleting every example would satisfy the gate above perfectly.
+    if !cargo_succeeds(
+        root,
+        &["check", "--locked", "-p", "renvor", "--all-targets"],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo check --locked -p renvor --all-targets` failed, so the lean check above proves \
+             nothing about a build that works",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL 2: the `configuration` example is a real target that genuinely needs the
+    // feature. This is the one that must FAIL. If the example ever stopped using `renvor::config`,
+    // the gate above would still pass while having nothing left to guard, and only this notices.
+    if cargo_succeeds(
+        root,
+        &[
+            "check",
+            "--locked",
+            "-p",
+            "renvor",
+            "--no-default-features",
+            "--example",
+            "configuration",
+        ],
+    ) {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the `configuration` example builds WITHOUT the `config` feature, so its \
+             `required-features` declaration guards nothing and the lean-build gate is vacuous",
+        );
+        return false;
+    }
+
+    true
+}
+
+/// Resolves one crate's normal-edge dependency graph.
+fn normal_edges(root: &std::path::Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("cargo")
+        .args(["tree", "--edges", "normal", "--prefix", "none"])
+        .args(args)
+        .current_dir(root)
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// T101: the crate DAG has the direction the plan claims, with positive controls.
+fn crate_dag_holds(root: &std::path::Path) -> bool {
+    // `renvor-core` carries no parser, no derive macro, and no secret type. That absence is the
+    // whole reason `renvor-config` exists as a separate crate.
+    let Some(core) = normal_edges(root, &["-p", "renvor-core"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor-core` failed",
+        );
+        return false;
+    };
+    for forbidden in ["serde ", "toml ", "secrecy "] {
+        if core.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "renvor-core resolves `{}`, which the crate split exists to prevent",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL 1: the query works and finds what IS there.
+    if !core.contains("petgraph") || !core.contains("tokio") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the renvor-core tree query found neither petgraph nor tokio, so it is not reading the graph",
+        );
+        return false;
+    }
+
+    // Nothing depends on `renvor-testkit`, which is what keeps `test-util` out of every production
+    // graph.
+    for package in ["renvor", "renvor-core", "renvor-config"] {
+        let Some(tree) = normal_edges(root, &["-p", package]) else {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!("`cargo tree -p {package}` failed"),
+            );
+            return false;
+        };
+        if tree.contains("renvor-testkit") {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "{package} depends on renvor-testkit, which would put test-util in a production graph"
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL 2: the facade DOES depend on renvor-core, so the absences above are facts
+    // about the graph rather than about an empty query.
+    let Some(facade) = normal_edges(root, &["-p", "renvor"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor` failed",
+        );
+        return false;
+    };
+    if !facade.contains("renvor-core") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the facade tree does not show renvor-core, so the DAG queries are not working",
+        );
+        return false;
+    }
+    true
+}
+
+/// T102: `renvor` with `--no-default-features` resolves none of the configuration crates, and
+/// **with** default features resolves them — both directions, because either alone is half a claim.
+fn facade_feature_isolation_holds(root: &std::path::Path) -> bool {
+    let lean = normal_edges(root, &["-p", "renvor", "--no-default-features"]);
+    let Some(lean) = lean else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the core-only facade tree query failed",
+        );
+        return false;
+    };
+    for forbidden in ["serde ", "toml ", "secrecy ", "confique "] {
+        if lean.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` without default features resolves `{}`",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // POSITIVE CONTROL: the same query WITH default features must resolve them. Without this, a
+    // broken query returning nothing would read as perfect isolation — and the plan's stated
+    // limit, that default-feature consumers still get the configuration dependencies, would go
+    // unproven rather than proven true.
+    let Some(full) = normal_edges(root, &["-p", "renvor"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the default facade tree query failed",
+        );
+        return false;
+    };
+    for expected in ["serde ", "toml ", "secrecy "] {
+        if !full.contains(expected) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` WITH default features does not resolve `{}`, so the isolation check proves nothing",
+                    expected.trim()
+                ),
+            );
+            return false;
+        }
+    }
+    true
+}
+
+/// T118: every dependency of a publishable package is resolvable from a registry.
+///
+/// FR-040 prohibits a **path-only** dependency in a publishable package, and prohibits git
+/// dependencies outright. `{ path, version }` is permitted, and is how a multi-crate workspace
+/// publishes at all: cargo rewrites it to the version requirement and drops the path.
+///
+/// Three documents stated this rule and **two stated it wrongly**, as "any path dependency" —
+/// which, read literally, made this workspace unpublishable by rule while it was publishable in
+/// fact. Nothing noticed, because nothing executed it. This does.
+///
+/// # Why this reads the manifests as text rather than asking `cargo metadata`
+///
+/// `cargo metadata` emits JSON, and parsing JSON needs a dependency. `xtask` is **deliberately
+/// dependency-free**, and its manifest says why: the verification runner is the thing that checks
+/// the dependency policy, so giving it dependencies would put the checker's own supply chain
+/// outside the check it performs. That principle outranks the convenience of a parser here.
+///
+/// The scan is therefore line-oriented, and **fails closed** on any manifest shape it does not
+/// recognise — a `[dependencies.name]` sub-table is refused rather than skipped, because skipping
+/// what it cannot read is exactly how a text scan reports a clean result it never earned.
+fn publishable_dependencies_are_resolvable(root: &std::path::Path) -> bool {
+    let Some(manifests) = workspace_manifests(root) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the workspace manifests could not be read",
+        );
+        return false;
+    };
+
+    match scan_manifests(&manifests) {
+        Ok(()) => true,
+        Err(reason) => {
+            step_fail(7, "architecture invariants", &reason);
+            false
+        }
+    }
+}
+
+/// The pure half of [`publishable_dependencies_are_resolvable`].
+///
+/// Separated so its refusals can be unit-tested against synthetic manifests. A check whose failure
+/// path has never run is a check nobody has evidence about.
+fn scan_manifests(manifests: &[(String, String)]) -> Result<(), String> {
+    let mut publishable = 0_usize;
+    let mut examined = 0_usize;
+    let mut path_and_version = 0_usize;
+
+    for (name, text) in manifests {
+        // `publish = false` is what exempts a package from this rule.
+        if text.contains("publish = false") {
+            continue;
+        }
+        publishable += 1;
+
+        let mut section = String::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('#') || trimmed.is_empty() {
+                continue;
+            }
+            if trimmed.starts_with('[') {
+                section = trimmed.to_owned();
+                // Fail closed on the sub-table form this scan cannot read line-by-line.
+                if section.starts_with("[dependencies.")
+                    || section.starts_with("[build-dependencies.")
+                {
+                    return Err(format!(
+                        "`{name}` declares `{section}`, a dependency sub-table this check \
+                             cannot read line-by-line. Rewrite it inline, or teach this check the \
+                             shape — do not leave it unexamined"
+                    ));
+                }
+                continue;
+            }
+
+            // Dev-dependencies are stripped from the published manifest, so a path-only one there
+            // is harmless. Normal and build dependencies are not.
+            let relevant = matches!(section.as_str(), "[dependencies]" | "[build-dependencies]")
+                || (section.starts_with("[target.")
+                    && (section.ends_with(".dependencies]")
+                        || section.ends_with(".build-dependencies]")));
+            if !relevant {
+                continue;
+            }
+            examined += 1;
+
+            if trimmed.contains("git = ") {
+                return Err(format!(
+                    "publishable package `{name}` has a git dependency: `{trimmed}`. crates.io \
+                         rejects it, and nothing pins what was built (FR-040)"
+                ));
+            }
+
+            if trimmed.contains("path = ") {
+                if !trimmed.contains("version = ") {
+                    return Err(format!(
+                        "publishable package `{name}` has a PATH-ONLY dependency: `{trimmed}`. \
+                             Add `version` so cargo can rewrite it at publish time (FR-040)"
+                    ));
+                }
+                path_and_version += 1;
+            }
+        }
+    }
+
+    // POSITIVE CONTROL: the scan read real manifests, found real dependency lines, and found at
+    // least one in the `{ path, version }` form the corrected rule exists to permit. Without this,
+    // a scan that read nothing would report perfect compliance — and the corrected wording would
+    // itself go untested.
+    if publishable < 2 || examined == 0 || path_and_version == 0 {
+        return Err(format!(
+            "the manifest scan saw {publishable} publishable package(s), {examined} dependency \
+                 line(s), and {path_and_version} in the `{{ path, version }}` form; it is not \
+                 reading the workspace"
+        ));
+    }
+
+    Ok(())
+}
+
+/// Reads every workspace member manifest as `(package name, text)`.
+///
+/// Discovered from the directory layout rather than from a list, so a new crate is examined
+/// without anybody remembering to add it here.
+fn workspace_manifests(root: &std::path::Path) -> Option<Vec<(String, String)>> {
+    let mut manifests = Vec::new();
+    for directory in [root.join("crates"), root.to_path_buf()] {
+        let Ok(entries) = std::fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let manifest = entry.path().join("Cargo.toml");
+            if !manifest.is_file() {
+                continue;
+            }
+            let text = std::fs::read_to_string(&manifest).ok()?;
+            // The virtual workspace root declares no package and has nothing to check.
+            if !text.contains("[package]") {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            manifests.push((name, text));
+        }
+    }
+    manifests.sort();
+    (!manifests.is_empty()).then_some(manifests)
+}
+
+/// T104: the instability-closure sentence is byte-identical in all three normative locations, and
+/// **0** phase numbers appear inside FR-036's normative closure clause.
+fn instability_wording_agrees(root: &std::path::Path) -> bool {
+    let spec = root.join("specs/002-core-kernel/spec.md");
+    let Ok(text) = std::fs::read_to_string(&spec) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "specs/002-core-kernel/spec.md is unreadable",
+        );
+        return false;
+    };
+
+    // Located by its own text rather than by line number, so editing the document around it does
+    // not silently disable this check.
+    let occurrences = text.matches(SC022_SENTENCE).count();
+    if occurrences < SC022_REQUIRED_OCCURRENCES {
+        step_fail(
+            7,
+            "architecture invariants",
+            &format!(
+                "the instability-closure sentence appears {occurrences} time(s); SC-022 requires \
+                 {SC022_REQUIRED_OCCURRENCES} byte-identical copies across the clarification \
+                 record, FR-036, and the Dependencies section"
+            ),
+        );
+        return false;
+    }
+
+    // **0 phase numbers inside the normative clause.** The requirement's surrounding prose does
+    // mention Phase 004 — deliberately, as roadmap rationale — so this checks the conditions
+    // themselves, between where they are introduced and where the rationale begins. Checking the
+    // whole requirement would fail on text that is explicitly not part of the condition.
+    let Some(clause_start) = text.find("requires **both** of the following") else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "FR-036's closure clause could not be located; the wording check is not reading it",
+        );
+        return false;
+    };
+    let after = &text[clause_start..];
+    let clause_end = after
+        .find("*(Roadmap rationale")
+        .unwrap_or_else(|| after.len().min(2000));
+    let clause = &after[..clause_end];
+
+    if clause.contains("Phase ") || clause.contains("phase 0") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "FR-036's normative closure clause names a phase number; the gate is event-named",
+        );
+        return false;
+    }
+
+    // POSITIVE CONTROL: the clause really was extracted and really does state both conditions, so
+    // the absence above means "no phase number" rather than "nothing was scanned".
+    if !clause.contains("supersedes ADR-0002") || !clause.contains("first real transport adapter") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the extracted closure clause is missing a condition, so the scan is looking at the wrong text",
+        );
+        return false;
+    }
+    true
+}
+
+/// The instability-closure sentence SC-022 requires to be byte-identical everywhere.
+const SC022_SENTENCE: &str =
+    "the first real transport adapter has exercised the surface and its feedback has been applied";
+
+/// How many normative locations must carry it: the clarification record, FR-036, and Dependencies.
+const SC022_REQUIRED_OCCURRENCES: usize = 3;
+
+#[cfg(test)]
+mod tests {
+    use super::scan_manifests;
+
+    /// A publishable manifest with the `{ path, version }` form the rule permits.
+    fn compliant() -> (String, String) {
+        (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             renvor-core = { path = \"../renvor-core\", version = \"0.0.0\" }\n\
+             tokio = { version = \"1.53.1\" }\n\
+             \n[dev-dependencies]\nscratch = { path = \"../scratch\" }\n"
+                .to_owned(),
+        )
+    }
+
+    /// A second publishable manifest, so the `publishable < 2` control is satisfied.
+    fn second() -> (String, String) {
+        (
+            "renvor-core".to_owned(),
+            "[package]\nname = \"renvor-core\"\n\n[dependencies]\npetgraph = { version = \"0.8.3\" }\n"
+                .to_owned(),
+        )
+    }
+
+    #[test]
+    fn the_permitted_path_and_version_form_passes() {
+        // POSITIVE CONTROL for every refusal below: the scan accepts what the corrected rule
+        // permits, so its refusals are about the offending shape rather than about paths on sight.
+        // The dev-dependency here is path-ONLY and must be ignored: dev-dependencies are stripped
+        // from the published manifest.
+        scan_manifests(&[compliant(), second()]).expect("`{ path, version }` is permitted");
+    }
+
+    #[test]
+    fn a_path_only_dependency_is_refused() {
+        let broken = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             renvor-core = { path = \"../renvor-core\" }\n"
+                .to_owned(),
+        );
+        let reason = scan_manifests(&[broken, second()]).expect_err("path-only is prohibited");
+        assert!(reason.contains("PATH-ONLY"), "{reason}");
+        assert!(reason.contains("renvor-core"), "names it: {reason}");
+    }
+
+    #[test]
+    fn a_git_dependency_is_refused() {
+        let broken = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies]\n\
+             thing = { git = \"https://example.invalid/thing\" }\n"
+                .to_owned(),
+        );
+        let reason = scan_manifests(&[broken, second()]).expect_err("git is prohibited");
+        assert!(reason.contains("git dependency"), "{reason}");
+    }
+
+    #[test]
+    fn a_dependency_sub_table_is_refused_rather_than_skipped() {
+        // The failure mode a line-oriented scan is prone to: a shape it cannot read looks exactly
+        // like a shape with nothing wrong. This must fail closed.
+        let unreadable = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n\n[dependencies.renvor-core]\npath = \"../renvor-core\"\n"
+                .to_owned(),
+        );
+        let reason =
+            scan_manifests(&[unreadable, second()]).expect_err("an unreadable shape fails");
+        assert!(reason.contains("sub-table"), "{reason}");
+    }
+
+    #[test]
+    fn a_non_publishable_package_is_exempt() {
+        let internal = (
+            "xtask".to_owned(),
+            "[package]\nname = \"xtask\"\npublish = false\n\n[dependencies]\n\
+             thing = { git = \"https://example.invalid/thing\" }\n"
+                .to_owned(),
+        );
+        scan_manifests(&[compliant(), second(), internal])
+            .expect("`publish = false` is what exempts a package from this rule");
+    }
+
+    #[test]
+    fn the_real_workspace_satisfies_the_rule() {
+        // The check run against the actual manifests, not only synthetic ones. `cargo xtask
+        // verify` step 7 runs the same pair; this makes `cargo test` run it too, so a manifest
+        // regression is caught by the fast suite rather than only by the full sequence.
+        let root = super::workspace_root();
+        let manifests =
+            super::workspace_manifests(&root).expect("the workspace manifests are readable");
+        assert!(
+            manifests.len() >= 4,
+            "discovery found only {} manifest(s): {:?}",
+            manifests.len(),
+            manifests.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        );
+        scan_manifests(&manifests).expect("the real workspace satisfies FR-040");
+    }
+
+    #[test]
+    fn a_scan_that_reads_nothing_is_a_failure_rather_than_a_pass() {
+        // The control that matters most: an empty or unreadable workspace must not report
+        // compliance. Every other assertion in this module rests on the scan having read something.
+        let reason = scan_manifests(&[]).expect_err("an empty scan proves nothing");
+        assert!(reason.contains("not reading the workspace"), "{reason}");
+
+        let no_dependencies = (
+            "renvor".to_owned(),
+            "[package]\nname = \"renvor\"\n".to_owned(),
+        );
+        scan_manifests(&[no_dependencies, second()])
+            .expect_err("a workspace with no path dependency at all fails the control");
+    }
 }

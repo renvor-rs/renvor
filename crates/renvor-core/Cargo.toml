@@ -1,0 +1,70 @@
+# The transport-independent kernel (spec FR-001…FR-014, FR-019…FR-029, FR-039, FR-042, FR-043).
+#
+# `publish = true` is deliberate and load-bearing, not a default left in place. The facade
+# `renvor` is publishable and, from Phase 002 onward, depends on this crate. A publishable
+# package cannot depend on an unpublishable one — `cargo publish --dry-run --workspace` fails at
+# the first `publish = false` member in the chain. Verified by experiment, recorded in
+# specs/002-core-kernel/research.md D13, and captured as proposed ADR-0008.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002). A second
+# literal declaration is a defect, asserted mechanically at T037 in Phase 001.
+#
+# This crate declares NO parser, NO derive macro, and NO secret type. That absence is the whole
+# point of splitting `renvor-config` out, and it is asserted at T101/T102, not merely intended.
+
+[package]
+name = "renvor-core"
+description = "Transport-independent application kernel for the Renvor framework: lifecycle, providers, typed state, cancellation, and health primitives."
+documentation = "https://docs.rs/renvor-core"
+readme = "README.md"
+keywords = ["renvor", "framework", "lifecycle"]
+categories = ["development-tools"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# Error taxonomy (research D1). Generates `Error` impls while leaving the enum — and therefore
+# the match-on-category surface FR-019 requires — entirely ours.
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# Provider dependency resolution via a single `tarjan_scc` pass (research D8).
+# Minimal features: `tarjan_scc` needs only the algo traits.
+petgraph = { version = "0.8.3", default-features = false }
+
+# Runtime primitives only. `net`, `fs`, `process`, `signal`, and `full` are excluded so the
+# kernel cannot acquire a transport by accident (constitution principle VIII, FR-033).
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+# Hierarchical cancellation scopes (research D3, FR-023/FR-024).
+tokio-util = { version = "0.7.19", default-features = false }
+
+# Instrumentation only. This crate NEVER installs a process-global subscriber (research D4,
+# contract C-O7) — that is the author's decision, not the library's.
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+
+# Run-identifier entropy, behind a Renvor `EntropySource` port (research D5, FR-043).
+getrandom = { version = "0.4.3", default-features = false }
+
+[dev-dependencies]
+# Deterministic time for deadline and drain tests (research D10, FR-031). Dev-only: `test-util`
+# must never reach a consumer's production graph.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true

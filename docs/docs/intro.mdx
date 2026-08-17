@@ -10,19 +10,25 @@ import Stamp from './_stamp.mdx';
 
 <Stamp />
 
-## Renvor does not work yet
+## Renvor cannot serve a request yet
 
-**This project ships no runtime capability.** The `renvor` crate exposes three constants
-and nothing else — and it is **not published**, so there is no way to install it. There is
-no framework here to use, and no API to learn.
+**Nothing is published.** The `renvor` crate does not exist on crates.io, so there is no way
+to install it.
 
-What exists today is the *foundation*: governance, verified public names, a pinned
-toolchain, a licence policy, a fail-closed verification sequence, and repository security
-controls — built deliberately before any code, so the first line of functionality lands
-into a project that can already verify and govern itself.
+Phase 002 delivered a working **transport-independent kernel**: a seven-phase application
+lifecycle with rollback in reverse actual initialisation order, a single-pass provider
+dependency resolver under a counted work budget, layered configuration with per-key
+attribution and total secret redaction, an enforced deadline on every call the kernel makes
+into your code, liveness and readiness as independent answers, and a failure-injection
+harness covering all 21 phase-and-behaviour combinations.
 
-**Do not adopt Renvor for anything yet.** Nothing is stable, and no compatibility promise
-applies before a `0.1.0` release.
+**It has no transport.** No HTTP server, no database adapter, no CLI, no way to receive a
+request. You can start and stop an application; you cannot serve anything with one. That is
+Phase 004's work.
+
+**Every API is explicitly unstable** and will change once the first real transport adapter
+exercises the surface and its feedback has been applied. **Do not adopt Renvor for anything
+yet** — no compatibility promise applies before a `0.1.0` release.
 
 ## The command is `renover`
 

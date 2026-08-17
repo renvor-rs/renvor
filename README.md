@@ -6,20 +6,24 @@
 
 > ## ⚠️ Pre-release — Renvor does not work yet
 >
-> **This project ships no runtime capability, and nothing is published.** Neither `renvor`
-> nor `renvor-cli` exists on crates.io — verified against the registry index on 2026-08-12,
-> both HTTP 404. The `renvor` crate in this repository exposes three constants and nothing
-> else. There is no framework here to use, and **no way to install one.**
+> **Nothing is published.** Neither `renvor` nor `renvor-cli` exists on crates.io — verified
+> against the registry index on 2026-08-16, both HTTP 404. There is **no way to install
+> Renvor**, and there will not be one before a `0.1.0` release.
 >
-> What exists today is the *foundation*: governance, verified public names, a pinned
-> toolchain, a licence policy, a fail-closed verification sequence, and repository
-> security controls — deliberately built before any code, so that the first line of
-> functionality lands into a project that can already verify and govern itself.
+> Phase 002 added a working **transport-independent kernel**: a seven-phase application
+> lifecycle, a single-pass provider dependency resolver with a counted work budget, layered
+> configuration with per-key attribution and total secret redaction, bounded deadlines on
+> every call into your code, liveness and readiness as independent answers, and a failure
+> injection harness. It runs, and it is tested.
 >
-> **Do not adopt Renvor for anything yet.** Nothing here is stable, and no compatibility
-> promise applies before a `0.1.0` release.
+> It is also **transport-independent**, which is the honest limit: there is no HTTP server,
+> no database adapter, no CLI, and no way to receive a request. You can start and stop an
+> application; you cannot yet serve anything with one.
+>
+> **Every API is explicitly unstable (FR-036)** and will change once the first real transport
+> adapter exercises it. **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework, currently in Phase 001 of its development programme.
+Renvor is a Rust framework, currently in Phase 002 of its development programme.
 
 ## The command is `renover`
 

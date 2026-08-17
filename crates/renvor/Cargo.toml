@@ -7,7 +7,7 @@
 
 [package]
 name = "renvor"
-description = "Facade crate for the Renvor framework; this release exposes version metadata only and provides no runtime capability."
+description = "Facade for the Renvor framework's transport-independent kernel: application lifecycle, provider resolution, layered configuration, and health. Pre-release, unpublished, and explicitly unstable."
 documentation = "https://docs.rs/renvor"
 readme = "README.md"
 keywords = ["renvor", "framework"]
@@ -32,9 +32,47 @@ include = [
     "LICENSE-APACHE",
 ]
 
-# No dependencies. A publishable package may not carry a git or path dependency
-# (FR-040); declaring none is the strongest form of compliance.
+# The facade gains its first dependencies in Phase 002. The previous comment here read "No
+# dependencies … declaring none is the strongest form of compliance" — true for Phase 001, and
+# no longer true.
+#
+# Phase 001 FR-040 forbids a package intended for publication from depending on a **path-only**
+# dependency. `{ path, version }` is not path-only: cargo rewrites it to the version requirement
+# at publish time and drops the path. Both keys are therefore mandatory, and omitting `version`
+# would breach FR-040 rather than merely inconvenience the release.
+#
+# `renvor-config` is OPTIONAL and gated behind the default-on `config` feature. That is the
+# mechanism by which a consumer can take the core-only path and resolve none of the parser,
+# derive, or secret crates — asserted with a positive control at T102, in both directions.
 [dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+renvor-config = { path = "../renvor-config", version = "0.0.0", optional = true }
+
+# Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
+# dependency EDGE and no new package — checked against the lockfile rather than assumed.
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
+
+# The configuration example declares a schema, which needs the derive. Already in the graph
+# through `renvor-config`; this adds an edge, not a package.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+# The configuration example uses `renvor::config`, which only exists when the `config` feature is
+# on. Without this declaration `cargo check --no-default-features --all-targets` FAILS to compile
+# it — and did, until T111. The `cargo tree` isolation check in `xtask` step 7 could never have
+# caught that: resolving a graph is not compiling against it.
+[[example]]
+name = "configuration"
+path = "examples/configuration.rs"
+required-features = ["config"]
+
+[features]
+# `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
+# isolation is opt-in via `default-features = false`. Stated plainly because the reverse is
+# easy to assume: this feature does not make the default build lean, it makes the lean build
+# reachable.
+default = ["config"]
+config = ["dep:renvor-config"]
 
 [lints]
 workspace = true

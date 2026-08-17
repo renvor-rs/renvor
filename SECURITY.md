@@ -64,12 +64,23 @@ claim about the application built on top of it.
 
 ## Current status — read this before relying on it
 
-**Renvor is pre-release and ships no runtime capability yet.** As of this writing the
-`renvor` crate in this repository exposes version constants only, and **nothing has been
-published to any registry** — `renvor`, `renvor-cli`, and `renover` are all absent from
-crates.io. There is presently no attack surface in the library itself. This policy is established now, ahead of any code, so that a reporting
-path exists from the first line of functionality rather than being retrofitted after the
-first incident.
+**Renvor is pre-release and unpublished.** **Nothing has been published to any registry** —
+`renvor`, `renvor-cli`, and `renover` are all absent from crates.io — so no version of Renvor
+can currently reach a user's dependency graph.
+
+The repository contains a working **transport-independent kernel** as of Phase 002. It
+**accepts no untrusted input over any network**: it has no transport, no listener, and no
+deserialisation of remote data. Its input surfaces are local configuration files, process
+environment variables, and code the application author writes. The security properties it does
+assert are secret redaction across every output form, bounded deadlines on every call into
+author code, and containment of a panicking provider or readiness check — each tested.
+
+Panic containment is built on `catch_unwind`, so it holds under the **unwinding** panic strategy
+only. Rather than leave that as a caveat a build profile could silently violate, `panic = "abort"`
+is **unsupported** and `renvor-core` refuses to compile under it.
+
+This policy was established ahead of the code, so that a reporting path existed from the first
+line of functionality rather than being retrofitted after the first incident.
 
 ## Supported versions
 
