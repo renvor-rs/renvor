@@ -1,5 +1,13 @@
 # Phase 001 Evidence Pack
 
+> **Record-count note added 2026-08-17.** Statements below that there are **six** Phase 001
+> decision records, or that they are **ADR-0001 through ADR-0006**, describe the set as it
+> stood on their own dates. There are now **seven**: **ADR-0010** was accepted under W-002 on
+> 2026-08-17, and **ADR-0001 is now `superseded`** by it. Both facts are recorded at
+> [§ADR-0010](#adr-0010--the-executable-name-unified-with-the-product-2026-08-17) at the foot
+> of this file. The SC-009 row and the §3ay result are **true as of their dates** and are not
+> rewritten; they are extended there.
+>
 > **Naming note added 2026-08-17.** Occurrences of **`renover`** below are **historical**.
 > ADR-0010 superseded ADR-0001 on 2026-08-17 and renamed the installed executable to
 > **`renvor`**; the primary command is `renvor new` and the package command is `renvor add`.
@@ -4133,3 +4141,94 @@ accompany a date, and the obligation fires at whichever arrives first.
 | ~~T006 independent-reviewer ruling~~ | ~~T026, T039, T040, T066~~ | Maintainer | 2026-08-11 | resolved — W-002, `governance/waivers.md` |
 | ~~T008 candidate names~~ | ~~T019, T020, T021~~ | Maintainer | 2026-08-11 | resolved — `governance/name-availability.md` |
 | ~~T009 publish-set decisions~~ | ~~T010 and the cleanup chain~~ | Maintainer | 2026-08-11 | resolved — §3a |
+
+---
+
+## ADR-0010 — the executable name unified with the product (2026-08-17)
+
+**Appended, not merged into the sections above.** Those sections are dated records of what was
+true when they were written, and the correct way to record a later change is to add to the
+ledger rather than to edit history into agreement with the present.
+
+### What changed
+
+**ADR-0010 supersedes ADR-0001.** The installed executable is **`renvor`**, matching the
+product and the facade crate; the primary command is `renvor new` and the package command is
+`renvor add`. `renvor::EXECUTABLE` changed from `"renover"` to `"renvor"`.
+
+The argument is ADR-0001's own, applied consistently. ADR-0001 rejected renaming the *product*
+to `Renover` because *"`Renover`/`renovate` is a closer pair than `Renvor`/`renovate`"* — then
+left the *executable*, the string users type, at the closer spelling. Measured 2026-08-17:
+Levenshtein `renover`↔`renovate` = **3**, `renvor`↔`renovate` = **4**.
+
+### Decision-record set — corrected
+
+| Record | State on 2026-08-17 | Reviewer |
+|---|---|---|
+| ADR-0001 | **`superseded`** by ADR-0010 | `Ahmed Anbar — self-review under W-002` |
+| ADR-0002 … ADR-0006 | `accepted` | `Ahmed Anbar — self-review under W-002` |
+| **ADR-0010** | **`accepted` 2026-08-17** | `Ahmed Anbar — self-review under W-002` |
+
+**Seven Phase 001 records: six `accepted`, one `superseded`.** Statements elsewhere in this
+file that there are six, or that the set is ADR-0001…ADR-0006, are true of their dates.
+
+**SC-009 still holds** — 0 records accepted without a recorded reviewer and review date. A
+`superseded` record is not an unaccepted one: ADR-0001 was accepted on 2026-08-12 with both
+fields recorded, and superseding it did not remove them.
+
+### W-002 controls, run before acceptance
+
+| # | Control | Result |
+|---|---|---|
+| 1 | Written alternatives-and-consequences review before acceptance | ✅ Six alternatives with rejection reasons; four accepted costs |
+| 2 | Verification against `checklists/governance.md` | ✅ **79/79**, 0 unchecked. **Found a real defect** — see below |
+| 3 | All required CI and security checks passing | ✅ On head `dcdf59b1e9a918ceab718ced164aa621ab91b4d5`: **13 passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design); **0** unresolved conversations; **0** open CodeQL alerts |
+| 4 | A dated review record stored with the ADR | ✅ ADR-0010 §Acceptance gate, dated 2026-08-17 |
+
+**Sequence, stated because it is the control that matters most:** ADR-0010 was pushed
+`proposed` in **PR #21**, merged as `f9ec01e1ee75cd943f6e6d463d1691cd7a2570c5`; the controls
+were then run against that merged state; acceptance followed in a separate change. Phase 002
+made the opposite mistake once — acceptance text written before the reviews returned — and it
+is not repeated here.
+
+### What control 2 found, and what was done about it
+
+The checklist verification surfaced a defect the author's own impact analysis had missed:
+**spec FR-005 mandates the very distinction ADR-0010 removes.**
+
+> *"FR-005: An accepted decision record MUST explain the intentional distinction between the
+> product name and the installed executable name…"*
+
+ADR-0010's impact analysis enumerated the constitution, `PLAN.md`, the public-identity
+contract, and the documentation — and did not reach FR-005. It was found by running a control
+that consults a different artifact than the author was reading, which is the entire reason to
+have one.
+
+**Dispositioned:** FR-005 carries a dated amendment note recording that its first clause is
+satisfied by ADR-0010 (the requirement is that the naming decision be justified in a record,
+and it is) and that its **second clause is unchanged and still binding** — documentation,
+tests, and examples must use the executable name consistently. The accepted text of a closed
+phase is annotated, not rewritten.
+
+**A second defect of the same shape was fixed alongside it.** Gate 8 in
+`specs/001-governance-foundation/quickstart.md` checked *"all six decision records — ADR-0001
+through ADR-0006"* — a hard-coded range that silently stopped covering the set the moment
+ADR-0010 was added, and whose omission would have been invisible. It now enumerates the
+directory and prints each record's state, so the gate cannot fall behind the set again.
+
+### Risk movement
+
+| Risk | State |
+|---|---|
+| **R-2** — confusability with `renovate` | **Open, reduced** — the typed string moves from distance 3 to 4 |
+| **R-3** — bounded clearance of `renover` | **Retired** — the name is no longer used |
+| **R-3a** — bounded clearance of `renvor` | **Open** — same bound, now on the name in use. Eight probes on 2026-08-17, each with a positive control; probe 7 additionally bounded because GitHub code search does not index this repository |
+| **R-4** — no trademark search for `Renvor` | **Open, unchanged** |
+| **R-5** — `renvor.dev` renewal | **Open, unchanged** |
+
+### Still owed
+
+**W-002 does not close.** ADR-0010 joins the set of records a qualified independent reviewer
+must re-review in full when one becomes available. **No independent human review of ADR-0010
+has occurred**, and the review recorded above must not be described as independent. Six waivers
+remain active; the underlying problem is unchanged.

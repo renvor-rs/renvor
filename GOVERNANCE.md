@@ -90,8 +90,21 @@ W-002 exists to prevent.
 **Updated 2026-08-15: control 3 has been met since the workflows landed**, and `main` now
 requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, strict, with
 administrators included. **All six Phase 001 decision records — ADR-0001 through ADR-0006 —
-are `accepted`**, each with reviewer `Ahmed Anbar — self-review under W-002` and a recorded
+were `accepted`**, each with reviewer `Ahmed Anbar — self-review under W-002` and a recorded
 review date. **None of those reviews is independent**, and none may be described as such.
+
+**Updated 2026-08-17.** There are now **seven** Phase 001 decision records, and one of the
+original six has changed state:
+
+- **ADR-0010** was accepted under W-002 on 2026-08-17. It unifies the product, facade-crate,
+  and executable spellings on `renvor`, and its reviewer field reads exactly
+  `Ahmed Anbar — self-review under W-002`. **That review is not independent either.**
+- **ADR-0001 is now `superseded`**, superseded by ADR-0010. Its decision body is preserved
+  verbatim as historical evidence; a superseded record is not an unaccepted one, and the
+  Phase 001 evidence that cites it stays checkable.
+
+So the accurate statement is: **seven Phase 001 decision records, six `accepted` and one
+`superseded`, every one of them reviewed non-independently under W-002.**
 
 When a second qualified person joins, W-002 ends immediately, every record accepted under
 it is re-reviewed, and the waiver is closed.
