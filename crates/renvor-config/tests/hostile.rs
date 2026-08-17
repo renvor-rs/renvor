@@ -24,6 +24,10 @@ use std::io::Write as _;
 use std::path::PathBuf;
 
 use renvor_config::{ConfigSchema, FileLayer, LayeredResolverBuilder};
+// Every use of this is inside a `#[cfg(unix)]` test, because every one of them asserts on the
+// refusal of a FIFO. Ungated it is an unused import on Windows, which the `platform` job has been
+// reporting as a warning.
+#[cfg(unix)]
 use renvor_core::ErrorCategory;
 use renvor_core::config_port::ConfigResolver as _;
 use serde::Deserialize;
@@ -1111,13 +1115,47 @@ fn read_resolves_the_pathname_exactly_once() {
             "{label} was rejected for the wrong reason: {verdict}"
         );
     }
+
+    // ── CRLF CONTROL ─────────────────────────────────────────────────────────────────────────
+    //
+    // Runs on every platform, including the ones that never produce CRLF, so the Windows fix is
+    // exercised rather than assumed. Verified to have power: with the normalisation removed, this
+    // section fails.
+    assert_eq!(normalise_line_endings("a\r\nb\r\n"), "a\nb\n");
+    let crlf = source_of("src/layer/file.rs").replace('\n', "\r\n");
+    assert!(
+        crlf.contains("\r\n"),
+        "the CRLF fixture is not actually CRLF"
+    );
+    let normalised = normalise_line_endings(&crlf);
+    let read_from_crlf = method_body(
+        &normalised,
+        "    pub fn read(&self) -> Result<Option<Table>, KernelError> {",
+    );
+    resolutions_are_delegated(read_from_crlf)
+        .expect("a CRLF checkout must reach the same verdict as an LF one");
 }
 
-/// Reads one of this crate's own source files.
+/// Reads one of this crate's own source files, with line endings normalised.
 fn source_of(relative: &str) -> String {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()))
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("{} is unreadable: {error}", path.display()));
+    normalise_line_endings(&source)
+}
+
+/// Converts CRLF to LF.
+///
+/// Load-bearing, and learned rather than anticipated: the first version of this test failed on
+/// both `platform (windows-latest, …)` jobs with *"no rustfmt-shaped closing brace"*. A Windows
+/// checkout converts `\n` to `\r\n`, so every `"\n    }\n"` and every multi-line signature
+/// stopped matching. The gate failed closed, which is the right direction — but a property that is
+/// platform-independent must also be CHECKABLE on every platform.
+///
+/// Named and separated from `source_of` so the control below can exercise it on a platform that
+/// never produces CRLF, instead of leaving the fix to be believed.
+fn normalise_line_endings(source: &str) -> String {
+    source.replace("\r\n", "\n")
 }
 
 /// Extracts one `impl`-level method body.
