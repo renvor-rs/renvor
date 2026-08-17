@@ -11,6 +11,7 @@
 resolver = "3"
 members = [
     "crates/renvor",
+    "crates/renvor-cli",
     "crates/renvor-core",
     "crates/renvor-config",
     "crates/renvor-testkit",

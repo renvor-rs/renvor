@@ -1,0 +1,92 @@
+# The `renvor` executable and its transactional project generator (Phase 003).
+#
+# # The package is `renvor-cli`; the EXECUTABLE is `renvor`
+#
+# Those are separate facts and both are normative. ADR-0010 makes the installed executable's name
+# a **compatibility promise** — it is the string a user types and a shell resolves — so `[[bin]]`
+# below is not a convenience, it is the contract. `xtask` asserts it, with a control.
+#
+# The package cannot also be called `renvor`: `crates/renvor` is the library facade and already
+# holds that name.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+#
+# `publish = false`, deliberately and unlike every other member. Phase 003 ships no release, and
+# `PLAN.md` §19.2 puts the first publication far later. A package marked publishable that nobody
+# has rehearsed publishing is a claim without evidence.
+
+[package]
+name = "renvor-cli"
+description = "The `renvor` command-line interface: interactive project generation, environment diagnostics, and local development workflow."
+readme = "README.md"
+publish = false
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# THE CONTRACT. Renaming this breaks every installed user's muscle memory and every script.
+[[bin]]
+name = "renvor"
+path = "src/main.rs"
+
+[dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+
+# research.md D1 — argument parsing. `derive` because the flag surface IS the contract and one
+# declaration keeps help, validation, and completions from drifting apart. `wrap_help` so `--help`
+# is readable at a narrow width, which the spec's edge cases require.
+clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "wrap_help"] }
+
+# research.md D2 — prompts. Selected over `dialoguer` because `InquireError` distinguishes
+# `OperationCanceled`, `OperationInterrupted`, and `NotTTY` as separate typed outcomes, which is
+# what lets cancellation exit 4 without inferring intent from an I/O error kind.
+inquire = { version = "0.9.4", default-features = false, features = ["crossterm", "one-liners"] }
+
+# research.md D4 — templating. Selected for three properties this phase requires as CONFIGURATION
+# rather than convention: bounded expansion, an allow-listed function set, and strict undefined.
+#
+# `fuel` IS THE BOUNDED-EXPANSION FEATURE, AND IT IS NOT ON BY DEFAULT. It is absent from
+# MiniJinja's `default` set, so FR-026's bound exists only because this line enables it. That is
+# worth stating: a bound nobody enabled is a bound that does not exist, and the difference is one
+# word in a manifest. `crates/renvor-cli/tests/bounds.rs` asserts the bound rather than trusting
+# this declaration.
+#
+# `default` is off so that `debug`, `deserialization`, `macros`, `multi_template`,
+# `adjacent_loop_items`, and `std_collections` stay out — each is a template capability this phase
+# has no use for, and constitution VI wants deny-by-default.
+minijinja = { version = "2.24.0", default-features = false, features = ["builtins", "fuel", "serde"] }
+
+# research.md D5 — the staging directory. The transaction itself is composed here from `tempfile`
+# and `std::fs::rename`, because no maintained crate provides DIRECTORY-level transactional
+# placement; the two that sound like it are file-level. That finding is recorded, not glossed.
+tempfile = { version = "3.27.0", default-features = false }
+
+# research.md D13 — deterministic traversal for the file manifest, with explicit control over
+# whether links are followed. The manifest must describe what was created, not what a link targets.
+walkdir = "2.5.0"  # no features at all; nothing to narrow
+
+# research.md D10 — the machine-readable output contract.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+# research.md D11 — content identity in the manifest. SHA-256 because it is what the rest of this
+# project already uses for artifact identity; a second algorithm would mean two vocabularies for
+# one idea. `blake3` was rejected for declaring no MSRV.
+sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }  # `oid` deliberately off: ASN.1 identifiers are not needed here
+
+# The project manifest format. Already in the resolved graph via `renvor-config`.
+toml = { version = "1.1.4", default-features = false, features = ["parse", "display", "serde"] }
+
+[dev-dependencies]
+# research.md D14 — the command surface is a public contract, so it is tested as expected OUTPUT
+# rather than as assertions buried in Rust. A contract change then appears as a diff in review.
+trycmd = { version = "1.2.1", default-features = false, features = ["color-auto", "diff", "filesystem", "examples"] }
+
+[lints]
+workspace = true

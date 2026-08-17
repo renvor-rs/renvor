@@ -106,9 +106,22 @@ but does not decide whether styling is appropriate for the destination, which is
 **Rationale.** FR-026 requires bounded expansion; FR-027 forbids a template reaching the filesystem
 or the network; FR-028 requires an undefined variable to be an error rather than an empty rendering.
 MiniJinja is the only candidate that offers all three as **configuration rather than convention**: it
-exposes explicit limits on recursion and output size, its function and filter set is
-allow-listed by the embedding application rather than ambient, and it has a strict undefined-behaviour
-mode. Its MSRV is well under ours and it is actively released.
+exposes an explicit expansion limit, its function and filter set is allow-listed by the embedding
+application rather than ambient, and it has a strict undefined-behaviour mode. Its MSRV is well
+under ours and it is actively released.
+
+**Correction found while wiring the manifest, and it sharpens the claim rather than weakening it.**
+The bounded-expansion mechanism is the **`fuel` feature, and `fuel` is NOT in MiniJinja's `default`
+feature set** — verified against the registry's feature map for 2.24.0, whose default is
+`builtins, debug, deserialization, macros, multi_template, adjacent_loop_items, std_collections,
+serde`. So a project that adopts MiniJinja the obvious way gets **no expansion bound at all**.
+
+This is exactly the difference between a bound that exists and a bound that is believed to exist,
+and it is one word in a manifest. Two consequences are now recorded rather than assumed:
+
+1. `crates/renvor-cli/Cargo.toml` enables `fuel` explicitly, with a comment saying why.
+2. `crates/renvor-cli/tests/bounds.rs` **asserts the bound behaviourally**, so the declaration
+   cannot silently regress. A feature flag is a claim; the test is the evidence.
 
 **Alternatives considered.** `Tera` 2.1.1 (MIT, 2026-08-11) is close in capability but ships built-in
 functions the application must remember to remove rather than opt into — a deny-list posture where
