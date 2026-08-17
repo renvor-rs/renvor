@@ -264,6 +264,11 @@ already running on this host, and it is rejected on two grounds recorded in full
   bypassed; against a public trust store the handshake fails on Traefik's default self-signed
   certificate — consistent with D11's note below. **Something answers; no Renvor content is
   served.** The argument is sound as a property of the design and unsound as an observation,
+  *(**and as of 2026-08-17 it is sound as an observation too** — `renvor.dev` returns 200 over a
+  valid Let's Encrypt certificate, so making the image public discloses nothing a visitor could not
+  already see. The 2026-08-15 measurement above is left unrewritten as the dated observation it is,
+  and it remains accurate for `docs.renvor.dev`. See
+  [`governance/deployment-evidence.md`](../governance/deployment-evidence.md).)*
   so it is stated as the former.)*
 - The trade is accepted knowingly: image *contents* and pull *counts* become public, and the
   image cannot be used as a private distribution channel. Both are acceptable for a static
@@ -492,6 +497,26 @@ was false for two of the four and is retracted.)* Observed 2026-08-15:
 **Closing the two gaps is future work and is not claimed by this record.** `renvor-infra`
 cannot have required checks until it has CI; `renvor-docs` cannot have a protected branch
 until it has a commit, which is itself gated on its licence decision and **T108**.
+
+> **Current state, recorded 2026-08-17. The tables above are left exactly as observed on
+> 2026-08-15; this note supersedes them without rewriting them.**
+>
+> **`renvor-infra` is no longer reserved and no longer empty.** It carries the Kubernetes
+> manifests, the hand-applied Flux control objects, the tenancy RBAC, the `infra-ci` workflow,
+> and the runbooks, at `07bda7ad59c0e82bc441e4cb400d290cd60a882d`, and it is the source Flux
+> reconciles into the `renvor-site` and `renvor-site-staging` namespaces.
+>
+> **Its required-status-check gap closed on 2026-08-17T20:42:25Z — late.** One check, `validate`,
+> strict, GitHub Actions app 15368. The obligation's deadline was *before the first manifest
+> merged*; the first manifest merged at 2026-08-17T16:31:44Z and **all seven pull requests #1–#7
+> merged with the check advisory**. That is recorded as a missed deadline corrected late, not as a
+> gate that ran.
+>
+> **`renvor-docs` is unchanged** — still commit-empty, still unprotected, still gated on its
+> licence decision and **T108**, and `docs.renvor.dev` is still not deployed. The second of the
+> two gaps this paragraph names is **not** closed.
+>
+> Evidence: [`governance/deployment-evidence.md`](../governance/deployment-evidence.md).
 
 **`renvor-rs/renvor-docs` remains the public canonical *destination* for the production
 documentation site and nothing more.** It is commit-empty, and **`framework/docs` remains the

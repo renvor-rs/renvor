@@ -36,6 +36,13 @@
 >   is the origin of a claim corrected in `PLAN.md` §26.1 and §26.4 and in ADR-0006 D7 and D13
 >   on 2026-08-15; the evidence ledger carries a global qualifier in its Status line, and
 >   **§3al still contains the uncorrected original wording**, annotated there;
+>   *(**Superseded 2026-08-17.** The 2026-08-15 measurement above stands as a dated observation and
+>   is deliberately not rewritten — but it no longer describes the internet. `renvor.dev` returns
+>   **200** over a valid Let's Encrypt certificate and `www.renvor.dev` permanently redirects to
+>   it. **`docs.renvor.dev` is unchanged**: still 404, still Traefik's default self-signed
+>   certificate, still not deployed. So "no Renvor property is deployed at all" is now false, while
+>   "something answers; no Renvor content is served" remains true of the documentation hostname
+>   alone. See [`governance/deployment-evidence.md`](../governance/deployment-evidence.md).)*;
 > - "*`renvor-infra` has the strongest case for remaining private permanently*" — **reversed by
 >   D13**, which weighed public GitHub, private GitHub, and private self-hosted GitLab and
 >   chose public. D13's alternatives review is where that reversal is argued.
