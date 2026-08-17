@@ -2333,3 +2333,61 @@ That is a different failure mode from the first four, and it is the one a decisi
 prone to: the artifact whose entire purpose is to be an accurate account is also the artifact
 nothing executes.
 
+
+## T160/T161 — validation after the W-006 batch
+
+Run on a **clean committed tree** at `4591dddfd996f8950e3a6bd2659c8251391eb8e8`.
+
+| Check | Result |
+|---|---|
+| `cargo fmt --all -- --check`; `git diff --check` | clean |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | clean |
+| `cargo test --workspace --all-features -- --test-threads=1` | **28 targets, 344 tests, 0 failing** |
+| `cargo test --workspace --doc` | ok (this workspace declares no doc tests) |
+| `cargo check --locked -p renvor --no-default-features --all-targets`, both toolchains | pass |
+| `cargo xtask verify` @ **1.94.0** | **11/11** |
+| `cargo xtask verify` @ **stable 1.97.1** | **11/11** |
+| `cargo deny check licenses advisories bans sources` | **4/4 ok** |
+| Quickstart gates **0–15**, each run individually in its own shell | **16/16 gates, 21/21 blocks** — Gate 14 now has five, including the new **14e** |
+| Tests executed across gates 2–11 | **170** |
+| Gate 12 under **bash 3.2** and **zsh** | pass in both, **8 controls**, repository unchanged |
+| `actionlint -no-color` | **0** |
+| Documentation frozen install and production build | pass; image-input guard reports ok |
+| `docs/scripts/check-image-inputs.test.mjs` | **20/20** — 15 refusals, 5 acceptances |
+| `npm audit --audit-level=moderate` | **0 findings** |
+| `cargo publish --dry-run --workspace` | **4 crates packaged, 0 published** |
+| FR-001…FR-044 and SC-001…SC-022 | all mapped, **0 empty cells** |
+| Task IDs | **T001…T161** contiguous and unique; **160 checked, 1 open (T158)** |
+| Commit signatures | **53/53** signed and verified |
+| CI on the exact head | **13 success, 1 skipped** (`attest rehearsal artifacts`, event-inapplicable by design) |
+| Unresolved conversations / open CodeQL alerts / dismissed alerts | **0 / 0 / 0** |
+| Crates / tags / releases / deployments / Phase 003 | **0 / 0 / 0 / 0 / none** |
+
+### One local anomaly, diagnosed rather than waved through
+
+`cargo publish --dry-run --workspace` **failed with exit 101** in the long-lived working copy,
+reporting that `renvor-config` could not resolve `renvor_core::error`, `renvor_core::config_port`,
+or `renvor_core::KernelError` — while CI's `package and verify without publishing` job passed all
+nineteen steps on the same commit.
+
+That contradiction was not accepted in either direction. It was isolated:
+
+| Environment | Result |
+|---|---|
+| CI, Linux runner, exact head | **exit 0** — every step ran, none skipped |
+| Fresh `git worktree` of the exact head, same machine | **exit 0** |
+| Fresh `git worktree` of the **previous** head `b83213a` | **exit 0** |
+| Long-lived working copy, exact head | **exit 101** |
+| Long-lived working copy, exact head, after `cargo clean` | **exit 0** — 4 crates packaged, 4 dry-run aborts, **0 uploads** |
+
+**Same commit, same machine, different working copy, different result** — so the variable is the
+working copy, not the tree under review. The contaminant was ~10 GiB of accumulated build state in
+`target/`; clearing `target/package` alone and removing a stale sibling worktree did **not** clear
+it, and a full `cargo clean` did. CI and fresh checkouts always start clean, which is why neither
+ever saw it.
+
+**This is recorded rather than omitted** because the first observation looked exactly like a real
+regression, and a phase that has spent five rounds on "records that overstate what was measured"
+should not quietly drop the one measurement that disagreed with the others. **No Rust source
+changed in this batch**, which is consistent with the diagnosis but is not what established it —
+the worktree comparison is.
