@@ -3,18 +3,31 @@
 | Field | Value |
 |---|---|
 | **ID** | 0010 |
-| **State** | `proposed` |
-| **Reviewer** | *(required to enter `accepted`)* |
-| **Review date** | *(required to enter `accepted`)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-17 |
 | **Superseded by** | — |
 | **Supersedes** | **ADR-0001** |
 
-> **A record MUST NOT be marked `accepted` without a recorded independent review**
-> (spec FR-013). This record is `proposed`. It is a **Phase 001 public-identity decision
-> record** and therefore falls inside the live literal scope of **W-002**; the scope analysis
-> that establishes this is in §Waiver authority below, and it is stated explicitly rather
-> than assumed, because a waiver applied one record wider than it was granted is a governance
-> failure dressed as a formality.
+> **Accepted 2026-08-17 under waiver W-002. This review is NOT independent.**
+>
+> Spec FR-013 requires a recorded **independent** review before acceptance. `GOVERNANCE.md`
+> and `specs/002-core-kernel/research.md` §D11 define a qualified independent reviewer as a
+> **person**, **not the author**, **competent in the subject**, and **able to reject without
+> the author's consent**. This project has one maintainer, who wrote this record, so criteria
+> 1, 2, and 4 cannot be met by anyone currently available. That is a staffing fact, not a
+> process defect, and W-002 is the recorded exception covering it.
+>
+> **No independent human review of ADR-0010 has occurred.** This review must not be described
+> as independent — here, in the evidence pack, in `GOVERNANCE.md`, or in any public document.
+> It is a structured self-review under a time-bounded exception expiring **2027-02-11**, or
+> immediately when a qualified independent reviewer becomes available, whichever comes first.
+>
+> This record is a **Phase 001 public-identity decision record** and therefore falls inside the
+> live literal scope of W-002; the scope analysis is in §Waiver authority below, and it is
+> stated explicitly rather than assumed, because a waiver applied one record wider than it was
+> granted is a governance failure dressed as a formality. **No new waiver was created**, and
+> neither W-004 nor W-006 was extended or borrowed.
 
 ## Context
 
@@ -273,23 +286,49 @@ Linux distributions, and privately distributed binaries were not checked.
 
 ## Acceptance gate
 
-Acceptance is a **separate, later commit**. This record is pushed `proposed`, W-002's controls
-are run against it, and only then is a follow-up signed commit made that sets `accepted`.
-Recording acceptance in the same commit that proposes the decision would assert that controls
-had passed before they were run — an error made once already in this project, in Phase 002, and
-not repeated here.
+Acceptance was a **separate, later commit**, and the sequence is the point. This record was
+pushed `proposed` in pull request **#21**, merged as `f9ec01e1ee75cd943f6e6d463d1691cd7a2570c5`;
+W-002's controls were then run against that merged state; and only then was this acceptance
+made. Recording acceptance in the same commit that proposes a decision asserts that controls
+passed before they were run — an error made once already in this project, in Phase 002, and
+deliberately not repeated.
 
 | # | W-002 compensating control | Status |
 |---|---|---|
-| 1 | Written alternatives-and-consequences review completed against the ADR template before acceptance | *(pending)* |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | *(pending)* |
-| 3 | All required CI and security checks passing | *(pending)* |
-| 4 | A dated review record stored with the ADR | *(pending)* |
+| 1 | Written alternatives-and-consequences review completed against the ADR template **before** acceptance | ✅ **Met** — six alternatives with stated rejection reasons, including two re-affirmed verbatim from ADR-0001; four accepted costs recorded, not only benefits |
+| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-17** — **79 of 79** items checked, 0 unchecked, 0 weakened. **CHK019 was re-examined specifically**, because it is the item this decision could have invalidated: it asks whether the *specification requires the naming distinction to be justified rather than merely restated*. It still passes — the requirement is that the naming decision be justified in a record, and ADR-0010 justifies removing the distinction at length. **This control also found a real defect** — see below |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-17** — on head `dcdf59b1e9a918ceab718ced164aa621ab91b4d5`: **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). Includes `verify (1.94.0)`, `verify (stable)`, `security`, `docs`, `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, and the macOS and Windows platform matrix. **0 unresolved conversations, 0 open CodeQL alerts** |
+| 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated **2026-08-17** |
 
-**On acceptance the reviewer field reads exactly `Ahmed Anbar — self-review under W-002`.**
-That review is **not independent** and must not be described as such — here, in the evidence
-pack, in `GOVERNANCE.md`, or in any public document. It is a structured self-review operating
-under a recorded, time-bounded exception that expires **2027-02-11**, or immediately when a
-qualified independent reviewer becomes available, whichever comes first. When W-002 closes, the
-first qualified independent reviewer re-reviews this record in full, alongside every other
-record accepted under it.
+**All four controls are met. This record is `accepted`.**
+
+### What control 2 found
+
+The checklist verification is not a formality here, and it earned that on this record: it
+surfaced that **spec FR-005 mandates the very distinction this decision removes.**
+
+> *"FR-005: An accepted decision record MUST explain the intentional distinction between the
+> product name and the installed executable name…"*
+
+The impact analysis above listed the constitution, `PLAN.md`, the public-identity contract, and
+the documentation — and **missed FR-005**. It was found by running control 2 rather than by
+re-reading the analysis, which is precisely the case for having a control that consults a
+different artifact than the author was looking at.
+
+Dispositioned in the same change that accepts this record: FR-005 carries a dated amendment
+note recording that its **first clause is satisfied by this record** (the requirement is that
+the naming decision be justified, and it is) and that its **second clause is unchanged and
+still binding** (documentation, tests, and examples must use the executable name consistently).
+The accepted text of a closed phase is annotated, not rewritten.
+
+### Still owed
+
+**W-002 does not close on acceptance.** When the first qualified independent reviewer becomes
+available they re-review this record in full — including the alternatives it rejects and the
+Phase 001 scope argument in §Waiver authority — alongside every other record accepted under
+W-002. Until then this project has **six active waivers**, and the underlying problem is
+unchanged: there is one maintainer, and no second person qualifies as independent.
+
+Reviewed by **`Ahmed Anbar — self-review under W-002`** on **2026-08-17**. That review is
+**not independent** and must not be described as such — here, in the evidence pack, in
+`GOVERNANCE.md`, or in any public document.

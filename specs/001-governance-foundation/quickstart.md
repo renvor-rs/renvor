@@ -349,7 +349,16 @@ Open `governance/phase-001-evidence.md` and confirm:
 - every row has an evidence link, command, platform, operator, date, and result;
 - `open_blockers` is empty, **or** every remaining entry is explicitly categorised as transferred, waived, or cancelled with an owner and a destination — an open blocker may not be closed by rewording it;
 - known limitations include the FR-049 residual risk (verified-but-unreserved package names), with a named owner and target phase;
-- **all six decision records — ADR-0001 through ADR-0006 — are accounted for**, each either `accepted` with a reviewer and a review date, or explicitly `proposed` with the named blocking task that keeps it there. *(Corrected 2026-08-15: this read "all four ADRs", which predates ADR-0005 and ADR-0006. It must never be read as permission to ignore the two it omitted.)* Under **W-002** the reviewer field reads exactly `Ahmed Anbar — self-review under W-002` and **must not be described as independent**;
+- **every Phase 001 decision record is accounted for** — each either `accepted` with a reviewer and a review date, `superseded` with the record that superseded it named, or explicitly `proposed` with the named blocking task that keeps it there. *(Corrected 2026-08-15: this read "all four ADRs", which predates ADR-0005 and ADR-0006. **Corrected again 2026-08-17**: it then read "all six decision records — ADR-0001 through ADR-0006", a fixed range that silently stopped covering the set the moment **ADR-0010** was added. A gate that names a range must be re-edited every time the set grows, and the edit that was forgotten is invisible; enumerate the directory instead.)* Under **W-002** the reviewer field reads exactly `Ahmed Anbar — self-review under W-002` and **must not be described as independent**. As of 2026-08-17 that set is **seven** records: ADR-0001 (`superseded` by ADR-0010), ADR-0002 through ADR-0006 (`accepted`), and ADR-0010 (`accepted`). Run this rather than trusting the list:
+
+```sh
+# Every Phase 001 record, with its state — derived from the directory, not from a range.
+for f in decisions/000[1-6]-*.md decisions/0010-*.md; do
+  printf '%-58s %s\n' "$f" "$(grep -m1 '^| \*\*State\*\*' "$f" | sed 's/.*| `\([a-z]*\)`.*/\1/')"
+done
+# Positive control: a state that is neither accepted nor superseded must be visible here.
+```
+
 - **the task counts are recomputed by ID and explicit status**, not by counting checkboxes, and completed / open / transferred / waived / cancelled are reported as separate figures — see "How to count the tasks in this file" in `tasks.md`;
 - no runtime framework capability was implemented (review against FR-047).
 
