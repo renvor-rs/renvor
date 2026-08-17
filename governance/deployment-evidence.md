@@ -28,10 +28,18 @@ for what was true on their own dates.**
 | Reconciled by | Flux v2.9.4 — only `kustomize-controller` and `source-controller`, both image `v1.9.4` |
 | Reconciler identity | `flux-system/renvor-reconciler` — **not** cluster-admin |
 | Namespaces | `renvor-site` (2 pods) and `renvor-site-staging` (1 pod) — counted live |
-| Registry credential in the cluster | **none.** No `imagePullSecret` exists on any ServiceAccount or Pod in either namespace |
+| Registry credential in the cluster | **none.** Enumerated: all 4 ServiceAccounts and all 3 Pods across both namespaces have `imagePullSecrets` **absent** — not empty, absent |
 
 The **same digest** runs in both namespaces, and it is the digest whose provenance, SBOMs, and
 attestations were verified before promotion. All three pods report `ready=true` with **0 restarts**.
+
+Three Secrets exist, all created and owned by cert-manager, none carrying application data:
+`letsencrypt-prod-account-key` (Opaque), `letsencrypt-staging-account-key` (Opaque), and
+`renvor-dev-tls` (`kubernetes.io/tls`) — all in `renvor-site`, none in staging. **Only names and
+types were read; no Secret value was read, printed, logged, or committed at any point.** The
+staging account key is a residue of issuing against Let's Encrypt's staging directory first, which
+is where the two self-inflicted issuance blockers were found without consuming a production rate
+limit.
 
 ## 2 — What the internet actually returns
 
