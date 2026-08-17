@@ -8,11 +8,16 @@
 > the dates shown.
 
 
-**Status**: Partly executed, **nothing deployed**. All four repositories exist, are public on
-GitHub, and are canonical there. `renvor-rs/renvor-site` has commits;
-`renvor-rs/renvor-docs` is **commit-empty**; `renvor-rs/renvor-infra` **has one commit**,
-`aa52237f4af421e089c31cfe306faa5db7c25e08`, published 2026-08-15. **No site is deployed and no
-image is published.** *(Status line corrected 2026-08-15. It previously read "the
+**Status**: **Partly executed — the landing property is deployed, the documentation property is
+not.** All four repositories exist, are public on GitHub, and are canonical there.
+`renvor-rs/renvor-site` has commits; `renvor-rs/renvor-docs` is **commit-empty**;
+`renvor-rs/renvor-infra` now carries the deployment configuration, Flux control objects, CI, and
+runbooks at `07bda7ad59c0e82bc441e4cb400d290cd60a882d`. **`https://renvor.dev` serves the landing
+site** from image `ghcr.io/renvor-rs/renvor-site@sha256:56446da7c16e155396114e185206837710eee1587d3b58ef8e5ecca96ddb84af`
+over a Let's Encrypt certificate. **`docs.renvor.dev` is not deployed.** *(Status line corrected
+again 2026-08-17. It read "Partly executed, **nothing deployed** … **No site is deployed and no
+image is published.**" — accurate on 2026-08-15, false from 2026-08-17. Evidence:
+[`deployment-evidence.md`](deployment-evidence.md).)* *(Status line corrected 2026-08-15. It previously read "the
 infrastructure repository has no commits on either host", which stopped being true when
 `renvor-infra` was published, and it pointed at §5 as current when §5 is now superseded. An
 earlier line reading "Planning only — nothing has been created, pushed, or deployed" was

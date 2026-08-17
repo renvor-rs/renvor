@@ -1532,14 +1532,23 @@ Four repositories, all public on GitHub, all canonical there:
 | Repository | Host | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|---|
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **to be served** at `renvor.dev` | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **served at `renvor.dev` since 2026-08-17** | Framework source, documentation content, cluster credentials |
 | `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | **Will be** the production documentation site at `docs.renvor.dev`; **commit-empty today**, so it is a reserved destination, not yet a source of truth | Framework source copied by hand, cluster credentials |
-| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | **Will be** Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation; **today a `README.md`, a `.gitignore`, and the brand mark — no manifest** | Application source, plaintext secrets of any kind |
+| `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation — **all three exist as of 2026-08-17** | Application source, plaintext secrets of any kind |
 
-**GitHub is the source, review, and future CI surface for all four repositories.** *("future"
-added 2026-08-15 — `renvor-docs` and `renvor-infra` have zero workflows and zero runs, so
-GitHub is not yet a CI surface for them. This now matches ADR-0006 D13 and
-`governance/phase-001-evidence.md` §3av, which both already read "future CI surface".)* **No
+> **Updated 2026-08-17.** The `renvor-site` row read "**to be served**" and the `renvor-infra` row
+> read "**Will be** … **no manifest**". Both were true when written and are now false: the landing
+> site is deployed, and `renvor-infra` carries manifests, Flux control objects, CI, tenancy RBAC,
+> and runbooks. The `renvor-docs` row is **unchanged and still accurate** — that repository remains
+> commit-empty and `docs.renvor.dev` is not deployed. Evidence:
+> [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
+
+**GitHub is the source, review, and CI surface for all four repositories** — actual for three of
+them, future for `renvor-docs`. *("future" added 2026-08-15 — `renvor-docs` and `renvor-infra` had
+zero workflows and zero runs, so GitHub was not yet a CI surface for them. This matched ADR-0006
+D13 and `governance/phase-001-evidence.md` §3av. **Narrowed 2026-08-17**: `renvor-infra` now has
+the `infra-ci` workflow with a required `validate` check, so "future" applies to `renvor-docs`
+alone, which is still commit-empty.)* **No
 Renvor process reads from, writes to, or depends on a GitLab instance** for source control,
 CI, registry, deployment, or disaster recovery.
 
@@ -1552,12 +1561,22 @@ false for two of the four.)* Observed 2026-08-15:
 |---|---|---|
 | `renvor-rs/renvor` | yes — pull request, strict checks, administrators included, conversation resolution, force push and deletion blocked | 4 — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` |
 | `renvor-rs/renvor-site` | yes — same controls | 5 — `build`, `accessibility`, `links`, `dependencies`, `container` |
-| `renvor-rs/renvor-infra` | yes, by ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **none** — the repository has no CI yet |
+| `renvor-rs/renvor-infra` | yes, by ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **1 — `validate`**, strict, *added 2026-08-17T20:42:25Z; **none** until then* |
 | `renvor-rs/renvor-docs` | **no** — commit-empty, so no `main` branch exists to protect and no protection or ruleset is configured | **none** — no commits, no workflows |
 
-Bringing `renvor-infra` and `renvor-docs` up to the full control set is future work gated on
-those repositories acquiring CI and content respectively. **Neither gap is closed by this
-record, and neither may be described as satisfied.**
+> **Updated 2026-08-17.** The `renvor-infra` row read "**none** — the repository has no CI yet".
+> That is no longer true, and **the way it became untrue is itself the finding**: CI arrived in the
+> same commit as the first manifest, but the check was not *required* until 2026-08-17T20:42:25Z,
+> so **all seven pull requests #1–#7 merged with `validate` advisory**. The obligation's deadline —
+> "before the first manifest is merged" — was **missed on its required-check half and corrected
+> late**. Recorded, not smoothed over, in
+> [`governance/deployment-evidence.md` §5](governance/deployment-evidence.md).
+
+`renvor-infra` reached the required-check half of the control set on 2026-08-17. **Bringing
+`renvor-docs` up to the full control set remains future work** gated on that repository acquiring
+content. **That gap is not closed by this record and may not be described as satisfied**, and
+neither may the approval gap: `renvor-infra` and `renvor` both sit at
+`required_approving_review_count: 0`, which is the single-maintainer gap recorded in W-001.
 
 **`renvor-rs/renvor-docs` is the public canonical *destination* for the production
 documentation site, and it is deliberately commit-empty.** It has no commits and receives none
@@ -1584,10 +1603,21 @@ A first attempt at the correction then claimed "all deployed properties are publ
 reachable"; **that was false and is retracted here — no Renvor site has ever been
 deployed**.)* The two application repositories became public on 2026-08-14 and `renvor-infra`
 followed on 2026-08-15; each was already intended to serve or describe public content. **All
-four repositories are publicly readable. No Renvor site is deployed, no image is published,
-and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content.** Repository visibility
+four repositories are publicly readable.** ~~No Renvor site is deployed, no image is published,
+and neither `renvor.dev` nor `docs.renvor.dev` serves Renvor content.~~ Repository visibility
 and website visibility remain separate decisions — repository visibility is a current fact,
 site visibility is a future gate, and neither implies the other.
+
+> **Superseded 2026-08-17 — the struck sentence is now false in two of its three clauses.** The
+> landing site **is** deployed, and an image **is** published:
+> `ghcr.io/renvor-rs/renvor-site@sha256:56446da7c16e155396114e185206837710eee1587d3b58ef8e5ecca96ddb84af`,
+> served at `https://renvor.dev` over a Let's Encrypt certificate. The third clause survives in
+> half: **`docs.renvor.dev` still serves no Renvor content** and is not deployed. The heading above
+> this paragraph, "All source public. No site deployed.", is likewise half-superseded. Full
+> evidence: [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
+>
+> The struck text is kept rather than deleted because the paragraph is a dated record of a
+> correction, and rewriting it would erase the reasoning that produced it.
 
 **The framework repository never depends on the other three.** Compiling, testing,
 packaging, and publishing the Rust crates MUST succeed from a clone of `renvor-rs/renvor`
@@ -1674,14 +1704,26 @@ decision itself is unchanged)*
   `www.renvor.dev` each resolve to the shared origin and return **HTTP 404**, over plain HTTP
   or over HTTPS with certificate validation bypassed; against a public trust store the TLS
   handshake fails, because Traefik serves its default self-signed certificate. **Something
-  answers; no Renvor content is served.**)* The image **will contain** only the built static
-  site, intended to be served publicly at `renvor.dev`; **once that site is deployed**,
-  publishing the image will disclose nothing a visitor could not already see. **That is a
-  property of the design, not an observation** — nothing is deployed today;
+  answers; no Renvor content is served.**)* **That parenthesis is itself now superseded — see the
+  note below.** The image contains only the built static site, and because that site **is** served
+  publicly at `renvor.dev`, publishing the image discloses nothing a visitor could not already
+  see. **That is now an observation as well as a property of the design;**
 - images are referenced **by immutable digest** in deployment manifests, never by a mutable
   tag such as `latest`;
 - images carry a signature, an SBOM, and build provenance;
 - images are scanned for vulnerabilities before promotion.
+
+> **Superseded 2026-08-17.** The 2026-08-15 parenthesis above measured `renvor.dev`,
+> `docs.renvor.dev`, and `www.renvor.dev` all returning HTTP 404 with no valid certificate, and
+> concluded *"Something answers; no Renvor content is served."* **That was accurate on its date and
+> is now false for two of the three hostnames.** `renvor.dev` returns **200** over a valid Let's
+> Encrypt certificate, and `www.renvor.dev` permanently redirects to it. **`docs.renvor.dev` is
+> unchanged**: still 404, still presenting only Traefik's default self-signed certificate, still
+> not deployed.
+>
+> The four design properties above — digest pinning, signature, SBOM and provenance, pre-promotion
+> scanning — were all **observed** on the deployed image rather than merely intended. Evidence:
+> [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
 
 **A private image would be the correct default for anything carrying configuration,
 credentials, or unreleased material.** The public choice here is specific to a static site
