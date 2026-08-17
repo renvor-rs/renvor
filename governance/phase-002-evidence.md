@@ -2067,19 +2067,19 @@ Every figure below was produced from the committed tree at the head this pull re
 |---|---|
 | `cargo fmt --all` + `git diff --check` | clean |
 | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | **0** |
-| `cargo test --workspace --all-features -- --test-threads=1` | 28 targets, **333 tests, 0 failing** |
+| `cargo test --workspace --all-features -- --test-threads=1` | 28 targets, **344 tests, 0 failing** |
 | `cargo xtask verify` @ **1.94.0** | **11/11** |
 | `cargo xtask verify` @ **stable 1.97.1** | **11/11** |
 | `cargo check --locked -p renvor --no-default-features --all-targets` @ 1.94.0 | pass |
 | `cargo check --locked -p renvor --no-default-features --all-targets` @ stable | pass |
 | `cargo deny check licenses advisories bans sources` | 4/4 ok |
 | `actionlint -no-color` | **0** |
-| Quickstart gates **0–15, individually**, each in its own shell | **16/16**, **168** tests executed across gates 2–11 |
-| Gate 12 under **bash 3.2** | PASS, 7 controls |
-| Gate 12 under **zsh 5.9** | PASS, 7 controls |
+| Quickstart gates **0–15, individually**, each in its own shell | **16/16**, **170** tests executed across gates 2–11 |
+| Gate 12 under **bash 3.2** | PASS, 8 controls |
+| Gate 12 under **zsh 5.9** | PASS, 8 controls |
 | FR-001…FR-044 present in the requirement map | **44/44**, no gaps |
 | SC-001…SC-022 present in the requirement map | **22/22**, no gaps |
-| Task IDs T001…T158 | contiguous, unique, no duplicates |
+| Task IDs T001…T159 | contiguous, unique, no duplicates |
 
 `cargo xtask verify` covers formatting, clippy under `-D warnings`, the workspace tests, rustdoc
 with warnings denied, `cargo deny`, secret scanning over both the working tree and the full commit
