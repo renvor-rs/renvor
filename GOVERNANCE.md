@@ -116,7 +116,7 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Five** waivers are currently active, all traceable to the same single-maintainer gap. Each
+**Six** waivers are currently active, all traceable to the same single-maintainer gap. Each
 covers one rule, at one level, in one phase — and none is extended to another by
 reinterpretation:
 
@@ -127,10 +127,36 @@ reinterpretation:
 | **W-003** | no independent requirements-and-security review | phase level | Phase 001 | **2027-02-11** |
 | **W-004** | no independent reviewer for **ADR-0007** | decision record | Phase 002 | **2027-02-16** |
 | **W-005** | no independent requirements-and-security review | phase level | Phase 002 | **2027-02-16** |
+| **W-006** | no independent reviewer for **ADR-0009** | decision record | Phase 002 | **2027-02-11** |
 
 Each expires on the date shown **or** immediately when a qualified second person becomes
 available — whichever comes first. Full text, compensating controls, and scope limits are in
 [`governance/waivers.md`](governance/waivers.md).
+
+**W-006 is the third explicit reviewed exception in Phase 002**, which exceeds the waiver
+ledger's own expected maximum of two per phase. That departure is recorded explicitly in the
+ledger rather than hidden by extending W-004 or W-005, and the underlying problem is unchanged:
+**this project has no second qualified human reviewer.** One problem has now been recorded five
+times across two phases. W-006 also expires **2027-02-11** rather than a later date, because the
+ledger's ratchet rule requires a new waiver for this same gap to inherit the earliest open
+expiry rather than restart the clock.
+
+### Decision-record review under W-006
+
+While W-006 is active, and **for ADR-0009 alone**:
+
+- The reviewer field of ADR-0009 reads exactly **`Ahmed Anbar — self-review under W-006`**.
+- This review **MUST NOT** be described as independent, in the record, in the evidence pack, in
+  this document, in the documentation site, or in any public document. It is a structured
+  self-review operating under a recorded exception. **No independent human review of ADR-0009
+  has occurred.**
+- ADR-0009 may not reach `accepted` until all **four counted** compensating controls are
+  complete, every restated precondition holds, and the review record is dated.
+- **W-006 waives the independent-review requirement for ADR-0009 and nothing else.** It does not
+  waive any security finding, any CI or acceptance gate, Phase 002's phase-level review
+  requirement, review of any other ADR, or any release restriction. W-004 remains confined to
+  ADR-0007; a record-level waiver never authorises closing a phase, and the phase-level W-005
+  never authorises accepting a decision record.
 
 ## Changes to the default branch
 

@@ -719,6 +719,8 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 2 | **ADR-0008** remains `proposed` | W-004 covers ADR-0007 alone and confers no authority here. FR-035 does not require acceptance for a packaging decision | No |
 | 3 | Independent re-review of ADR-0007 when W-004 closes | No qualified independent reviewer is available (research §D11 criteria 1, 2, 4) | Blocks W-004 closure |
 | 4 | **W-005** — Phase 002 independent requirements-and-security review | Same staffing gap, phase level | Blocks public release |
+| 4a | Independent re-review of **ADR-0009** when **W-006** closes | Same staffing gap, record level. **Added 2026-08-17.** W-006 waives *who reviews* ADR-0009 and nothing else; the record is `accepted` on a **self-review**, and the first qualified independent reviewer must re-review it in full — the record, the vendored replacement, the override, the lockfile, the guard, and the rejected alternatives | Blocks W-006 closure |
+| 4b | **The per-phase waiver guard is breached: Phase 002 holds three explicit reviewed exceptions against an expected maximum of two** | **Added 2026-08-17.** W-006 is the third. It could not be folded into W-004 (ADR-0007 alone) or W-005 (phase level, which never authorises accepting a record), and the ledger's rules forbid extending a waiver by reinterpretation. Recorded as an acknowledged departure rather than absorbed. **Phase 003 is now one waiver away from tripping the trend guard**, which makes a third consecutive phase waiving the same rule a release blocker absent dated recruitment progress | No — but it is the clearest signal in this pack that the single-maintainer gap is structural, not incidental |
 | ~~5~~ | ~~`ConfigSource::load` and `validate` carry no value type~~ | **CLOSED 2026-08-16 (T126).** It was written to close with US3, and US3 shipped: typed decoding lives in `ConfigResolver`, and `SchemaSource` bridges it to the lifecycle by resolving during `load` and holding the value for a `ConfigHandle`. The port carries no value type *by design*, not pending a decision — the kernel never sees the author's schema, which is what keeps `renvor-core` free of a parser | — |
 | ~~6~~ | ~~The facade's `config` re-export is **vacuous**~~ | **CLOSED 2026-08-16 (T126).** It was written when `renvor-config` was a documentation-only stub. The crate now exports `ConfigSchema`, `LayeredResolver`, `LayeredResolverBuilder`, `FileLayer`, `MAX_FILE_BYTES`, `SchemaSource`, `ConfigHandle`, `Secret`, `REDACTED`, `NESTING_SEPARATOR`, `DecodedLayer`, and `Merged`. The feature gate is load-bearing: `--no-default-features` resolves no parser, derive macro, or secret crate, asserted in both directions by `xtask` step 7 | — |
 | 7 | `DEFAULT_PROVIDER_DEADLINE` is **30 s by Renvor's choice, not by specification** | FR-025 and C-L7 require the bound; no artifact names a value. Chosen to match the drain default as a symmetry, not from measurement | No — but a phase that measures real provider start-up times should revisit it |
@@ -746,6 +748,7 @@ No direct dependency was added, and the gates were re-run rather than assumed:
 | 29 | Gate 12's repository-state check **cannot see an ignored path** | D5-1. `git status --porcelain` consults `.gitignore` — the same blind spot T120 removed from `release-dry-run.yml`, where the fix was a `find` comparison. Both of Gate 12's own probe files are git-visible, so the detector sees what it is aimed at | No — but the claim it supports is "no tracked or untracked-but-visible file changed", not "byte-identical" |
 | 30 | The wait-inventory gate's comment strip is **not a comment parser** | D7-5. `split_once("//")` truncates at a `//` inside a string literal — one production line is truncated today, `observe/spans.rs:163`, with no live effect — and `/* … */` is not stripped at all, so the original false positive reproduces in block-comment form | No — the errors run in opposite directions (stricter for bounding constructs, laxer for author calls) and both are named in the code |
 | 31 | A **regular file is now required** for a configuration source | S3-2. `/dev/null` as a deliberately-empty source, `/dev/stdin` when stdin is a pipe, and process substitution are all refused. The alternative — permitting character devices — readmits `/dev/zero`, which is the memory exhaustion finding 4.1 was raised for | No — but an operator who passed `/dev/stdin` before now gets a refusal, and the release note should say so |
+| 32 | **No JavaScript static analysis runs on this repository**, so the vendored `image-size` replacement is examined by none | SQ7, 2026-08-17. Verified against the live configuration rather than assumed: CodeQL default setup covers **`rust` and `actions` only**. The vendored files are first-party build-time code that `npm run build` executes, and `cargo-deny` (Rust-only), `dependency-review` (registry packages only), and `npm audit` (see SQ14) all miss them. Enabling JavaScript in default setup is **free on a public repository** and is the remedy; it is a **repository-settings change deliberately outside this pull request**, because changing code-scanning configuration mid-merge can surface new alerts against the exact head under review | No — the code is 6 files, 20 committed controls exercise the guard beside it, and ADR-0009 states the asymmetry. But it is a real gap, owned by the maintainer, and it should be closed before the documentation site is treated as a released artifact |
 
 ## Pre-shipping corrections (T111–T132)
 
@@ -1130,7 +1133,7 @@ rather than in a footnote.
 | **FR-032** | Examples compile, run, no hidden global mutable state | `crates/renvor/examples/{minimal,providers,configuration}.rs` | quickstart Gate 12, with a control | **MET** |
 | **FR-033** | No HTTP, GraphQL, persistence, auth, CLI, generation, or frontend | `tokio` features are `rt`, `time`, `sync`, `macros` only | `xtask` step 7 `crate_dag_holds`; quickstart Gate 13a | **MET** |
 | **FR-034** | No crate, package, image, release, or tag published | 0 published; `publish = true` states a crate *may* be, not that it was | quickstart Gate 14a–14c; sparse-index 404 × 4 with a 200 control | **MET** |
-| **FR-035** | Custom infrastructure justified by an accepted ADR | ADR-0007, accepted under W-004 | quickstart Gate 14d; `decisions/0007-*.md` | **MET — under waiver** |
+| **FR-035** | Custom infrastructure justified by an accepted ADR | ADR-0007, accepted under W-004; **ADR-0009, accepted under W-006** *(added 2026-08-17 — the vendored `image-size` replacement is custom infrastructure and needed its own record and its own waiver)* | quickstart Gate 14d; `decisions/0007-*.md`; `decisions/0009-*.md` | **MET — under waiver** |
 | **FR-036** | Public surface declared explicitly unstable | SC-022 sentence, byte-identical in three normative locations | `xtask` step 7 `instability_wording_agrees` | **MET** |
 | **FR-037** | Two classes of sensitive data, both non-emitting | `Secret<T>` (a); `TypedStateMap` emits type names only (b) | `tests/redaction.rs` | **MET** |
 | **FR-038** | Hostile configuration fails closed | `MAX_FILE_BYTES`; `locate_failure` bisection; non-Unicode environment refusal | `renvor-config/tests/hostile.rs`, `tests/environment_bytes.rs` | **MET** |
@@ -1170,9 +1173,12 @@ rather than in a footnote.
 
 **Counts**: 44 functional requirements, 44 rows. 22 success criteria, 22 rows. **0 empty cells.**
 
-**FR-035 is MET under a waiver, not unconditionally.** ADR-0007 is accepted; the independent review
-its acceptance would otherwise require has **not** occurred, and W-004 is the recorded authority for
-that gap. A reader who needs FR-035 satisfied without a waiver should treat it as open.
+**FR-035 is MET under a waiver, not unconditionally — and now under two.** ADR-0007 is accepted and
+**ADR-0009 is accepted**; the independent review each acceptance would otherwise require has **not**
+occurred, and **W-004** and **W-006** are the recorded authorities for those two gaps. A reader who
+needs FR-035 satisfied without a waiver should treat it as open. *(Updated 2026-08-17: the second
+record and second waiver were added when a round-four review found that the vendored `image-size`
+replacement is itself custom infrastructure.)*
 
 **SC-009's `Panic` behaviour is bounded by the panic strategy.** It holds wherever unwinding is the
 strategy, which is the default and is what CI runs. Under `panic = "abort"` it does not hold and
@@ -2147,7 +2153,7 @@ here, and worth more than either report alone.
 | **R4-5** | MAJOR | T151 acted on the subject matter of `001-T108` and `001-T109`, which `spec.md` twice declares out of scope | **ACCEPTED and CORRECTED** (T159). The finding is right: `001-T108` is literally *"resolve `image-size`"*. The work stands, because PLAN.md §17.3 admits no waiver and the maintainer directed it; the **record** was wrong. A dated correction is in `spec.md`, and this ledger's "untouched by Phase 002" row is corrected above. Phase 001's own ledger is **deliberately not edited from here** — recorded as an open item with an owner |
 | **R4-6** | MAJOR | T150 and T151 shipped with no evidence entry and unchecked task rows | **FIXED** (T159). Sections I and J above; both rows now closed with what was verified |
 | **R4-7** | MAJOR | `SUPPORT.md` cites the `platform` contexts as evidence, but they are not required status checks, so the rule it states cannot hold | **FIXED** (T159). `SUPPORT.md` now carries an enforcement table stating plainly that the four contexts are **not** required and that the macOS and Windows claims rest on review practice. Making them required is a repository-settings change, deliberately outside this batch |
-| **R4-8** | MAJOR | The vendored `image-size` replacement is custom infrastructure with no ADR, which FR-035 and principle III require | **FIXED** (T159). **ADR-0009**, `proposed`, recording all seven options considered, the measured cost of each, the capability loss, the ownership cost of the vendored export map, and the exit condition. Left `proposed`: W-004 does not reach it, exactly as it does not reach ADR-0008 |
+| **R4-8** | MAJOR | The vendored `image-size` replacement is custom infrastructure with no ADR, which FR-035 and principle III require | **FIXED** (T159). **ADR-0009**, `proposed`, recording all seven options considered, the measured cost of each, the capability loss, the ownership cost of the vendored export map, and the exit condition. Left `proposed`: W-004 does not reach it, exactly as it does not reach ADR-0008. **Updated 2026-08-17:** the maintainer granted **W-006** specifically for ADR-0009 on 2026-08-17, and the record is now **`accepted`** under it, reviewer `Ahmed Anbar — self-review under W-006`, after two clean-context advisory reviews with every finding dispositioned individually. The record was *not* accepted to unblock the merge — see §W-006 below for the controls that had to pass first |
 | **R4-9** | MINOR | The lossy environment path reports a byte count that is not the name's length | **FIXED** with S4-3 — bounding is now idempotent and always reports the **original** length |
 | **R4-10** | MINOR | Two requirement mis-citations in new records | **FIXED** (T159) |
 | **R4-11** | MINOR | "128 KB key vs 1.28 MB key" should be 1.28 KB vs 1.28 MB | **FIXED** (T159). The test uses `MAX_IDENTIFIER_BYTES * 10` = 1,280 bytes |
@@ -2202,3 +2208,128 @@ cargo deny check licenses advisories bans sources
 cargo publish --dry-run --workspace          # stages 4 crates, publishes 0
 cargo xtask verify                           # the full CI gate, locally
 ```
+
+---
+
+## W-006 — compensating controls for ADR-0009
+
+**Granted by Ahmed Anbar on 2026-08-17.** W-006 waives the **independent-review requirement** for
+**ADR-0009 and for nothing else**. It waives nothing about what must be true — not a security
+finding, not a CI or acceptance gate, not Phase 002's phase-level review, not any other record.
+
+**W-006 is the third explicit reviewed exception in Phase 002**, against a ledger maximum of two per
+phase. That departure is recorded as an acknowledged departure in `governance/waivers.md`, **not**
+by extending W-004 (which names ADR-0007 alone) or W-005 (which is phase-level and never authorises
+accepting a record). The underlying problem is unchanged and is not a process defect: **this project
+has no second qualified human reviewer.** One problem has now been recorded **five** times across
+two phases.
+
+### The four counted controls
+
+| # | Control | Status | Evidence |
+|---|---|---|---|
+| 1 | Two clean-context advisory reviews **of ADR-0009 specifically**, each producing a recorded result | **PASSED on attempt 2**; attempt 1 recorded as **NOT PERFORMED** | See "Advisory review attempts" below. Requirements: **10 findings**. Security: **14 findings** |
+| 2 | Every finding individually dispositioned, no grouping | **PASSED** | **24 of 24** dispositioned individually below, each with a stable ID and severity |
+| 3 | Every Critical, High, **and Medium** finding fixed before acceptance | **PASSED** | 2 CRITICAL, 10 MAJOR, 12 MINOR — **24 fixed, 0 refused.** The **Medium** half is what this control buys; `PLAN.md` §17.3 already blocks Critical and High unconditionally and stops there |
+| 4 | The replacement does not merge until controls 1–3 **and** seven named record elements are on the record | **HOLDS** | The two reviews, the dispositions, the executable dependency proof, the fail-closed image guard, the capability-loss statement, the ownership cost, and the removal condition are all in `decisions/0009-*.md`, and quickstart **Gate 14e** checks each mechanically |
+
+### The five restated preconditions
+
+Restated for completeness and **deliberately not counted** — a control another rule already mandates
+unconditionally compensates for nothing.
+
+| Precondition | Already required by | Status |
+|---|---|---|
+| Critical and High findings fixed | `PLAN.md` §17.3, which admits no waiver | **HOLDS** — both HIGH advisories closed by removal, not suppression |
+| Alternatives-and-consequences analysis | FR-035, principle III | **HOLDS** — 8 rejected alternatives, two of them **named maintained packages scored on principle III's axes**, added after a review found the original table named zero |
+| Package-first evaluation | FR-035, principle III | **HOLDS** — `image-dimensions@2.5.1` and `probe-image-size@7.4.0` evaluated and rejected with stated reasons |
+| Capability loss and hazards stated | principle XII | **HOLDS** — and corrected to say the loss was **elective**, not forced |
+| Recorded in the dependency inventory | FR-040 | **HOLDS** — `governance/phase-002-dependency-inventory.md` §T160, written because the row claiming it was **false** when written |
+
+### Advisory review attempts
+
+**Attempt 1 — NOT PERFORMED.** Two agents were dispatched with broad, multi-part checklists. Both
+ran for roughly 40 minutes and **returned nothing** — no findings, no "no findings" statement — and
+did not answer two status messages. W-006 control 1 requires an empty result to be recorded as not
+performed, never as passed, and it is so recorded here.
+
+**This is the third occurrence of this exact failure mode on this project.** It happened twice under
+W-004. The clause exists because of those, and it has now caught it a third time.
+
+**Remedy — the same one that worked under W-004, applied deliberately rather than rediscovered**:
+narrow each review to **seven numbered questions**, and make the deliverable a **file written to
+disk** rather than a returned message, removing message delivery from the critical path.
+
+**Attempt 2 — both performed**, both delivering complete reports to disk. *(Both the retried agents
+and one of the original pair delivered after the remedy was applied; the reports are attributed by
+content, and the count of findings below is of distinct findings, not of agents.)*
+
+**Neither review is independent.** Both are agent reviews operating under a recorded exception, and
+must never be described as independent in any document.
+
+### What the reviews found, in one sentence
+
+**The remedy works; several of the record's claims about it did not.** The vulnerable tarball is
+measurably absent, the override survives clean `npm ci`, plain `npm install`, and npm major 11, and
+`npm audit` reports zero — this is a real fix, not scanner-gaming. What did not survive scrutiny was
+a set of claims *about* the fix, three of them load-bearing, plus the enforcement around it.
+
+### Requirements / package-governance review — all 10 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| **Q1** | **CRITICAL** | The evidence pack recorded ADR-0009 as `accepted` — *"after two clean-context advisory reviews with every finding dispositioned individually"* — **while the record still read `proposed` and before either review had returned**. Four locations asserted it | **FIXED.** The reviewer is right and the error was the maintainer's: the acceptance statements were written ahead of the evidence that was supposed to gate them. **Nothing was committed in that state** — the sequence was corrected first: reviews returned, all 24 findings dispositioned, every Critical/High/Medium fixed, and only then the record moved to `accepted`. The statements are now true. **The error is recorded rather than quietly repaired**, in this row and in ADR-0009's own review record, because a record that reports its own review favourably is precisely what W-006 exists to prevent. This is the same shape as the "empty result recorded as passed" failure mode, inverted: an outcome recorded before the process that produces it |
+| **Q2** | **CRITICAL** | The record contained a standing directive forbidding its own acceptance — *"This record is `proposed` and must not be marked `accepted` in Phase 002"* — plus a Compliance row repeating it. Flipping the State field alone would leave the document simultaneously `accepted` and instructing every reader that it must not be | **FIXED.** The blockquote is replaced with the W-006 acceptance note, and the Compliance row now cites W-006. Both state plainly that **no independent human review of ADR-0009 has occurred**, that W-006 reaches this record alone, and that W-004 confers no authority here |
+| **Q3** | MAJOR | The FR-040 Compliance row claimed *"the change is recorded in the dependency inventory"*. Measured: `governance/phase-002-dependency-inventory.md` contained **zero** occurrences of `image-size`, `npm`, `uuid`, or `docusaurus` — it was Cargo-only by construction. This also breaks a W-006 **restated precondition**, which must hold for acceptance | **FIXED** — and fixed by **making the claim true rather than narrowing it to be defensible**. `§T160` records the vendored package and the `uuid` upgrade with version, licence, maintenance status, engines, advisories, and the resolved-graph proof read from the committed lockfile, plus an explicit scope statement that the Cargo counts are unchanged. Found independently as **SQ4** |
+| **Q4** | MAJOR | The exit condition named **three** artifacts; there are **four**. The `$image-size` override resolves its specifier *from* the root `file:` dependency, so the two are coupled — and a partial exit in the order the record implied **re-admits the vulnerable 2.0.2** | **FIXED.** Four artifacts, the coupling stated, and both partial-removal failures recorded with their measured npm errors. The measurement that dropping the override restores `image-size@2.0.2` and 19 high advisories is now in the record |
+| **Q5** | MAJOR | *"The guard fails the build closed if an image is ever added"* — **falsified end-to-end.** Three reference forms escape: reference-style `![alt][ref]` definitions, bare ESM `import x from "./y.png"`, and `<Image src=…>`. Proven with a real build that succeeded and emitted an `<img>` | **FIXED in code.** All three are caught, each with a committed positive control. Distinct from S4-7, which was dispositioned on "the roots cover every directory that exists" — these were missed **forms** inside scanned directories, which that reasoning does not cover |
+| **Q6** | MAJOR | *"A call is therefore loud, not silently dimensionless"* is false — mdx-loader catches, logs, and continues | **FIXED.** See the corroboration note below; reproduced three times independently |
+| **Q7** | MAJOR | Package-first named **zero** packages and scored **zero** axes, while two maintained alternatives existed. The record therefore presented an **elective** capability loss as an ecosystem constraint | **FIXED.** `image-dimensions@2.5.1` (MIT, zero dependencies) and `probe-image-size@7.4.0` are named and scored, with the three genuine grounds for rejecting the first — it parses HEIF, it does not parse ICNS or JXL, and it returns `undefined` rather than throwing. The consequences now say the loss was **chosen**. The reviewer's observation that these counter-arguments make the rejection *stronger* is correct, which is why naming them cost nothing |
+| **Q8** | MINOR | *"Throws from every entry point"* is untrue of three of six exports: `setConcurrency`, `disableTypes`, and `types` return normally | **FIXED.** "Throws from every **measuring** entry point", with the three no-ops named and justified. Found independently as **SQ11** |
+| **Q9** | MINOR | *"Mirrors the real package's export map"* is inaccurate, and the dropped `bin` entry was undisclosed anywhere | **FIXED.** The Decision says "the subpaths this project can reach"; all three divergences — missing `./types/*`, added `./package.json`, dropped `bin` — are on the ownership-cost ledger. Found independently as **SQ12** |
+| **Q10** | MINOR | No committed positive control for the guard. CI exercised only the passing path, where a guard broken to always exit 0 is indistinguishable from a working one | **FIXED.** `docs/scripts/check-image-inputs.test.mjs` — **20 controls**, wired into `docs.yml`. Found independently as **SQ8** |
+
+### Security / supply-chain review — all 14 findings
+
+| ID | Severity | Finding | Disposition |
+|---|---|---|---|
+| **SQ1** | MAJOR | The record's central safety claim is falsified by the caller it cites: mdx-loader's `try`/`catch` logs and continues, so throwing and returning `{}` differ **only** in console output. Measured: build exits **0**, emitted `<img>` has no `width`/`height` | **FIXED.** The record now states this as measured fact and draws the consequence: **the guard is the only fail-closed control**, not a second one. Reproduced independently by the requirements review (**Q6**) and by the maintainer before either review returned — **three independent reproductions**, the strongest corroboration available here |
+| **SQ2** | MAJOR | The guard did not scan `i18n/` or `versioned_docs/` — the two trees `docusaurus write-translations` and `docusaurus docs:version` create, both compiled by the same mdx-loader. Planted images in each: guard **exit 0** | **FIXED.** The scan is now **by exclusion** (`node_modules`, `build`, `.docusaurus`, dotfiles) rather than by an include list, so a new content root is covered by default rather than by remembering to add it. Two controls |
+| **SQ3** | MAJOR | The guard skipped **symlinks entirely** — `Dirent.isFile()` and `isDirectory()` are both false for a link, so a symlinked documentation subtree was invisible to the guard and fully visible to mdx-loader. Proven through a real `npm run build` | **FIXED.** `lstatSync` is used, and any symlink under a scanned root is **refused rather than followed** — resolving links would mean reasoning about cycles and escapes, and this guard's job is to be the thing that cannot be walked past. Re-measured after the fix: `npm run build` now refuses at `prebuild` with `docs/sub` named. Two controls. **The sharpest of the guard findings** |
+| **SQ4** | MAJOR | The FR-040 compliance claim is false; the vendored package appears in no dependency inventory | **FIXED** — see **Q3**, found independently |
+| **SQ5** | MAJOR | **No npm advisory gate ran in CI at all.** `cargo-deny` is Rust-only; the weekly scheduled `security` job runs cargo-deny alone; `dependency-review` is gated on `pull_request`. A newly published advisory against any of ~1,310 npm packages reached **no gate on any trigger** | **FIXED.** `npm audit --audit-level=moderate` added to **both** `docs.yml` and the scheduled `security` job, so the weekly sweep now covers npm as well as cargo. `moderate` rather than `high` because `governance/dependency-advisory-policy.md` requires a written time-bounded exception even at Medium. **This is the finding with the longest reach** — it is why two unfixable HIGH advisories could sit open, and the remedy is a gate rather than a reminder |
+| **SQ6** | MINOR | The `overrides` entry is the sole load-bearing control; the root `file:` dependency protects nothing alone. Measured: removing only `overrides` and running `npm install` restores the real `image-size@2.0.2` nested under mdx-loader — the copy its `require` resolves — and `npm audit` reports **25 vulnerabilities, 19 high** | **FIXED.** Recorded in the exit condition with the measurement. `npm ci` fails closed on the same drift, which is recorded too |
+| **SQ7** | MINOR | The vendored code carries no integrity hash and is covered by **none** of the gates that cover a real dependency | **FIXED as far as this pull request can.** The asymmetry is now a table in the record. **CodeQL coverage is verified, not assumed**: the live default-setup configuration covers **`rust` and `actions` only**, so no JavaScript analysis runs — the vendored code is examined by no static analysis. Enabling JavaScript is free and is the remedy, but it is a **repository-settings change deliberately outside this pull request**, carried as **named open item 32**. A `CODEOWNERS` entry was considered and **rejected**: with one maintainer it routes review to the change's author, compensating for nothing |
+| **SQ8** | MINOR | No test asserts the stub still throws or the guard still fires | **FIXED** — see **Q10**, found independently |
+| **SQ9** | MINOR | Nine raster extensions passed, including `.tga`, which the real `image-size` lists among the formats it parses; and reference-style syntax was unmatched | **FIXED.** The extension set is widened to 32; reference definitions are matched. The reviewer's own reachability caveat — mdx-loader does not transform the reference form — is why **Q5**/SQ9's reference half is a guard-accuracy gap rather than an `image-size` exposure, and it is fixed on accuracy grounds |
+| **SQ10** | MINOR | The SVG exclusion rationale is **factually wrong**: the real `image-size` lists `svg` among its formats, and `transformImage` applies no extension filter, so an MDX-embedded `.svg` *is* passed to it. The exclusion is safe only because the embed regex catches it | **FIXED.** The comment now says SVG **files** are permitted as static assets while SVG **embeds** are still caught, and states why. Two controls pin both halves. The failure scenario the reviewer names — a maintainer trusting the comment and widening the exclusion — is exactly why a wrong reason is worse than no reason |
+| **SQ11** | MINOR | Three of six exports return normally despite the "throws from every entry point" claim | **FIXED** — see **Q8**, found independently |
+| **SQ12** | MINOR | Export-map divergences from the real package | **FIXED** — see **Q9**, found independently |
+| **SQ13** | MINOR | The vendored package declared `"license": "MIT"` inside a repository that ships both `LICENSE-APACHE` and `LICENSE-MIT` and advertises `MIT OR Apache-2.0`. Original code, so the narrower declaration was a choice rather than an inheritance — and no gate would ever notice | **FIXED.** Declared `MIT OR Apache-2.0`, matching the repository |
+| **SQ14** | MINOR | `npm audit: 0` is cited as verification but **cannot discriminate** — the stub is versioned outside the advisory range, so audit reports zero regardless of what the stub contains | **FIXED.** The record now states this limit explicitly and names the **resolved graph** — symlink, no tarball, no bundled copy across 1,377 packages — as the actual evidence, with the audit number demoted to a consequence of the version string |
+
+### Corroboration, and what it says
+
+Three findings were reached independently by both reviewers, and one of those by the maintainer as
+well before either review returned:
+
+| Defect | Found by |
+|---|---|
+| *"Loud, not silently dimensionless"* is false | **maintainer**, **Q6**, **SQ1** — three reproductions |
+| The FR-040 inventory entry does not exist | **maintainer**, **Q3**, **SQ4** |
+| No committed control for the guard | **Q10**, **SQ8** |
+| The export-map and "throws everywhere" claims are inaccurate | **Q8/Q9**, **SQ11/SQ12** |
+
+**The pattern this round shows is a new one for this phase, and worth naming.** The previous four
+rounds kept finding *fixes applied to the instances someone pointed at, guarded by a check that
+asserts the fix rather than the property*. This round found something different: **the engineering
+was sound and the record describing it was not**. Every external fact in ADR-0009 was verified true;
+what failed was the record's account of its own safety mechanism, its own inventory entry, its own
+exit condition, and its own package-first evaluation. A reader acting on the Decision section would
+have believed a throw could fail a build, that three artifacts could be removed together, and that
+an inventory entry existed.
+
+That is a different failure mode from the first four, and it is the one a decision record is most
+prone to: the artifact whose entire purpose is to be an accurate account is also the artifact
+nothing executes.
+

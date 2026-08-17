@@ -870,6 +870,97 @@ as compensating controls. They must all hold; none of them is what the waiver bu
 **W-002 covers Phase 001 decision records; W-003 covers Phase 001's phase-level review. Neither
 authorises accepting a Phase 002 ADR — W-004 does, and only for ADR-0007.**
 
+### 14e — ADR-0009 governance gate
+
+**Added 2026-08-17 (T160).** Phase 002 now has **two** accepted decision records, each under its own
+waiver, and 14d checks exactly one of them. An accepted record whose authority is not verified is
+the failure 14d was written for, so leaving ADR-0009 unchecked would have reproduced that failure
+in the same phase that fixed it.
+
+**The authority is `W-006`, granted 2026-08-17, scoped to ADR-0009 and nothing else.** W-004 does
+not reach it and W-005 — being phase-level — never authorises accepting a record at all. This gate
+additionally checks the two things W-006 has that W-004 does not: the **Medium** fix bar, and the
+**acknowledged departure** for being the third exception in one phase.
+
+```bash
+set -euo pipefail
+ADR=$(ls decisions/0009-*.md 2>/dev/null | head -1)
+test -n "$ADR" || { echo "14e FAIL — ADR-0009 ABSENT; custom infrastructure MUST NOT merge (FR-035)"; exit 1; }
+
+# The waiver must exist and be active. An accepted ADR with no live authority behind it is
+# the failure this check exists for — the same one 14d exists for.
+grep -q '| \*\*W-006\*\* |' governance/waivers.md \
+  || { echo "14e FAIL — W-006 is not recorded in the waiver ledger"; exit 1; }
+grep -qE '\*\*W-006\*\*.*\| `active` \|' governance/waivers.md \
+  || { echo "14e FAIL — W-006 is not active"; exit 1; }
+
+# State is a TABLE ROW, not front matter — the same shape 14d had to be corrected for.
+grep -qiE '^\| \*\*State\*\* \| `accepted` \|' "$ADR" \
+  || { echo "14e FAIL — ADR-0009 is not accepted"; exit 1; }
+
+# W-006's grant fixes the reviewer string exactly, so no reader mistakes a self-review for
+# an independent one.
+grep -qF 'Ahmed Anbar — self-review under W-006' "$ADR" \
+  || { echo "14e FAIL — ADR-0009's reviewer field is not the exact string W-006 requires"; exit 1; }
+
+# The FOUR counted controls, each visible in the record. 'Medium' is the one W-004 has no
+# equivalent of: PLAN.md §17.3 already blocks Critical and High unconditionally and stops
+# there, so the Medium bar is the clearest thing this waiver actually buys.
+for control in \
+  'NON-INDEPENDENT' \
+  'ADVISORY' \
+  'disposition' \
+  'Medium'
+do
+  grep -qiF "$control" "$ADR" \
+    || { echo "14e FAIL — ADR-0009 does not record W-006 control evidence for: $control"; exit 1; }
+done
+
+# W-006 control 4 names SEVEN record elements that must be present before the replacement merges.
+# Checking the reviews and dispositions is done above; these are the other five.
+for element in \
+  'dependency proof' \
+  'fail-closed' \
+  'capability loss' \
+  'ownership cost' \
+  'exit condition'
+do
+  grep -qiF "$element" "$ADR" \
+    || { echo "14e FAIL — ADR-0009 is missing W-006 record element: $element"; exit 1; }
+done
+
+# The advisory reviews must have produced a RESULT. Silence is recorded as not performed.
+grep -qiE 'no findings|finding' "$ADR" \
+  || { echo "14e FAIL — no advisory review result recorded; silence is NOT PERFORMED"; exit 1; }
+
+# The record must STATE the truth, not merely avoid claiming otherwise.
+grep -qiF 'No independent human review of ADR-0009 has occurred' "$ADR" \
+  || { echo "14e FAIL — the record does not state that no independent review occurred"; exit 1; }
+
+# W-006 is the THIRD explicit reviewed exception in Phase 002, against a ledger maximum of two.
+# The ledger requires that departure to be justified explicitly rather than absorbed. A waiver
+# count that silently exceeds its own guard is worse than no guard.
+grep -qiF 'third Phase 002 exception' governance/waivers.md \
+  || { echo "14e FAIL — the third-exception departure is not acknowledged in the ledger"; exit 1; }
+
+# W-004 must NOT be cited as the authority here. Extending a waiver by reinterpretation is
+# exactly what the ledger forbids, and it is the cheapest way this record could go wrong.
+grep -qiE 'accepted under W-004|W-004 authorises this|authority is W-004' "$ADR" \
+  && { echo "14e FAIL — ADR-0009 cites W-004 as its authority; W-004 covers ADR-0007 alone"; exit 1; }
+
+# POSITIVE CONTROL: these greps can return false. Without it, a grep matching everything would
+# satisfy every check above — including the honest-denial check, whose subject string is a
+# SUBSTRING of the denial itself, which is why that check is written as the affirmative sentence.
+grep -qiF 'this record was independently reviewed and approved' "$ADR" \
+  && { echo "14e CONTROL FAILED — grep matched text that is not in the record"; exit 1; }
+echo "14e PASS — ADR-0009 accepted under W-006, with its four counted controls and seven record elements"
+```
+
+**No automated check can discharge the underlying requirement.** It needs a **qualified independent
+human review**, which has **not occurred**. W-006 waives *who reviews*; it waives nothing about
+*what must be true* — not a security finding, not a CI gate, not Phase 002's phase-level review,
+and not any other ADR.
+
 ---
 
 ## Gate 15 — Complete resolved-dependency inventory (FR-040)
@@ -1195,7 +1286,7 @@ paragraph above says.
 | 11 | FR-038 | yes | fuzz/property corpus |
 | 12 | SC-013, SC-014 | yes | **8 controls**: discovery minimum, a failing example, a planted global, a planted leftover file, cleanup proven on a **failure** and on an **interruption**, a no-trap probe proving those two are not vacuous, and **`gate12_cleanup` invoked directly against all five of its own probe paths** |
 | 13 | SC-010 + crate DAG | yes | **5 controls, one per sub-check** |
-| 14 | SC-011, FR-034, ADR-0007 | yes | 14a `serde` returns 200 (non-200/404 is a FAIL); 14c plants a `docker/build-push-action` step |
+| 14 | SC-011, FR-034, **ADR-0007 and ADR-0009** | yes | 14a `serde` returns 200 (non-200/404 is a FAIL); 14c plants a `docker/build-push-action` step; 14d and **14e** each carry a false-returning grep control, and 14e additionally fails closed if ADR-0009 cites **W-004** as its authority |
 | 15 | **yes** — FR-040 | yes | **7 controls**: both sides read, a planted package, **two planted row defects (15d)**, and three planted narrative defects |
 
 > **Corrected 2026-08-16 (T138).** This table was stale in three rows, which W-005 re-review RV-N11

@@ -47,7 +47,7 @@ Rules that make a waiver a waiver rather than a loophole:
   already mandates unconditionally compensates for nothing.
 - **Security release blockers cannot be waived.**
 
-**Five** waivers are active. Each expires on the date shown **or** when the person it depends
+**Six** waivers are active. Each expires on the date shown **or** when the person it depends
 on becomes available — whichever comes first:
 
 | ID | Gap | Phase | Expires |
@@ -57,6 +57,7 @@ on becomes available — whichever comes first:
 | **W-003** | **No independent human requirements and security review of Phase 001 has occurred** *(granted 2026-08-15)* | Phase 001 | 2027-02-11 |
 | **W-004** | **No independent reviewer exists for ADR-0007**, the Phase 002 custom-primitives decision record *(granted 2026-08-16)* | Phase 002 | 2027-02-16 |
 | **W-005** | **No independent human requirements and security review of Phase 002 has occurred** *(granted 2026-08-16)* | Phase 002 | 2027-02-16 |
+| **W-006** | **No independent reviewer exists for ADR-0009**, the record removing `image-size` from this site *(granted 2026-08-17)* | Phase 002 | 2027-02-11 |
 
 Under W-002, decision-record review is a **structured self-review**, and it is never
 described as independent. **All six** Phase 001 decision records — ADR-0001 through
@@ -75,6 +76,20 @@ record — **ADR-0007 and no other** — and **W-005** covers Phase 002's phase-
 Both carry compensating controls that go beyond the baseline every pull request already
 meets, and both expire **2027-02-16** or as soon as a qualified second person is available.
 **Neither review is independent**, in Phase 002 any more than in Phase 001.
+
+**W-006** was added on 2026-08-17 for the same reason and on the same terms, covering a
+second Phase 002 decision record — **ADR-0009 and no other**, which removes the vulnerable
+`image-size` package from this documentation site. It could not be folded into W-004, which
+names ADR-0007 alone, nor into W-005, because a phase-level waiver never authorises
+accepting a decision record.
+
+Two things about W-006 are stated here rather than left in the ledger. It is the **third**
+explicit reviewed exception in Phase 002, which **exceeds the waiver ledger's own expected
+maximum of two per phase** — an acknowledged departure, recorded as one. And it expires
+**2027-02-11**, earlier than W-004 and W-005, because a new waiver for this same gap
+inherits the earliest open expiry instead of restarting the clock. **The review of ADR-0009
+is a structured self-review and is not independent.** Five waivers now record one problem:
+this project has one person.
 
 ## Branch protection
 

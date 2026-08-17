@@ -117,6 +117,43 @@ flag and `libc` does not define it on Windows. The **TOCTOU** half of the fix �
 from the open descriptor instead of re-resolving the pathname — is platform-independent and applies
 on every platform.
 
+## T160 — FR-040 evaluation: the documentation site's npm changes (ADR-0009)
+
+**Added 2026-08-17.** Until now this document was **Cargo-only**, and that was a real gap rather
+than a scoping choice: ADR-0009's Compliance table claimed *"the change is recorded in the
+dependency inventory alongside the resolved graph it produces"*, and **it was not recorded here at
+all**. FR-040 says *"every external dependency introduced by this phase"* without restricting itself
+to one package manager, and Phase 002 changed two npm dependencies. The claim is made true here
+rather than narrowed away.
+
+**Scope statement, so the boundary is explicit.** Every count in the Summary above and in T030/T033
+below describes the **Cargo** closure and is unchanged by this section. The documentation site is a
+separate npm graph that ships **no** code to a consumer of the Renvor crates — it produces a static
+website. It is inventoried because FR-040 says so, not because it reaches a crate consumer.
+
+| Package | Version | Licence | Maintenance | Engines / MSRV analogue | Advisories | How it entered |
+|---|---|---|---|---|---|---|
+| `image-size` → **`vendor/image-size-disabled`** | `3.0.0-renvor.1` (local, **not published**) | MIT | **First-party.** Maintained by this project; six files tracking the real package's export map | `node >= 16.x`; `.nvmrc` pins 22 | **None** — it contains no parser. It replaces a package carrying `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq`, both **high**, CVSS 7.5, **no fixed version at any release** | `overrides: {"image-size": "$image-size"}` paired with a root `dependencies` entry `"image-size": "file:./vendor/image-size-disabled"`. **ADR-0009** |
+| `uuid` | **11.1.1** | MIT / Apache-2.0 | Actively maintained | `node >= 16` | The Medium finding against `< 11.1.1` is **fixed by upgrade**, not waived | `overrides: {"uuid": "^11.1.1"}`, in the same change |
+
+**Resolved-graph proof, read from the committed `docs/package-lock.json` rather than asserted:**
+
+```
+image-size@3.0.0-renvor.1 deduped -> ./vendor/image-size-disabled   (via @docusaurus/mdx-loader)
+image-size@3.0.0-renvor.1 overridden -> ./vendor/image-size-disabled (root)
+```
+
+`node_modules/image-size` is a **symlink** to `../vendor/image-size-disabled`; no `image-size`
+directory containing real parser code exists anywhere under `node_modules`, and no bundled copy
+exists inside another package. `npm audit` reports **0 findings**, down from 21.
+
+**Why a vendored package is inventoried at all.** It is not an external dependency, which is exactly
+why it is easy to miss: it passes through no registry, no licence scanner, and no advisory feed. It
+is **first-party build-time code that executes during `npm run build`**, and the only gates that see
+it are this project's own — `cargo-deny` does not cover npm, and `npm audit` has nothing to report
+about a local package. That asymmetry is recorded here rather than left implicit, and it is the
+clearest ongoing cost of the removal strategy ADR-0009 chose.
+
 ## T031 — `cargo deny check licenses advisories bans sources`
 
 Run against the tracked `Cargo.lock`, not a fresh resolution:
