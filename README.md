@@ -1,8 +1,10 @@
 <p align="center">
-  <img src="assets/renvor-mark-v7.svg" alt="Renvor" width="120">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/renvor-lockup-v21-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/renvor-lockup-v21-light.svg">
+    <img alt="Renvor" src="assets/renvor-lockup-v21-light.svg" width="360">
+  </picture>
 </p>
-
-<h1 align="center">Renvor</h1>
 
 > ## ⚠️ Pre-release — Renvor does not work yet
 >
