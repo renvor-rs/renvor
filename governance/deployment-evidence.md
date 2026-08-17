@@ -303,6 +303,12 @@ Hostinger** (API: *"Domain is not registered at Hostinger"*), and its nameserver
 
 No credential was requested, printed, or created.
 
+**Publishing the intended records here discloses nothing.** Checked rather than assumed: the CA is
+already disclosed by every TLS handshake (`issuer=C=US, O=Let's Encrypt, CN=YE1`); the `iodef`
+address already appears in six files on `main`, including `SECURITY.md` and `README.md`; and the
+**absence** of CAA is queryable by anyone — a public resolver returns zero records today. An
+attacker learns nothing from this section they could not obtain with `dig` and a browser.
+
 **T111 therefore remains open.** The ordering it protects has, however, been established and is
 worth recording plainly: **issuance happened first.** Adding these records now cannot lock out the
 issuer the deployment depends on, because that issuer has already succeeded and its certificate is
