@@ -220,7 +220,7 @@ Required by `contracts/public-identity.md` for any change to a frozen identity v
 | **Templates** | None exist. Phase 003 creates them | Not applicable |
 | **Documentation** | `README.md`, `crates/renvor/README.md`, `docs/docs/intro.mdx`, `docs/docs/api-reference.mdx`, `docs/src/pages/index.js`, `SECURITY.md` carry active command text | Migrated in this change |
 | **Program plan** | `PLAN.md` carries the executable name, the full command surface for Phases 003/025/028, and the Phase 003 `/speckit-specify` prompts | Migrated in this change |
-| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to 2.0.0 in this change |
+| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to **2.0.0** in this change. `CONSTITUTION.md` is the **only tracked copy** — `.specify/memory/constitution.md` exists for the specification tooling but `.specify/` is gitignored, so it is a local working copy and not a repository mirror. Both were changed together and the amendment record lives in the tracked file |
 | **Published links** | None. No crate, release, tag, or deployed site references either spelling | No external reference exists |
 | **External references** | None known. The name has never been published or announced | No action |
 | **Security** | None. The change is a string; it grants no capability, alters no trust boundary, and touches no dependency | No impact |
@@ -264,7 +264,7 @@ Linux distributions, and privately distributed binaries were not checked.
 | Constitution — decisions recorded with alternatives | Six alternatives, each with a stated rejection reason, including a verbatim re-affirmation of two of ADR-0001's own |
 | Constitution principle X — no claim exceeds measurement | Every availability claim carries a dated probe **and a positive control**; probe 7's limits are stated; the `renovate` proximity claim is computed, not asserted |
 | Constitution principle XI — simplicity | Removes one of two names for one concept |
-| Constitution §Governance — amendment process | The amendment to 2.0.0 carries a written proposal (this record), an impact analysis (above), a migration plan (this record's Decision), maintainer approval, an updated version and date, and synchronisation of the canonical mirror |
+| Constitution §Governance — amendment process | The amendment to 2.0.0 carries a written proposal (this record), an impact analysis (above), a migration plan (this record's Decision), maintainer approval, an updated version and date, and synchronisation of the tooling working copy. The amendment record — including why the bump is MAJOR rather than MINOR or PATCH — is in the tracked `CONSTITUTION.md` itself |
 | FR-013 | State, reviewer, and date recorded; acceptance gated on W-002's four controls |
 | FR-003 (stop, do not substitute) | The new value was verified free **before** adoption, not assumed |
 | FR-049 | `renvor` is verified, not reserved; no placeholder crate was published |

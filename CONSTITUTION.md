@@ -2,6 +2,26 @@
   AUTHORITATIVE PUBLIC COPY of the ratified Renvor Constitution.
   This file is the discoverable copy referenced by all public documentation (spec FR-012).
   Amendments follow the process in the Governance section below.
+
+  This file is the ONLY copy of the constitution tracked in this repository. A working copy
+  also exists at `.specify/memory/constitution.md` for the specification tooling; `.specify/`
+  is gitignored, so that copy is local-only and is NOT the canonical mirror. Keep the two
+  identical from the `# Renvor Constitution` heading onward; this file wins on any difference.
+
+  AMENDMENT HISTORY
+
+  2026-08-17 — 1.0.0 to 2.0.0 (MAJOR). Authority: ADR-0010, superseding ADR-0001.
+    Change: principles VII and XIII name the executable's commands normatively. `renover new`
+      becomes `renvor new`; `renover add` becomes `renvor add`. Three normative sentences
+      changed. No principle was added, removed, reordered, or otherwise redefined.
+    Why MAJOR: the Governance section below defines MAJOR as "removes or redefines a governing
+      principle or COMPATIBILITY PROMISE". The installed executable's name is a compatibility
+      promise — it is the string a user types and a shell resolves — and this redefines it.
+      PATCH is excluded because required behavior changes: a conforming implementation must now
+      install a differently named binary. MINOR is excluded because nothing was added.
+    Ratified date preserved at 2026-08-11. Last Amended set to 2026-08-17.
+    Not changed: `.renvor/` and `RENVOR_`, which derive from the product name rather than the
+      executable name, and which ADR-0010 does not alter.
 -->
 
 # Renvor Constitution
