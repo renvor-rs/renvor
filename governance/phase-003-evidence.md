@@ -381,6 +381,26 @@ clean after each: RULE 0 traversal, secret redaction, the TLS consent gate, FR-0
 promise, the prompt census, FR-040's no-archive assertion (earlier, via `flate2`), and FR-009's
 equivalent command. Review B independently reproduced the first of these.
 
+### 6.6 Mutation evidence for the 2026-08-18 corrections
+
+Every gate added or changed by the rulings was **broken on purpose and observed failing** before
+being restored, and the working tree was verified clean after each. Same caveat as §6.5: this can
+only find tests that fail to fail.
+
+| Guard | Mutation applied | Observed |
+|---|---|---|
+| The destination policy, at the unit level | RULE 4 given back its old arm accepting an existing **empty** directory | `paths::tests::every_kind_of_existing_destination_is_refused` **FAILED** on its first case; the other 8 tests in the module still passed, so the mutation was specific |
+| The destination policy, end to end | same mutation | `transaction.rs::a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected` **FAILED**: *"an existing empty destination must be refused, whatever is injected: left: 1 right: 3"* — exit 1 rather than 3, because with the old policy the run got as far as the injected step, which is precisely what the test forbids |
+| The registry-versus-contract gate, code set | one row deleted from C-2's registry table | **FAILED**: *"parsed 18 rows from the contract's registry table for 19 codes"* |
+| The registry-versus-contract gate, exit column | `staging_failed` published as exit 5 | **FAILED**: *"`staging_failed` is published as exit 5 and exits 3"* |
+| The Principle VII compliance gate | `--database` renamed in the reserved table, row count preserved so it still compiles | **FAILED**: *"`database` is a governed choice this phase does not ship, so `--database` must be a reserved input — dropping it from the reserved table drops the choice from the governed set, which the constitution forbids"* |
+| Quickstart Gate 0's own pattern | — | Not a mutation but a **defect found by running it**: `*"0 passed"*` matches `10 passed`, so the gate reported a false alarm on its own suite. Corrected to `*". 0 passed;"*` and the discrimination demonstrated on `0 passed`, `10 passed`, and `100 passed` |
+
+`no_production_path_removes_the_destination` is **not** in this table, and that is deliberate: it
+carries its own inline positive control — it asserts the scan matched exactly one line before
+asserting anything about that line — because a source-text scan that matched nothing would otherwise
+pass while checking nothing.
+
 ## 7. T093a — Constitution principle VII, referred to the maintainer
 
 **This section states the question and does not answer it.** T093a says: *"Record the ruling; do not
