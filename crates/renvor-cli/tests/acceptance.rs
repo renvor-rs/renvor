@@ -594,6 +594,40 @@ fn a_malformed_command_line_in_human_mode_keeps_claps_own_diagnostics() {
 }
 
 #[test]
+fn a_closed_stdout_is_not_a_panic() {
+    // C-1: "A closed `stdout` (`| head -1`) MUST NOT produce a panic; it exits `0` if the result
+    // was already written, and otherwise reports the write failure."
+    //
+    // Written with `Stdio::piped()` and an immediately-dropped read handle rather than a shell
+    // pipeline, because `head` is not reliably present on the Windows runner and this property is
+    // not Unix-specific — `println!` panics on a broken pipe everywhere.
+    let base = tempfile::tempdir().expect("tempdir");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(["doctor", "--output", "json"])
+        .current_dir(base.path())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawns");
+
+    // Close the read end before the child gets a chance to write. Its first write then fails with
+    // `BrokenPipe`, which is the case under test.
+    drop(child.stdout.take().expect("a piped stdout"));
+
+    let status = child.wait().expect("waits");
+    assert!(
+        status.success(),
+        "a closed stdout produced exit {:?} instead of 0",
+        status.code()
+    );
+    // A Rust panic would be 101 — or 1 with our hook — so `success()` covers both regressions.
+    //
+    // DEMONSTRATED FAILING on 2026-08-18: removing the `BrokenPipe` arm from
+    // `Reporter::write_stdout` makes this exit 1 instead of 0. A gate nobody has watched fail is a
+    // gate nobody knows works.
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");
