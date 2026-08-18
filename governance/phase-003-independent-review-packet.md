@@ -18,7 +18,7 @@ the thing you are here to decide.
 | | |
 |---|---|
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Content head** | `bb6454864d8c4fa829cfafa02b4c620b5f45191b` |
+| **Content head** | `dfe58978447cf9751866863a71a478955330d168` |
 | **Branch tip** | one commit later — the commit that wrote this table, touching only this file and `phase-003-review-pack.md` |
 | **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28), open and unmerged. Its description names the exact tip SHA |
 | **Superseded head** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` — do **not** review this one |
@@ -26,7 +26,7 @@ the thing you are here to decide.
 ```sh
 git fetch origin feat/phase-003-interactive-cli
 git checkout feat/phase-003-interactive-cli
-git diff bb6454864d8c4fa829cfafa02b4c620b5f45191b..HEAD --stat    # must list exactly two governance files, and nothing else
+git diff dfe58978447cf9751866863a71a478955330d168..HEAD --stat    # must list exactly two governance files, and nothing else
 ```
 
 A stamp cannot contain its own commit's SHA, which is why this names the content head and bounds
