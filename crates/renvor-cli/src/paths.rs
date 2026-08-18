@@ -396,10 +396,21 @@ impl Destination {
 /// and `Staging::place` immediately before the rename — and a consumer that had to handle two
 /// vocabularies for one code would be handling an accident of where the check ran.
 ///
-/// The symlink test comes **first**: a symbolic link to a directory answers `true` to both
-/// `is_symlink` and — through `Metadata`'s own resolution on some platforms — potentially to
-/// `is_dir`. Reporting it as a directory would hide the fact that the entry is a link, which is the
-/// more useful half of the answer.
+/// # Why the symlink test comes first, separating what is measured from what is reasoned
+///
+/// **Measured, on Unix**: `symlink_metadata` reports the link itself, so a symbolic link to a
+/// directory answers `is_symlink() == true` and `is_dir() == false`, and the order would not matter
+/// there. `every_kind_of_existing_destination_is_refused` asserts `found == "symlink"` for both a
+/// live and a dangling link, so this is checked rather than assumed.
+///
+/// **Reasoned, on Windows, and not measured here**: a directory symbolic link is a reparse point
+/// that also carries the directory attribute, so `is_dir()` may well be true for it. If the
+/// directory test came first, the same entry would be reported as `directory` on one platform and
+/// `symlink` on another — a difference an operator would have no way to account for.
+///
+/// Ordering the symlink test first makes the answer the same everywhere and keeps the more useful
+/// half: that the entry is a link. The Windows half is stated as reasoning, not as a measurement,
+/// because no test in this repository observes it.
 pub fn describe(metadata: &cap_std::fs::Metadata) -> &'static str {
     if metadata.is_symlink() {
         "symlink"
