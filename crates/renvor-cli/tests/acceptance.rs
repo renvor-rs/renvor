@@ -717,6 +717,56 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
 }
 
 #[test]
+fn a_bound_exceeded_failure_carries_its_bound_and_limit_all_the_way_out() {
+    // C-2's registry says `bound_exceeded` carries `details.bound` and `details.limit`. Every
+    // bound in this program is unit-tested, and until now **none was verified end to end** — so
+    // the registry's promise about the wire format rested on reading the code.
+    //
+    // The manifest-size bound is the one reachable from outside without a pathological template,
+    // because `renvor check` reads a file the operator names.
+    let base = tempfile::tempdir().expect("tempdir");
+    std::fs::write(base.path().join("renvor.toml"), "x".repeat(70 * 1024)).expect("write");
+
+    let (code, stdout, _) = renvor(&["check", ".", "--output", "json"], base.path(), &[]);
+    assert_eq!(code, 3, "a bound violation is a validation failure");
+
+    let document: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("one JSON document");
+    assert_eq!(document["error"]["code"], "bound_exceeded");
+    assert_eq!(
+        document["error"]["details"]["bound"], "manifest_bytes",
+        "the failure must name WHICH bound was hit"
+    );
+    assert_eq!(
+        document["error"]["details"]["limit"], "65536",
+        "the failure must name the ceiling, or the operator cannot act on it"
+    );
+}
+
+#[test]
+fn a_file_just_under_the_bound_is_still_read() {
+    // POSITIVE CONTROL. A `check` that rejected every manifest would satisfy the test above and be
+    // useless — and an off-by-one in the bound would be invisible without this.
+    let base = tempfile::tempdir().expect("tempdir");
+    // Valid TOML, comfortably under 64 KiB, padded with a long comment.
+    let padding = "#".repeat(60 * 1024);
+    let manifest = format!(
+        "{padding}\n[renvor]\ngenerator_version = \"0\"\ntemplate_version = \"1\"\n\n         [project]\nname = \"padded\"\ntarget = \"api\"\nlocal_domain = \"padded.test\"\n"
+    );
+    assert!(
+        manifest.len() < 65_536,
+        "the fixture must be under the bound to test it"
+    );
+    std::fs::write(base.path().join("renvor.toml"), &manifest).expect("write");
+
+    let (code, _, stderr) = renvor(&["check", "."], base.path(), &[]);
+    assert_eq!(
+        code, 0,
+        "a manifest under the bound was rejected:\n{stderr}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

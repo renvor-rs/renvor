@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**48 of 95 tasks complete. This section states what is built and what is not, because a task list
+**49 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -140,13 +140,26 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
 ### Not built. Each is real work, not a formality
 
-- **T008** — of the nine named test files, `generated.rs`, `acceptance.rs`, and `redaction.rs`
+- **T008 — the file layout deviates deliberately, and this is a decision rather than an omission.**
+  The plan named nine test files before the code existed. What exists is five —
+  `generated.rs`, `acceptance.rs`, `redaction.rs`, `capabilities.rs`, `cli.rs` — organised by how
+  the tests actually need to be isolated rather than by the pre-implementation guess.
+  `redaction.rs` is separate because the `renvor-core` diagnostics gate forbids interpolating
+  renderings in a credential-handling file, and that constraint should not spread to the whole
+  suite. `cli.rs` is separate because trycmd owns its own directory of expectations. Splitting the
+  remaining three concerns into six more files would duplicate the `renvor()` helper or add a
+  `common/` module for no behavioural gain.
+  **Coverage was checked concern by concern before deciding this**, and it turned up one real gap
+  rather than an organisational one: `bound_exceeded` had never been verified end to end. It now is,
+  with `details.bound` and `details.limit` asserted on the wire and a control proving a file just
+  under the ceiling is still read.
+  *(Original text: of the nine named test files, `generated.rs`, `acceptance.rs`, and `redaction.rs`
   exist; `transaction.rs`, `hostile.rs`, `parity.rs`, `cli.rs`, `bounds.rs`, `offline.rs`, and
   `tls_consent.rs` do not — though `cli.rs` now records the command surface as **byte-exact
   expected output** under `tests/cmd/`, which is what C-1 asks for and what makes a contract change
   a reviewable diff rather than an invisible one, and `capabilities.rs` now covers FR-040 and the structural half of
   FR-043 (T023), and was **demonstrated failing** by adding `flate2` before being kept. Their properties are covered by unit tests and by the three files above,
-  but the suite is not organised the way this plan says it is.
+  but the suite is not organised the way this plan says it is.)*
 - **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;
   they were **not** written failing-first, and that ordering was the point.
 - **T042–T052** — the non-interactive parity work as specified. SC-003 is currently **structural**:
