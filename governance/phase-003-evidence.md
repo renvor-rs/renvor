@@ -259,20 +259,62 @@ and `platform (windows-latest, stable)`.
 
 ---
 
-## 6. Advisory reviews (T092) and their disposition (T093)
+## 6. Advisory reviews (T092) and their disposition (T093) — **NOT OBTAINED**
 
-### 6.1 Standing label
+### 6.1 What was attempted
 
-**Both reviews below are NON-INDEPENDENT and ADVISORY.** They were performed by AI agents in clean
-context — each was given the repository, the specification, and an adversarial brief, and neither was
-given this session's history or any account of what the author believed to be true. That design makes
-them useful. It does not make them independent, and they do **not** discharge the independent-review
-requirement. See §8.
+T092 asks for two clean-context advisory reviews — one requirements, one security — each labelled
+**NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings"
+statement naming what was checked.
 
-Each was instructed to report **what it observed**, not what it inferred, and to state explicitly if
-it found nothing at a severity and what it checked in reaching that.
+**Four review agents were dispatched on 2026-08-18** — two with a broad brief, two with a tightened,
+time-bounded brief after the first pair went quiet. Each was given the repository, the specification,
+an adversarial instruction, and no account of what the author believed to be true. Each was told to
+report observations rather than inferences, to attempt attacks rather than describe them, and to
+state explicitly if it found nothing and what it had checked.
 
-PLACEHOLDER_FINDINGS
+**None of the four delivered a report.** Repeated requests for partial results, including "report now
+with whatever you have", produced nothing.
+
+### 6.2 Disposition
+
+**T092 is OPEN. T093 is OPEN**, because there are no findings to disposition.
+
+This is recorded as a failure to obtain the reviews rather than resolved by substituting something
+else. In particular:
+
+- **The author's own reading is not a substitute.** T092 says *clean-context*; the author has the
+  opposite of clean context, and a self-review by the person who wrote the code is the weakest form
+  of the thing being asked for, not a weaker version of it.
+- **The mutation pass in §6.3 is not a substitute either**, and is deliberately filed under its own
+  heading rather than under this one. It answers "can these tests fail?", which is one question a
+  reviewer would ask. It cannot answer "what did nobody think to test?", which is the question that
+  makes a review worth having.
+
+**Consequence for the phase**: two more tasks are OPEN than would otherwise be, and the final counts
+in §9 reflect that.
+
+### 6.3 What was obtained instead: a mutation pass over the load-bearing guards
+
+**This is verification evidence, not a review.** It was produced by the author, with full knowledge
+of the code, and it can only find tests that fail to fail — never tests that were never written.
+
+Each guard below was **deliberately broken**, the suite was run, and the guard was then restored and
+the suite re-run green. The working tree was verified clean after every one.
+
+| Guard broken | How | Result |
+|---|---|---|
+| RULE 0, the `..` traversal rule | condition short-circuited to `false` | `every_traversal_spelling_is_refused_by_the_traversal_rule` **FAILED** (7 passed, 1 failed) |
+| Secret redaction | `redact::line` made an identity function | **2 of 3 redaction tests FAILED**; `ordinary_output_is_not_mangled_by_redaction` correctly still passed — it is the control, and a control that fails when the thing it controls for is removed would be measuring the wrong property |
+| The TLS consent gate | `--yes` made to grant trust-store consent | `yes_does_not_grant_trust_store_consent` **FAILED** |
+| FR-012's restore path | the `place` injection point moved past the empty-destination removal | `a_failure_at_any_mutating_step_leaves_a_pre_existing_empty_destination_exactly_as_it_was` **FAILED**, naming the exact violation |
+| The prompt census | an eighth, uncovered prompt added to `prompts::fill` | `the_wizard_asks_exactly_these_prompts` **FAILED**, with the diagnosis showing *child STILL RUNNING* and `? An eighth prompt nobody covered?` on screen |
+| FR-040's no-archive assertion | `flate2` added as a dependency (earlier in the phase) | `the_executable_reaches_no_archive_crate` **FAILED**, naming `["flate2"]` |
+| FR-009's equivalent command | *(no mutation needed — it was already broken)* | running the wizard's printed command produced clap's *"unexpected argument '--name'"* |
+
+**Seven guards, seven detections.** What this establishes is narrow and worth stating exactly: these
+particular tests are capable of failing. It establishes nothing about coverage of anything they do
+not test.
 
 ## 7. T093a — Constitution principle VII, referred to the maintainer
 
@@ -395,3 +437,31 @@ adversarial — and they are **not** an independent human review. Specifically:
 **No Phase 003 phase-level waiver has been created, and this document does not assume one is
 available.** A self-contained packet for an independent reviewer is prepared and referenced in the
 checkpoint that accompanies this document.
+
+---
+
+## 9. Final task counts
+
+Counted against each task's own acceptance wording, not asserted. The definitions are in
+[`tasks.md`](../specs/003-interactive-cli/tasks.md); the checkboxes there agree with this table.
+
+| Status | Count | Which |
+|---|---|---|
+| **COMPLETED** | **77** | Full acceptance wording met, with something that fails if it stops being met |
+| **WITHDRAWN** | **4** | T009–T012 — the requirement was removed by adopting `cap-std`, not waived |
+| **MISSED** | **11** | T008, T015–T024 — the behaviour is built and tested; the **failing-first ordering** did not happen and cannot be created retrospectively |
+| **HUMAN-GATED** | **1** | T093a — the constitution principle VII ruling |
+| **OPEN** | **2** | T092, T093 — the two advisory reviews were not obtained |
+| **Total** | **95** | |
+
+### What is required before Phase 003 can close
+
+1. **Two clean-context advisory reviews** (T092), and every finding dispositioned (T093).
+2. **The T093a ruling** on constitution principle VII — §7. Two options are stated; neither is taken.
+3. **A decision on whether the missed failing-first ordering blocks closure** — `tasks.md`,
+   "Ordering requirements that were missed".
+4. **A qualified independent human requirements review and security review** — §8. Advisory reviews
+   do not satisfy this, and **no Phase 003 waiver exists or has been drafted**.
+
+Items 2, 3, and 4 are **not** engineering work and are not the author's to decide. Item 1 is
+engineering work that was attempted and failed.
