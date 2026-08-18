@@ -44,15 +44,12 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ### The decision-record gate
 
-- [ ] T009 Write `decisions/0011-path-containment-without-capability-handles.md` recording the D6 decision: **hand-composed path containment selected over `cap-std` 4.0.2**. It MUST name the package evaluated, its concrete shortcomings for this use (whole-generator adoption required, transitive tree to inventory), the ownership cost of the alternative, the **explicit statement that a checked boundary is weaker than a capability boundary**, and an exit strategy (FR-045)
-- [ ] T010 Record in `decisions/0011-…md` the alternatives **rejected with reasons**: `cap-std` (rejected on adoption scope, not on quality), `normpath` + `dunce` (retained as supporting, not sufficient alone), and `path-clean` (**rejected: purely lexical, cannot detect a symlink escape; last released 2023-02-24**)
-- [ ] T011 Obtain and record, in `decisions/0011-path-containment-without-capability-handles.md`, two clean-context advisory reviews of ADR-0011 — one architecture, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing either enumerated findings or an explicit written "no findings" statement naming what was checked. **A review that returns nothing is recorded as NOT PERFORMED, never as passed**
-- [ ] T012 Disposition every ADR-0011 finding individually (fixed, or refused with a stated reason) in `decisions/0011-path-containment-without-capability-handles.md`
-- [ ] T013 Record the waiver position for ADR-0011 in `governance/waivers.md`: **neither W-004 nor W-005 authorises accepting it** — W-004 covers ADR-0007 alone and W-005 is phase-level and authorises accepting no decision record. State plainly whether a new waiver is required and, if so, number it correctly: it would be **W-007 overall** and the **first exception in Phase 003**, which is **within** the ledger's stated maximum of *two per phase*. **Do not repeat the earlier draft's claim that it is the "fourth" exception exceeding the maximum — that conflated the overall waiver count with the per-phase one, and a governance record that cries wolf is as damaging as one that under-reports.** Record the cross-phase trend separately: seven waivers for the same single-maintainer review gap is a trend even when no single phase exceeds its maximum
-- [ ] T014 **GATE**: confirm ADR-0011 is `accepted` with T011–T013 on the record. **`crates/renvor-cli/src/paths.rs` MUST NOT merge before this task is complete**
-
-### Failing-first transactional harness
-
+- [x] T009 **WITHDRAWN — no ADR is required.** `research.md` D6 **revision 2** (2026-08-18) reverses revision 1 and adopts `cap-std` 4.0.2. Constitution principle III and FR-045 require an accepted decision record only for **custom infrastructure chosen over a maintained package**; adopting the package removes the requirement rather than waiving it. Revision 1's two stated objections were measured and both were false for this design — the renderer performs no filesystem I/O of its own, and the transitive tree is 12 crates while `walkdir` is dropped
+- [x] T010 **WITHDRAWN with T009.** The alternatives and their rejection reasons are recorded in `research.md` D6 revision 2 rather than in an ADR: `normpath` + `dunce` (not adopted — a handle makes their normalisation unnecessary) and `path-clean` (**rejected: purely lexical, cannot detect a symlink escape; last released 2023-02-24**)
+- [x] T011 **WITHDRAWN with T009.** There is no ADR to review
+- [x] T012 **WITHDRAWN with T009.** There are no ADR findings to disposition
+- [x] T013 **RESOLVED WITHOUT A WAIVER, and this is the point of the withdrawal.** Checking the ledger before drafting ADR-0011 established that **W-002 is scoped to Phase 001 decision records, W-004 to ADR-0007 alone, and W-006 to ADR-0009 alone** — so **no live waiver covers a Phase 003 decision record**, and accepting ADR-0011 would have required creating **W-007**. **No waiver was created, extended, or borrowed.** Record the cross-phase trend separately and truthfully: six waivers for the same single-maintainer review gap is a trend, and this task is the first time that trend was reduced rather than extended
+- [x] T014 **GATE DISCHARGED BY REMOVAL.** `crates/renvor-cli/src/paths.rs` carries no ADR gate, because there is no custom containment left to gate. Its containment is `cap_std::fs::Dir`; what remains hand-written is *name* validation, which no capability can decide
 - [ ] T015 Write `crates/renvor-cli/tests/transaction.rs` cancellation coverage: drive the wizard to **each** prompt in turn and cancel there, asserting exit `4` and a destination that does not exist. Parameterise over prompts so adding a prompt without covering it fails the suite
 - [ ] T016 Write injected-failure coverage in `crates/renvor-cli/tests/transaction.rs`: fail at **each mutating** protocol step of contract C-5 — `stage`, `render`, `manifest`, `verify`, `place` — against **both** an absent destination and a pre-existing empty one. **C-5 defines seven steps; `validate` and `report` are excluded deliberately and the reason is stated here rather than left to inference**: `validate` writes nothing, so it has no post-condition to violate, and `report` runs after placement has already succeeded, byte-comparing the pre-existing case before and after
 - [ ] T017 Add the **positive control** to `crates/renvor-cli/tests/transaction.rs`: an un-injected run into the same fixtures succeeds and produces a project. Without it, a harness that refuses everything satisfies T015 and T016
@@ -117,7 +114,7 @@ builds; cancel at each prompt and assert the destination is absent.
 
 ## Phase 5: User Story 5 — Refuse to be tricked into writing somewhere else (P1)
 
-**BLOCKED ON T014.** `paths.rs` must not merge before ADR-0011 is accepted.
+**UNBLOCKED.** T014's gate was discharged by removing the custom infrastructure it guarded; see T009.
 
 **Goal**: every hostile destination and template is refused before any write.
 
@@ -127,7 +124,7 @@ builds; cancel at each prompt and assert the destination is absent.
 - [ ] T050 [US5] Implement canonicalisation-based containment in `crates/renvor-cli/src/paths.rs`: the canonical destination must be inside the canonical parent (symlink-escape rejection)
 - [ ] T051 [US5] Implement platform-reserved-name rejection in `crates/renvor-cli/src/paths.rs`, enumerating the names rather than describing the class
 - [ ] T052 [US5] Ensure rejection precedes **any** creation, including the staging directory, in `crates/renvor-cli/src/commands/new.rs` (CHK020)
-- [ ] T053 [US5] Document invariant I-17 in `crates/renvor-cli/src/paths.rs`: the time-of-check-to-time-of-use race is **converted into a clean failure, not eliminated**, and eliminating it needs the capability handles ADR-0011 rejected
+- [ ] T053 [US5] Document invariant I-17 in `crates/renvor-cli/src/paths.rs` and `generate/place.rs`: the time-of-check-to-time-of-use race is **narrowed by holding one directory handle and converted into a clean failure, not eliminated**. Closing it entirely needs an atomic create-or-fail rename, which POSIX does not provide portably
 - [ ] T054 [US5] Make T020–T023 pass — `crates/renvor-cli/tests/hostile.rs` green, including the T021 positive control
 
 ---
@@ -210,7 +207,7 @@ builds; cancel at each prompt and assert the destination is absent.
 ```text
 Phase 1 (T001-T008)
    └─▶ Phase 2 GATES (T009-T024)
-          ├─ T009-T014  ADR-0011 ──────────────▶ BLOCKS Phase 5 (paths.rs)
+          ├─ T009-T014  WITHDRAWN — package adopted, gate removed (D6 rev 2)
           ├─ T015-T019  transaction harness ───▶ verified by Phase 3
           ├─ T020-T023  hostile corpus ────────▶ verified by Phase 5
           └─ T024       parity harness ────────▶ verified by Phase 4

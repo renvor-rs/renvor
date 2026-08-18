@@ -161,35 +161,94 @@ sufficient. FR-016 requires the limit be documented per platform.
 
 ## D6 — Path containment and the destination boundary
 
-**Decision: compose `std::fs::canonicalize` with explicit component validation, and DO NOT adopt
-`cap-std`. This choice requires an accepted decision record before the component merges.**
+> **REVISION 2, 2026-08-18. THE FIRST DECISION IS REVERSED.** Revision 1 rejected `cap-std` and
+> required an accepted decision record to justify hand-composed containment instead. That rejection
+> rested on two claims about this codebase, and when the code existed both turned out to be false.
+> The measurements are below. Revision 1's text is quoted rather than deleted, so the reversal can
+> be judged rather than taken on trust.
 
-**Rationale.** FR-039 and SC-009 require traversal, absolute-path injection, symlink escape, and
-platform-reserved names to be refused before any write. `cap-std` 4.0.2 solves this at the strongest
-possible level — capability-based `Dir` handles that make escape structurally impossible rather than
-checked — and its licence (`Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`) is acceptable.
+**Decision: adopt `cap-std` 4.0.2.** Every filesystem operation the generator performs goes through
+a `cap_std::fs::Dir` handle. **No ADR is required, and none is created**, because this is the
+package-first default rather than custom infrastructure chosen over it.
 
-It is nonetheless not adopted here, for one reason worth stating plainly: **`cap-std` requires every
-filesystem operation in the generator to be expressed through its handles**, including those inside
-the template renderer, and it brings a substantial transitive tree that must be inventoried under
-FR-044. Adopting it partially would be worse than not adopting it, because a checked boundary beside
-an unchecked one is an unchecked boundary.
+`Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT`, published 2026-02-15, 5.72M downloads/month,
+maintained by the Bytecode Alliance.
 
-**Choosing a checked boundary over a structural one is a deliberate weakening, and this document
-does not pretend otherwise.** That is why it is recorded as requiring an ADR rather than decided
-here.
+### What revision 1 said, and what measurement showed
 
-> **GATE — ADR REQUIRED.** Under constitution principle III and FR-045, selecting hand-composed path
-> containment in preference to the maintained capability-based package requires an **accepted**
-> decision record naming `cap-std`, its concrete shortcomings for this use, the ownership cost of the
-> alternative, and an exit strategy. **The path-validation component MUST NOT merge before that
-> record is accepted.** This mirrors how ADR-0007 gated Phase 002's custom typed-state map.
+> *"`cap-std` requires every filesystem operation in the generator to be expressed through its
+> handles, **including those inside the template renderer**, and it brings a **substantial
+> transitive tree** that must be inventoried under FR-044."*
 
-**Supporting packages evaluated.** `normpath` 1.5.1 (`MIT OR Apache-2.0`, 2026-05-05) for
-Windows-aware normalisation and `dunce` 1.0.5 for UNC de-verbatim are both plausible and both under
-consideration for the ADR. `path-clean` 1.0.1 is **purely lexical** — it resolves `..` textually
-without touching the filesystem, so it cannot detect a symlink escape at all — and its last release
-was **2023-02-24, roughly 42 months ago**. It is rejected on both counts.
+**Claim 1 — the template renderer.** False for this design. MiniJinja performs no filesystem I/O of
+its own: no loader is installed (`crates/renvor-cli/src/generate/render.rs`), so `{% include %}`
+resolves only against templates registered in memory, and the crate has no filesystem function in
+its allow-list because `Environment::empty()` starts with an empty one. The renderer's entire
+filesystem surface is **two calls in our own code** — one `create_dir_all`, one `write` — both
+taking a path this program constructed. Expressing them through a handle was a two-line change.
+
+**Claim 2 — a substantial transitive tree.** Measured on 2026-08-18 with `cargo tree`: **12
+crates** — `ambient-authority`, `bitflags`, `cap-primitives`, `cap-std`, `errno`, `fs-set-times`,
+`io-extras`, `io-lifetimes`, `ipnet`, `libc`, `maybe-owned`, `rustix`. On Windows it additionally
+brings `windows-sys` and `winx`. Every licence is on `deny.toml`'s allow-list. It **builds clean on
+Rust 1.94.0**, verified by compiling a spike with `rustup run 1.94.0`.
+
+Against that, adoption **removes** `walkdir` (and its `same-file` / `winapi-util` tail), because a
+`Dir`-relative recursive `read_dir` gives deterministic traversal *and* containment where `walkdir`
+gave only the first. The net dependency change is smaller than revision 1 assumed.
+
+### What the capability catches that the hand-written boundary did not
+
+Measured with a spike against a real filesystem, 2026-08-18:
+
+| Operation through a `Dir` handle | Result |
+|---|---|
+| `write("../escape")` | `PermissionDenied` |
+| `write("/tmp/absolute")` | `PermissionDenied` |
+| `read("link/secret")` where `link` → outside the tree | `PermissionDenied` |
+| `symlink("/etc", "link")` — *creating* an escaping link | `PermissionDenied` |
+| ordinary nested `write` (**positive control**) | ok |
+| `rename` within one handle — the placement operation | ok |
+| `read_dir`, `symlink_metadata`, `remove_dir_all` | ok |
+
+Row 3 is the one that settles it. The hand-written boundary rejected a symlink **at** the
+destination and would have followed a symlink **inside** the rendered tree — a case for which no
+rule had been written, because nobody thought of it. The handle refuses it with no rule at all.
+Row 4 goes further than the requirement: an escaping link cannot even be planted for a later step
+to follow.
+
+### The governance consequence, stated plainly rather than as a side effect
+
+Revision 1's gate read: *"selecting hand-composed path containment in preference to the maintained
+capability-based package requires an **accepted** decision record."* Checking the waiver ledger
+before writing that record surfaced the real problem: **W-002** is scoped to *Phase 001* decision
+records, **W-004** to ADR-0007 alone, **W-006** to ADR-0009 alone. **No live waiver covers a Phase
+003 decision record**, and this project has one maintainer, so an accepted ADR-0011 would have
+required creating a seventh waiver.
+
+Adopting the package removes the requirement rather than waiving it. That is the outcome constitution
+principle III is *for*: the package-first rule and the review-burden rule pointed the same way, and
+the first draft had gone against both.
+
+**This is recorded as a reversal, not presented as the original plan.** `ADR-0011` was never opened;
+no waiver was created, extended, or borrowed; and `crates/renvor-cli/src/paths.rs` no longer carries
+the "GATED ON ADR-0011 — DO NOT MERGE" header, because there is nothing left to gate.
+
+### What is still checked rather than structural, and where authority enters
+
+Two rules cannot come from a capability, because they concern *names* rather than resolution:
+Windows reserved device names, and the character set that makes a string usable as a Rust package
+name. Both remain ordinary validation in `paths.rs`.
+
+There is exactly **one** ambient call in the program: `Dir::open_ambient_dir` on the destination's
+parent. It is deliberate — the operator typed that path, and honouring `..` inside it is correct.
+So the trust statement is exact: **renvor trusts the path the operator typed, and nothing else.**
+
+**Supporting packages evaluated.** `normpath` 1.5.1 and `dunce` 1.0.5 were under consideration for
+the ADR that is no longer needed; neither is adopted, because a handle makes the normalisation they
+provide unnecessary. `path-clean` 1.0.1 is **purely lexical** — it resolves `..` textually without
+touching the filesystem, so it cannot detect a symlink escape at all — and its last release was
+**2023-02-24**. Rejected on both counts.
 
 ## D7 — Archives
 

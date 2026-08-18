@@ -68,12 +68,22 @@ Two runs targeting one destination: **at most one succeeds**, and the other fail
 Each stages in its own uniquely named directory, so the renders never interleave; the loser's rename
 finds the destination occupied and reports `destination_not_empty`.
 
-## The race this does not eliminate
+## The race this narrows and does not eliminate
 
-Between the boundary check and the rename, an attacker with write access to the destination's parent
-can change what the destination names. The rename refuses an existing destination, which converts
-that race into a **clean failure rather than an overwrite**.
+*(Revised 2026-08-18 with research.md D6 revision 2.)*
 
-**It is not eliminated, and this contract does not claim it is.** Eliminating it needs directory
-handles held across the whole operation — which is `cap-std`, which is the D6 decision record, which
-is why that record blocks the path-containment component from merging.
+`cap-std` is adopted, so the parent directory is opened **once** and every subsequent operation —
+the staging create, every render write, the existence re-check, and the rename — goes through that
+one handle. Nothing is re-resolved from a string, so an attacker cannot change **what the parent
+means** part-way through: the handle refers to the directory that was opened, not to whatever the
+path spells now.
+
+**What remains.** A process with write access to that same directory can still create the
+destination *name* inside it between the re-check and the rename. The rename targets a path that
+must not exist, so the outcome is a **clean failure rather than an overwrite** — and the staged tree
+is removed by `Drop`, so the destination is untouched either way.
+
+**This contract does not claim the race is closed.** Closing it needs an atomic
+create-or-fail rename primitive, which POSIX `renameat` does not provide and `renameat2` provides
+only on Linux. A cross-platform generator cannot rely on it, so the residual window is specified
+here rather than papered over.

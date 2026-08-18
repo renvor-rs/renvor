@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 use crate::exit::{CliError, Code};
-use crate::paths::{DestinationPath, validate_project_name};
+use crate::paths::{Destination, validate_project_name};
 
 /// What kind of project to generate.
 ///
@@ -81,6 +81,10 @@ pub enum LocalHttps {
 pub struct ProjectConfiguration {
     name: String,
     #[serde(skip)]
+    /// **For display and for the generated manifest only.** The authority to write there is
+    /// the [`Destination`] that [`ProjectConfiguration::resolve`] returns alongside this value —
+    /// a path is not a capability, and keeping the two separate is what stops a later caller from
+    /// re-deriving one from the other.
     destination: PathBuf,
     local_domain: String,
     target: Target,
@@ -116,18 +120,26 @@ pub struct Answers {
 }
 
 impl ProjectConfiguration {
-    /// Validates answers into a configuration, or refuses.
+    /// Validates answers into a configuration and the capability to write it, or refuses.
     ///
     /// **Performs no filesystem writes.** It reads the filesystem — the destination boundary has
-    /// to — but creates nothing, which is what lets FR-007 hold.
+    /// to — and opens one directory handle, but creates nothing, which is what lets FR-007 hold.
+    ///
+    /// # Why this returns two values
+    ///
+    /// The configuration is data: serialisable, comparable, and the thing SC-003 asserts is
+    /// identical between the wizard and the flags. The [`Destination`] is a **capability** holding
+    /// an open directory handle, and it is neither serialisable nor comparable. Fusing them would
+    /// mean either weakening the configuration to hold a handle or weakening the capability to a
+    /// path. They are returned as a pair instead.
     ///
     /// # Errors
     ///
     /// Any of the validation codes. Every one is `Exit::Validation` except
     /// [`Code::InvalidProjectName`], which is also validation. Nothing here can produce a
     /// cancellation or an environment failure.
-    pub fn resolve(answers: Answers) -> Result<Self, CliError> {
-        let destination = DestinationPath::validate(&answers.destination)?;
+    pub fn resolve(answers: Answers) -> Result<(Self, Destination), CliError> {
+        let destination = Destination::open(&answers.destination)?;
 
         let name = match answers.name {
             Some(name) => name,
@@ -155,9 +167,9 @@ impl ProjectConfiguration {
             .with("flags", "--seed-data, --example-domain"));
         }
 
-        Ok(Self {
+        let configuration = Self {
             name,
-            destination: destination.as_path().to_path_buf(),
+            destination: destination.display_path(),
             local_domain,
             target,
             container: answers.container,
@@ -168,7 +180,8 @@ impl ProjectConfiguration {
             },
             seed_data: answers.seed_data,
             example_domain: answers.example_domain,
-        })
+        };
+        Ok((configuration, destination))
     }
 
     /// The project name.
@@ -177,7 +190,7 @@ impl ProjectConfiguration {
         &self.name
     }
 
-    /// The validated destination.
+    /// The validated destination, **for display and for the manifest**. Not a capability.
     #[must_use]
     pub fn destination(&self) -> &Path {
         &self.destination
@@ -363,7 +376,8 @@ mod tests {
         let base = tempfile::tempdir().expect("a temporary directory");
         let destination = base.path().join("demo");
         let config = ProjectConfiguration::resolve(answers(destination.clone()))
-            .expect("an ordinary destination resolves");
+            .expect("an ordinary destination resolves")
+            .0;
         assert_eq!(config.name(), "demo");
         assert!(
             !destination.exists(),
@@ -376,7 +390,8 @@ mod tests {
     fn the_local_domain_defaults_from_the_name() {
         let base = tempfile::tempdir().expect("a temporary directory");
         let config = ProjectConfiguration::resolve(answers(base.path().join("commerce")))
-            .expect("resolves");
+            .expect("resolves")
+            .0;
         assert_eq!(config.local_domain(), "commerce.test");
     }
 
@@ -407,7 +422,7 @@ mod tests {
         let mut a = answers(base.path().join("demo"));
         a.container = true;
         a.example_domain = true;
-        let config = ProjectConfiguration::resolve(a).expect("resolves");
+        let (config, _capability) = ProjectConfiguration::resolve(a).expect("resolves");
         let printed = config.equivalent_command();
         assert!(printed.contains("--container"), "{printed}");
         assert!(printed.contains("--example-domain"), "{printed}");

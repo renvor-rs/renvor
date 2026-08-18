@@ -3,6 +3,7 @@
 mod config;
 mod exit;
 mod generate;
+mod output;
 mod paths;
 
 fn main() {

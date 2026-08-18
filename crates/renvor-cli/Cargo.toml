@@ -67,9 +67,21 @@ minijinja = { version = "2.24.0", default-features = false, features = ["builtin
 # placement; the two that sound like it are file-level. That finding is recorded, not glossed.
 tempfile = { version = "3.27.0", default-features = false }
 
-# research.md D13 — deterministic traversal for the file manifest, with explicit control over
-# whether links are followed. The manifest must describe what was created, not what a link targets.
-walkdir = "2.5.0"  # no features at all; nothing to narrow
+# research.md D6 (revision 2) — THE DESTINATION BOUNDARY, AND IT IS STRUCTURAL RATHER THAN CHECKED.
+#
+# Every filesystem operation the generator performs goes through a `cap_std::fs::Dir` handle opened
+# once on the destination's parent. Inside a handle, traversal, absolute-path injection, and
+# symlinks that leave the tree are refused by the library — not by a check this program remembers
+# to call. A code path that forgets to validate cannot escape, because there is no ambient path API
+# in scope to escape with.
+#
+# The first revision of D6 rejected this crate and required an ADR to justify hand-composed
+# containment instead. That rejection was reversed on measured evidence rather than on preference;
+# the measurements are in research.md D6.
+#
+# It also replaces `walkdir` for the manifest walk: a `Dir`-relative recursive read_dir gives
+# deterministic traversal AND containment, where walkdir gave only the first.
+cap-std = { version = "4.0.2", default-features = false }
 
 # research.md D10 — the machine-readable output contract.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }

@@ -21,14 +21,14 @@ English, not for the code.
 - [ ] CHK008 Is the residue case (process killed between staging and placement) **specified with required properties** — identifiable, located beside the destination, never inside it — or only acknowledged as possible? [Completeness, Contract §C-5]
 - [ ] CHK009 Do the requirements state what must happen to discovered residue, including whether anything may delete it automatically? [Clarity, Contract §C-5]
 - [ ] CHK010 Is the concurrency requirement stated as a **guarantee about outcomes** ("at most one succeeds, the other fails cleanly") rather than as an absence of corruption? [Measurability, Spec §FR-015]
-- [ ] CHK011 Is the time-of-check-to-time-of-use race described with its **residual risk stated**, rather than implied to be closed? [Clarity, Data-model §I-17]
+- [ ] CHK011 Is the time-of-check-to-time-of-use race described with its **residual risk stated**, rather than implied to be closed — including after D6 revision 2 narrowed it? [Clarity, Data-model §I-17]
 - [ ] CHK012 Do the requirements say what the TOCTOU race is **converted into** (a clean failure) rather than only that it is mitigated? [Clarity, Contract §C-5]
 - [ ] CHK013 Is the cross-filesystem case addressed by making it **unreachable** rather than by handling it, and is that reasoning recorded where a later reader would find it? [Consistency, Contract §C-5 / Research §D5]
 - [ ] CHK014 Are the disk-full and destination-becomes-non-empty-mid-run edge cases carried into a requirement, or do they appear only in the spec's Edge Cases list? [Coverage, Spec §Edge Cases]
 
 ## Path Containment — Strength of the Claim
 
-- [ ] CHK015 Do the requirements state plainly that a **checked** boundary is weaker than a **capability** boundary, rather than describing the chosen design as simply "safe"? [Clarity, Data-model §I-16]
+- [ ] CHK015 Now that a **capability** boundary is adopted (D6 revision 2), do the requirements state plainly which rules the capability decides and which remain **checked** name validation, rather than describing the whole design as uniformly structural? [Clarity, Data-model §I-16]
 - [ ] CHK016 Is the D6 decision-record gate written as **blocking a merge**, using language that cannot be read as advisory? [Clarity, Research §D6]
 - [ ] CHK017 Does the gate name what the record must contain — the package evaluated, its concrete shortcomings, the ownership cost, and an exit strategy? [Completeness, Research §D6]
 - [ ] CHK018 Is every path-rejection rule paired with the **specific attack or mistake it rejects**, so a reader can tell whether the list is complete? [Completeness, Data-model §5]
@@ -61,3 +61,6 @@ English, not for the code.
   distinguishes a working boundary from a broken one.
 - **CHK015, CHK016** are the highest-risk items here. If the requirements let a checked boundary read
   as equivalent to a capability boundary, the D6 record becomes a formality rather than a decision.
+  **Revision 2 note (2026-08-18):** the capability boundary was adopted, so this risk inverts — the
+  new failure mode is describing the design as *uniformly* structural when name validation is still
+  checked and one ambient call still exists.

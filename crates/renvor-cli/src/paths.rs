@@ -1,30 +1,42 @@
 //! The destination boundary.
 //!
-//! # GATED ON ADR-0011 — DO NOT MERGE THIS FILE BEFORE THAT RECORD IS ACCEPTED
+//! # This boundary is structural, not checked — and that is a change from the first draft
 //!
-//! `specs/003-interactive-cli/research.md` D6 selects hand-composed containment in preference to
-//! `cap-std`'s capability handles. That is **custom infrastructure chosen over a maintained
-//! package**, which constitution principle III and FR-045 make conditional on an accepted decision
-//! record. The record is `decisions/0011-path-containment-without-capability-handles.md`.
+//! An earlier version of this module composed `std::fs::canonicalize` with hand-written component
+//! validation, and carried a long comment admitting that escape was only *checked*: a code path
+//! that forgot to call the validator was unprotected. That version needed an accepted decision
+//! record before it could merge, because constitution principle III and FR-045 make custom
+//! infrastructure conditional on justifying it over a maintained package.
 //!
-//! # The weakening this file represents, stated rather than implied
+//! It is gone. Everything the generator writes goes through a [`cap_std::fs::Dir`] handle, and
+//! inside a handle there is **no ambient path API to escape with**. Traversal, absolute-path
+//! injection, and symlinks that leave the tree are refused by `cap-std`, not by this program
+//! remembering to look. `research.md` D6 records the measurements that reversed the decision.
 //!
-//! `cap-std` makes escape **structurally impossible**: every operation goes through a directory
-//! handle, so there is no path for a caller to get wrong. This module makes escape **checked**: a
-//! code path that forgets to call [`DestinationPath::validate`] is unprotected.
+//! The practical difference, stated so nobody has to take it on faith: the old boundary rejected a
+//! symlink **at** the destination and would have followed a symlink **inside** the rendered tree.
+//! A `Dir` handle refuses both, because it refuses any resolution step that leaves.
 //!
-//! Those are not the same guarantee, and this comment exists so that nobody reading the tests —
-//! which pass — concludes that they are.
+//! # The one ambient call, named on purpose
 //!
-//! # What this does not close
+//! [`Destination::open`] calls `Dir::open_ambient_dir` on the destination's **parent**. That is the
+//! single point where authority enters this program, and it is deliberate: the operator typed that
+//! path, and honouring `..` in it is correct — they asked for it.
 //!
-//! Between validation here and the final rename in [`crate::generate::place`], an attacker with
-//! write access to the destination's parent can change what the destination names. The rename
-//! refuses an existing destination, which converts that race into a **clean failure rather than an
-//! overwrite**. It does **not** eliminate it. Eliminating it needs handles held across the whole
-//! operation — which is `cap-std`, which is what ADR-0011 declines.
+//! Everything below that point is confined. So the trust statement is exact: **renvor trusts the
+//! path the operator typed, and nothing else** — not a template's output path, not a project name,
+//! not a symlink it encounters while walking.
+//!
+//! # What is still checked rather than structural
+//!
+//! Two rules cannot come from a capability, because they are about *names*, not about resolution:
+//! Windows reserved device names, and the characters that make a string usable as a Rust package
+//! name. Both are below, and both are ordinary validation.
 
 use std::path::{Component, Path, PathBuf};
+
+use cap_std::ambient_authority;
+use cap_std::fs::Dir;
 
 use crate::exit::{CliError, Code};
 
@@ -38,80 +50,101 @@ const RESERVED_DEVICE_NAMES: [&str; 22] = [
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
-/// A destination that has passed every boundary rule.
+/// An opened parent directory plus the single name the project will occupy inside it.
 ///
-/// The type exists so that "validated" is a property a value carries rather than a step a caller
-/// remembers. Nothing constructs one except [`DestinationPath::validate`].
-#[derive(Debug, Clone)]
-pub struct DestinationPath {
-    parent: PathBuf,
+/// The `Dir` is the capability. Holding one of these *is* the authority to write the project, and
+/// there is no constructor that produces one without passing every rule in [`Destination::open`].
+pub struct Destination {
+    parent: Dir,
+    parent_display: PathBuf,
     name: String,
-    full: PathBuf,
 }
 
-impl DestinationPath {
-    /// The canonical parent directory. The staging directory is created here, which is what makes
-    /// the final rename same-filesystem by construction.
+impl std::fmt::Debug for Destination {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // `Dir` formats as a raw file descriptor, which is noise in a log and meaningless to a
+        // reader. The path and name are the useful half.
+        formatter
+            .debug_struct("Destination")
+            .field("parent", &self.parent_display)
+            .field("name", &self.name)
+            .finish()
+    }
+}
+
+impl Destination {
+    /// The capability every write goes through.
     #[must_use]
-    pub fn parent(&self) -> &Path {
+    pub fn parent(&self) -> &Dir {
         &self.parent
     }
 
-    /// The final path component.
+    /// The final path component the project will occupy.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// The full destination path.
+    /// The full path, **for messages only**.
+    ///
+    /// Deliberately not usable as a capability: nothing in this crate opens it. It exists so an
+    /// error can say where the project would have gone.
     #[must_use]
-    pub fn as_path(&self) -> &Path {
-        &self.full
+    pub fn display_path(&self) -> PathBuf {
+        self.parent_display.join(&self.name)
     }
 
-    /// Applies every rule, in order, and refuses before anything is created.
+    /// Applies every rule and opens the parent, refusing before anything is created.
     ///
     /// # Errors
     ///
     /// [`Code::InvalidProjectName`], [`Code::DestinationRejected`],
     /// [`Code::DestinationParentMissing`], or [`Code::DestinationNotEmpty`]. Every rejection names
     /// the rule that fired in `details.rule`, so a refusal is a diagnosis rather than a verdict.
-    pub fn validate(requested: &Path) -> Result<Self, CliError> {
-        let rejected = |rule: &str, why: &str| {
+    pub fn open(requested: &Path) -> Result<Self, CliError> {
+        let rejected = |rule: &'static str, why: &str| {
             CliError::new(Code::DestinationRejected, why.to_owned())
                 .with("rule", rule)
                 .with("destination", requested.display().to_string())
         };
 
-        // Rule 1 — no traversal component, checked structurally rather than by string search.
-        // A textual `..` check misses platform-specific spellings; `Component::ParentDir` does not.
-        if requested
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-        {
-            return Err(rejected(
-                "no_traversal",
-                "the destination contains a `..` component, which could place the project outside \
-                 the directory you named",
-            ));
-        }
-
-        // Rule 3 — the final component is a single name.
-        let Some(name) = requested.file_name().and_then(|name| name.to_str()) else {
+        // RULE 1 — the final component is a single ordinary name.
+        //
+        // Checked structurally with `Component`, not by searching the string: a textual `..` test
+        // misses platform-specific spellings, and `Component::ParentDir` does not.
+        let Some(last) = requested.components().next_back() else {
             return Err(rejected(
                 "final_component_is_a_name",
                 "the destination has no final path component to use as the project directory",
             ));
         };
-        if name.is_empty() || name == "." || name == ".." {
-            return Err(rejected(
-                "final_component_is_a_name",
-                "the destination's final component is not a usable directory name",
-            ));
-        }
+        let name = match last {
+            Component::Normal(name) => match name.to_str() {
+                Some(name) => name.to_owned(),
+                None => {
+                    return Err(rejected(
+                        "final_component_is_a_name",
+                        "the destination's final component is not valid UTF-8",
+                    ));
+                }
+            },
+            Component::ParentDir | Component::CurDir => {
+                return Err(rejected(
+                    "final_component_is_a_name",
+                    "the destination ends in `.` or `..`, which is not a usable directory name",
+                ));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(rejected(
+                    "final_component_is_a_name",
+                    "the destination is a filesystem root, not a directory that can be created",
+                ));
+            }
+        };
 
-        // Rule 4 — not a platform-reserved device name.
-        let stem = name.split('.').next().unwrap_or(name);
+        // RULE 2 — not a platform-reserved device name. A name, not a path, so no capability can
+        // decide it.
+        let stem = name.split('.').next().unwrap_or(&name);
         if RESERVED_DEVICE_NAMES
             .iter()
             .any(|reserved| reserved.eq_ignore_ascii_case(stem))
@@ -125,56 +158,46 @@ impl DestinationPath {
                 ),
             )
             .with("rule", "reserved_device_name")
-            .with("name", name.to_owned()));
+            .with("name", name.clone()));
         }
 
-        // Rule 5 — the parent exists and canonicalises. Canonicalisation is what turns a symlinked
-        // parent into the real directory the rename will actually target.
-        let requested_parent = requested.parent().filter(|parent| !parent.as_os_str().is_empty());
-        let parent_input = match requested_parent {
+        // RULE 3 — the parent opens. THIS IS THE ONE AMBIENT CALL IN THE PROGRAM.
+        //
+        // From here on nothing takes a path from outside; every operation is relative to `parent`.
+        let parent_input = match requested.parent().filter(|p| !p.as_os_str().is_empty()) {
             Some(parent) => parent.to_path_buf(),
-            None => std::env::current_dir().map_err(|error| {
-                CliError::new(
-                    Code::DestinationParentMissing,
-                    format!("the current directory could not be resolved: {error}"),
-                )
-            })?,
+            None => PathBuf::from("."),
         };
-        let parent = parent_input.canonicalize().map_err(|error| {
+        let parent = Dir::open_ambient_dir(&parent_input, ambient_authority()).map_err(|error| {
             CliError::new(
                 Code::DestinationParentMissing,
                 format!(
-                    "the destination's parent directory `{}` does not exist or cannot be \
-                     resolved: {error}",
+                    "the destination's parent directory `{}` does not exist or cannot be opened: \
+                     {error}",
                     parent_input.display()
                 ),
             )
-            .with("rule", "parent_resolves")
+            .with("rule", "parent_opens")
             .with("parent", parent_input.display().to_string())
         })?;
-        if !parent.is_dir() {
-            return Err(rejected(
-                "parent_resolves",
-                "the destination's parent is not a directory",
-            ));
-        }
 
-        let full = parent.join(name);
-
-        // Rule 7 — the destination is not a symbolic link. Checked with `symlink_metadata`, which
-        // does NOT follow the link; `metadata` would report the target and defeat the whole check.
-        if let Ok(metadata) = std::fs::symlink_metadata(&full)
-            && metadata.file_type().is_symlink()
+        // RULE 4 — the destination is not a symbolic link.
+        //
+        // `symlink_metadata` does NOT follow the link; `metadata` would report the target and
+        // defeat the check entirely. Note that this is now belt-and-braces: writing *through* the
+        // link would be refused by the handle anyway. It is kept because a clear message beats an
+        // opaque `PermissionDenied` three steps later.
+        if let Ok(metadata) = parent.symlink_metadata(&name)
+            && metadata.is_symlink()
         {
             return Err(rejected(
                 "not_a_symlink",
-                "the destination is a symbolic link; writing through it would create the project \
-                 somewhere other than where you asked",
+                "the destination is a symbolic link; renvor will not write through it",
             ));
         }
 
-        // Rule 6 — the destination does not exist, or exists and is empty.
-        match std::fs::read_dir(&full) {
+        // RULE 5 — the destination is absent, or present and empty.
+        match parent.read_dir(&name) {
             Ok(mut entries) => {
                 if entries.next().is_some() {
                     return Err(CliError::new(
@@ -182,18 +205,17 @@ impl DestinationPath {
                         format!(
                             "`{}` already exists and is not empty; merging into an existing \
                              project is not supported",
-                            full.display()
-                        )
-                        .to_string(),
+                            parent_input.join(&name).display()
+                        ),
                     )
                     .with("rule", "destination_absent_or_empty")
-                    .with("destination", full.display().to_string()));
+                    .with("destination", parent_input.join(&name).display().to_string()));
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => {
-                // Exists but is not a readable directory — a regular file, most likely.
-                if full.exists() {
+                // Present, and not a readable directory — a regular file, most likely.
+                if parent.symlink_metadata(&name).is_ok() {
                     return Err(rejected(
                         "destination_absent_or_empty",
                         "the destination exists and is not a directory",
@@ -202,26 +224,14 @@ impl DestinationPath {
             }
         }
 
-        // Rule 2 and Rule 8 together — the resolved destination is inside the resolved parent.
-        //
-        // This is the check that catches an absolute path smuggled in as a "name" and a symlinked
-        // ancestor, and it is done on CANONICAL paths so that it reasons about where writes will
-        // actually land rather than about the text the user typed.
-        if !full.starts_with(&parent) {
-            return Err(rejected(
-                "contained_by_parent",
-                "the destination resolves outside the directory that contains it",
-            ));
-        }
-
-        Ok(Self { parent, name: name.to_owned(), full })
+        Ok(Self { parent, parent_display: parent_input, name })
     }
 }
 
 /// Rejects a project name before it becomes a path.
 ///
-/// Separate from [`DestinationPath::validate`] because the name is also written into `renvor.toml`
-/// and used as a Rust package name, so it has constraints a directory name does not.
+/// Separate from [`Destination::open`] because the name is also written into `renvor.toml` and used
+/// as a Rust package name, so it has constraints a directory name does not.
 ///
 /// # Errors
 ///
@@ -276,10 +286,7 @@ mod tests {
         // Deliberately not `#[cfg(windows)]`. A project generated on Linux gets checked out on
         // Windows, and finding out then is worse.
         for name in ["con", "CON", "Nul", "com1", "LPT9"] {
-            assert!(
-                validate_project_name(name).is_err(),
-                "{name} must be refused"
-            );
+            assert!(validate_project_name(name).is_err(), "{name} must be refused");
         }
     }
 
@@ -298,24 +305,79 @@ mod tests {
     #[test]
     fn names_that_are_not_usable_as_package_names_are_refused() {
         for name in ["", "1app", "-app", "my app", "my/app", "app!", &"x".repeat(65)] {
-            assert!(
-                validate_project_name(name).is_err(),
-                "{name:?} must be refused"
-            );
+            assert!(validate_project_name(name).is_err(), "{name:?} must be refused");
         }
     }
 
     #[test]
-    fn traversal_is_refused_structurally() {
-        let error = DestinationPath::validate(Path::new("../escape")).unwrap_err();
+    fn a_destination_ending_in_a_traversal_component_is_refused() {
+        let error = Destination::open(Path::new("some/where/..")).unwrap_err();
         assert_eq!(error.code, Code::DestinationRejected);
-        assert!(error.details.iter().any(|(key, value)| key == "rule" && value == "no_traversal"));
+        assert!(error
+            .details
+            .iter()
+            .any(|(key, value)| key == "rule" && value == "final_component_is_a_name"));
     }
 
     #[test]
     fn a_missing_parent_is_named_as_such() {
-        let error =
-            DestinationPath::validate(Path::new("/definitely/not/here/at/all/x")).unwrap_err();
+        let error = Destination::open(Path::new("/definitely/not/here/at/all/x")).unwrap_err();
         assert_eq!(error.code, Code::DestinationParentMissing);
+    }
+
+    #[test]
+    fn an_ordinary_destination_opens() {
+        // POSITIVE CONTROL for every refusal above.
+        let base = tempfile::tempdir().expect("tempdir");
+        let destination = Destination::open(&base.path().join("demo")).expect("opens");
+        assert_eq!(destination.name(), "demo");
+    }
+
+    #[test]
+    fn a_non_empty_destination_is_refused() {
+        let base = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
+        std::fs::write(base.path().join("demo/f"), b"x").expect("write");
+        let error = Destination::open(&base.path().join("demo")).unwrap_err();
+        assert_eq!(error.code, Code::DestinationNotEmpty);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_symlinked_destination_is_refused_by_name_before_it_is_refused_by_the_handle() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let elsewhere = base.path().join("elsewhere");
+        std::fs::create_dir(&elsewhere).expect("mkdir");
+        std::os::unix::fs::symlink(&elsewhere, base.path().join("demo")).expect("symlink");
+        let error = Destination::open(&base.path().join("demo")).unwrap_err();
+        assert_eq!(error.code, Code::DestinationRejected);
+        assert!(error
+            .details
+            .iter()
+            .any(|(key, value)| key == "rule" && value == "not_a_symlink"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn the_handle_refuses_an_escape_that_no_rule_in_this_module_checks_for() {
+        // THIS IS THE TEST THAT JUSTIFIES THE DEPENDENCY.
+        //
+        // No rule above looks at a symlink *inside* the tree. The previous hand-written boundary
+        // would have written straight through this one. The capability refuses it with no rule
+        // written for it at all, which is the difference between structural and checked.
+        let base = tempfile::tempdir().expect("tempdir");
+        let outside = base.path().join("outside");
+        std::fs::create_dir_all(&outside).expect("mkdir");
+        let inside = base.path().join("inside");
+        std::fs::create_dir_all(&inside).expect("mkdir");
+        std::os::unix::fs::symlink(&outside, inside.join("link")).expect("symlink");
+
+        let handle = Dir::open_ambient_dir(&inside, ambient_authority()).expect("opens");
+        assert!(handle.write("link/planted", b"x").is_err(), "wrote through a symlink");
+        assert!(handle.write("../planted", b"x").is_err(), "wrote through a traversal");
+        assert!(!outside.join("planted").exists(), "a file escaped the boundary");
+
+        // POSITIVE CONTROL: the same handle must still be able to do its job.
+        handle.write("legitimate", b"x").expect("an ordinary write must still work");
     }
 }

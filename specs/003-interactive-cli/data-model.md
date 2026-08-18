@@ -124,15 +124,21 @@ the D6 decision record** ([`research.md`](research.md)).
 
 - **I-15 — Rejection precedes creation.** No filesystem entry is created before every rule above has
   passed (FR-039, SC-009).
-- **I-16 — The boundary is checked, not structural.** This is a **recorded weakening** relative to
-  `cap-std`'s capability handles, and it is why D6 requires an ADR. A checked boundary can be
-  bypassed by a code path that forgets to check; a capability boundary cannot. **Stating this is not
-  a formality — it is the difference between the two designs.**
-- **I-17 — Time-of-check to time-of-use is bounded, not eliminated.** Between validation and the
-  final rename, an attacker with write access to the destination's parent can change what the
-  destination names. The rename is refused if the destination exists, which turns that race into a
-  clean failure rather than an overwrite — but **it is not eliminated, and the spec's edge case for
-  it stands**.
+- **I-16 — The boundary is structural, not checked.** *(Revised 2026-08-18 with research.md D6
+  revision 2.)* Containment comes from `cap_std::fs::Dir` handles, so a code path that forgets to
+  validate **cannot** escape — there is no ambient path API in scope to escape with. The earlier
+  version of this invariant recorded the opposite as a deliberate weakening; that weakening no
+  longer exists and the invariant is stated in the direction that is now true. What remains checked
+  is *name* validation — Windows reserved device names and package-name characters — because those
+  are not resolution questions and no capability can decide them. **Exactly one ambient call exists**
+  (`Dir::open_ambient_dir` on the destination's parent), and it is deliberate: the operator typed
+  that path.
+- **I-17 — Time-of-check to time-of-use is narrowed, not eliminated.** Between opening the parent
+  handle and the final rename, another process holding write access to that directory can still
+  create the destination. The rename refuses an existing destination, which converts the race into a
+  **clean failure rather than an overwrite**. The window is narrower than a path-based design's,
+  because both the check and the rename go through one open handle rather than being re-resolved
+  from a string each time — but it is not zero, and this invariant does not claim it is.
 
 ## Entity relationships
 
