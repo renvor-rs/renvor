@@ -343,7 +343,7 @@ state is not absence — the same rule as `paths.rs` RULE 4, applied at the last
 | `a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_project` | `tests/transaction.rs` | `SIGKILL`; residue is beside, named, and no project exists |
 | `staging_names_are_unique_within_one_process` | `place.rs` | 256 names, all distinct |
 
-**Result at the head of this branch**: all pass — **210 tests** in `renvor-cli`, **555** across the
+**Result at the head of this branch**: all pass — **212 tests** in `renvor-cli`, **557** across the
 workspace — on `ubuntu-latest`, `macos-latest`, and `windows-latest`, on both `1.94.0` and `stable`.
 
 ## 10. What a reviewer should try to break

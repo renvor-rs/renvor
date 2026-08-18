@@ -216,15 +216,26 @@ impl<'a> Staging<'a> {
                 .with("found", crate::paths::describe(&metadata)));
             }
             Err(error) => {
+                // `destination_rejected` with `rule = "destination_unverifiable"` — the SAME code
+                // and the same rule `paths.rs` RULE 4 uses for the same condition, and NOT
+                // `placement_failed`.
+                //
+                // `placement_failed` is published as *"the final move could not be performed
+                // atomically"*, and no move has been attempted here: the rename is two steps away.
+                // Reporting it would be the identical category error that finding A-R6 was about,
+                // reintroduced in the commit that fixed A-R6 — which is the kind of thing that
+                // happens when a code is chosen for being nearby rather than for being true.
                 return Err(named(
-                    Code::PlacementFailed,
+                    Code::DestinationRejected,
                     format!(
                         "`{}` could not be inspected before placement, so renvor cannot establish \
                          that it is absent: {error}. Nothing was written there and the staged tree \
                          has been removed",
                         destination.display_path().display()
                     ),
-                ));
+                )
+                .with("rule", "destination_unverifiable")
+                .with("error", error.to_string()));
             }
         }
 
@@ -552,6 +563,50 @@ mod tests {
             assert_eq!(detail("found"), "directory", "{site}");
             assert!(!detail("destination").is_empty(), "{site}");
         }
+    }
+
+    #[test]
+    fn both_fail_closed_arms_report_the_same_code_and_rule() {
+        // The fail-closed condition — "the destination's state could not be established" — is
+        // reached from two places, `Destination::open` RULE 4 and `Staging::place` STEP 1, and both
+        // must answer with the same code and the same rule.
+        //
+        // `place`'s arm reported `placement_failed` when first written, which is published as *"the
+        // final move could not be performed atomically"* while no move had been attempted: the
+        // identical category error finding A-R6 was about, reintroduced inside the commit that
+        // fixed A-R6. This test exists so it cannot come back quietly.
+        //
+        // Asserted from the SOURCE for `place`'s arm rather than by provoking it, because provoking
+        // it needs the parent to become unreadable *after* staging was created inside it — which
+        // makes the staging cleanup in `Drop` fail too, and turns the test into a tempdir the
+        // harness cannot remove. The behavioural half of the same rule is covered on the `paths.rs`
+        // side by `a_destination_whose_state_cannot_be_established_fails_closed`.
+        let source = include_str!("place.rs");
+        let step_one = source
+            .split("── STEP 1")
+            .nth(1)
+            .expect("STEP 1 is still marked in the source")
+            .split("── STEP 2")
+            .next()
+            .expect("STEP 2 follows STEP 1");
+
+        assert!(
+            step_one.contains("Code::DestinationRejected"),
+            "STEP 1's fail-closed arm must refuse with `destination_rejected`, the same code              `paths.rs` RULE 4 uses for the same condition"
+        );
+        assert!(
+            step_one.contains("\"destination_unverifiable\""),
+            "STEP 1's fail-closed arm must name the same rule as `paths.rs` RULE 4"
+        );
+        assert!(
+            !step_one.contains("Code::PlacementFailed"),
+            "STEP 1 attempts no move, so `placement_failed` would be a false statement about what              was tried"
+        );
+        // POSITIVE CONTROL: the slice must actually be STEP 1 and not an empty string.
+        assert!(
+            step_one.contains("symlink_metadata"),
+            "the extracted STEP 1 slice does not contain the check it is supposed to be about"
+        );
     }
 
     #[test]

@@ -211,7 +211,7 @@ five times before being committed.
 leaves the destination untouched. `renvor doctor`, `renvor check`, `renvor dev`, and
 `renvor docker up|down|status|logs`. The complete flag surface including reserved-flag refusal.
 The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard and the FR-009 review-and-confirm screen.
-The embedded template catalogue and bounded rendering. **210 tests** in `renvor-cli` and **555**
+The embedded template catalogue and bounded rendering. **212 tests** in `renvor-cli` and **557**
 across the workspace (measured by `cargo test`, not counted by hand — this line said 107, which was
 true of an earlier tree and had not been re-measured, then 206 before the 2026-08-18 corrections
 added four), `cargo xtask verify` green on all **11** steps, clippy clean on Rust 1.94.0 and current

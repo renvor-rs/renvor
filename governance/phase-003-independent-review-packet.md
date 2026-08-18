@@ -80,7 +80,7 @@ git checkout feat/phase-003-interactive-cli
 cargo xtask verify          # 11 checks: fmt, clippy, tests, rustdoc -D warnings,
                             # cargo-deny, architecture invariants, secret scan,
                             # docs build, link check, working-tree cleanliness
-cargo test --workspace      # 210 tests in renvor-cli, 555 across the workspace
+cargo test --workspace      # 212 tests in renvor-cli, 557 across the workspace
 ```
 
 Nothing requires network access. Nothing requires Docker. The generated projects declare no

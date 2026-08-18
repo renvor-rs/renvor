@@ -453,6 +453,22 @@ Fixed by extracting `paths::describe` and using it at both sites, with
 The lost-race branch, which has no metadata in hand, reports `found = "unknown"` rather than
 inventing a value or omitting the key; `unknown` is published in the contract as a possible value.
 
+A second one, found the same way an hour later and worth recording because of **where** it was:
+`place.rs` STEP 1's fail-closed arm reported `placement_failed` — published as *"the final move
+could not be performed atomically"* — at a point where no move has been attempted and the rename is
+two steps away. That is the identical category error finding A-R6 was about, **reintroduced inside
+the commit that fixed A-R6**, because the code was chosen for being nearby rather than for being
+true. It now reports `destination_rejected` with `rule = "destination_unverifiable"`, the same code
+and rule `paths.rs` RULE 4 uses for the same condition, and
+`both_fail_closed_arms_report_the_same_code_and_rule` fails if `placement_failed` returns to that
+arm — demonstrated by putting it back.
+
+Neither defect was found by a test. Both were found by re-reading the diff against the published
+contract, which is the check the registry gate cannot perform: it verifies the code **set** and the
+**exit** column, and says nothing about which code a given site emits or which details it carries.
+That limitation is worth stating plainly rather than leaving a reader to assume the gate is stronger
+than it is.
+
 `no_production_path_removes_the_destination` is **not** in the §6.6 table, and that is deliberate: it
 carries its own inline positive control — it asserts the scan matched exactly one line before
 asserting anything about that line — because a source-text scan that matched nothing would otherwise
