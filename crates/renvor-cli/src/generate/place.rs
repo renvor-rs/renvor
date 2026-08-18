@@ -205,7 +205,19 @@ impl<'a> Staging<'a> {
         // both Windows toolchains before this line existed.
         drop(self.handle.take());
 
-        // ── STEP 3: the rename ──────────────────────────────────────────────────────────
+        // ── STEP 3: the rename, and INVARIANT I-17 ──────────────────────────────────────
+        //
+        // **Time-of-check to time-of-use is narrowed here, not eliminated**, and this is the line
+        // where that matters. Step 1 observed the destination; this step acts on it. Another
+        // process can create the destination in between, and nothing below prevents that.
+        //
+        // What holds instead: the rename **refuses an existing destination**, so losing the race is
+        // a clean failure rather than an overwrite, and both the observation and the action go
+        // through the same open parent handle rather than re-resolving a path string twice.
+        //
+        // Eliminating the window needs an atomic create-or-fail rename. POSIX `rename(2)` silently
+        // replaces an empty destination directory; `renameat2(RENAME_NOREPLACE)` would do it and is
+        // Linux-only. See `paths.rs` for the full statement of I-17.
         if let Err(error) = self.parent.rename(&self.name, self.parent, target) {
             // CLASSIFY FROM THE KERNEL'S OWN ANSWER, not from a second observation.
             //

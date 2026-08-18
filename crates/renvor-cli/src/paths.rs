@@ -50,6 +50,32 @@ const RESERVED_DEVICE_NAMES: [&str; 22] = [
     "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
+/// # Invariant I-17 — time-of-check to time-of-use is **narrowed, not eliminated**
+///
+/// Between [`Destination::open`] returning a handle and `Staging::place` performing the rename,
+/// another process with write access to that directory can still create the destination. Nothing in
+/// this module prevents that, and this invariant does not claim it does.
+///
+/// What the design gives instead is two properties, both weaker than "impossible" and both worth
+/// having:
+///
+/// 1. **The window is narrower than a path-based design's.** Every check and the rename itself go
+///    through **one open handle** rather than being re-resolved from a string each time. A design
+///    that re-`stat`s a path and then renames by path resolves the name twice, and an attacker who
+///    wins between those two resolutions gets a different directory. Here there is one resolution
+///    and it happened at `open`.
+/// 2. **Losing the race is a clean failure, never an overwrite.** The rename refuses an existing
+///    destination — see `Staging::place`, which classifies from the kernel's own `ErrorKind` rather
+///    than by re-observing the filesystem, because a re-observation is itself racy and is exactly
+///    how a lost race used to be misreported as `placement_failed`.
+///
+/// Closing the window entirely needs an atomic create-directory-or-fail rename, which POSIX does
+/// not provide portably: `rename(2)` silently replaces an empty destination directory, and
+/// `renameat2(RENAME_NOREPLACE)` is Linux-only. So the residual risk is stated here rather than
+/// designed around, and `tests/transaction.rs` asserts the *consequence* — that concurrent runs
+/// produce exactly one project and clean failures for the rest — rather than asserting an
+/// impossibility that does not hold.
+///
 /// An opened parent directory plus the single name the project will occupy inside it.
 ///
 /// The `Dir` is the capability. Holding one of these *is* the authority to write the project, and
