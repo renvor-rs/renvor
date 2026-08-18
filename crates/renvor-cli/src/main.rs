@@ -23,6 +23,7 @@ mod templates;
 use std::io::IsTerminal;
 
 use clap::Parser;
+use clap::error::ErrorKind;
 
 use config::flags::{Cli, Command, DockerAction};
 use exit::{CliError, Code, Exit};
@@ -67,10 +68,77 @@ fn install_panic_hook(format: Format, command: &'static str) {
     }));
 }
 
+/// Reads `--output` straight from `argv`, before clap has parsed anything.
+///
+/// # Why this scan exists
+///
+/// clap reports a malformed invocation by printing prose and exiting **before** any of our code
+/// runs. C-2 is explicit that this is a contract violation:
+///
+/// > *"A command that fails by printing an unstructured error and exiting has broken this
+/// > contract, because the consumer that asked for JSON receives something it cannot parse
+/// > precisely when it most needs to know what went wrong."*
+///
+/// To honour that we have to know the requested format **while the command line is still
+/// unparseable**, which is a chicken-and-egg problem no parser can solve for us. A scan of the raw
+/// arguments is the honest answer.
+///
+/// It is deliberately narrow: it recognises only the two spellings clap accepts, and it makes no
+/// other decision. Everything else still goes through clap.
+fn requested_format_from_argv() -> Format {
+    let mut arguments = std::env::args();
+    while let Some(argument) = arguments.next() {
+        let value = if argument == "--output" {
+            arguments.next()
+        } else {
+            argument.strip_prefix("--output=").map(str::to_owned)
+        };
+        if let Some(value) = value {
+            return Format::parse(&value).unwrap_or_default();
+        }
+    }
+    Format::default()
+}
+
 fn main() {
-    // clap handles `--help`, `--version`, and malformed invocations itself, exiting 2 — which is
-    // the code C-1 assigns to a usage error, so no translation is needed.
-    let cli = Cli::parse();
+    // `try_parse`, not `parse`. clap's own error path prints prose and exits, which breaks C-2 for
+    // a `--output json` consumer — see `requested_format_from_argv`.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        // `--help` and `--version` arrive here as "errors" and are **successes**: they print to
+        // stdout and exit 0. Folding them into the failure path below would turn `renvor --help`
+        // into a usage error — the kind of fix that breaks the thing it was meant to protect.
+        Err(error)
+            if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) =>
+        {
+            let _ = error.print();
+            std::process::exit(Exit::Success.code());
+        }
+        Err(error) => {
+            let format = requested_format_from_argv();
+            match format {
+                // In human mode, print clap's own error exactly as clap would have. Reformatting it
+                // would lose the caret diagnostics and the suggestions, which are the useful part.
+                Format::Human => {
+                    let _ = error.print();
+                }
+                Format::Json => {
+                    let reporter = Reporter::new(format, false);
+                    let usage = CliError::new(
+                        Code::Usage,
+                        // clap's rendering is the useful text. It goes in the envelope's `message`,
+                        // which C-2 marks explicitly as human-readable and NOT stable.
+                        error.render().to_string().trim().to_owned(),
+                    );
+                    reporter.fail("renvor", &usage);
+                }
+            }
+            std::process::exit(Exit::Usage.code());
+        }
+    };
 
     // `--output` is parsed by hand rather than by clap's `value_parser`, so that an unsupported
     // value produces `unsupported_value` (exit 3) with `details.supported`, rather than clap's

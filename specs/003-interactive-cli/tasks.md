@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**42 of 95 tasks complete. This section states what is built and what is not, because a task list
+**44 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -46,6 +46,17 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-0000. **clap's own error path violated C-2, which names this failure mode explicitly.** clap
+   prints prose and exits **before** any renvor code runs, so
+   `renvor new demo --nonsense --output json` wrote **zero** JSON documents — while C-2 says: *"A
+   command that fails by printing an unstructured error and exiting has broken this contract,
+   because the consumer that asked for JSON receives something it cannot parse precisely when it
+   most needs to know what went wrong."* Fixed with `try_parse` plus a narrow `argv` scan for
+   `--output`, which is needed because the format has to be known **while the command line is still
+   unparseable** — a chicken-and-egg problem no parser can solve for us. Two controls guard the fix:
+   `--help` and `--version` arrive through the same `Err` path and must stay exit-0 successes, and
+   the human path must keep clap's caret diagnostics rather than being degraded to buy the JSON one.
+
 2a-000. **Rust's own defaults violated both output contracts on the panic path.** C-1 reserves
    exit `1` for "unclassified or internal failure — a panic", **so that anything exiting `1` is a
    bug report** — but Rust exits **101**, measured rather than assumed with a bare

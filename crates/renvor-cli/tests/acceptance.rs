@@ -535,6 +535,65 @@ fn a_panic_in_human_mode_also_exits_one_and_leaves_stdout_empty() {
 }
 
 #[test]
+fn a_malformed_command_line_still_produces_one_json_document() {
+    // C-2 names this exact failure mode:
+    //
+    //   "A command that fails by printing an unstructured error and exiting has broken this
+    //    contract, because the consumer that asked for JSON receives something it cannot parse
+    //    precisely when it most needs to know what went wrong."
+    //
+    // That was renvor's behaviour until 2026-08-18: clap printed prose and exited **before** any
+    // of our code ran, so `--output json` produced ZERO documents on a malformed invocation.
+    let base = tempfile::tempdir().expect("tempdir");
+    for args in [
+        &["new", "demo", "--nonsense", "--output", "json"][..],
+        &["nosuchcommand", "--output", "json"][..],
+        &["new", "--output=json", "--nonsense"][..],
+    ] {
+        let (code, stdout, _) = renvor(args, base.path(), &[]);
+        assert_eq!(code, 2, "{args:?} must be a usage error");
+        let document: serde_json::Value = serde_json::from_str(stdout.trim())
+            .unwrap_or_else(|error| panic!("{args:?} wrote no parseable document: {error}"));
+        assert_eq!(document["status"], "failure", "{args:?}");
+        assert_eq!(document["error"]["code"], "usage", "{args:?}");
+    }
+}
+
+#[test]
+fn help_and_version_are_successes_and_still_go_to_stdout() {
+    // POSITIVE CONTROL for the change above. clap delivers `--help` and `--version` through the
+    // same `Err` path as a malformed command line, so a fix that treated every `Err` as a usage
+    // error would turn `renvor --help` into exit 2 — breaking the thing the fix was protecting.
+    let base = tempfile::tempdir().expect("tempdir");
+    for args in [&["--help"][..], &["--version"][..], &["new", "--help"][..]] {
+        let (code, stdout, _) = renvor(args, base.path(), &[]);
+        assert_eq!(code, 0, "{args:?} must exit 0");
+        assert!(
+            !stdout.trim().is_empty(),
+            "{args:?} wrote nothing to stdout"
+        );
+    }
+}
+
+#[test]
+fn a_malformed_command_line_in_human_mode_keeps_claps_own_diagnostics() {
+    // The other control: the JSON path must not have been bought by degrading the human one.
+    // clap's caret diagnostics and suggestions are the useful part of its error.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = renvor(&["new", "demo", "--nonsense"], base.path(), &[]);
+    assert_eq!(code, 2);
+    assert!(
+        stdout.trim().is_empty(),
+        "human-mode errors must not touch stdout"
+    );
+    assert!(stderr.contains("unexpected argument"), "{stderr}");
+    assert!(
+        stderr.contains("tip:"),
+        "clap's suggestion was lost:\n{stderr}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");
