@@ -165,10 +165,14 @@ impl<'a> Staging<'a> {
         };
 
         // Injected failure for the transaction tests. **Before any mutation**, so the meaning is
-        // exactly "the place step failed": nothing was moved, nothing was removed, and `self`
-        // drops on the way out — which is the cleanup this test is checking. Injecting *between*
-        // the removal below and the rename would instead exercise the restore path, and would
-        // report an FR-012 violation caused by where the injector sits rather than by the code.
+        // exactly "the place step failed": nothing was moved and `self` drops on the way out,
+        // which is the cleanup those tests check.
+        //
+        // Its placement used to matter more than it does now. While `place` removed an existing
+        // empty destination, injecting *after* that removal exercised a restore path and would
+        // have reported an FR-012 violation caused by where the injector sat rather than by the
+        // code. **There is no longer any position in this method that removes anything**, so the
+        // injector's placement is now a straightforward choice rather than a load-bearing one.
         crate::inject::fail_at("place")?;
 
         // ── STEP 1: refuse an existing destination. NOTHING IS REMOVED HERE ─────────────
