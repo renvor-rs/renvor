@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**45 of 95 tasks complete. This section states what is built and what is not, because a task list
+**47 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -46,6 +46,14 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-00000. **An unbounded input on a path the operator names.** FR-042 requires *every* input to be
+   bounded with the bound documented; `renvor check` read `renvor.toml` with a plain
+   `read_to_string`. Since `check` takes a **directory from the command line**, that is an
+   out-of-memory anyone can trigger by pointing it at a large file. Now bounded at 64 KiB — three
+   orders of magnitude above a real manifest — and the size is checked **twice**, because
+   `metadata` reports the size at one instant and a file can grow before the read completes. The
+   `take(limit + 1)` makes the read itself bounded rather than trusting the stat.
+
 2a-0000. **clap's own error path violated C-2, which names this failure mode explicitly.** clap
    prints prose and exits **before** any renvor code runs, so
    `renvor new demo --nonsense --output json` wrote **zero** JSON documents — while C-2 says: *"A

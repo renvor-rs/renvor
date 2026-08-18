@@ -4,11 +4,77 @@
 //! failure. "Invalid manifest" tells an operator nothing; "`project.name` must start with an ASCII
 //! letter" tells them what to edit.
 
+use std::io::Read;
+
 use serde::{Deserialize, Serialize};
 
 use crate::exit::{CliError, Code, Exit};
 use crate::output::Reporter;
 use crate::paths::validate_project_name;
+
+/// The largest `renvor.toml` this command will read.
+///
+/// FR-042: *"Every input, expansion, retry, and concurrent operation MUST be bounded, and the bound
+/// MUST be documented."* An unbounded `read_to_string` on a path the operator names is an
+/// out-of-memory waiting for somebody to point `renvor check` at a large file — deliberately or by
+/// mistake, since `check` takes a directory from the command line.
+///
+/// A generated manifest is a few hundred bytes. 64 KiB is three orders of magnitude of headroom for
+/// hand-editing and still small enough that reading it can never be the reason a machine runs out
+/// of memory.
+const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+
+/// Reads a manifest, refusing anything above [`MAX_MANIFEST_BYTES`].
+///
+/// The size is checked **twice**, and that is not redundancy for its own sake: `metadata` reports
+/// the size at one instant, and a file can grow between that call and the read. `take` makes the
+/// read itself bounded, so the bound holds even against a file being written concurrently.
+fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
+    let unreadable = |detail: String| {
+        CliError::new(Code::ManifestInvalid, detail)
+            .with("field", "renvor.toml")
+            .with("constraint", "must exist, be readable, and be under 64 KiB")
+    };
+
+    let file = std::fs::File::open(path)
+        .map_err(|error| unreadable(format!("`{}` could not be read: {error}", path.display())))?;
+
+    if let Ok(metadata) = file.metadata()
+        && metadata.len() > MAX_MANIFEST_BYTES
+    {
+        return Err(CliError::new(
+            Code::BoundExceeded,
+            format!(
+                "`{}` is {} bytes, above the {MAX_MANIFEST_BYTES}-byte limit for a renvor manifest",
+                path.display(),
+                metadata.len()
+            ),
+        )
+        .with("bound", "manifest_bytes")
+        .with("limit", MAX_MANIFEST_BYTES.to_string()));
+    }
+
+    let mut text = String::new();
+    // `+ 1` so that a file which grew past the limit between the two checks is still detected here
+    // rather than silently truncated into something that might parse.
+    file.take(MAX_MANIFEST_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|error| unreadable(format!("`{}` could not be read: {error}", path.display())))?;
+
+    if text.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(CliError::new(
+            Code::BoundExceeded,
+            format!(
+                "`{}` grew past the {MAX_MANIFEST_BYTES}-byte limit while it was being read",
+                path.display()
+            ),
+        )
+        .with("bound", "manifest_bytes")
+        .with("limit", MAX_MANIFEST_BYTES.to_string()));
+    }
+
+    Ok(text)
+}
 
 /// The `[renvor]` table.
 #[derive(Debug, Deserialize, Serialize)]
@@ -39,14 +105,7 @@ struct Manifest {
 /// [`Code::ManifestInvalid`] with `details.field` and `details.constraint`.
 pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
     let manifest_path = path.join("renvor.toml");
-    let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
-        CliError::new(
-            Code::ManifestInvalid,
-            format!("`{}` could not be read: {error}", manifest_path.display()),
-        )
-        .with("field", "renvor.toml")
-        .with("constraint", "must exist and be readable")
-    })?;
+    let text = read_bounded(&manifest_path)?;
 
     let manifest: Manifest = toml::from_str(&text).map_err(|error| {
         CliError::new(
@@ -165,6 +224,40 @@ local_domain = "commerce.test"
                 "{field} reported no constraint"
             );
         }
+    }
+
+    #[test]
+    fn a_manifest_above_the_documented_bound_is_refused_rather_than_read() {
+        // FR-042. `check` takes a directory from the command line, so an unbounded read is an
+        // out-of-memory anybody can trigger by pointing it at a large file.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let oversized = "x".repeat((MAX_MANIFEST_BYTES + 1024) as usize);
+        std::fs::write(dir.path().join("renvor.toml"), oversized).expect("write");
+        let error = run(&reporter(), dir.path()).unwrap_err();
+        assert_eq!(error.code, Code::BoundExceeded);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "bound" && v == "manifest_bytes")
+        );
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "limit" && v == "65536")
+        );
+    }
+
+    #[test]
+    fn an_ordinary_manifest_is_comfortably_inside_the_bound() {
+        // POSITIVE CONTROL, and a check that the bound is not so tight it rejects real files. A
+        // generated manifest is a few hundred bytes against a 64 KiB ceiling.
+        assert!(
+            (VALID.len() as u64) < MAX_MANIFEST_BYTES / 100,
+            "a generated manifest is {} bytes, which is not comfortably under the {MAX_MANIFEST_BYTES}-byte bound",
+            VALID.len()
+        );
     }
 
     #[test]
