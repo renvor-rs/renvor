@@ -788,6 +788,68 @@ fn a_file_just_under_the_bound_is_still_read() {
 }
 
 #[test]
+fn a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_project() {
+    // The residue promise, which until now rested entirely on a comment.
+    //
+    // `Staging`'s `Drop` cleans up on every ordinary failure path including a panic — but a
+    // SIGKILL runs no destructor, and the design's answer to that is explicit: residue survives,
+    // and it is made **identifiable** and placed **beside** the destination rather than inside it,
+    // so it can never become part of a project.
+    //
+    // Killed during pre-placement verification, which takes seconds — a comfortable window,
+    // and just as much "mid-transaction" as killing during the render itself.
+    let base = tempfile::tempdir().expect("tempdir");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(["new", "doomed", "--yes"])
+        .current_dir(base.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawns");
+
+    // Wait for staging to appear rather than sleeping a fixed time, so this is not a race against
+    // a slow machine.
+    let staging = loop {
+        if let Some(name) = std::fs::read_dir(base.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .find(|name| name.starts_with(".renvor-staging-"))
+        {
+            break name;
+        }
+        if child.try_wait().expect("try_wait").is_some() {
+            panic!("the run finished before staging was observed; it is too fast to kill here");
+        }
+        std::thread::yield_now();
+    };
+
+    child.kill().expect("kill");
+    child.wait().expect("wait");
+
+    // THE THREE PROMISES.
+    assert!(
+        base.path().join(&staging).exists(),
+        "the test observed staging and it vanished; nothing is being asserted"
+    );
+    assert!(
+        !base.path().join("doomed").exists(),
+        "a killed run left a destination behind — the transaction's central promise"
+    );
+    assert!(
+        !base
+            .path()
+            .join(&staging)
+            .starts_with(base.path().join("doomed")),
+        "staging is inside the destination, so residue could become part of a project"
+    );
+    assert!(
+        staging.starts_with(".renvor-staging-") && staging.contains(&child.id().to_string()),
+        "residue must be identifiable as renvor's and name the process that left it: {staging}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

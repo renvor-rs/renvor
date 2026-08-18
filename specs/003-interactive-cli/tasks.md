@@ -27,10 +27,15 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**53 of 95 tasks complete. This section states what is built and what is not, because a task list
+**54 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
+
+**The residue promise is tested, not just documented (T019).** A run is killed with no chance to
+run a destructor; the staging directory survives, is **beside** the destination rather than inside
+it, **names the process** that left it, and **no project exists**. Twenty consecutive runs. Until
+this test, that promise rested entirely on a comment.
 
 **FR-015 is verified by racing, not by reading.** Six concurrent `renvor new` runs at one
 destination produce exactly one success, five clean `destination_not_empty` failures each carrying a
@@ -257,7 +262,7 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 - [ ] T016 Write injected-failure coverage in `crates/renvor-cli/tests/transaction.rs`: fail at **each mutating** protocol step of contract C-5 — `stage`, `render`, `manifest`, `verify`, `place` — against **both** an absent destination and a pre-existing empty one. **C-5 defines seven steps; `validate` and `report` are excluded deliberately and the reason is stated here rather than left to inference**: `validate` writes nothing, so it has no post-condition to violate, and `report` runs after placement has already succeeded, byte-comparing the pre-existing case before and after
 - [ ] T017 Add the **positive control** to `crates/renvor-cli/tests/transaction.rs`: an un-injected run into the same fixtures succeeds and produces a project. Without it, a harness that refuses everything satisfies T015 and T016
 - [ ] T018 Write concurrency coverage in `crates/renvor-cli/tests/transaction.rs`: two runs targeting one destination, asserting **at most one succeeds** and the other reports `destination_not_empty` — never a corrupt tree (FR-013, FR-015)
-- [ ] T019 Write residue coverage in `crates/renvor-cli/tests/transaction.rs`: kill a run mid-render and assert the staging directory is **beside** the destination, never inside it, and is identifiable as Renvor's
+- [x] T019 Write residue coverage in `crates/renvor-cli/tests/transaction.rs`: kill a run mid-render and assert the staging directory is **beside** the destination, never inside it, and is identifiable as Renvor's
 
 ### Failing-first hostile corpus
 
