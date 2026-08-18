@@ -25,15 +25,68 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ---
 
+## Implementation status, 2026-08-18
+
+**27 of 95 tasks complete. This section states what is built and what is not, because a task list
+with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
+
+### Built, tested, and green on both toolchains
+
+`renvor new` end to end — the full contract C-5 transaction (validate → stage → render → **verify**
+→ manifest → place → report), with a `Drop`-enforced guarantee that any failure before placement
+leaves the destination untouched. `renvor doctor`, `renvor check`, `renvor dev`, and
+`renvor docker up|down|status|logs`. The complete flag surface including reserved-flag refusal.
+The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard.
+The embedded template catalogue and bounded rendering. **107 tests**, `cargo xtask verify` green on
+all ten checks, clippy clean on Rust 1.94.0 and current stable.
+
+### Two governing-document changes made during implementation, both recorded rather than assumed
+
+1. **`research.md` D6 is at revision 2 and reverses revision 1.** `cap-std` 4.0.2 is adopted, so
+   path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
+   — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
+   that falsified revision 1's two stated objections. See D6 for the numbers.
+2. **Phase 002 proof-gate obligation 8 had its scope corrected**, in
+   `crates/renvor-config/tests/proof_gate.rs`. It scanned the whole workspace lockfile for
+   `serde_json` while its rationale is about **configuration source formats**; Phase 003 needs
+   `serde_json` for `--output json`, which is a **machine-readable output format**. The check now
+   runs against the configuration crates' transitive closure, with a positive control per crate and
+   a negative control proving the walk can detect what it looks for. **The YAML checks remain
+   workspace-wide.** This is a scope correction, not a weakening, and it is called out here because
+   editing another phase's gate is exactly the kind of change that should never happen quietly.
+
+### Not built. Each is real work, not a formality
+
+- **T008** — the nine named test-module skeletons. Equivalent coverage exists in unit tests and in
+  `tests/generated.rs`, but the enumerated files do not exist, so the suite is not organised the way
+  this plan says it is.
+- **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;
+  they were **not** written failing-first, and that ordering was the point.
+- **T031, T032** — the review screen and confirmation. The equivalent non-interactive command is
+  printed after a wizard run; the review-and-confirm step itself is absent, so `--yes` currently
+  waives nothing because there is nothing to waive.
+- **T042–T052** — the non-interactive parity work as specified, including the byte-identical
+  serialisation comparison between the two interfaces.
+- **T053–T060** — the hostile-path suite as a named file.
+- **T061–T075** — dry-run and JSON edge cases beyond those in `tests/generated.rs`.
+- **T076–T095** — `doctor`/`dev`/`docker` hardening, the TLS-consent suite, offline proof, and the
+  polish phase.
+- **T093a** — the constitution principle VII question. It is **referred, not answered**: this phase
+  asks three of the eleven things principle VII lists, because the other eight correspond to flags
+  it reserves and refuses. Whether that is compliance or non-compliance is a maintainer ruling and
+  is deliberately not made here.
+
+---
+
 ## Phase 1: Setup
 
-- [ ] T001 Create `crates/renvor-cli/Cargo.toml` declaring package `renvor-cli` with `[[bin]] name = "renvor"`, inheriting `edition`, `rust-version`, `license`, `repository`, `homepage`, and `authors` from `[workspace.package]` and **restating none of them** (ADR-0002)
-- [ ] T002 Add `crates/renvor-cli` to `members` in the workspace `Cargo.toml`, keeping the list alphabetically ordered
-- [ ] T003 Create `crates/renvor-cli/src/main.rs` with a binary that parses no arguments yet and exits `0`, so the workspace builds from the first commit
-- [ ] T004 Assert in `xtask/src/main.rs` that the built executable is named exactly `renvor` and **not** `renvor-cli`, with a control proving the check fails if the `[[bin]]` name is changed — FR-001 is a compatibility promise and a test that cannot fail is not a test
-- [ ] T005 [P] Create `crates/renvor-cli/README.md` stating what the crate is, that its executable is `renvor`, and that the crate is pre-release and unstable
-- [ ] T006 [P] Add the declared dependencies from [`research.md`](research.md) D1–D14 to `crates/renvor-cli/Cargo.toml` with **narrow feature sets**, each with a comment naming the decision that selected it
-- [ ] T007 Run `cargo deny check` and record that every new dependency resolves to a licence on the `deny.toml` allow-list, with **0** exceptions added
+- [x] T001 Create `crates/renvor-cli/Cargo.toml` declaring package `renvor-cli` with `[[bin]] name = "renvor"`, inheriting `edition`, `rust-version`, `license`, `repository`, `homepage`, and `authors` from `[workspace.package]` and **restating none of them** (ADR-0002)
+- [x] T002 Add `crates/renvor-cli` to `members` in the workspace `Cargo.toml`, keeping the list alphabetically ordered
+- [x] T003 Create `crates/renvor-cli/src/main.rs` with a binary that parses no arguments yet and exits `0`, so the workspace builds from the first commit
+- [x] T004 Assert in `xtask/src/main.rs` that the built executable is named exactly `renvor` and **not** `renvor-cli`, with a control proving the check fails if the `[[bin]]` name is changed — FR-001 is a compatibility promise and a test that cannot fail is not a test
+- [x] T005 [P] Create `crates/renvor-cli/README.md` stating what the crate is, that its executable is `renvor`, and that the crate is pre-release and unstable
+- [x] T006 [P] Add the declared dependencies from [`research.md`](research.md) D1–D14 to `crates/renvor-cli/Cargo.toml` with **narrow feature sets**, each with a comment naming the decision that selected it
+- [x] T007 Run `cargo deny check` and record that every new dependency resolves to a licence on the `deny.toml` allow-list, with **0** exceptions added
 - [ ] T008 Create the test module skeletons `crates/renvor-cli/tests/{transaction,hostile,parity,cli,redaction,bounds,offline,generated,tls_consent}.rs`, each containing one deliberately failing assertion, so an empty test file cannot be mistaken for a passing suite
 
 ---
@@ -76,22 +129,22 @@ a generator with two of the three is not a smaller product but an unsafe one.
 **Independent test**: complete the wizard against a scripted terminal and assert the destination
 builds; cancel at each prompt and assert the destination is absent.
 
-- [ ] T025 [US1] Define `ProjectConfiguration` in `crates/renvor-cli/src/config/model.rs` with the fields and constraints of [`data-model.md`](data-model.md) §1, and **no field capable of holding a secret** (invariant I-3)
-- [ ] T026 [US1] Make validation the **only** constructor in `crates/renvor-cli/src/config/model.rs`, so an unvalidated configuration cannot exist (invariant I-1) — this is what makes FR-007 structural rather than a matter of call ordering
-- [ ] T027 [US1] Implement canonical serialization in `crates/renvor-cli/src/config/model.rs` such that equal configurations serialize byte-identically regardless of origin (invariant I-2)
-- [ ] T028 [US1] Implement the wizard in `crates/renvor-cli/src/config/prompts.rs`, asking **only** the prompts this phase honours (FR-005a): name and destination, local domain, container, local HTTPS, seed data, example domain
-- [ ] T029 [US1] Gate wizard entry on `std::io::IsTerminal` in `crates/renvor-cli/src/config/prompts.rs`, and map `InquireError::NotTTY` as an independent backstop (research D2, D12) — two mechanisms, because FR-010 forbids two distinct failure modes
-- [ ] T030 [US1] Map `InquireError::OperationCanceled` and `OperationInterrupted` to exit `4` in `crates/renvor-cli/src/config/prompts.rs`, distinct from every failure code
+- [x] T025 [US1] Define `ProjectConfiguration` in `crates/renvor-cli/src/config/model.rs` with the fields and constraints of [`data-model.md`](data-model.md) §1, and **no field capable of holding a secret** (invariant I-3)
+- [x] T026 [US1] Make validation the **only** constructor in `crates/renvor-cli/src/config/model.rs`, so an unvalidated configuration cannot exist (invariant I-1) — this is what makes FR-007 structural rather than a matter of call ordering
+- [x] T027 [US1] Implement canonical serialization in `crates/renvor-cli/src/config/model.rs` such that equal configurations serialize byte-identically regardless of origin (invariant I-2)
+- [x] T028 [US1] Implement the wizard in `crates/renvor-cli/src/config/prompts.rs`, asking **only** the prompts this phase honours (FR-005a): name and destination, local domain, container, local HTTPS, seed data, example domain
+- [x] T029 [US1] Gate wizard entry on `std::io::IsTerminal` in `crates/renvor-cli/src/config/prompts.rs`, and map `InquireError::NotTTY` as an independent backstop (research D2, D12) — two mechanisms, because FR-010 forbids two distinct failure modes
+- [x] T030 [US1] Map `InquireError::OperationCanceled` and `OperationInterrupted` to exit `4` in `crates/renvor-cli/src/config/prompts.rs`, distinct from every failure code
 - [ ] T031 [US1] Implement the review screen in `crates/renvor-cli/src/config/prompts.rs` listing resolved selections, paths to be created, warnings, and **the exact equivalent non-interactive command** (FR-009)
 - [ ] T032 [US1] Ensure declining confirmation still prints the equivalent command in `crates/renvor-cli/src/config/prompts.rs`, so the answers are not lost (US1 acceptance scenario 3)
-- [ ] T033 [US1] Implement staging in `crates/renvor-cli/src/generate/staging.rs`: a uniquely named directory **inside the destination's parent**, never the system temporary directory (contract C-5) (FR-011)
-- [ ] T034 [US1] Implement bounded rendering in `crates/renvor-cli/src/generate/render.rs` with strict-undefined behaviour and an **allow-listed** filter and function set (FR-026, FR-027, FR-028)
-- [ ] T035 [US1] Implement `FileManifest` in `crates/renvor-cli/src/generate/manifest.rs`: sorted by path, SHA-256 per file, symbolic links not followed (invariants I-9, I-11)
-- [ ] T036 [US1] Implement pre-move verification in `crates/renvor-cli/src/generate/place.rs`: run the generated project's own fmt, clippy, build, test, and start **while it is still in staging** (FR-030)
-- [ ] T037 [US1] Implement placement in `crates/renvor-cli/src/generate/place.rs` as a **single rename**, failing with `placement_failed` rather than falling back to a copy (FR-016)
-- [ ] T038 [US1] Implement `ProjectManifest` writing in `crates/renvor-cli/src/generate/manifest.rs`, recording **only honoured choices** plus generator and template versions (invariant I-12) (FR-017, FR-018)
-- [ ] T039 [US1] Create the embedded API-only template set under `crates/renvor-cli/templates/` with a version constant, producing a project that formats, compiles, tests, and starts (FR-024)
-- [ ] T040 [US1] Wire `renvor new` in `crates/renvor-cli/src/commands/new.rs` to the protocol order of contract C-5
+- [x] T033 [US1] Implement staging in `crates/renvor-cli/src/generate/staging.rs`: a uniquely named directory **inside the destination's parent**, never the system temporary directory (contract C-5) (FR-011)
+- [x] T034 [US1] Implement bounded rendering in `crates/renvor-cli/src/generate/render.rs` with strict-undefined behaviour and an **allow-listed** filter and function set (FR-026, FR-027, FR-028)
+- [x] T035 [US1] Implement `FileManifest` in `crates/renvor-cli/src/generate/manifest.rs`: sorted by path, SHA-256 per file, symbolic links not followed (invariants I-9, I-11)
+- [x] T036 [US1] Implement pre-move verification in `crates/renvor-cli/src/generate/place.rs`: run the generated project's own fmt, clippy, build, test, and start **while it is still in staging** (FR-030)
+- [x] T037 [US1] Implement placement in `crates/renvor-cli/src/generate/place.rs` as a **single rename**, failing with `placement_failed` rather than falling back to a copy (FR-016)
+- [x] T038 [US1] Implement `ProjectManifest` writing in `crates/renvor-cli/src/generate/manifest.rs`, recording **only honoured choices** plus generator and template versions (invariant I-12) (FR-017, FR-018)
+- [x] T039 [US1] Create the embedded API-only template set under `crates/renvor-cli/templates/` with a version constant, producing a project that formats, compiles, tests, and starts (FR-024)
+- [x] T040 [US1] Wire `renvor new` in `crates/renvor-cli/src/commands/new.rs` to the protocol order of contract C-5
 - [ ] T041 [US1] Make T015–T019 pass — `crates/renvor-cli/tests/transaction.rs` green, including the T017 positive control
 
 ---
