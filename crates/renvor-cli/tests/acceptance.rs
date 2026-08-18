@@ -480,6 +480,61 @@ fn the_global_dry_run_flag_reaches_every_command_that_can_change_anything() {
 }
 
 #[test]
+fn a_panic_exits_one_and_still_emits_exactly_one_json_document() {
+    // TWO CONTRACTS, BOTH VIOLATED BY RUST'S DEFAULTS UNTIL 2026-08-18.
+    //
+    // C-1 reserves exit `1` for "unclassified or internal failure — a panic". Rust exits **101**,
+    // measured with a bare `fn main() { panic!() }`, so the reservation was a fiction.
+    //
+    // C-2 requires exactly one JSON document "for success and for failure alike. Not zero on
+    // failure". A panic wrote **nothing** to stdout, so a JSON consumer got nothing to parse at
+    // precisely the moment it most needed an answer.
+    //
+    // `RENVOR_PANIC_FOR_TESTS` exists only under `debug_assertions`, so this path cannot exist in
+    // a release binary.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = renvor(
+        &["doctor", "--output", "json"],
+        base.path(),
+        &[("RENVOR_PANIC_FOR_TESTS", "1")],
+    );
+    assert_eq!(code, 1, "a panic must exit 1, not Rust's default 101");
+
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+        panic!("a panicking JSON run wrote no parseable document: {error}")
+    });
+    assert_eq!(document["status"], "failure");
+    assert_eq!(document["error"]["code"], "internal");
+
+    // The unstructured detail belongs on stderr, which is not a contract surface. The envelope's
+    // message must NOT carry the panic text, which can contain arbitrary values.
+    assert!(
+        !document["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("deliberate panic"),
+        "the panic message reached the structured envelope"
+    );
+    assert!(
+        stderr.contains("deliberate panic"),
+        "the detail did not reach stderr"
+    );
+}
+
+#[test]
+fn a_panic_in_human_mode_also_exits_one_and_leaves_stdout_empty() {
+    // The other half of stream discipline: in human mode `stdout` carries the result and nothing
+    // else, so a failure must leave it empty rather than printing a panic there.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, _) = renvor(&["doctor"], base.path(), &[("RENVOR_PANIC_FOR_TESTS", "1")]);
+    assert_eq!(code, 1);
+    assert!(
+        stdout.trim().is_empty(),
+        "a panic wrote to stdout in human mode: {stdout}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

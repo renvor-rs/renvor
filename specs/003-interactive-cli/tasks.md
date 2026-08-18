@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**40 of 95 tasks complete. This section states what is built and what is not, because a task list
+**42 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -46,6 +46,17 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-000. **Rust's own defaults violated both output contracts on the panic path.** C-1 reserves
+   exit `1` for "unclassified or internal failure — a panic", **so that anything exiting `1` is a
+   bug report** — but Rust exits **101**, measured rather than assumed with a bare
+   `fn main() { panic!() }`. And C-2 requires exactly one JSON document "for success and for failure
+   alike. **Not zero on failure**" — a panic wrote nothing to `stdout`, so a JSON consumer got
+   nothing to parse at the moment it most needed an answer. A panic hook now emits the `internal`
+   envelope and exits `1`. The panic **text** is deliberately kept out of the structured envelope
+   and sent to `stderr`, because it can carry arbitrary values from wherever the panic happened and
+   redaction is a filter rather than a guarantee. The test trigger exists only under
+   `debug_assertions`, so it cannot exist in a release binary.
+
 2a-00. **A safety defect in the global-flag wiring.** `--dry-run` is declared global in contract
    C-1, but `main` passed it only to `new` — so **`renvor docker up --dry-run` started containers**
    and **`renvor dev --dry-run` ran the build**. A global flag that silently does nothing on the

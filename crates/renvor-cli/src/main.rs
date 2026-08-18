@@ -25,8 +25,47 @@ use std::io::IsTerminal;
 use clap::Parser;
 
 use config::flags::{Cli, Command, DockerAction};
-use exit::{CliError, Exit};
+use exit::{CliError, Code, Exit};
 use output::{Format, Reporter};
+
+/// Makes a panic obey the two output contracts instead of Rust's defaults.
+///
+/// # Two defaults are wrong here, and both matter
+///
+/// **Rust exits `101` on panic.** C-1 assigns `1` to "unclassified or internal failure — a panic,
+/// or an error no other code describes", and reserves it precisely so that anything exiting `1` is
+/// a bug report. A binary that exits `101` makes that reservation a fiction.
+///
+/// **A panic writes nothing to `stdout`.** C-2 requires *exactly one* JSON document "for success
+/// and for failure alike. Not zero on failure" — because a consumer that asked for JSON needs a
+/// parseable answer precisely when something went wrong.
+///
+/// Both were measured rather than assumed: a bare `fn main() { panic!() }` exits 101.
+fn install_panic_hook(format: Format, command: &'static str) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // The panic message is NOT put in the envelope. It can carry arbitrary values from wherever
+        // the panic happened, and redaction is a filter rather than a guarantee — so the stable,
+        // structured half says "internal defect" and the unstructured detail goes to `stderr`,
+        // which is not the contract surface.
+        if format == Format::Json {
+            let error = CliError::new(
+                Code::Internal,
+                "renvor failed with an internal defect; the details are on stderr. This is a bug \
+                 in renvor, not a problem with your command",
+            );
+            let envelope = output::json::Envelope::failure(command, &error);
+            if let Ok(text) = serde_json::to_string_pretty(&envelope) {
+                use std::io::Write as _;
+                let mut stdout = std::io::stdout();
+                let _ = writeln!(stdout, "{text}");
+                let _ = stdout.flush();
+            }
+        }
+        previous(info);
+        std::process::exit(Exit::Unclassified.code());
+    }));
+}
 
 fn main() {
     // clap handles `--help`, `--version`, and malformed invocations itself, exiting 2 — which is
@@ -54,6 +93,16 @@ fn main() {
         Command::Dev => "dev",
         Command::Docker { .. } => "docker",
     };
+
+    install_panic_hook(format, command_name);
+
+    // A deliberate panic, for the test that proves the hook works. `debug_assertions` is off in a
+    // release build, so this path **cannot exist** in a shipped binary — the alternative, a hidden
+    // flag that ships, would be test scaffolding in production code.
+    #[cfg(debug_assertions)]
+    if std::env::var_os("RENVOR_PANIC_FOR_TESTS").is_some() {
+        panic!("deliberate panic requested by RENVOR_PANIC_FOR_TESTS");
+    }
 
     let outcome = dispatch(cli, &reporter);
     let exit = match outcome {
