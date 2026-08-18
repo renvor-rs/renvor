@@ -6,6 +6,30 @@ This packet is self-contained. You should not need to be briefed by anyone on th
 should not accept a briefing from anyone on the project about whether the code is correct — that is
 the thing you are here to decide.
 
+> **REVISION 2 — 2026-08-18.** Revision 1 pointed at head `08d3f89`. That head is **superseded**:
+> the maintainer denied approval of the `paths.rs`/`place.rs` review pack and directed a change to
+> the destination policy, the error registry, and constitution principle VII. **Review the head named
+> in §-1, not `08d3f89`.**
+
+---
+
+## -1. The exact head to review
+
+| | |
+|---|---|
+| **Branch** | `feat/phase-003-interactive-cli` |
+| **Head SHA** | `PENDING_FINAL_HEAD` |
+| **Pull request** | [#28](https://github.com/renvor/renvor/pull/28), open and unmerged |
+| **Superseded head** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` — do **not** review this one |
+
+```sh
+git fetch origin feat/phase-003-interactive-cli
+git checkout PENDING_FINAL_HEAD
+git rev-parse HEAD    # confirm it matches
+```
+
+Everything in this packet, and every line reference in the review pack, describes that head.
+
 ---
 
 ## 0. What counts as independent, and what does not
@@ -46,7 +70,7 @@ ready, saying so is the expected outcome, not a problem to be managed.
 | 3 | [`specs/003-interactive-cli/contracts/`](../specs/003-interactive-cli/contracts/) | C-1 command surface, C-2 JSON, C-4 templates, C-5 the transaction |
 | 4 | [`specs/003-interactive-cli/data-model.md`](../specs/003-interactive-cli/data-model.md) | Invariants I-1 … I-17 |
 | 5 | [`phase-003-evidence.md`](phase-003-evidence.md) §3 | The requirement-to-evidence map, 64 rows |
-| 6 | `crates/renvor-cli/src/` | 22 files, ~5,400 lines |
+| 6 | `crates/renvor-cli/src/` | 22 files, ~5,700 lines |
 | 7 | `crates/renvor-cli/tests/` | 9 files + a shared pty harness |
 
 ## 3. Reproduce everything
@@ -56,7 +80,7 @@ git checkout feat/phase-003-interactive-cli
 cargo xtask verify          # 11 checks: fmt, clippy, tests, rustdoc -D warnings,
                             # cargo-deny, architecture invariants, secret scan,
                             # docs build, link check, working-tree cleanliness
-cargo test --workspace      # ~206 tests in renvor-cli alone
+cargo test --workspace      # 210 tests in renvor-cli, 555 across the workspace
 ```
 
 Nothing requires network access. Nothing requires Docker. The generated projects declare no
@@ -68,9 +92,12 @@ Stated up front so you spend your time on what nobody has found yet.
 
 | # | Issue | Where |
 |---|---|---|
-| 1 | **Constitution principle VII says the wizard MUST ask eleven things. It asks three.** Unresolved; two candidate rulings stated, neither taken. | evidence §2, §7 |
-| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed. | `tasks.md` "Ordering requirements that were missed" |
-| 3 | **Invariant I-17: the TOCTOU window is narrowed, not closed.** Stated residual risk. | review pack §6 |
+| 1 | **Constitution principle VII said the wizard MUST ask eleven things; it asks three.** **RESOLVED 2026-08-18** — the principle was amended, 2.0.0 → 3.0.0 MAJOR, rather than waived. Whether the amendment is legitimate is a fair thing for you to challenge. | evidence §2, §7.7; `constitution-amendment-3.0.0.md` |
+| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | `tasks.md` "Ordering requirements that were missed" |
+| 3 | **Invariant I-17: the TOCTOU window is narrowed, not closed.** Specifically, POSIX `rename(2)` will silently replace an **empty** directory another process creates between the last check and the rename. Stated residual risk; not portably closable. | review pack §6.1 |
+| 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
+| 3c | **The "renvor never deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. | review pack §5.3 |
+| 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | evidence §6.3 |
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
 | 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | evidence §3.1 |
 | 6 | **Data-model §5 rule 8 has no `details.rule`** — containment is structural. | review pack §4 |
@@ -88,7 +115,7 @@ This is offered as a map of where to look, not as reassurance.
 | taxonomy ↔ runtime | a panic exited 101, not 1 |
 | clap ↔ JSON contract | zero JSON documents on malformed input |
 | requirement ↔ code | unbounded manifest read |
-| `open` ↔ `place` | empty destination accepted, then refused |
+| `open` ↔ `place` | empty destination accepted, then refused — and the fix for that introduced two more findings (A-R8, A-R9) before the **policy itself** was ruled to be the defect |
 | `place` ↔ kernel | a lost race misclassified |
 | comment ↔ code | a false uniqueness claim |
 | schema ↔ generator | `check` rejected renvor's own output |
@@ -133,4 +160,4 @@ requirement.
 ---
 
 **Branch**: `feat/phase-003-interactive-cli` · **PR**: #28 (open, unmerged) ·
-**Packet produced**: 2026-08-18
+**Packet revision 2**: 2026-08-18 · **Head to review**: see §-1
