@@ -17,6 +17,29 @@ So the older statements stay, each gaining a dated superseding note that names t
 file is authoritative for present-tense deployment facts. The older ledgers remain authoritative
 for what was true on their own dates.**
 
+## 0 — Corrections to the first version of this file
+
+This file was merged on 2026-08-17 in `5acd051`. An independent-in-process but **NON-INDEPENDENT**
+advisory review of that change reported four defects in it *after* it had merged. All four are
+corrected here, in place, and logged below — because leaving a false statement standing and adding a
+note beside it would mean the false statement is still what a reader finds first.
+
+| # | What the first version said | Why it was wrong | Where it is now |
+|---|---|---|---|
+| C-1 | the reconciler "may **write 10** resource types in two namespaces" | that is the **union** of two different Roles; `renvor-site` grants 10 and `renvor-site-staging` grants 6. A boundary described by its union is described as wider than it is, which is the wrong direction for a safety claim | §3.1 |
+| C-2 | Renvor "creates only namespaced objects" | true of repository-driven reconciliation, **false of the hand-applied bootstrap**, which creates 15 cluster-scoped objects including 7 CRDs and a `cluster-admin` binding. The sentence did not say which path it meant | §4, §4.2 |
+| C-3 | the `cluster-admin` binding "is retained" | accurate about the action, misleading about the provenance: it reads as pre-existing, and Flux was installed **by** this bootstrap | §3, §4.2 |
+| C-4 | the digest's "provenance, **SBOMs**, and attestations were verified before promotion" | two SBOMs are generated and **one** is attested; and both attestations are produced *after* the registry push, not before it | §1 |
+
+C-2 is the one that could actually mislead a third party: it is a statement about the blast radius
+of this project on a **shared host that other people's workloads run on**, and it understated that
+footprint. It is corrected in the direction of a wider disclosure, not a narrower one.
+
+**This section is not a superseding note on a dated ledger.** §§1–7 are a present-tense record of the
+current deployment, so a factual error in them is a defect to fix rather than history to preserve.
+The four sentences above are quoted so the fix is auditable against `5acd051` without reading the
+diff.
+
 ## 1 — What is deployed
 
 | | |
@@ -30,8 +53,23 @@ for what was true on their own dates.**
 | Namespaces | `renvor-site` (2 pods) and `renvor-site-staging` (1 pod) — counted live |
 | Registry credential in the cluster | **none.** Enumerated: all 4 ServiceAccounts and all 3 Pods across both namespaces have `imagePullSecrets` **absent** — not empty, absent |
 
-The **same digest** runs in both namespaces, and it is the digest whose provenance, SBOMs, and
-attestations were verified before promotion. All three pods report `ready=true` with **0 restarts**.
+The **same digest** runs in both namespaces. All three pods report `ready=true` with **0
+restarts**.
+
+**What is attested, stated exactly.** `publish-image.yml` generates **two** SBOMs and attests
+**one**. The runtime SBOM (`sbom/renvor-site.spdx.json`, scanned from the image) is signed by
+`actions/attest-sbom` with the digest as subject; the dependency SBOM
+(`sbom/renvor-site-dependencies.spdx.json`, scanned from the source tree) is hashed into the job
+summary and uploaded as a workflow artifact, and is **never attested**. Build provenance is attested
+separately. So the digest carries **one provenance attestation and one SBOM attestation**, not
+"SBOMs" plural.
+
+**And the ordering, which "before promotion" left ambiguous.** Both attestations are created
+*after* the push to GHCR — `attest-build-provenance` and `attest-sbom` take
+`steps.push.outputs.digest` as their subject, so the digest must already exist in the registry
+before either can run. `gh attestation verify` then runs against the registry, after both. What is
+true is that all of this completed before the cluster was pointed at the digest; what is not true is
+that anything was verified before the image was published.
 
 Three Secrets exist, all created and owned by cert-manager, none carrying application data:
 `letsencrypt-prod-account-key` (Opaque), `letsencrypt-staging-account-key` (Opaque), and
@@ -98,15 +136,51 @@ Both Flux Kustomizations report `Ready=True` at `main@sha1:07bda7ad59c0e82bc441e
 with `serviceAccountName: renvor-reconciler`.
 
 **This is soft multi-tenancy, and the limit is recorded rather than glossed.** Upstream Flux binds
-`kustomize-controller` to `cluster-admin`, and that binding is retained, because Kubernetes
-impersonation requires the impersonator to already hold the rights it delegates. What is constrained
-is **what the public repository can cause the controller to do**: repository-driven applies run as
-`renvor-reconciler`, which may **write 10** resource types in two namespaces — `certificates`,
-`deployments`, `ingressroutes`, `issuers`, `limitranges`, `middlewares`, `networkpolicies`,
-`resourcequotas`, `serviceaccounts`, `services` — may additionally **read** exactly two more,
-`pods` and `replicasets`, which `wait: true` health checks require, may read no Secret in any
-namespace, and is denied every cluster-scoped resource. Counted from the live Role, not from the
-manifest that produced it.
+`kustomize-controller` to `cluster-admin`. **That binding exists on this cluster because the Renvor
+bootstrap created it** — `cluster-reconciler-flux-system` is part of the upstream Flux v2.9.4
+manifest this project applied, and it binds **both** `kustomize-controller` **and** `helm-controller`
+to `cluster-admin`. It is retained rather than removed because Kubernetes impersonation requires the
+impersonator to already hold the rights it delegates. It is not something Renvor inherited from a
+pre-existing installation; see §4.2.
+
+What is constrained is **what the public repository can cause the controller to do**:
+repository-driven applies run as `renvor-reconciler`.
+
+### 3.1 The two Roles are not the same Role
+
+There are **two** Roles named `renvor-reconciler`, one per namespace, and they differ. An earlier
+version of this section said the identity "may write 10 resource types in two namespaces". **That
+figure is the union of the two Roles, and it describes staging as four resource types wider than it
+is.** Per namespace:
+
+| Namespace | Writable types (`create` `update` `patch` `delete`) | Count | Read-only (`get` `list` `watch`) |
+|---|---|---|---|
+| `renvor-site` | `services`, `serviceaccounts`, `limitranges`, `resourcequotas`, `deployments`, `networkpolicies`, `certificates`, `issuers`, `ingressroutes`, `middlewares` | **10** | `pods`, `replicasets` |
+| `renvor-site-staging` | `services`, `serviceaccounts`, `limitranges`, `resourcequotas`, `deployments`, `networkpolicies` | **6** | `pods`, `replicasets` |
+
+Staging holds **no** `cert-manager.io` and **no** `traefik.io` grant, deliberately: the staging
+overlay renders neither, and Traefik routes cluster-globally, so a staging `IngressRoute` claiming
+`Host(renvor.dev)` would contend with production for real traffic. The per-environment hostname
+allow-list in CI would not catch that — `renvor.dev` is on the allow-list, just not for that
+environment.
+
+Neither Role grants any verb on `secrets` in any namespace, and neither grants any cluster-scoped
+resource.
+
+**Provenance of these counts.** They are read from
+`clusters/hostinger/flux-system/renvor-tenancy.yaml` at
+`07bda7ad59c0e82bc441e4cb400d290cd60a882d` — the manifest that is applied — and from the rendered
+output in `rendered/clusters-hostinger-flux-system.yaml`. The first version of this section said
+"counted from the live Role, not from the manifest that produced it"; that sentence is withdrawn,
+because the count it introduced was wrong in the direction that overstates the boundary, and because
+the correction was made from the manifests. The two agree on the rules; the live re-read is recorded
+in §4.1 for the authorisation results, not for these counts.
+
+*(The manifest's own header comment says "ten resource types, in two namespaces", and its production
+Role carries the comment "Identical rules to staging" while a comment forty lines above correctly
+states the opposite. Those two comments in `renvor-infra` are wrong in the same way this section was.
+They are reported here and not corrected, because infrastructure changes are outside this change's
+authorised scope.)*
 
 A malicious or mistaken commit to the public repository is contained by that boundary. **A
 compromise of the `kustomize-controller` process itself is not.** Hard multi-tenancy would require a
@@ -134,9 +208,16 @@ flagged as needing narrowing, to buy nothing — the condition flags are the fac
 
 **These counts went up, and that is stated rather than smoothed.** The "before" figures are lower
 bounds: the capture was truncated at thirty rows and grouped by phase, so `Running` pods in the
-smaller namespaces are not included. The observable increase is in `Completed`, `Evicted`, and
-`ContainerStatusUnknown` pods — these namespaces accumulate terminated pods continuously, and 524
-evictions were already recorded on this node before any Renvor object existed.
+smaller namespaces are not included. The increase is in **terminated** pods — `Completed` and
+`ContainerStatusUnknown` — which these namespaces accumulate continuously.
+
+**`Evicted` is not claimed as part of that increase.** An earlier version of this paragraph listed
+it alongside the other two while also citing 524 as the number of evictions already recorded on the
+node before any Renvor object existed. Those two statements cannot both be supported by one figure:
+524 is a single capture, and nothing here establishes it as either the before value or the after
+value of a comparison. What is supported is that **524 evicted pods were present on this node**, and
+that this is a pre-existing property of a shared host running four unrelated workloads. No delta in
+evictions is claimed in either direction.
 
 **So "co-tenants unchanged" is not claimed from these numbers, because these numbers do not
 establish it.** What is established, and by what:
@@ -145,7 +226,9 @@ establish it.** What is established, and by what:
 |---|---|
 | Repository-driven reconciliation cannot write in any co-tenant namespace | `SubjectAccessReview` against `system:serviceaccount:flux-system:renvor-reconciler` — **re-run live on 2026-08-17 while writing this record**, see §4.1 |
 | Renvor created objects only in `renvor-site`, `renvor-site-staging`, and the hand-applied bootstrap in `flux-system` | the applied manifests, and `targetNamespace` on both Kustomizations |
-| Renvor installs no distribution, adds no second ingress controller, and upgrades nothing | it uses the existing Traefik 3.6.13 and cert-manager v1.20.2 through their public APIs, and creates only namespaced objects |
+| Renvor installs no *ingress* distribution, adds no second ingress controller, and upgrades nothing | it uses the existing Traefik 3.6.13 and cert-manager v1.20.2 through their public APIs, and adds no CRD, admission webhook, or controller to either |
+| **Repository-driven** reconciliation creates only namespaced objects | the two Roles in §3.1 grant no cluster-scoped resource, and §4.1 shows `create` denied on `namespaces`, `nodes`, `customresourcedefinitions`, `clusterroles`, and `clusterrolebindings` |
+| The **hand-applied bootstrap** created 15 cluster-scoped objects, and did install a distribution — Flux | enumerated in §4.2 |
 | TLS is issued by a namespace-scoped `Issuer`, not a `ClusterIssuer` | `apps/renvor-site/overlays/production/issuer.yaml` — editing a cluster-wide issuer would put every other certificate on this shared host at risk of a Renvor mistake |
 
 ### 4.1 The boundary, re-proven rather than cited
@@ -169,6 +252,53 @@ An earlier draft of this section asserted that "no unrelated workload was create
 restarted, or deleted". **That was an overclaim** — it is a statement about everything that happened
 on a busy shared host over thirteen hours, and pod counts cannot support it. The narrower claims
 above are the ones the evidence actually carries.
+
+### 4.2 What the bootstrap created outside any namespace
+
+The claim corrected here is the one most likely to mislead somebody else who runs a workload on this
+host, so it is enumerated rather than characterised.
+
+`kubectl apply --server-side -k clusters/hostinger/flux-system/` is applied **by hand, once**, and
+is not reconciled from Git. It applies upstream Flux v2.9.4 unmodified plus the tenancy boundary.
+Between them they create **15 cluster-scoped objects**:
+
+| Kind | Count | Names |
+|---|---|---|
+| `Namespace` | 3 | `flux-system`, `renvor-site`, `renvor-site-staging` |
+| `CustomResourceDefinition` | 7 | `buckets`, `externalartifacts`, `gitrepositories`, `helmcharts`, `helmrepositories`, `ocirepositories` — all `.source.toolkit.fluxcd.io` — and `kustomizations.kustomize.toolkit.fluxcd.io` |
+| `ClusterRole` | 3 | `crd-controller-flux-system`, `flux-edit-flux-system`, `flux-view-flux-system` |
+| `ClusterRoleBinding` | 2 | `cluster-reconciler-flux-system` (→ `cluster-admin`, subjects `kustomize-controller` **and** `helm-controller`), `crd-controller-flux-system` |
+
+Counted from `rendered/clusters-hostinger-flux-system.yaml` at
+`07bda7ad59c0e82bc441e4cb400d290cd60a882d`, which is the rendered form of exactly what is applied.
+
+**Three consequences, stated rather than left for a reader to infer:**
+
+1. **Flux did not pre-exist on this cluster.** The `flux-system` Namespace is created by this
+   bootstrap. Saying the `cluster-admin` binding is "retained" was accurate about the *action*
+   — the bootstrap does not remove it — and misleading about the *provenance*, because it reads as
+   though the binding was already there. It was not. Renvor introduced it.
+2. **Seven CRDs are a cluster-wide API surface change.** Any workload on this host can now create a
+   `Kustomization` or a `GitRepository`, subject to its own RBAC. That is a property of the cluster
+   Renvor changed.
+3. **The `cluster-admin` binding covers `helm-controller` as well**, which the first version of §3
+   did not say. `helm-controller` is not deployed here — §1 records that only `kustomize-controller`
+   and `source-controller` run — but the binding names it, so if it were ever deployed into
+   `flux-system` it would be `cluster-admin` on arrival with no further change.
+
+None of this is created or modifiable by repository-driven reconciliation; §4.1's denials are what
+establish that, and they remain correct. The distinction the corrected table now draws is between
+**the bootstrap**, which is hand-applied and cluster-scoped, and **reconciliation**, which is
+Git-driven and namespaced.
+
+### 4.3 What could not be re-verified while writing this correction
+
+`kubectl` on the maintainer's workstation is configured for a local context and the SSH profile for
+`153.92.208.119` failed authentication during this change, so the cluster was **not** re-read. Every
+figure in §3.1 and §4.2 therefore comes from the applied manifests in `renvor-rs/renvor-infra` at
+`07bda7ad…`, which is stated above at each point rather than presented as a live capture. The live
+`SubjectAccessReview` results in §4.1 are from the original 2026-08-17 capture and are unchanged by
+this correction. **No credential was requested, created, or printed to restore that access.**
 
 ## 5 — Required checks on `renvor-infra`: a missed deadline, corrected late
 
@@ -331,5 +461,9 @@ Recorded so that no later reader infers more than was measured:
 - **`renvor-rs/renvor` does not require signed commits** (`required_signatures: false`), even though
   every commit is signed by convention. Only `renvor-infra` enforces it, by ruleset. This restates
   Phase 001 limitation R-16 rather than closing it.
+- **The cluster's API surface was changed and is not un-done by anything here.** The 7 Flux CRDs and
+  the `cluster-admin` binding enumerated in §4.2 remain, and removing them would break the
+  reconciliation this deployment depends on. No claim is made that Renvor's footprint on this shared
+  host is reversible without downtime for Renvor.
 - **The independent-review gap is untouched.** Every review supporting this deployment was an
   advisory agent review, explicitly **NON-INDEPENDENT**. W-001 through W-006 remain active.
