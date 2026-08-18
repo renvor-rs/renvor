@@ -144,34 +144,53 @@ grep succeed without making the traceability real.
 
 ## 4. Checklist results (T089)
 
-**T089 says "all 69 items". The three checklists contain 85.** The task text is stale; the figure
-below is counted from the files.
+**A correction, made after checking rather than before.** An earlier draft of this section claimed
+*"T089 says 69 items; the checklists contain 85; the task text is stale"*. **That was wrong.** The
+three checklists contain 85 items, of which `requirements.md`'s 16 were completed at specification
+time. The **69** T089 refers to are exactly `generation-safety.md`'s 30 plus `contracts.md`'s 39 —
+the ones that were outstanding. T089 was correct and the correction was not.
 
-| Checklist | Items | Verdict |
+It is recorded because it is the same failure this phase keeps finding in its own tests: a number
+asserted from a plausible reading instead of counted from the thing itself.
+
+| Checklist | Items | Pass | Not pass |
+|---|---|---|---|
+| [`requirements.md`](../specs/003-interactive-cli/checklists/requirements.md) | 16 | 16 | 0 |
+| [`generation-safety.md`](../specs/003-interactive-cli/checklists/generation-safety.md) | 30 | 26 | **4** |
+| [`contracts.md`](../specs/003-interactive-cli/checklists/contracts.md) | 39 | 38 | **1** |
+| **Total** | **85** | **80** | **5** |
+
+These are **requirements-quality** checklists — "unit tests for the English" — so each item asks
+whether a requirement is complete, clear, consistent, measurable, and covered. They are answered
+against the specification, not against the code.
+
+### 4.1 The five that do not pass, individually
+
+| Item | Verdict | Why |
 |---|---|---|
-| [`checklists/requirements.md`](../specs/003-interactive-cli/checklists/requirements.md) | 16 | all pass |
-| [`checklists/generation-safety.md`](../specs/003-interactive-cli/checklists/generation-safety.md) | 30 | all pass |
-| [`checklists/contracts.md`](../specs/003-interactive-cli/checklists/contracts.md) | 39 | all pass |
-| **Total** | **85** | |
+| **CHK006** | **GAP** | SC-009 requires a positive control for the hostile-destination corpus. **Nothing requires one for the cancellation or injected-failure suites.** `tasks.md` T017 supplies it as a task, so the code has one — but the *requirement* does not demand it, and a future rewrite could drop it without failing anything. |
+| **CHK014** | **PARTIAL** | "Destination becomes non-empty mid-run" is carried into FR-013 and FR-015. **"Disk fills during rendering" is carried into no requirement** — it appears only in the Edge Cases list. |
+| **CHK016** | **SUPERSEDED** | D6 revision 2 withdrew the decision-record gate by adopting `cap-std`. There is no gate left to word as blocking. |
+| **CHK017** | **SUPERSEDED** | With CHK016. No gate, so no record for it to require. |
+| **CHK060** | **PARTIAL** | The shorter-wizard narrowing is recorded in `spec.md` §Clarifications and in §1–§2 here. **It is not in `PLAN.md` §20 itself**, so a reader who opens `PLAN.md` and stops there still does not encounter it. Closing it means editing `PLAN.md`, which is outside this phase's scope. |
 
-These are **requirements-quality** checklists — "unit tests for English" — so each item asks whether
-a requirement is complete, clear, consistent, measurable, and covered, not whether code works. Their
-verdicts were reconciled against the specification as it now stands, including the FR-010 reading
-recorded in §3 and the principle VII conflict in §2.
+**None of the five was closed by editing the specification to match what was built.** CHK006 in
+particular would have been trivial to "pass" by adding a sentence to SC-002; it is left open because
+the gap it names is real.
 
-**Two items are worth calling out because their verdicts changed during implementation:**
+### 4.2 Two items whose verdict changed between the specification and the code
 
-- *"Is every documented bound given a stated value?"* — passed on the specification and **failed in
-  practice** until 2026-08-18: three of the five bounds were enforced in code and exercised by
-  nothing. A stated value that no test reaches is a value, not a bound.
-- *"Is the refusal for each hostile input attributable to a named rule?"* — passed on the
-  specification and **failed in practice**: `validate_project_name` emitted no `details.rule` at all,
-  so five distinct refusals were indistinguishable on the wire.
+Worth stating, because they are the argument for working checklists against the implementation as
+well as against the document:
 
-Both are now true in code as well as in prose. That is the argument for working checklists against
-the implementation rather than against the document that describes it.
+- *"Does every bound named in the requirements have a stated value?"* (CHK022) — passes on the
+  specification, and **three of the five bounds were enforced in code and exercised by no test at
+  all** until 2026-08-18. A stated value that nothing reaches is a value, not a bound.
+- *"Is every path-rejection rule paired with the specific attack it rejects?"* (CHK018) — passes on
+  the specification, and `validate_project_name` emitted **no `details.rule` whatsoever**, so five
+  distinct refusals were indistinguishable to a consumer.
 
----
+Both are now true in code as well as in prose.
 
 ## 5. Toolchain and platform evidence (T090, T091, SC-014)
 
@@ -214,6 +233,29 @@ carefully rather than as a formality. Two defects were caught **only** there:
   idle local machine and wide enough for a loaded runner.
 
 Treating an advisory failure as ignorable would have shipped both.
+
+### 5.3 The pseudo-terminal suite runs on all three platforms, and getting there found three more things
+
+The wizard tests drive a real pty (`portable-pty`, research D15). Making them pass on Windows took
+three fixes, **all of them in the harness and none in the product**, and each is recorded where it
+was made:
+
+1. **`crossterm` blocks on an unanswered cursor-position query.** It writes `ESC [ 6 n` and waits for
+   the terminal to reply. A harness that only *reads* is not a terminal emulator, so nobody answered
+   and the child waited forever. Diagnosed from the harness's own failure output — *child STILL
+   RUNNING, reader still running, **bytes received: 4*** — and four bytes is exactly `ESC [ 6 n`.
+2. **ConPTY mirrors the screen, not the bytes written**, and merges lines unpredictably: the review
+   screen's last file-list entry arrived joined to the line after it. Two tests that parsed transcript
+   line structure had to stop doing so.
+3. **The pty wrapped long lines at 120 columns**, so a Windows temporary path split the printed
+   equivalent command mid-string. The pty is now 1000 columns wide, which removes the emulator's
+   layout decisions from the evidence entirely.
+
+**None of these was a defect in `renvor`.** They are recorded because a reader comparing the Unix and
+Windows runs would otherwise conclude the product behaves differently on Windows, and it does not.
+
+**Final CI state at branch head**: every check green, including `platform (windows-latest, 1.94.0)`
+and `platform (windows-latest, stable)`.
 
 ---
 
