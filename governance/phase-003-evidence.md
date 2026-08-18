@@ -33,28 +33,52 @@ structurally and has been **demonstrated firing** by adding `flate2`.
 
 ---
 
-## 2. Constitution principle VII — a known non-compliance, not a narrowing
+## 2. Constitution principle VII — a real non-compliance, RESOLVED BY AMENDMENT on 2026-08-18
 
-**This has its own heading deliberately.** It is not a scope narrowing; it is a governing-document
-conflict, and filing it as a narrowing would understate it.
+**This has its own heading deliberately.** It was not a scope narrowing; it was a governing-document
+conflict, and filing it as a narrowing would have understated it.
 
-Principle VII lists **eleven** things the project wizard is to ask about: target, transport,
-persistence model, database, auth starter, frontend, render mode, styling, desktop option,
-capabilities, and local tooling.
+### 2.1 What was true, for the whole of Phase 003 up to 2026-08-18
 
-**This wizard asks about three of them** — target, local tooling (container, local HTTPS), and
-capabilities (example domain, seed data). The other eight correspond to flags this phase
-**reserves and refuses** (FR-005b), because the phases that implement them have not happened.
+Constitution **v2.0.0** principle VII listed **eleven** things the project wizard is to ask about:
+target, transport, persistence model, database, auth starter, frontend, render mode, styling,
+desktop option, capabilities, and local tooling.
 
-The tension is real in both directions:
+**This wizard asks about three of them** — target (defaulted, single-valued), local tooling
+(container, local HTTPS, local domain), and capabilities (example domain, seed data). The other eight
+correspond to flags this phase **reserves and refuses** (FR-005b), because the phases that implement
+them have not happened.
+
+The tension was real in both directions:
 
 - Asking an operator to choose a database that the generator cannot act on would produce a recorded
   choice that no generated file reflects, which **data-model invariant I-12 forbids outright**.
-- Principle VII says **MUST**, and a partially implemented command is still the command the
+- Principle VII said **MUST**, and a partially implemented command is still the command the
   principle names.
 
-**This document does not resolve it.** See §7 (T093a), which states the two honest options and
-leaves the ruling to the maintainer.
+**Phase 003 was in violation of a MUST, structurally.** No implementation work inside this phase
+could have satisfied that sentence without breaking another one.
+
+### 2.2 The ruling
+
+The maintainer ruled on 2026-08-18. **Neither of the two options §7 offered was taken.** The ruling
+was that the rule itself was wrong:
+
+> *"Amend Constitution Principle VII to be compatible with staged delivery. The present rule requires
+> questions for capabilities that do not exist and conflicts with the requirement not to solicit or
+> record choices the generator cannot honour."*
+
+| | |
+|---|---|
+| **Instrument** | **MAJOR constitutional amendment, 2.0.0 → 3.0.0**, dated 2026-08-18 |
+| **Not** | A waiver. **W-007 does not exist** and was explicitly forbidden. A waiver is a time-bounded exception to a rule that stays correct; this rule was not correct |
+| **Not** | A weakening. All eleven governed choices are **preserved**; each binds when its capability ships, and none may be dropped by an implementation that has not shipped it |
+| **Record** | [`constitution-amendment-3.0.0.md`](constitution-amendment-3.0.0.md) — written proposal, impact analysis across APIs, generated projects, security, compatibility, documentation, and active phases; migration plan; recorded maintainer approval; clause-by-clause compliance verdict |
+| **Canonical text** | [`../CONSTITUTION.md`](../CONSTITUTION.md), version 3.0.0, Last Amended 2026-08-18. The local `.specify/memory/constitution.md` working copy was synchronised and verified identical from the `# Renvor Constitution` heading onward by SHA-256 |
+| **Phase 003 status** | **COMPLIANT** under v3.0.0. Enforced by `config::flags::tests::every_governed_choice_of_principle_seven_is_classified`, which fails if any of the eleven stops being either honoured, single-valued-and-defaulted, or reserved-with-a-named-phase |
+
+§7 is retained as the referral it was, with the ruling appended. It is not rewritten to look as
+though the question was never open.
 
 ---
 
@@ -77,8 +101,8 @@ leaves the ruling to the maintainer.
 | **FR-009** | Review screen lists selections, paths, warnings, and the exact equivalent command | `src/config/prompts.rs::review`; `tests/parity.rs::the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project` **runs** the printed command | COVERED — **defect found and fixed 2026-08-18** |
 | **FR-010** | No prompt, no block, no substituted default without a terminal | `tests/parity.rs::the_wizard_runs_only_because_stdin_is_a_terminal` and `…an_answer_nothing_determines_is_refused_rather_than_invented` | COVERED |
 | **FR-011** | Rendering in a uniquely named directory inside the destination's parent | `src/generate/place.rs::Staging`; `tests/transaction.rs` residue and cancellation coverage | COVERED |
-| **FR-012** | A failure leaves a pre-existing destination exactly as it was | `tests/transaction.rs::a_failure_at_any_mutating_step_leaves_a_pre_existing_empty_destination_exactly_as_it_was` — **demonstrated failing on purpose** | COVERED |
-| **FR-013** | A destination that exists and is not empty is refused | `tests/hostile.rs::an_existing_non_empty_destination_is_refused_without_being_touched` | COVERED |
+| **FR-012** | A failure leaves a pre-existing destination exactly as it was | `tests/transaction.rs::a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected` (inode, mode, uid, gid compared before and after, for every injection point) and `::a_failure_at_any_mutating_step_leaves_an_absent_destination_absent` — the earlier form was **demonstrated failing on purpose** | COVERED — **test rewritten 2026-08-18**, because the destination ruling made its predecessor pass vacuously |
+| **FR-013** | A destination that **already exists is refused, in every form** — empty directory, non-empty directory, file, symlink, and an entry whose state cannot be established | `src/paths.rs::every_kind_of_existing_destination_is_refused` (5 cases); `::a_destination_whose_state_cannot_be_established_fails_closed`; `src/generate/place.rs::an_empty_destination_that_appears_mid_run_is_refused_and_not_replaced`, `::no_production_path_removes_the_destination`; `tests/hostile.rs::an_existing_non_empty_destination_is_refused_without_being_touched`; `tests/transaction.rs::a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected` | COVERED — **requirement rewritten and tightened 2026-08-18 by maintainer ruling, item 4** |
 | **FR-014** | Each rejection names the rule that fired | `src/paths.rs`; `tests/hostile.rs::every_project_name_refusal_names_a_distinct_rule` | COVERED — **defect found and fixed 2026-08-18** |
 | **FR-015** | Concurrent runs never interleave into a corrupt state | `tests/transaction.rs::concurrent_runs_at_one_destination_produce_one_project_and_no_corruption`; `place.rs` thread race | COVERED |
 | **FR-016** | Placement is a single rename, no copy fallback | `src/generate/place.rs` | COVERED |
@@ -169,7 +193,7 @@ against the specification, not against the code.
 | Item | Verdict | Why |
 |---|---|---|
 | **CHK006** | **GAP** | SC-009 requires a positive control for the hostile-destination corpus. **Nothing requires one for the cancellation or injected-failure suites.** `tasks.md` T017 supplies it as a task, so the code has one — but the *requirement* does not demand it, and a future rewrite could drop it without failing anything. |
-| **CHK014** | **PARTIAL** | "Destination becomes non-empty mid-run" is carried into FR-013 and FR-015. **"Disk fills during rendering" is carried into no requirement** — it appears only in the Edge Cases list. |
+| **CHK014** | **PARTIAL** | "Destination becomes non-empty mid-run" is carried into FR-013 and FR-015, and since 2026-08-18 FR-013 covers a destination becoming **anything** mid-run, not only non-empty. **"Disk fills during rendering" is carried into no requirement** — it appears only in the Edge Cases list. |
 | **CHK016** | **SUPERSEDED** | D6 revision 2 withdrew the decision-record gate by adopting `cap-std`. There is no gate left to word as blocking. |
 | **CHK017** | **SUPERSEDED** | With CHK016. No gate, so no record for it to require. |
 | **CHK060** | **PARTIAL** | The shorter-wizard narrowing is recorded in `spec.md` §Clarifications and in §1–§2 here. **It is not in `PLAN.md` §20 itself**, so a reader who opens `PLAN.md` and stops there still does not encounter it. Closing it means editing `PLAN.md`, which is outside this phase's scope. |
@@ -306,10 +330,10 @@ the fix second.
 | **A-R3** | **High** | **Nothing lint-checked the generated project**, while FR-029 says "formatting, **linting**, building, and testing" and both `tasks.md` T036 and quickstart gate 5 claimed clippy ran | **FIXED.** Confirmed (`grep -rn clippy crates/renvor-cli/` → 0). `cargo clippy -- -D warnings` added to `verify::CHECKS`. **Demonstrated firing** by planting a lintable construct in a template: `render_failed`, `details.check = "cargo clippy -- -D warnings"`, destination absent. |
 | **A-R4** | **High** | **The JSON success path did not redact.** `Envelope::failure` redacted; `Envelope::success` did not, so one input gave two answers | **FIXED.** Reproduced: same destination rendered `token=abc123secret` in JSON and `token=[redacted]` in human. `redact_value` now walks the whole result. A test drives a **successful** run through both modes, and **was demonstrated failing** with the fix reverted. |
 | **A-R5** | Medium | `availability()` — the function making FR-035's not-installed/not-running distinction — was **called by no test** | **FIXED.** Split into `classify(client, daemon)`, doing the deciding without the I/O, with all six combinations asserted directly. |
-| **A-R6** | Medium | Three stable registry codes emitted outside their published meaning (`manifest_invalid` for a failing `cargo test` and a missing `compose.yaml`; `placement_failed` when staging cannot be **created**) | **ACCEPTED, NOT FIXED.** Real and correctly reported. Fixing it means either widening three published registry entries or adding new codes, and `schemaVersion` is part of the contract — that is a deliberate contract change, cheap now only because no consumer exists, and it should be a decision rather than a side effect of a review sweep. Carried to the maintainer with §9. |
+| **A-R6** | Medium | Three stable registry codes emitted outside their published meaning (`manifest_invalid` for a failing `cargo test` and a missing `compose.yaml`; `placement_failed` when staging cannot be **created**) | **FIXED 2026-08-18 by maintainer ruling, item 6**, after being carried as ACCEPTED. Three accurate codes added rather than three published meanings widened: `project_verification_failed`, `container_controls_missing`, `staging_failed`. A fourth site found while fixing — pre-placement verification reporting a failing build as `render_failed`, published as *"template rendering failed"* — is corrected with them. `schemaVersion` bumped **1 → 2** and documented in C-2's *Schema history*. `exit.rs::the_registry_matches_the_published_contract_exactly` now parses C-2's registry table at compile time, so document and binary cannot drift; demonstrated failing by renaming one row and by deleting another. |
 | **A-R7** | Medium | Pre-placement verification never **started** the generated binary, though C-5 step 5 and FR-029 both say it must | **FIXED** with A-R3: `cargo run --quiet` added to `CHECKS`. |
-| **A-R8** | Medium | An existing **empty** destination is deleted and replaced; mode `0700` → `0755` and the inode changes — recorded in no document | **PARTIALLY FIXED.** The behaviour is now documented in contract C-5, in `docs/docs/cli.mdx`, and in the review pack's approval statement, so nobody agrees to it unknowingly. **Preserving the metadata is not implemented** — that changes what placement does and belongs with A-R6 as a decision, not a sweep. |
-| **A-R9** | Medium | The restore branch that puts back a removed empty destination after a failed rename is **unreachable from any test** | **ACCEPTED, NOT FIXED.** Correct: the injector deliberately sits *before* the removal, and reaching the branch needs a second injection point. Recorded rather than closed, because adding an injection point to reach one branch is the kind of change that should be reviewed on its own. |
+| **A-R8** | Medium | An existing **empty** destination is deleted and replaced; mode `0700` → `0755` and the inode changes — recorded in no document | **FIXED 2026-08-18 by maintainer ruling, item 4**, after being carried as PARTIALLY FIXED. The metadata is not preserved — the destination is **refused**, so there is nothing to preserve. `remove_dir` on the destination is gone from `place.rs`, and `no_production_path_removes_the_destination` reads the module's own source and fails if any removal names anything but this process's own staging directory. Asserted end to end by comparing inode, mode, uid, and gid before and after a refused run. |
+| **A-R9** | Medium | The restore branch that puts back a removed empty destination after a failed rename is **unreachable from any test** | **FIXED 2026-08-18 by maintainer ruling, item 4**, after being carried as ACCEPTED — and fixed by **deletion**, not by a new injection point. The branch existed to undo a removal that no longer happens, so an untested recovery path and the silently ignored `let _ = create_dir` error both cease to exist rather than becoming tested. |
 | **A-R10** | Medium | `renvor new --help` published an internal note about Rust enum memory layout as its description, frozen into the trycmd contract | **FIXED.** The boxing note is now a `//` comment; `New` has a real description. Contract regenerated **and read** — which caught the regeneration silently replacing `renvor[EXE]` with `renvor`, a Windows regression the file's own header warns about. |
 | **A-R11** | Low | The doctor test named for "unparseable ≠ incompatible" passed via an unrelated disjunct; the rule was untested | **FIXED.** Extracted `compatible(minimum, found)` and stated all six combinations, including the `(Some, None)` row no real tool can produce. |
 | **A-R12** | Low | `prompts.rs` claimed the wizard asks about **target**; it does not — overstating principle VII compliance by one of eleven | **FIXED.** Corrected to "two of them", with a note that this number feeds the §7 referral. |
@@ -322,11 +346,19 @@ the fix second.
 | **B-R3** | Low | The redaction "corpus" is two values through one injection point; no dry-run-specific case | **PARTIALLY FIXED.** A successful-run case through both output modes is added (this is what caught A-R4). Broadening to more `SECRET_KEYS` and an explicit dry-run case is not done. |
 | **C-S1** | Low-Med | The **path-derived** directory name reached no character check, so `--path $'…/inject\nLINE'` created a directory with an embedded newline and `…/trailing. ' created one Windows silently renames — while the same strings in the NAME position were correctly refused | **FIXED.** Control characters and a trailing dot or space are refused on the destination's final component, with distinct rules. Deliberately **narrower** than the package-name rule, with a control test proving `my.project`, `my project`, and `v1.2.3` still work. |
 
-**Totals: 20 findings — 15 FIXED, 2 PARTIALLY FIXED, 2 ACCEPTED and not fixed, 1 no action.**
+**Totals after the 2026-08-18 rulings: 20 findings — 18 FIXED, 1 PARTIALLY FIXED (B-R3), 0 ACCEPTED
+and unfixed, 1 no action.**
 
-Nothing was suppressed, dismissed, or closed by editing a requirement to match the code. The two
-accepted findings (A-R6, A-R9) are real, are stated as real, and are carried forward rather than
+Before those rulings the totals were 15 FIXED, 2 PARTIALLY FIXED, 2 ACCEPTED, 1 no action. The
+maintainer took all three carried findings — A-R6, A-R8, A-R9 — and directed fixes; §6.3 records the
+earlier disposition alongside the later one rather than overwriting it, so the sequence is legible.
+
+**B-R3 remains PARTIALLY FIXED** and is the only finding not closed: the redaction corpus is
+broadened by one successful-run case through both output modes, and broadening it to more
+`SECRET_KEYS` values with an explicit dry-run case is still not done. It is stated as open, not
 argued away.
+
+Nothing was suppressed, dismissed, or closed by editing a requirement to match the code.
 
 ### 6.4 What the reviews could not do
 
@@ -433,6 +465,29 @@ through this document.
 > constitutional text changed. Waiver W-007 does **not** exist. This phase does not assume a waiver is
 > available (FR-046).
 
+### 7.7 THE RULING, 2026-08-18
+
+**The maintainer took the third framing**, which §7.5 named and deliberately did not smuggle in.
+
+> *"Amend Constitution Principle VII to be compatible with staged delivery. … Treat this as a MAJOR
+> constitutional amendment from 2.0.0 to 3.0.0. … Do not create W-007. … Do not weaken any other
+> Principle VII requirement."*
+
+| Option stated in §7.5 | Outcome |
+|---|---|
+| **A** — keep Phase 003 open until compliant | **Not taken.** It makes this phase's completion depend on Phases 004–024 |
+| **B** — a narrowly scoped, time-bounded waiver | **Not taken, and explicitly forbidden.** W-007 was not created |
+| **Third framing** — amend principle VII | **TAKEN.** Constitution 2.0.0 → 3.0.0, MAJOR, through the amendment process, not through this document |
+
+The amendment ran the constitution's own six-item process: written proposal, impact analysis,
+migration plan, recorded maintainer approval, updated version and date, and synchronisation of the
+canonical text with the local tooling working copy (verified by SHA-256). All of it is in
+[`constitution-amendment-3.0.0.md`](constitution-amendment-3.0.0.md).
+
+**On §7.6's trend:** the waiver ledger still records **six** waivers. Phase 003 created none. The
+one occasion it might have — this one — was resolved by fixing the rule rather than by excusing the
+violation, which is the stronger outcome of the two.
+
 ### 7.6 One relevant fact for whichever ruling is taken
 
 The waiver ledger currently records **six** waivers, all for the same single-maintainer independent-
@@ -457,13 +512,19 @@ adversarial — and they are **not** an independent human review. Specifically:
 - The maintainer's own review is also not independent — this is a single-maintainer repository, and
   that is the standing condition the six existing waivers all describe.
 
-**What is still required to close the phase:**
+**What is still required to close the phase — revised 2026-08-18:**
 
-1. A **qualified independent human** requirements review.
+1. A **qualified independent human** requirements review. **STILL OPEN.**
 2. A **qualified independent human** security review, with particular attention to
-   `crates/renvor-cli/src/paths.rs` and `crates/renvor-cli/src/generate/place.rs`.
-3. The T093a ruling (§7).
-4. A decision on whether the missed failing-first ordering (T008, T015–T024) blocks closure.
+   `crates/renvor-cli/src/paths.rs` and `crates/renvor-cli/src/generate/place.rs`. **STILL OPEN.**
+   The maintainer directed that this review examine the **final head after the 2026-08-18
+   corrections**, not the earlier one the first packet named.
+3. ~~The T093a ruling (§7).~~ **RULED** — principle VII amended to 3.0.0. See §7.7.
+4. ~~A decision on whether the missed failing-first ordering blocks closure.~~ **RULED** — it does
+   **not** block closure; the eleven tasks stay permanently MISSED. See `tasks.md`.
+
+So **two** of the four remain, and both are the same thing: a qualified independent human who is not
+the author, not the maintainer, and not an agent.
 
 **No Phase 003 phase-level waiver has been created, and this document does not assume one is
 available.** A self-contained packet for an independent reviewer is prepared and referenced in the
@@ -480,20 +541,27 @@ Counted against each task's own acceptance wording, not asserted. The definition
 |---|---|---|
 | **COMPLETED** | **79** | Full acceptance wording met, with something that fails if it stops being met |
 | **WITHDRAWN** | **4** | T009–T012 — the requirement was removed by adopting `cap-std`, not waived |
-| **MISSED** | **11** | T008, T015–T024 — the behaviour is built and tested; the **failing-first ordering** did not happen and cannot be created retrospectively |
-| **HUMAN-GATED** | **1** | T093a — the constitution principle VII ruling |
+| **MISSED** | **11** | T008, T015–T024 — the behaviour is built and tested; the **failing-first ordering** did not happen and cannot be created retrospectively. **Permanent by ruling**: these never become COMPLETED |
+| **RULED** | **1** | T093a — referred, and ruled on 2026-08-18. Principle VII amended to 3.0.0; no waiver |
 | **OPEN** | **0** | — |
 | **Total** | **95** | |
 
-### What is required before Phase 003 can close
+The 95 tasks are the phase's original task list and it has not grown. The 2026-08-18 corrections —
+the destination policy, the error registry, and the constitutional amendment — are **maintainer
+rulings on an open pull request**, not new tasks, and inventing task numbers for them would make the
+denominator move while the work was being reviewed against it.
 
-1. **The T093a ruling** on constitution principle VII — §7. Two options are stated; neither is taken.
-2. **A decision on whether the missed failing-first ordering blocks closure** — `tasks.md`,
-   "Ordering requirements that were missed".
-3. **A qualified independent human requirements review and security review** — §8. Advisory reviews
-   do not satisfy this, and **no Phase 003 waiver exists or has been drafted**.
-4. **A decision on the two accepted advisory findings** — A-R6 (three registry codes used outside
-   their published meaning) and A-R9 (an untested restore branch). Both are real; both are contract
-   or injection-point changes that should be decided rather than swept in.
+### What is required before Phase 003 can close — revised 2026-08-18
+
+| # | Requirement | Status |
+|---|---|---|
+| 1 | The T093a ruling on constitution principle VII | **RULED** — amended to 3.0.0 (§7.7). No waiver; W-007 does not exist |
+| 2 | A decision on whether the missed failing-first ordering blocks closure | **RULED** — it does not block closure; T008 and T015–T024 stay permanently MISSED |
+| 3 | The two carried advisory findings, A-R6 and A-R9 (and A-R8, carried as partial) | **RULED and FIXED** — see §6.3. Three new registry codes, `schemaVersion` 2, and the removal branch deleted |
+| 4 | **A qualified independent human requirements review** | **OPEN.** Advisory reviews do not satisfy it |
+| 5 | **A qualified independent human security review**, on `paths.rs` and `place.rs`, against the **final** head | **OPEN.** Advisory reviews do not satisfy it |
+
+**No Phase 003 phase-level waiver exists or has been drafted, and this document does not assume one
+is available** (FR-046). Items 4 and 5 are the whole of what remains.
 
 **None of the four is engineering work the author can complete.** All four are decisions.

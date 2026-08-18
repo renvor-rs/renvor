@@ -37,13 +37,15 @@ by the table below, which was produced by checking each task against its own acc
 |---|---|---|
 | **COMPLETED** | **79** | The task's full acceptance wording is met, and something fails if it stops being met. |
 | **WITHDRAWN** | **4** | T009–T012. The requirement was removed, not waived — see D6 revision 2. |
-| **MISSED** | **11** | T008, T015–T024. The behaviour is built and tested; the **failing-first ordering** the task asked for did not happen and cannot be created retrospectively. |
-| **HUMAN-GATED** | **1** | T093a. The constitution principle VII ruling is the maintainer's to make. |
+| **MISSED** | **11** | T008, T015–T024. The behaviour is built and tested; the **failing-first ordering** the task asked for did not happen and cannot be created retrospectively. **Permanent classification by maintainer ruling of 2026-08-18, item 1** — these never become COMPLETED. |
+| **RULED** | **1** | T093a. Referred to the maintainer and **ruled on** 2026-08-18: principle VII amended to 3.0.0 rather than waived. The task asked for a referral and a recorded ruling, and both happened. |
 | **OPEN** | **0** | — |
 | **Total** | **95** | |
 
-The 4 WITHDRAWN tasks are ticked because the requirement no longer exists. The 11 MISSED and the 1
-HUMAN-GATED are **not** ticked, because a task whose stated requirement was not met is not complete
+The 4 WITHDRAWN tasks are ticked because the requirement no longer exists. T093a is ticked because
+its acceptance wording — *"refer … Record the ruling; do not make it"* — is met: the referral was
+made, the maintainer ruled, and the ruling is recorded. The 11 MISSED are **not** ticked, and by the
+2026-08-18 ruling they never will be: a task whose stated requirement was not met is not complete
 however much of its substance was built.
 
 ### Ordering requirements that were missed, and whether they block closure
@@ -71,14 +73,21 @@ done, on 2026-08-18:
   `place`'s FR-012 promise was **demonstrated failing on purpose** by moving the injection point past
   the removal, then restored.
 
-**Do these missed requirements block phase closure?** They are a **process** failure, not a coverage
-gap, and this document does not decide the question. What it can say precisely:
+**Do these missed requirements block phase closure? RULED: no.** The maintainer ruled on 2026-08-18,
+item 1:
+
+> *"T008 and T015–T024 remain permanently classified MISSED, not COMPLETED. Their historical
+> failing-first ordering cannot be recreated. Because their behavioural outcomes are now covered with
+> working positive/negative controls, this historical process failure does not block Phase 003
+> closure. Preserve the full record and never convert these tasks to completed."*
+
+The facts the ruling rests on, unchanged and stated precisely:
 
 - No functional requirement or success criterion is unmet *because* of the ordering.
 - The compensating controls are weaker evidence than failing-first would have been: a control proves
   the harness *can* fail today, where failing-first proved it *did* fail against absent code.
-- The decision is the maintainer's, alongside T093a. It is listed in the human checkpoint rather
-  than resolved here.
+- The 11 tasks stay MISSED **permanently**. Any future edit converting one of them to COMPLETED
+  contradicts a recorded maintainer ruling, not merely this document.
 
 ### Deviations from the task text, stated rather than absorbed
 
@@ -180,13 +189,20 @@ must leave a **pre-existing empty** destination exactly as it was — still pres
 leave no staging behind. A version that removed the destination eagerly at the start of `place`
 would pass every other test in that file.
 
+> **REVISED 2026-08-18.** A pre-existing empty destination is now refused outright, so this case is
+> no longer reached by way of an injected failure. The test was rewritten rather than left green:
+> `a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected` asserts, for every
+> injection point, that the refusal happens *before* it — proved by `details.injected` being absent
+> from the failure document — and that the operator's directory keeps its inode, mode, and owner.
+
 **The residue promise is tested, not just documented (T019).** A run is killed with no chance to
 run a destructor; the staging directory survives, is **beside** the destination rather than inside
 it, **names the process** that left it, and **no project exists**. Twenty consecutive runs. Until
 this test, that promise rested entirely on a comment.
 
 **FR-015 is verified by racing, not by reading.** Six concurrent `renvor new` runs at one
-destination produce exactly one success, five clean `destination_not_empty` failures each carrying a
+destination produce exactly one success, five clean `destination_exists` failures — the code was
+`destination_not_empty` when this was written and was retired on 2026-08-18 — each carrying a
 parseable JSON document, a project that passes `renvor check`, and **no staging residue**. Repeated
 five times before being committed.
 
@@ -195,8 +211,11 @@ five times before being committed.
 leaves the destination untouched. `renvor doctor`, `renvor check`, `renvor dev`, and
 `renvor docker up|down|status|logs`. The complete flag surface including reserved-flag refusal.
 The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard and the FR-009 review-and-confirm screen.
-The embedded template catalogue and bounded rendering. **206 tests** (measured by `cargo test -p renvor-cli`, not counted by hand — it said 107, which was true of an earlier tree and had not been re-measured since), `cargo xtask verify` green on
-all ten checks, clippy clean on Rust 1.94.0 and current stable.
+The embedded template catalogue and bounded rendering. **210 tests** in `renvor-cli` and **555**
+across the workspace (measured by `cargo test`, not counted by hand — this line said 107, which was
+true of an earlier tree and had not been re-measured, then 206 before the 2026-08-18 corrections
+added four), `cargo xtask verify` green on all **11** steps, clippy clean on Rust 1.94.0 and current
+stable.
 
 ### Two governing-document changes made during implementation, both recorded rather than assumed
 - **`research.md` D6 is at revision 2 and reverses revision 1.** `cap-std` 4.0.2 is adopted, so
@@ -212,6 +231,15 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    rename. **`remove_dir` is what makes that safe**: the kernel refuses to remove a non-empty
    directory, so the emptiness check and the removal are one atomic operation rather than a check
    followed by a hopeful delete.
+
+   > **SUPERSEDED 2026-08-18 by maintainer ruling, item 4. The paragraph above is preserved as the
+   > record of what was done and why; it is no longer what the code does.** The ruling found the
+   > reasoning sound and the *policy* wrong: `remove_dir` made the removal safe against data loss,
+   > but the operator still got back a different directory — a new inode with this process's mode
+   > and ownership (A-R8) — and the restore-on-failed-rename branch was reachable from no test and
+   > swallowed its own error (A-R9). **FR-013 now refuses every existing destination**, and the
+   > removal and the restore are both deleted. The two components no longer disagree because
+   > neither of them accepts an existing destination at all.
 - **A false uniqueness claim in a comment, proved false by a sixteen-thread race on
    macOS CI.** `Staging::create` named its directory `.renvor-staging-{pid}-{nanos}` and the comment
    beside it read *"a monotonic-ish discriminator so two runs in one process never collide"*. Two
@@ -244,6 +272,12 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    empty-destination fix had itself introduced. **The local
    machine never hit the window and both macOS and Windows CI did**, which is the argument for
    keeping the platform matrix and for not trimming a slow concurrency test.
+
+   > **PARTLY SUPERSEDED 2026-08-18.** The `ErrorKind` classification stands and is unchanged — it
+   > is what makes a lost race report the right thing. The restore branch is **gone** with the
+   > removal it was compensating for; a failure now restores nothing because nothing was removed.
+   > The code a loser reports is `destination_exists`; `destination_not_empty` was retired from the
+   > registry in `schemaVersion` 2.
 - **An unbounded input on a path the operator names.** FR-042 requires *every* input to be
    bounded with the bound documented; `renvor check` read `renvor.toml` with a plain
    `read_to_string`. Since `check` takes a **directory from the command line**, that is an
@@ -355,7 +389,7 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 - [ ] T015 Write `crates/renvor-cli/tests/transaction.rs` cancellation coverage: drive the wizard to **each** prompt in turn and cancel there, asserting exit `4` and a destination that does not exist. Parameterise over prompts so adding a prompt without covering it fails the suite **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
 - [ ] T016 Write injected-failure coverage in `crates/renvor-cli/tests/transaction.rs`: fail at **each mutating** protocol step of contract C-5 — `stage`, `render`, `manifest`, `verify`, `place` — against **both** an absent destination and a pre-existing empty one. **C-5 defines seven steps; `validate` and `report` are excluded deliberately and the reason is stated here rather than left to inference**: `validate` writes nothing, so it has no post-condition to violate, and `report` runs after placement has already succeeded, byte-comparing the pre-existing case before and after **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
 - [ ] T017 Add the **positive control** to `crates/renvor-cli/tests/transaction.rs`: an un-injected run into the same fixtures succeeds and produces a project. Without it, a harness that refuses everything satisfies T015 and T016 **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
-- [ ] T018 Write concurrency coverage in `crates/renvor-cli/tests/transaction.rs`: two runs targeting one destination, asserting **at most one succeeds** and the other reports `destination_not_empty` — never a corrupt tree (FR-013, FR-015) **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
+- [ ] T018 Write concurrency coverage in `crates/renvor-cli/tests/transaction.rs`: two runs targeting one destination, asserting **at most one succeeds** and the other reports `destination_exists` (`destination_not_empty` until the 2026-08-18 destination ruling retired it) — never a corrupt tree (FR-013, FR-015) **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
 - [ ] T019 Write residue coverage in `crates/renvor-cli/tests/transaction.rs`: kill a run mid-render and assert the staging directory is **beside** the destination, never inside it, and is identifiable as Renvor's **[MISSED — the failing-first ordering; the behaviour it asks for is now complete. See "Ordering requirements that were missed".]**
 
 ### Failing-first hostile corpus
@@ -493,7 +527,7 @@ builds; cancel at each prompt and assert the destination is absent.
 - [x] T091 Record in `governance/phase-003-evidence.md` which platforms `.github/workflows/ci.yml` actually exercised, and **claim no platform CI did not run** (SC-014)
 - [x] T092 Obtain, and record in `governance/phase-003-evidence.md`, two clean-context advisory reviews of the phase — one requirements, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings" statement naming what was checked
 - [x] T093 Disposition every review finding individually in `governance/phase-003-evidence.md`
-- [ ] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it** **[HUMAN-GATED — the ruling is the maintainer's.]**
+- [x] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it** **[RULED 2026-08-18 — the maintainer chose neither option offered and amended the principle instead: constitution 2.0.0 → 3.0.0, MAJOR, no waiver, W-007 explicitly not created. Recorded in `governance/constitution-amendment-3.0.0.md` and enforced by `config::flags::tests::every_governed_choice_of_principle_seven_is_classified`.]**
 - [x] T094 Record in `governance/phase-003-evidence.md` that the **independent human requirements and security review remains open**, that advisory reviews are not independent, and that this phase does **not** assume a waiver is available (FR-046)
 ---
 
@@ -546,6 +580,10 @@ reconcile against the other two.
 
 By status — see "Implementation status" above for what each word means:
 
-| COMPLETED | WITHDRAWN | MISSED | HUMAN-GATED | OPEN | Total |
+| COMPLETED | WITHDRAWN | MISSED | RULED | OPEN | Total |
 |---|---|---|---|---|---|
 | 79 | 4 | 11 | 1 | 0 | **95** |
+
+**MISSED is permanent.** The 2026-08-18 maintainer ruling classifies T008 and T015–T024 as MISSED
+for good, and rules that this historical process failure does **not** block closure. Converting any
+of them to COMPLETED later would contradict that ruling.
