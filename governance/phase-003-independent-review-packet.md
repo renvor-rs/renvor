@@ -18,17 +18,22 @@ the thing you are here to decide.
 | | |
 |---|---|
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Head SHA** | `PENDING_FINAL_HEAD` |
-| **Pull request** | [#28](https://github.com/renvor/renvor/pull/28), open and unmerged |
+| **Content head** | `4a3eb49b6aaf304b020af78e7cf2a4e5882287cb` |
+| **Branch tip** | one commit later — the commit that wrote this table, touching only this file and `phase-003-review-pack.md` |
+| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28), open and unmerged. Its description names the exact tip SHA |
 | **Superseded head** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` — do **not** review this one |
 
 ```sh
 git fetch origin feat/phase-003-interactive-cli
-git checkout PENDING_FINAL_HEAD
-git rev-parse HEAD    # confirm it matches
+git checkout feat/phase-003-interactive-cli
+git diff 4a3eb49b6aaf304b020af78e7cf2a4e5882287cb..HEAD --stat    # must list exactly two governance files, and nothing else
 ```
 
-Everything in this packet, and every line reference in the review pack, describes that head.
+A stamp cannot contain its own commit's SHA, which is why this names the content head and bounds
+what came after it. Everything in this packet, and every line reference in the review pack,
+describes that head.
+
+
 
 ---
 

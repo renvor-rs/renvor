@@ -29,22 +29,25 @@ reconstruct the design from the code.
 | | |
 |---|---|
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Head SHA** | `PENDING_FINAL_HEAD` |
-| **Pull request** | [#28](https://github.com/renvor/renvor/pull/28), open and unmerged |
+| **Content head** | `4a3eb49b6aaf304b020af78e7cf2a4e5882287cb` |
+| **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file and `phase-003-independent-review-packet.md`, and nothing else |
+| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28), open and unmerged. Its description names the exact tip SHA |
 | **Revision** | 2, 2026-08-18 |
 | **Supersedes** | Revision 1, at head `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` — **approval DENIED** |
 
-**Verify before reviewing**, so that what you read and what you approve are the same tree:
+A stamp cannot contain its own commit's SHA, so the table names the **content** head and states
+exactly what the one commit after it contains. That is verifiable rather than approximate:
 
 ```bash
-git rev-parse HEAD            # must equal the head SHA above
-git status --porcelain        # must be empty
+git rev-parse HEAD                          # the tip; must match the SHA in PR #28's description
+git diff 4a3eb49b6aaf304b020af78e7cf2a4e5882287cb..HEAD --stat          # must list exactly these two governance files
+git status --porcelain                      # must be empty
 ```
 
-If they do not match, this pack describes a different tree than the one in front of you and the
-approval statement in §11 must not be signed. **Every `file.rs:NNN` reference below was
-verified against this head by script**, and line numbers drift on any edit, so a mismatch here
-makes them unreliable too.
+If `git diff` lists anything else, this pack describes a different tree than the one in front of you
+and the approval statement in §11 must not be signed. **Every `file.rs:NNN` reference below was
+verified against this head by script**, and line numbers drift on any edit, so a mismatch here makes
+them unreliable too.
 
 ---
 
