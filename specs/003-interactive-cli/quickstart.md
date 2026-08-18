@@ -36,11 +36,14 @@ has failed and nothing below is meaningful.
 # A `cargo test` filter that matches no test runs zero tests and exits 0. Six of the gates below
 # did exactly that until 2026-08-18, so six success criteria were "verified" by commands that
 # verified nothing. Run this first.
-grep -oE 'cargo test -p renvor-cli --test [a-z_]+( -- [a-z_]+)?' quickstart.md | sort -u |
+grep -oE 'cargo test -p renvor-cli --(test|bins) [a-z_:]+( -- [a-z_]+)?' quickstart.md | sort -u |
 while read -r cmd; do
   out=$(eval "$cmd" 2>&1 | grep -E '^test result' | head -1)
   case "$out" in
-    *"0 passed"*) echo "GATE RUNS NOTHING: $cmd -> $out"; exit 1 ;;
+    # `. 0 passed;` and not `0 passed` — the loose pattern also matches "10 passed", which made
+    # this gate cry wolf on its own suite. A gate that reports a failure that is not one gets
+    # ignored, which is the same outcome as not having it.
+    *". 0 passed;"*) echo "GATE RUNS NOTHING: $cmd -> $out"; exit 1 ;;
     *)            echo "ok: $cmd -> $out" ;;
   esac
 done
@@ -69,10 +72,12 @@ the first prompt.
 
 ```bash
 cargo test -p renvor-cli --test transaction -- a_failure_at_any_mutating_step
+cargo test -p renvor-cli --test transaction -- a_pre_existing_empty_destination_is_refused
 ```
 
-Fails the render at each step, against **both** a destination that does not exist and one that exists
-and is empty. The pre-existing destination is byte-compared before and after.
+Fails the render at each mutating step against a destination that does not exist, and separately
+checks that a destination which **does** exist is refused before any of those steps can run — no
+staging created, `details.injected` absent from the failure document.
 
 **Expected**: 0 modifications. **Plus the control**: an un-injected run into the same fixture
 succeeds, so the harness is not merely refusing everything.
@@ -172,6 +177,19 @@ cargo test -p renvor-cli --test hostile
 
 The corpus: path traversal, absolute-path injection, a destination that is a symlink elsewhere,
 platform-reserved device names, and a template whose output path escapes the staging root.
+
+Since 2026-08-18 it also covers the tightened destination policy. Every existing destination is
+refused — empty directory, non-empty directory, regular file, symbolic link including a dangling
+one — and a destination whose state cannot be established fails closed rather than being treated as
+absent:
+
+```bash
+cargo test -p renvor-cli --bins paths::tests
+cargo test -p renvor-cli --bins generate::place::tests
+```
+
+**Expected**: all pass, including `no_production_path_removes_the_destination`, which reads
+`place.rs` and fails if any removal names anything but this process's own staging directory.
 
 **Expected**: 100% refused before any write, **and the positive control succeeds** — an ordinary
 destination still generates. Without that control the whole gate is satisfied by refusing everything.

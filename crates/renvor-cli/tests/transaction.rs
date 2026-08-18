@@ -244,32 +244,51 @@ fn a_failure_at_any_mutating_step_leaves_an_absent_destination_absent() {
 }
 
 #[test]
-fn a_failure_at_any_mutating_step_leaves_a_pre_existing_empty_destination_exactly_as_it_was() {
-    // T016, second half, and the case that only became reachable once FR-013's "exists and is not
-    // empty" was honoured properly: an existing EMPTY destination is a legal target, so a failure
-    // must leave it **present and empty** rather than removing it. A version of `place` that
-    // removed the destination eagerly at the start passes every test in the first half and fails
-    // every test in this one.
+fn a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected() {
+    // T016, second half. **Its premise changed on 2026-08-18 and so did its claim.**
+    //
+    // It used to read: an existing EMPTY destination is a legal target, so a failure injected at
+    // each mutating step must leave it present and empty. Under the maintainer's destination
+    // ruling the fixture is refused at validation, so no injected step ever runs — and the old
+    // assertions would all still have PASSED, silently, while testing nothing. A gate that keeps
+    // passing after the thing it tests becomes unreachable is the exact defect this phase's
+    // advisory reviews found six times, so it is rewritten rather than left green.
+    //
+    // What it asserts now is stronger and is actually reachable: **for every injection point**,
+    // the refusal happens before that point, the operator's directory is untouched, and no staging
+    // was created. `details.injected` being absent is the assertion that makes this true rather
+    // than assumed — its presence would prove the run got as far as the injected step.
     for step in MUTATING_STEPS {
         let base = tempfile::tempdir().expect("a temporary directory");
         let destination = base.path().join("demo");
         std::fs::create_dir(&destination).expect("the empty destination is created");
 
-        let (exit, _, stderr) = generate_into(base.path(), Some(step));
-        assert_ne!(exit, 0, "injecting at `{step}` must fail the run: {stderr}");
+        let (exit, stdout, stderr) = generate_into(base.path(), Some(step));
+        assert_eq!(
+            exit, 3,
+            "an existing empty destination must be refused, whatever is injected: {stderr}"
+        );
+        let document: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|error| panic!("no JSON document at `{step}`: {error}\n{stdout}"));
+        assert_eq!(document["error"]["code"], "destination_exists", "at `{step}`");
+        assert!(
+            document["error"]["details"]["injected"].is_null(),
+            "the run reached the injected step `{step}`, so the refusal is NOT happening before \
+             it: {document}"
+        );
 
         assert!(
             destination.is_dir(),
-            "failing at `{step}` removed a pre-existing empty destination"
+            "with `{step}` injected, a pre-existing empty destination was removed"
         );
         assert_eq!(
             std::fs::read_dir(&destination).expect("readable").count(),
             0,
-            "failing at `{step}` wrote into a pre-existing empty destination"
+            "with `{step}` injected, something was written into the destination"
         );
         assert!(
             staging_residue(base.path()).is_empty(),
-            "failing at `{step}` left staging behind: {:?}",
+            "with `{step}` injected, staging was created despite the refusal: {:?}",
             staging_residue(base.path())
         );
     }
