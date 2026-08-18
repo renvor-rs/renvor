@@ -285,6 +285,46 @@ and `platform (windows-latest, stable)`.
 
 ---
 
+### 5.4 The quickstart gate sweep, run 2026-08-18 after the rulings
+
+`quickstart.md` is the phase's success-criterion harness. Advisory finding A-R1 established that six
+of its gates ran **zero tests and exited 0**, so the gates are now run through **Gate 0**, which
+extracts every gate command from the document and fails any that reports no tests.
+
+Gate 0 itself had a defect, found by running it: its pattern `*"0 passed"*` also matches
+`10 passed`, so it raised a false alarm on `--test hostile`. A gate that cries wolf gets ignored, so
+the pattern is now `*". 0 passed;"*` and the discrimination is demonstrated on `0 passed`,
+`10 passed`, and `100 passed`.
+
+Result of the full sweep — **15 commands, 15 ran something, 0 failures**:
+
+| Gate command | Tests run |
+|---|---|
+| `--bins generate::place::tests` | 12 |
+| `--bins paths::tests` | 9 |
+| `--test bounds` | 2 |
+| `--test cli -- every_json_document` | 1 |
+| `--test generated -- a_reserved_flag_exits_three` | 1 |
+| `--test generated -- every_generated_variant` | 1 |
+| `--test generated -- generating_the_same_configuration_twice` | 1 |
+| `--test hostile` | 10 |
+| `--test offline` | 4 |
+| `--test parity` | 6 |
+| `--test redaction` | 4 |
+| `--test tls_consent` | 9 |
+| `--test transaction -- a_failure_at_any_mutating_step` | 1 |
+| `--test transaction -- a_pre_existing_empty_destination_is_refused` | 1 |
+| `--test transaction -- cancelling_at_each_prompt` | 1 |
+
+The **positive controls** these gates depend on, each of which would make its gate vacuous if
+removed: `an_ordinary_legitimate_destination_still_generates` and
+`an_ordinary_punctuated_directory_name_is_still_accepted` (hostile), `an_uninjected_run_into_the
+_same_fixtures_succeeds` and `an_unrecognised_injection_point_is_not_a_failure` (transaction),
+`a_project_that_builds_and_tests_passes` (verify), `ordinary_names_are_accepted` and
+`an_ordinary_destination_opens` (paths), the legitimate write in
+`the_handle_refuses_an_escape_that_no_rule_in_this_module_checks_for`, and
+`the_shape_function_can_tell_two_different_shapes_apart` (cli).
+
 ## 6. Advisory reviews (T092) and their disposition (T093)
 
 ### 6.1 Standing label
