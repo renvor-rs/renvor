@@ -422,15 +422,32 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         .find("equivalent command: ")
         .unwrap_or_else(|| panic!("no equivalent command was printed\n{visible}"))
         + "equivalent command: ".len();
-    let printed = visible[start..]
-        .split(['\r', '\n'])
-        .next()
-        .expect("a first segment always exists")
-        .trim()
-        .to_owned();
+    // The end of the command is the earliest of a line break OR `inquire`'s prompt marker `? `.
+    //
+    // ConPTY does not merely wrap lines, it merges them: the equivalent-command line and the
+    // review screen's question arrived as one line, so bounding on `\r`/`\n` alone swept
+    // `? Create this project? (Y/n)` into the argv. A shell command emitted by
+    // `equivalent_command` never contains `? `, so it is a safe delimiter here — and it is a
+    // delimiter of the *transcript*, not of the program's output, which is the right place to
+    // absorb a terminal's layout decisions.
+    let tail = &visible[start..];
+    let end = ['\r', '\n']
+        .iter()
+        .filter_map(|c| tail.find(*c))
+        .chain(tail.find("? "))
+        .min()
+        .unwrap_or(tail.len());
+    let printed = tail[..end].trim().to_owned();
+
     assert!(
         !printed.is_empty(),
         "the equivalent command was empty\n{visible}"
+    );
+    // THE TRUNCATION GUARD. `equivalent_command` always ends with `--yes`, so an extraction that
+    // stopped early is caught here rather than showing up as a confusing argv failure below.
+    assert!(
+        printed.ends_with("--yes"),
+        "the equivalent command was truncated by the transcript: {printed:?}\n{visible}"
     );
 
     // 2. It must be OUR command, in the surface's own spelling.
