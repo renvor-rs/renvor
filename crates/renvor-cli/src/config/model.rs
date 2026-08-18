@@ -270,10 +270,22 @@ impl ProjectConfiguration {
     /// change of mind (FR-009, US1 acceptance scenario 3).
     #[must_use]
     pub fn equivalent_command(&self) -> String {
+        // THE ORDER AND SPELLING HERE ARE THE FLAG SURFACE'S, NOT A DESCRIPTION OF IT.
+        //
+        // An earlier version emitted `renvor new <destination> --name <name>`, which reads
+        // plausibly and **is not a command**: `NewArgs` takes the project name as the positional
+        // argument and the destination as `--path`, and declares no `--name` flag at all. So the
+        // review screen's "exact equivalent command" (FR-009) failed with clap's *"unexpected
+        // argument '--name'"* if anyone pasted it.
+        //
+        // It survived because nothing ran the string it produced. `tests/parity.rs` now does:
+        // `the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project` executes
+        // this output verbatim and compares the result byte for byte. A command that is printed
+        // but never run is a claim, not a contract.
         let mut parts = vec![
             "renvor new".to_owned(),
-            shell_quote(&self.destination.display().to_string()),
-            format!("--name {}", shell_quote(&self.name)),
+            shell_quote(&self.name),
+            format!("--path {}", shell_quote(&self.destination.display().to_string())),
             format!(
                 "--target {}",
                 match self.target {
@@ -446,9 +458,16 @@ mod tests {
     }
 
     #[test]
-    fn the_equivalent_command_round_trips_to_the_same_configuration() {
-        // The review screen prints this command. If it did not reproduce the configuration, the
-        // screen would be showing a command that produces a different project.
+    fn the_equivalent_command_carries_every_answered_choice() {
+        // NAMED FOR WHAT IT CHECKS. It was called `…_round_trips_to_the_same_configuration`, and
+        // it does not round-trip anything — it asserts that four substrings are present. The
+        // difference is not pedantry: while this test was passing under that name, the printed
+        // command was `renvor new <destination> --name <name> …`, which this program cannot parse
+        // at all, and the name of this test was a large part of why nobody looked.
+        //
+        // The actual round trip is
+        // `tests/parity.rs::the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project`,
+        // which runs the string and compares the resulting tree.
         let base = tempfile::tempdir().expect("a temporary directory");
         let mut a = answers(base.path().join("demo"));
         a.container = true;

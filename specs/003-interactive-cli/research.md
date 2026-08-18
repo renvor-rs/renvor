@@ -344,6 +344,52 @@ structural diff is more useful than a string one.
 and remains available for cases needing imperative control; it is not the primary choice because a
 contract expressed as assertions is harder to review than one expressed as expected output.
 
+## D15 — Driving the real wizard (revision 1, 2026-08-18)
+
+**Decision: `portable-pty` 0.9.0**, MIT, as a dev-dependency of `renvor-cli`.
+
+**Why a decision was needed at all.** `renvor new` enters the wizard on `stdin.is_terminal()`. A
+test that pipes stdin therefore exercises the **flag** path however carefully it writes to the pipe
+— which is how this phase accumulated a large suite that asserted prompt behaviour at length and
+never once ran a prompt. SC-003's byte-identical comparison, FR-011's cancel-at-each-prompt
+coverage, and FR-009's review screen are all only reachable through a pseudo-terminal.
+
+**Why not `rexpect` 0.7.1**, which an earlier note recorded as the candidate. It is the obvious
+expect-style choice, `MIT OR Apache-2.0`, MSRV 1.85, 325k downloads a month — and it is
+**Unix-only**. Five of the ten defects this phase found were caught by the Windows or macOS matrix
+legs, including one (`os error 32` on an open `Dir` handle) that was false on Windows while every
+Unix test passed. Coverage that silently disappears on the leg that finds half the defects is the
+wrong trade, and that is why the harness was declined rather than built on `rexpect`.
+
+**What `portable-pty` changes.** It wraps ConPTY on Windows and `openpty` elsewhere behind one
+interface, so the same tests run on every matrix leg. It is a raw pty rather than an expect
+harness, so the read/expect/write loop is ~120 lines in `tests/harness/mod.rs` — a cost accepted
+deliberately in exchange for the platform coverage.
+
+**Measured, not assumed:**
+
+| Property | Result |
+| --- | --- |
+| `cargo deny check` | exit 0 — advisories, bans, licenses, sources all pass |
+| Licence | MIT; every one of the 13 added transitive crates resolves to an allow-listed licence |
+| MSRV | `cargo +1.94.0 check -p renvor-cli --tests` succeeds |
+| Resolved additions | `anyhow`, `bitflags 1.3.2`, `cfg_aliases`, `downcast-rs`, `filedescriptor`, `nix 0.28`, `portable-pty`, `serial2`, `shared_library`, `shell-words`, `thiserror`, `thiserror-impl`, `winreg` |
+| Maintenance | 5.37M downloads/month; part of the WezTerm tree |
+
+**Costs recorded rather than glossed.** It pulls `bitflags 1.3.2` alongside the `2.x` already in the
+graph (a duplicate, which `deny.toml` treats as a warning by policy), and `shared_library 0.1.9` and
+`winreg 0.10.1` are both old and Windows-only. `deny.toml` sets `unmaintained = "workspace"`, so a
+transitive unmaintained crate is not a gate failure — that is the existing policy applying, not an
+exception made for this crate. It is a **dev-dependency**, so none of this reaches a shipped
+`renvor` binary; `tests/capabilities.rs` continues to assert what the executable's own closure may
+contain.
+
+**What it found immediately.** The first run of the real wizard showed that the review screen's
+"exact equivalent non-interactive command" (FR-009) was `renvor new <destination> --name <name> …`
+— and `--name` is not a flag this program has. Pasting the wizard's own output produced clap's
+*"unexpected argument '--name'"*. Every prior test asserted the string **contained** things; none
+ran it.
+
 ## Unresolved and carried forward
 
 1. **The D6 decision record is a blocking gate**, not a documentation task. Nothing in the path

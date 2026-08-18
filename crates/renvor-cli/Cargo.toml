@@ -106,6 +106,7 @@ trycmd = { version = "1.2.1", default-features = false, features = ["color-auto"
 toml = { version = "1.1.4", default-features = false, features = ["parse", "serde"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 tempfile = { version = "3.27.0", default-features = false }
+portable-pty = { version = "0.9.0", default-features = false }
 
 [lints]
 workspace = true

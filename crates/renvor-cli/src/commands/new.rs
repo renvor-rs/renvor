@@ -180,6 +180,7 @@ pub fn run(
     // that predicted the manifest from the template list would drift the first time a template
     // gained a conditional.
     let staging = Staging::create(&destination)?;
+    crate::inject::fail_at("stage")?;
 
     // ── 3. RENDER ───────────────────────────────────────────────────────────────────
     //
@@ -190,6 +191,7 @@ pub fn run(
         reporter.note("rendering…");
     }
     renderer.render_into(staging.dir(), &context)?;
+    crate::inject::fail_at("render")?;
 
     // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
     //
@@ -206,12 +208,14 @@ pub fn run(
     }
     let staging_path = destination.parent_display().join(staging.name());
     crate::generate::verify::in_staging(&staging_path)?;
+    crate::inject::fail_at("verify")?;
 
     // ── 5. MANIFEST ─────────────────────────────────────────────────────────────────
     //
     // Taken AFTER verification, so it describes exactly the tree that will be renamed —
     // `Cargo.lock` included.
     let manifest = FileManifest::describe(staging.dir())?;
+    crate::inject::fail_at("manifest")?;
 
     // ── 6. REVIEW AND CONFIRM ───────────────────────────────────────────────────────
     //

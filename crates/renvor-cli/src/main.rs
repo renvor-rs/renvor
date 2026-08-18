@@ -16,6 +16,7 @@ mod commands;
 mod config;
 mod exit;
 mod generate;
+mod inject;
 mod output;
 mod paths;
 mod templates;
