@@ -628,6 +628,95 @@ fn a_closed_stdout_is_not_a_panic() {
 }
 
 #[test]
+fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
+    // FR-015: "Concurrent runs targeting the same destination MUST NOT interleave into a corrupt
+    // state." Asserted by actually racing them, because the property is about timing and no
+    // amount of reading the code establishes it.
+    //
+    // The design's answer: each run stages under a name carrying its own process id, and
+    // placement is a rename onto a path that must not exist. So the losers fail cleanly rather
+    // than merging into the winner's tree.
+    //
+    // Run five times before being committed, all five identical — because a flaky concurrency
+    // test is worse than none: it trains people to re-run CI rather than to read it.
+    let base = tempfile::tempdir().expect("tempdir");
+    let destination = base.path().join("contended");
+
+    let mut children = Vec::new();
+    for _ in 0..6 {
+        children.push(
+            Command::new(env!("CARGO_BIN_EXE_renvor"))
+                .args([
+                    "new",
+                    "contended",
+                    "--yes",
+                    "--example-domain",
+                    "--output",
+                    "json",
+                ])
+                .current_dir(base.path())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .expect("spawns"),
+        );
+    }
+
+    let mut succeeded = 0;
+    let mut failed_cleanly = 0;
+    for child in children {
+        let output = child.wait_with_output().expect("waits");
+        match output.status.code() {
+            Some(0) => succeeded += 1,
+            Some(3) => {
+                // A loser must still honour C-2: exactly one parseable document naming a stable
+                // code. "It failed somehow" is not an acceptable answer to a consumer.
+                let document: serde_json::Value =
+                    serde_json::from_slice(&output.stdout).expect("a loser wrote no document");
+                assert_eq!(document["status"], "failure");
+                assert_eq!(
+                    document["error"]["code"], "destination_not_empty",
+                    "a loser failed for an unexpected reason"
+                );
+                failed_cleanly += 1;
+            }
+            other => {
+                panic!("a concurrent run exited {other:?}, which is neither a win nor a clean loss")
+            }
+        }
+    }
+
+    assert_eq!(succeeded, 1, "exactly one run must win");
+    assert_eq!(failed_cleanly, 5, "every other run must lose cleanly");
+
+    // THE PROJECT MUST BE WHOLE, not a merge of six renders. Its own checks are the strongest
+    // available statement of that, and they are what a corrupted tree would fail.
+    let (code, _, stderr) = renvor(
+        &["check", destination.to_str().expect("utf-8")],
+        base.path(),
+        &[],
+    );
+    assert_eq!(code, 0, "the surviving project is not valid:\n{stderr}");
+    assert!(
+        destination.join("src/domain.rs").is_file(),
+        "the survivor is incomplete"
+    );
+
+    // AND NO RESIDUE. A staging directory left behind by a loser is not corruption, but it is
+    // litter in the operator's working directory and the design promises it will not happen.
+    let residue: Vec<String> = std::fs::read_dir(base.path())
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".renvor-staging-"))
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "concurrent losers left staging behind: {residue:?}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

@@ -27,10 +27,15 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**47 of 95 tasks complete. This section states what is built and what is not, because a task list
+**48 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
+
+**FR-015 is verified by racing, not by reading.** Six concurrent `renvor new` runs at one
+destination produce exactly one success, five clean `destination_not_empty` failures each carrying a
+parseable JSON document, a project that passes `renvor check`, and **no staging residue**. Repeated
+five times before being committed.
 
 `renvor new` end to end — the full contract C-5 transaction (validate → stage → render → **verify**
 → manifest → place → report), with a `Drop`-enforced guarantee that any failure before placement
