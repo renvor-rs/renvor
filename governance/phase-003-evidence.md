@@ -571,7 +571,7 @@ Counted against each task's own acceptance wording, not asserted. The definition
 | **COMPLETED** | **79** | Full acceptance wording met, with something that fails if it stops being met |
 | **WITHDRAWN** | **4** | T009–T012 — the requirement was removed by adopting `cap-std`, not waived |
 | **MISSED** | **11** | T008, T015–T024 — the behaviour is built and tested; the **failing-first ordering** did not happen and cannot be created retrospectively. **Permanent by ruling**: these never become COMPLETED |
-| **RULED** | **1** | T093a — referred, and ruled on 2026-08-18. Principle VII amended to 3.0.0; no waiver |
+| **HUMAN-GATED** | **1** | T093a — **the gate was reached and discharged**: referred, and ruled on 2026-08-18. Principle VII amended to 3.0.0; no waiver |
 | **OPEN** | **0** | — |
 | **Total** | **95** | |
 

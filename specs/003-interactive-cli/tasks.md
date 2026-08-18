@@ -38,7 +38,7 @@ by the table below, which was produced by checking each task against its own acc
 | **COMPLETED** | **79** | The task's full acceptance wording is met, and something fails if it stops being met. |
 | **WITHDRAWN** | **4** | T009–T012. The requirement was removed, not waived — see D6 revision 2. |
 | **MISSED** | **11** | T008, T015–T024. The behaviour is built and tested; the **failing-first ordering** the task asked for did not happen and cannot be created retrospectively. **Permanent classification by maintainer ruling of 2026-08-18, item 1** — these never become COMPLETED. |
-| **RULED** | **1** | T093a. Referred to the maintainer and **ruled on** 2026-08-18: principle VII amended to 3.0.0 rather than waived. The task asked for a referral and a recorded ruling, and both happened. |
+| **HUMAN-GATED** | **1** | T093a. **The gate was reached and discharged**: referred to the maintainer, ruled on 2026-08-18 — principle VII amended to 3.0.0 rather than waived. The category still describes what kind of task it is; the note records that the human decided. |
 | **OPEN** | **0** | — |
 | **Total** | **95** | |
 
@@ -527,7 +527,7 @@ builds; cancel at each prompt and assert the destination is absent.
 - [x] T091 Record in `governance/phase-003-evidence.md` which platforms `.github/workflows/ci.yml` actually exercised, and **claim no platform CI did not run** (SC-014)
 - [x] T092 Obtain, and record in `governance/phase-003-evidence.md`, two clean-context advisory reviews of the phase — one requirements, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings" statement naming what was checked
 - [x] T093 Disposition every review finding individually in `governance/phase-003-evidence.md`
-- [x] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it** **[RULED 2026-08-18 — the maintainer chose neither option offered and amended the principle instead: constitution 2.0.0 → 3.0.0, MAJOR, no waiver, W-007 explicitly not created. Recorded in `governance/constitution-amendment-3.0.0.md` and enforced by `config::flags::tests::every_governed_choice_of_principle_seven_is_classified`.]**
+- [x] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it** **[HUMAN-GATED — the gate was reached and DISCHARGED. Ruled 2026-08-18: the maintainer chose neither option offered and amended the principle instead: constitution 2.0.0 → 3.0.0, MAJOR, no waiver, W-007 explicitly not created. Recorded in `governance/constitution-amendment-3.0.0.md` and enforced by `config::flags::tests::every_governed_choice_of_principle_seven_is_classified`.]**
 - [x] T094 Record in `governance/phase-003-evidence.md` that the **independent human requirements and security review remains open**, that advisory reviews are not independent, and that this phase does **not** assume a waiver is available (FR-046)
 ---
 
@@ -580,7 +580,7 @@ reconcile against the other two.
 
 By status — see "Implementation status" above for what each word means:
 
-| COMPLETED | WITHDRAWN | MISSED | RULED | OPEN | Total |
+| COMPLETED | WITHDRAWN | MISSED | HUMAN-GATED | OPEN | Total |
 |---|---|---|---|---|---|
 | 79 | 4 | 11 | 1 | 0 | **95** |
 
