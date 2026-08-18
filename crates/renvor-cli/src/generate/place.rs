@@ -28,7 +28,16 @@ use crate::paths::Destination;
 pub struct Staging<'a> {
     parent: &'a Dir,
     name: String,
-    handle: Dir,
+    /// `Option` so it can be **closed before** the directory is renamed or removed.
+    ///
+    /// This is not stylistic. On Windows a directory with an open handle cannot be deleted, and
+    /// may not be renamable either — so a `Drop` that removed the directory while still holding a
+    /// handle on it would silently leave residue on one platform and work on the others. Taking
+    /// the handle first is correct everywhere and costs nothing.
+    ///
+    /// `dir()` unwraps it, which is safe because the only two places that clear it — `place` and
+    /// `drop` — both consume or end the value.
+    handle: Option<Dir>,
     placed: bool,
 }
 
@@ -78,7 +87,7 @@ impl<'a> Staging<'a> {
         Ok(Self {
             parent,
             name,
-            handle,
+            handle: Some(handle),
             placed: false,
         })
     }
@@ -98,7 +107,9 @@ impl<'a> Staging<'a> {
     /// perform an ambient operation with this, because it is not a path.
     #[must_use]
     pub fn dir(&self) -> &Dir {
-        &self.handle
+        self.handle
+            .as_ref()
+            .expect("the staging handle is only cleared when the value is consumed or dropped")
     }
 
     /// Moves the staged tree to the destination with a single rename.
@@ -141,6 +152,10 @@ impl<'a> Staging<'a> {
             ));
         }
 
+        // Close our handle on the staging directory BEFORE renaming it. See the field's docs:
+        // Windows treats an open handle as a reason to refuse.
+        drop(self.handle.take());
+
         self.parent
             .rename(&self.name, self.parent, target)
             .map_err(|error| {
@@ -170,6 +185,11 @@ impl Drop for Staging<'_> {
     /// **every** path including a panic, rather than only on the paths somebody remembered to
     /// write a cleanup for.
     fn drop(&mut self) {
+        // Close the handle first, unconditionally. On Windows an open handle blocks the removal
+        // below, which would turn "cleanup on failure" into "residue on failure" on exactly one
+        // platform — the kind of difference that shows up as a mysterious CI failure rather than
+        // as a bug report.
+        drop(self.handle.take());
         if !self.placed {
             let _ = self.parent.remove_dir_all(&self.name);
         }
@@ -275,6 +295,25 @@ mod tests {
         assert!(
             !base.path().join("demo/ours").exists(),
             "our tree leaked in"
+        );
+    }
+
+    #[test]
+    fn the_handle_is_closed_before_the_directory_is_removed() {
+        // Asserted through the observable consequence rather than by inspecting the field: after a
+        // drop, the directory must be gone. On Windows this fails if the handle is still open, and
+        // this test is why that is caught here rather than in CI on one platform.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let target = destination(base.path(), "demo");
+        let name = {
+            let staging = Staging::create(&target).expect("creates");
+            staging.dir().create_dir_all("deep/nested").expect("mkdir");
+            staging.dir().write("deep/nested/f", b"x").expect("write");
+            staging.name.clone()
+        };
+        assert!(
+            !base.path().join(&name).exists(),
+            "a non-empty staging directory survived its owner"
         );
     }
 

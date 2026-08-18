@@ -53,6 +53,31 @@ struct Context {
     modules: String,
 }
 
+/// Anything the operator should see on the review screen before agreeing.
+///
+/// Empty is a valid and common answer. A screen that manufactures a warning to look thorough
+/// teaches people to skip warnings.
+fn warnings_for(configuration: &ProjectConfiguration) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if configuration.local_https() == crate::config::model::LocalHttps::Requested {
+        // FR-036. The operator asked for local HTTPS; they are about to get a recorded intent and
+        // nothing else, and finding that out later would be a reasonable thing to be annoyed by.
+        warnings.push(
+            "local HTTPS is RECORDED ONLY: no certificate is issued and no trust store is \
+             modified by this or any later renvor command without a separate, explicit step"
+                .to_owned(),
+        );
+    }
+    if configuration.container() {
+        warnings.push(
+            "container controls are generated but not run; `renvor docker up` needs a container \
+             runtime"
+                .to_owned(),
+        );
+    }
+    warnings
+}
+
 /// Builds the `mod` block. See [`Context::modules`].
 fn module_block(example_domain: bool, seed_data: bool) -> String {
     let mut modules = Vec::new();
@@ -69,19 +94,40 @@ fn module_block(example_domain: bool, seed_data: bool) -> String {
     }
 }
 
+/// How much this run may ask.
+///
+/// # Why these are two flags and not one
+///
+/// Contract C-1 says `--yes` waives **confirmation only** — "it never waives validation". An
+/// earlier version of this function had a single `interactive` flag computed as
+/// `stdin.is_terminal() && !yes`, which made `--yes` skip the **wizard** as well. That is a
+/// different command: it substitutes defaults for answers the operator never gave, on a terminal,
+/// which is precisely what FR-010 forbids in the non-terminal case and what nothing authorises
+/// here.
+///
+/// So: `prompt` is "there is a terminal to ask on", and `confirm` is "and the operator has not
+/// waived the review".
+#[derive(Debug, Clone, Copy)]
+pub struct Interaction {
+    /// The wizard may fill answers the flags did not supply.
+    pub prompt: bool,
+    /// The review screen must be confirmed before placement.
+    pub confirm: bool,
+}
+
 /// Runs the command.
 ///
-/// `interactive` is whether the wizard may run — decided by the caller from whether `stdin` is a
-/// terminal, so this function has no ambient dependency on the process environment and stays
-/// testable.
+/// [`Interaction`] is decided by the caller from whether `stdin` is a terminal, so this function
+/// has no ambient dependency on the process environment and stays testable without a
+/// pseudo-terminal.
 pub fn run(
     reporter: &Reporter,
     answers: Answers,
-    interactive: bool,
+    interaction: Interaction,
     dry_run: bool,
 ) -> Result<Exit, CliError> {
     // ── 1. VALIDATE ─────────────────────────────────────────────────────────────────
-    let answers = if interactive {
+    let answers = if interaction.prompt {
         prompts::fill(answers)?
     } else {
         answers
@@ -117,7 +163,10 @@ pub fn run(
     //
     // It goes to `stderr`, because C-1 reserves `stdout` for the result. A JSON consumer must not
     // receive this.
-    if interactive {
+    // The review screen below prints this too. Printing it here as well would be duplication, so
+    // it is emitted here ONLY when there will be no review — a run with no confirmation still
+    // benefits from seeing the canonical form of what it just did.
+    if interaction.prompt && !interaction.confirm {
         reporter.note(&format!(
             "equivalent command: {}",
             configuration.equivalent_command()
@@ -163,6 +212,19 @@ pub fn run(
     // Taken AFTER verification, so it describes exactly the tree that will be renamed —
     // `Cargo.lock` included.
     let manifest = FileManifest::describe(staging.dir())?;
+
+    // ── 6. REVIEW AND CONFIRM ───────────────────────────────────────────────────────
+    //
+    // FR-009. After the manifest, because the screen must list the paths that WILL be created and
+    // the only way to know those is to have rendered them. Declining drops `staging`, which
+    // removes the tree — so the cost of asking late is a few seconds, and the benefit is that the
+    // list is true rather than predicted.
+    //
+    // Skipped for a dry run: a dry run writes nothing, so there is nothing to consent to.
+    if interaction.confirm && !dry_run {
+        let warnings = warnings_for(&configuration);
+        prompts::review(reporter, &configuration, &manifest, &warnings)?;
+    }
 
     if dry_run {
         // `staging` is dropped here, which removes the tree. FR-020: nothing was written.
@@ -240,6 +302,15 @@ mod tests {
         Reporter::new(Format::Human, true)
     }
 
+    /// No terminal, so neither the wizard nor the review runs — which is the state every test
+    /// here needs and the state a CI run is actually in.
+    fn quiet() -> Interaction {
+        Interaction {
+            prompt: false,
+            confirm: false,
+        }
+    }
+
     #[test]
     fn the_module_block_produces_the_blank_lines_rustfmt_wants() {
         // The exact strings, because one extra newline here is a `cargo fmt --check` failure in
@@ -254,7 +325,7 @@ mod tests {
     fn a_project_is_generated_and_the_destination_appears_exactly_once() {
         let base = tempfile::tempdir().expect("tempdir");
         let target = base.path().join("commerce");
-        let exit = run(&reporter(), answers(target.clone()), false, false).expect("generates");
+        let exit = run(&reporter(), answers(target.clone()), quiet(), false).expect("generates");
         assert_eq!(exit, Exit::Success);
         assert!(target.join("Cargo.toml").is_file());
         assert!(target.join("src/main.rs").is_file());
@@ -267,7 +338,7 @@ mod tests {
         // directory left beside it would also be a write.
         let base = tempfile::tempdir().expect("tempdir");
         let target = base.path().join("commerce");
-        run(&reporter(), answers(target.clone()), false, true).expect("dry run");
+        run(&reporter(), answers(target.clone()), quiet(), true).expect("dry run");
         assert!(!target.exists(), "the destination was created by a dry run");
         let leftovers: Vec<_> = std::fs::read_dir(base.path())
             .expect("read_dir")
@@ -335,7 +406,7 @@ mod tests {
         // contain a Dockerfile that the manifest would then record as an honoured choice.
         let base = tempfile::tempdir().expect("tempdir");
         let target = base.path().join("plain");
-        run(&reporter(), answers(target.clone()), false, false).expect("generates");
+        run(&reporter(), answers(target.clone()), quiet(), false).expect("generates");
         assert!(!target.join("Dockerfile").exists());
         assert!(!target.join("compose.yaml").exists());
         assert!(!target.join("src/domain.rs").exists());
@@ -351,7 +422,7 @@ mod tests {
         a.container = true;
         a.example_domain = true;
         a.seed_data = true;
-        run(&reporter(), a, false, false).expect("generates");
+        run(&reporter(), a, quiet(), false).expect("generates");
         assert!(target.join("Dockerfile").is_file());
         assert!(target.join("compose.yaml").is_file());
         assert!(target.join("src/domain.rs").is_file());

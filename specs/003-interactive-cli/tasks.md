@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**27 of 95 tasks complete. This section states what is built and what is not, because a task list
+**29 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -36,7 +36,7 @@ with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It
 → manifest → place → report), with a `Drop`-enforced guarantee that any failure before placement
 leaves the destination untouched. `renvor doctor`, `renvor check`, `renvor dev`, and
 `renvor docker up|down|status|logs`. The complete flag surface including reserved-flag refusal.
-The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard.
+The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard and the FR-009 review-and-confirm screen.
 The embedded template catalogue and bounded rendering. **107 tests**, `cargo xtask verify` green on
 all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
@@ -46,7 +46,19 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
-2. **Phase 002 proof-gate obligation 8 had its scope corrected**, in
+2a. **A Windows-only correctness bug in the transaction, found by the advisory platform matrix.**
+   `Staging` held an open `cap_std::fs::Dir` handle on the directory its `Drop` then removed and
+   its `place` then renamed. On Unix that is fine; **Windows refuses both with `os error 32`**, so
+   the transaction's central guarantee — a failure leaves nothing behind — was **false on Windows**
+   while every Unix test passed. Fixed by closing the handle before either operation, with a test
+   asserting the observable consequence. Worth stating: the `platform` matrix jobs are
+   **advisory, not required**, so treating an advisory failure as ignorable would have shipped this.
+
+2b. **A contract bug in `--yes`, found while implementing T031.** It was computed as
+   `stdin.is_terminal() && !yes`, which made `--yes` skip the **wizard**. C-1 says it waives
+   "confirmation only". Prompting and confirming are now two separate flags.
+
+3. **Phase 002 proof-gate obligation 8 had its scope corrected**, in
    `crates/renvor-config/tests/proof_gate.rs`. It scanned the whole workspace lockfile for
    `serde_json` while its rationale is about **configuration source formats**; Phase 003 needs
    `serde_json` for `--output json`, which is a **machine-readable output format**. The check now
@@ -62,9 +74,6 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
   this plan says it is.
 - **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;
   they were **not** written failing-first, and that ordering was the point.
-- **T031, T032** — the review screen and confirmation. The equivalent non-interactive command is
-  printed after a wizard run; the review-and-confirm step itself is absent, so `--yes` currently
-  waives nothing because there is nothing to waive.
 - **T042–T052** — the non-interactive parity work as specified, including the byte-identical
   serialisation comparison between the two interfaces.
 - **T053–T060** — the hostile-path suite as a named file.
@@ -135,8 +144,8 @@ builds; cancel at each prompt and assert the destination is absent.
 - [x] T028 [US1] Implement the wizard in `crates/renvor-cli/src/config/prompts.rs`, asking **only** the prompts this phase honours (FR-005a): name and destination, local domain, container, local HTTPS, seed data, example domain
 - [x] T029 [US1] Gate wizard entry on `std::io::IsTerminal` in `crates/renvor-cli/src/config/prompts.rs`, and map `InquireError::NotTTY` as an independent backstop (research D2, D12) — two mechanisms, because FR-010 forbids two distinct failure modes
 - [x] T030 [US1] Map `InquireError::OperationCanceled` and `OperationInterrupted` to exit `4` in `crates/renvor-cli/src/config/prompts.rs`, distinct from every failure code
-- [ ] T031 [US1] Implement the review screen in `crates/renvor-cli/src/config/prompts.rs` listing resolved selections, paths to be created, warnings, and **the exact equivalent non-interactive command** (FR-009)
-- [ ] T032 [US1] Ensure declining confirmation still prints the equivalent command in `crates/renvor-cli/src/config/prompts.rs`, so the answers are not lost (US1 acceptance scenario 3)
+- [x] T031 [US1] Implement the review screen in `crates/renvor-cli/src/config/prompts.rs` listing resolved selections, paths to be created, warnings, and **the exact equivalent non-interactive command** (FR-009)
+- [x] T032 [US1] Ensure declining confirmation still prints the equivalent command in `crates/renvor-cli/src/config/prompts.rs`, so the answers are not lost (US1 acceptance scenario 3)
 - [x] T033 [US1] Implement staging in `crates/renvor-cli/src/generate/staging.rs`: a uniquely named directory **inside the destination's parent**, never the system temporary directory (contract C-5) (FR-011)
 - [x] T034 [US1] Implement bounded rendering in `crates/renvor-cli/src/generate/render.rs` with strict-undefined behaviour and an **allow-listed** filter and function set (FR-026, FR-027, FR-028)
 - [x] T035 [US1] Implement `FileManifest` in `crates/renvor-cli/src/generate/manifest.rs`: sorted by path, SHA-256 per file, symbolic links not followed (invariants I-9, I-11)

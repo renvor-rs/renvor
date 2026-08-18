@@ -190,6 +190,12 @@ impl ProjectConfiguration {
         &self.name
     }
 
+    /// The destination as it will be reported, **for display only**. Not a capability.
+    #[must_use]
+    pub fn destination_display(&self) -> String {
+        self.destination.display().to_string()
+    }
+
     /// The local development domain.
     #[must_use]
     pub fn local_domain(&self) -> &str {

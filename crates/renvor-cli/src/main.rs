@@ -74,10 +74,15 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
     match cli.command {
         Command::New(args) => {
             let answers = (*args).into_answers()?;
-            // C-1: the wizard is entered ONLY when stdin is a terminal, and `--yes` waives
-            // confirmation rather than requesting non-interactivity.
-            let interactive = std::io::stdin().is_terminal() && !yes;
-            commands::new::run(reporter, answers, interactive, dry_run)
+            // C-1, exactly: the wizard is entered ONLY when stdin is a terminal, and `--yes`
+            // waives **confirmation** rather than requesting non-interactivity. Folding these into
+            // one flag would make `--yes` substitute defaults for answers nobody gave.
+            let terminal = std::io::stdin().is_terminal();
+            let interaction = commands::new::Interaction {
+                prompt: terminal,
+                confirm: terminal && !yes,
+            };
+            commands::new::run(reporter, answers, interaction, dry_run)
         }
         Command::Doctor => commands::doctor::run(reporter),
         Command::Check { path } => commands::check::run(reporter, &path),

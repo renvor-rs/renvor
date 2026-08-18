@@ -26,6 +26,8 @@
 
 use inquire::{Confirm, Text, error::InquireError};
 
+use crate::generate::manifest::FileManifest;
+
 use super::model::Answers;
 use crate::exit::{CliError, Code};
 
@@ -122,6 +124,75 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
     }
 
     Ok(answers)
+}
+
+/// Presents the review screen and asks for confirmation (FR-009).
+///
+/// # Why this runs after rendering rather than before it
+///
+/// FR-009 requires the screen to list **the paths that will be created**. The only way to know
+/// those is to render — a list predicted from the template catalogue would drift the first time a
+/// template gained a conditional, and would then be a screen that confidently describes a project
+/// other than the one about to appear.
+///
+/// So the transaction renders and verifies into staging first, shows this, and only then performs
+/// the rename. Declining costs a few seconds of work and leaves the destination untouched, which
+/// is the right trade against showing an operator a list that might be wrong.
+///
+/// # Declining is not a failure of the answers
+///
+/// The equivalent command is printed **before** the question, so it is on screen whether the
+/// operator says yes or no. US1 acceptance scenario 3 requires that declining not lose the
+/// answers, and printing it only on the success path would lose exactly the case the requirement
+/// is about.
+///
+/// # Errors
+///
+/// [`Code::Cancelled`] (exit `4`) if the operator declines or interrupts.
+pub fn review(
+    reporter: &crate::output::Reporter,
+    configuration: &super::model::ProjectConfiguration,
+    manifest: &FileManifest,
+    warnings: &[String],
+) -> Result<(), CliError> {
+    reporter.note("");
+    reporter.note(&format!("  project      {}", configuration.name()));
+    reporter.note(&format!(
+        "  destination  {}",
+        configuration.destination_display()
+    ));
+    reporter.note(&format!("  local domain {}", configuration.local_domain()));
+    reporter.note(&format!(
+        "  files        {} ({} bytes)",
+        manifest.file_count(),
+        manifest.total_bytes()
+    ));
+    for path in manifest.paths() {
+        reporter.note(&format!("    {path}"));
+    }
+    for warning in warnings {
+        reporter.note(&format!("  warning: {warning}"));
+    }
+    reporter.note("");
+    reporter.note(&format!(
+        "  equivalent command: {}",
+        configuration.equivalent_command()
+    ));
+    reporter.note("");
+
+    let confirmed = Confirm::new("Create this project?")
+        .with_default(true)
+        .prompt()
+        .map_err(from_inquire)?;
+
+    if !confirmed {
+        return Err(CliError::new(
+            Code::Cancelled,
+            "declined; nothing was written and the destination is unchanged. The equivalent \
+             command above reproduces these answers without the prompts",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
