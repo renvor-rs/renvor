@@ -4,12 +4,26 @@ How decisions get made in Renvor, who makes them, and how this document changes.
 
 ## Supreme authority
 
-The [**Renvor Constitution**](CONSTITUTION.md) — **version 1.0.0, ratified 2026-08-11** —
-is the highest authority in this project. Where this document and the constitution
-conflict, the constitution wins, and the conflict is a defect in this document.
+The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.0, ratified 2026-08-11,
+last amended 2026-08-18** — is the highest authority in this project. Where this document
+and the constitution conflict, the constitution wins, and the conflict is a defect in
+this document.
+
+> **This line said `1.0.0` until 2026-08-18, through two amendments.** It was stale from
+> 2026-08-17, when ADR-0010 took the constitution to 2.0.0, and nobody noticed for a day —
+> which is exactly the class of drift the constitution's amendment item 6 ("synchronization
+> of affected templates and guidance") exists to prevent. Recorded rather than quietly
+> corrected. **The constitution itself is the authority on its own version; if this line and
+> `CONSTITUTION.md` ever disagree again, `CONSTITUTION.md` wins.**
 
 The constitution can only be amended through the process stated in its own Governance
 section. It is not amended by practice, precedent, or convenience.
+
+| Version | Date | Change | Record |
+|---|---|---|---|
+| **3.0.0** | 2026-08-18 | Principle VII's wizard-scope sentence redefined for staged delivery. MAJOR. **No waiver created** | [`governance/constitution-amendment-3.0.0.md`](governance/constitution-amendment-3.0.0.md) |
+| 2.0.0 | 2026-08-17 | Principles VII and XIII name `renvor` rather than `renover`. MAJOR | [`decisions/0010-unify-product-and-executable-name.md`](decisions/0010-unify-product-and-executable-name.md) |
+| 1.0.0 | 2026-08-11 | Ratified | — |
 
 ## Roles
 
@@ -194,7 +208,7 @@ and is not something W-001 waives — W-001 covers the *approving review* requir
 
 | Document | Covers |
 |---|---|
-| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v1.0.0, ratified 2026-08-11 |
+| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v3.0.0, ratified 2026-08-11, last amended 2026-08-18 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, verification, dependency policy, licensing of contributions |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting and response commitments |
