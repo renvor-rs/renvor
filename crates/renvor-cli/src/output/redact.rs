@@ -46,6 +46,77 @@ const SECRET_KEYS: [&str; 8] = [
     "authorization",
 ];
 
+/// Neutralises terminal control sequences in text bound for a **human** stream.
+///
+/// # The finding this exists for, reproduced before it was fixed
+///
+/// An advisory security review found that `--path` components other than the **final** one reach
+/// the terminal with their bytes intact. `Destination::open`'s RULE 1b refuses a control character
+/// in the directory renvor is about to *create*, but a directory that already exists two levels up
+/// — planted, extracted from an archive, or on a shared mount — is opened by RULE 3 and its name is
+/// then interpolated into the success message, the `destination_exists` message, and the
+/// `destination_parent_missing` message.
+///
+/// Measured with `od -c`, not inferred:
+///
+/// ```text
+/// c r e a t e d   6   f i l e s   ( 8 7 1   b y t e s )   i n   o
+/// u t 2 / 033 [ 3 1 m R E D 033 [ 0 m / d e m o \n
+/// ```
+///
+/// Those `033` bytes are `ESC`. In a real terminal that line renders in red rather than showing the
+/// text, and other sequences can move the cursor, erase what is above them, or — with OSC — reach
+/// the window title and, on some terminals, the clipboard. So the operator can be shown a
+/// destination that is not the one on disk, which is **precisely** the reasoning RULE 1b's own
+/// message gives for refusing control characters. The program already agreed this mattered; it
+/// enforced it in one place and not the other.
+///
+/// # Why here and not in [`line()`]
+///
+/// [`line()`] is applied to the JSON path as well (see [`super::json`]), where `serde_json` already
+/// escapes these bytes correctly. Escaping them a second time would put a literal `\u{1b}` into a
+/// JSON string and then escape *its* backslash — corrupting the contract in order to fix a problem
+/// that path does not have. This runs only on the two human-mode writes in [`super::Reporter`].
+///
+/// # Why escaped rather than stripped
+///
+/// Stripping makes the displayed path silently different from the real one, which is the same lie
+/// told more quietly. `\u{1b}` shows the operator exactly what is there.
+///
+/// # Newline and tab are deliberately left alone, and that is a residual
+///
+/// renvor's own messages are legitimately multi-line — `generate::verify` embeds cargo's stderr
+/// verbatim — so escaping `\n` would turn a compiler error into one unreadable line. A newline
+/// injected through a **non-final** path component therefore still reaches the terminal and can
+/// still forge a log line. In the **final** component, which is the one renvor creates, RULE 1b
+/// refuses it outright. The residual is stated rather than designed around.
+#[must_use]
+pub fn for_terminal(input: &str) -> String {
+    // Fast path: the overwhelming majority of lines have nothing to escape, and allocating a new
+    // string for every one of them to change nothing is waste with no upside.
+    if !input.chars().any(needs_escaping) {
+        return input.to_owned();
+    }
+    input
+        .chars()
+        .flat_map(|character| {
+            // `escape_debug` renders ESC as `\u{1b}` and is `char`-aware, so the C1 range
+            // (U+0080–U+009F) — which `is_control` also covers — is handled without byte fiddling.
+            let escaped: Box<dyn Iterator<Item = char>> = if needs_escaping(character) {
+                Box::new(character.escape_debug())
+            } else {
+                Box::new(std::iter::once(character))
+            };
+            escaped
+        })
+        .collect()
+}
+
+/// Every control character except the two that carry meaning in renvor's own output.
+fn needs_escaping(character: char) -> bool {
+    character.is_control() && character != '\n' && character != '\t'
+}
+
 /// Redacts credential-shaped material in a line of output.
 ///
 /// Handles `key=value` and `key: value`, which is what a configuration dump, an environment
@@ -185,5 +256,99 @@ mod tests {
     #[test]
     fn the_marker_is_a_single_greppable_string() {
         assert_eq!(REDACTED, "[redacted]");
+    }
+
+    #[test]
+    fn a_terminal_escape_sequence_is_neutralised() {
+        // THE REPRODUCTION, as a test. Measured before the fix with `od -c`: the raw ESC bytes
+        // reached the terminal, so the destination rendered in red rather than as text.
+        let hostile = "created 6 files in out/\u{1b}[31mRED\u{1b}[0m/demo";
+        let safe = for_terminal(hostile);
+        // ── THE MESSAGES IN THIS MODULE'S TESTS DELIBERATELY PRINT NOTHING BACK ──────
+        //
+        // `renvor-core`'s `diagnostics` suite refuses an interpolated rendering in an assertion
+        // message inside a credential-handling file, and it caught these tests when they were first
+        // written. Its reasoning is exact: on a redaction regression the value being asserted about
+        // IS the leaked credential, so the failure message would print it into the test log — the
+        // one run where that matters most. Fixed text, or an index, instead.
+        assert!(
+            !safe.contains('\u{1b}'),
+            "an ESC byte survived into human output"
+        );
+        assert!(
+            safe.contains("\\u{1b}[31m"),
+            "the sequence must be shown, not silently removed — an operator who cannot see it \
+             cannot tell the path is not what it looks like"
+        );
+    }
+
+    #[test]
+    fn the_whole_control_range_is_covered_not_just_escape() {
+        for (index, (character, _name)) in [
+            ('\u{1b}', "ESC"),
+            ('\r', "CR"),
+            ('\u{7}', "BEL"),
+            ('\u{8}', "backspace"),
+            ('\u{b}', "vertical tab"),
+            ('\u{c}', "form feed"),
+            ('\u{0}', "NUL"),
+            ('\u{9b}', "C1 CSI"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let out = for_terminal(&format!("a{character}b"));
+            // The INDEX, not the rendering — see the note in the test above. The names are kept in
+            // the table so a reader can see WHAT is covered without the failure printing it.
+            assert!(
+                !out.contains(character),
+                "the control character at index {index} of this list survived"
+            );
+        }
+    }
+
+    #[test]
+    fn newline_and_tab_survive_because_renvors_own_messages_use_them() {
+        // NEGATIVE CONTROL, and a deliberate limitation rather than an oversight. `generate::verify`
+        // embeds cargo's stderr verbatim; escaping `\n` would turn a compiler error into one
+        // unreadable line. A neutraliser that mangles ordinary output gets switched off.
+        let multiline = "the generated project does not compile:\nerror[E0425]:\n\tnot found";
+        assert_eq!(
+            for_terminal(multiline),
+            multiline,
+            "newline and tab must pass through untouched"
+        );
+    }
+
+    #[test]
+    fn ordinary_output_is_returned_unchanged() {
+        // POSITIVE CONTROL. A function that rewrote everything would satisfy the assertions above
+        // and would make every message unreadable.
+        for (index, ordinary) in [
+            "created 6 files (879 bytes) in /tmp/demo",
+            "next: cd demo && cargo run",
+            "error: `/tmp/demo` already exists (it is a directory)",
+            "a path with spaces and punctuation: my.project-2_final!",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                for_terminal(ordinary),
+                ordinary,
+                "the ordinary line at index {index} of this list was altered"
+            );
+        }
+    }
+
+    #[test]
+    fn redaction_and_neutralisation_compose_in_the_order_the_reporter_uses() {
+        // Both are needed and neither subsumes the other: one hides a value, the other stops the
+        // text reprogramming the terminal. This asserts the composition the `Reporter` performs.
+        let hostile = "token=secret\u{1b}[31m";
+        let out = for_terminal(&line(hostile));
+        // Printing `out` here would print the secret on exactly the failure that matters.
+        assert!(out.contains(REDACTED), "the secret was not redacted");
+        assert!(!out.contains('\u{1b}'), "the escape sequence survived");
     }
 }

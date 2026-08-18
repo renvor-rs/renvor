@@ -200,8 +200,15 @@ consequence of this amendment. The migration is documentary and forward-looking.
    Constitution` heading onward.
 3. Every tracked document citing constitution v2.0.0 or quoting the old sentence updated.
 4. A test added — `crates/renvor-cli/src/config/flags.rs`,
-   `the_amended_principle_seven_is_satisfied_by_this_phase` — that fails if a reserved flag stops
+   `every_governed_choice_of_principle_seven_is_classified` — that fails if a reserved flag stops
    naming its phase or a new reserved flag is added without one. Compliance is checked, not asserted.
+
+   *Corrected 2026-08-18.* This line originally named a test
+   `the_amended_principle_seven_is_satisfied_by_this_phase`, **which does not exist**: the citation
+   was written before the test was, and the test was then given a different name. An advisory
+   requirements review found it by grepping for the name and getting no hits (finding R-1). The
+   guarantee described was real all along; the pointer to it was not, and a reader checking this
+   claim would have concluded the enforcement was missing.
 
 **At the start of each later phase, as a phase-entry obligation:**
 

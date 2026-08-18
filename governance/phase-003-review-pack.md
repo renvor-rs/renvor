@@ -132,6 +132,7 @@ them unreliable too.
 | **S10** | Staging is never the system temporary directory | `place.rs:66` | It sits beside the destination so the final step can be a rename. |
 | **S11** | **The destination must not exist, in any form** | `paths.rs:304` (RULE 4) and `place.rs:174` (STEP 1) | Added 2026-08-18. Empty directory, non-empty directory, regular file, symbolic link, dangling symbolic link — all refused with `destination_exists`. `symlink_metadata` and **not** `metadata`, so a link is seen rather than followed and a dangling link does not read as absence. |
 | **S12** | **An unverifiable destination fails closed** | `paths.rs:304`, `place.rs:174` | Added 2026-08-18. Only an authoritative `NotFound` proceeds. The previous code asked a second question after the first failed and, when that failed too, fell through to success. The original OS error is carried into the message and `details.error`, not discarded. |
+| **S14** | **No control byte from a path reaches a human stream** | `output::redact::for_terminal`, on both human writes in `Reporter` | Added 2026-08-18 after advisory finding **G/S-1**, reproduced with `od -c`: RULE 1b guards only the component renvor *creates*, so a pre-existing directory higher up the `--path` put raw `ESC` bytes into the success message and two error messages, and the operator was shown a destination that renders rather than reads. Escaped, not stripped — stripping is the same lie told quietly. **Not** applied inside `redact::line`, which is also on the JSON path where `serde_json` already escapes; doing it there would corrupt the contract. `\n` and `\t` are deliberately exempt so cargo's multi-line stderr stays readable, which leaves a stated residual: a newline in a **non-final** component still passes. |
 | **S13** | **No production path removes the destination** | `place.rs` — asserted by `no_production_path_removes_the_destination` | Added 2026-08-18. The test reads this module's own source and requires that the single removal in it names `&self.name`, this process's own staging directory. A blunt instrument, used knowingly: the code it replaced was written by someone who also believed it was safe. |
 
 ## 4. Traversal and symlinks — read this section carefully
@@ -346,7 +347,7 @@ state is not absence — the same rule as `paths.rs` RULE 4, applied at the last
 | `a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_project` | `tests/transaction.rs` | `SIGKILL`; residue is beside, named, and no project exists |
 | `staging_names_are_unique_within_one_process` | `place.rs` | 256 names, all distinct |
 
-**Result at the head of this branch**: all pass — **212 tests** in `renvor-cli`, **557** across the
+**Result at the head of this branch**: all pass — **218 tests** in `renvor-cli`, **563** across the
 workspace — on `ubuntu-latest`, `macos-latest`, and `windows-latest`, on both `1.94.0` and `stable`.
 
 ## 10. What a reviewer should try to break
@@ -369,7 +370,11 @@ Suggested, in descending order of value:
    rule has **no Windows-specific test**.
 6. **Challenge the I-17 trade-off** (§6.1). It is a stated residual risk, not a solved problem, and
    the empty-directory replacement it describes is a real data-loss window on Unix.
-7. **Challenge the `schemaVersion` decision.** Retiring `destination_not_empty` and adding four codes
+7. **Attack the human output path.** `for_terminal` escapes control characters except `\n` and
+   `\t`. The exemption is deliberate and is a **stated residual** — a newline injected through a
+   non-final `--path` component still reaches the terminal and can forge a log line. If you think
+   that trade is wrong, or you find a control sequence the escaper misses, that is a finding.
+8. **Challenge the `schemaVersion` decision.** Retiring `destination_not_empty` and adding four codes
    was ruled a breaking change and bumped `1 → 2`. If you think adding codes alone would not have
    required it, the reasoning is in `contracts/json-output.md` *Schema history*.
 

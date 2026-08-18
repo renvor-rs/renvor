@@ -327,46 +327,108 @@ _same_fixtures_succeeds` and `an_unrecognised_injection_point_is_not_a_failure` 
 
 ## 6. Advisory reviews (T092) and their disposition (T093)
 
-### 6.0 The post-ruling advisory reviews were commissioned and DID NOT REPORT
+### 6.0 The post-ruling advisory reviews — commissioned, and they DID report
 
-Recorded first, because the honest answer is a negative one and burying it below three successful
-reviews would misrepresent the state of this section.
+> **This section previously said they did not.** That statement was written after five unanswered
+> requests and was **false**: all four reported, and one of them found a real, reproduced defect that
+> is now fixed. The error is recorded rather than quietly overwritten, because a governance document
+> that asserted a negative it had not established is the same failure mode this phase keeps finding
+> in its own tests.
 
 The maintainer's instruction of 2026-08-18 item 8 required *"new clean-context requirements and
-security advisory reviews"* against the corrected code. **Four were commissioned** — two broad
-(requirements, security) and, when those did not return, two deliberately narrowed with an explicit
-work budget. **None returned a report within the session.** They were asked to report five, four,
-three, two, and one time respectively; each request explicitly said a partial report was preferable
-to none.
+security advisory reviews"* against the corrected code. **Four were commissioned** — two broad, and
+two deliberately narrowed with an explicit work budget when the first pair were slow. All four
+reported. All are **NON-INDEPENDENT and ADVISORY** and none discharges §8.
 
-**So the post-ruling code carries no new advisory review**, and nothing in this document should be
-read as if it does. What was done instead is weaker and is named as such:
-
-| Instead of | What was actually done | Why it is weaker |
+| Review | Scope | Outcome |
 |---|---|---|
-| A clean-context requirements review | The author re-read the whole diff against the published contracts, and cross-checked the four representations of the task counts and the three of the error registry by script (§6.7, §9) | The author knows what the code is supposed to do, so this can find disagreements between documents but not requirements nobody thought of |
-| A clean-context security review | The author traced every error path in `paths.rs` and `place.rs` by hand, probed the shipped binary against entry kinds no test covered, and swept every refusal class for residue (§6.8, §6.9) | Same. It attacks the design the author has in mind, not the one an adversary would look for |
+| **D — requirements**, broad | re-verified its own earlier findings against the new code; checked the version sync | **0 new.** Confirmed R2 and R3 from its earlier pass are genuinely fixed, not doc-patched; agreed `specs/002-core-kernel/plan.md` should stay at v1.0.0 as Phase 002's historical record |
+| **E — security**, broad | re-attacked the destination boundary and redaction against the rebuilt binary | **0 new.** Confirmed the lost-race `found` stat cannot influence classification, and `describe`'s symlink-first ordering, both empirically. Its earlier **S1** is addressed below |
+| **F — requirements**, budgeted | FR-013 vs code, the registry, the ledger, the amendment, claims-versus-evidence | **1 finding: R-1 (Medium)** — plus a non-blocking note on the new staging cleanup |
+| **G — security**, budgeted | the four destination claims, attacked against the real binary | **1 finding: S-1 (Medium), reproduced with `od -c`** |
 
-**It was not fruitless, which is the argument for recording it rather than skipping it.** Three real
-defects came out of it, all in code written the same day to satisfy the rulings:
+### 6.0.1 Disposition of the two new findings
 
-1. `destination_exists` carried the contract's published `details` at one emit site and not the
-   other (§6.7);
-2. `place.rs`'s fail-closed arm reported `placement_failed` — reintroducing the exact category error
-   that finding A-R6 was about, inside the commit that fixed A-R6 (§6.7);
-3. `Staging::create` orphaned the staging directory it had just created if `open_dir` failed, while
-   reporting *"Nothing was written"* (§6.8).
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| **G/S-1** | Medium | **Control characters and ANSI escapes reach the terminal unescaped in human mode**, via a `--path` component other than the final one. RULE 1b guards only the directory renvor *creates*; a pre-existing directory two levels up is opened by RULE 3 and its raw bytes are interpolated into the success message and two error messages. Reproduced with `od -c` | **FIXED.** `redact::for_terminal` neutralises control characters on the two human write sites in `Reporter`. **Not** inside `redact::line`, which is also on the JSON path where `serde_json` already escapes correctly — doing it there would put a literal `\u{1b}` in a document and escape *its* backslash, corrupting the contract to fix a problem that path does not have. Escaped rather than stripped, because stripping makes the displayed path silently differ from the real one, which is the same lie told quietly. Demonstrated failing: with the two call sites reverted, `no_raw_control_byte_from_a_path_ever_reaches_a_human_stream` fails with *"a raw ESC byte reached a human stream"* |
+| **F/R-1** | Medium | `constitution-amendment-3.0.0.md` cited a test named `the_amended_principle_seven_is_satisfied_by_this_phase`. **No such test exists.** The guarantee is real and is provided by `every_governed_choice_of_principle_seven_is_classified`; the citation was written before the test was and never updated | **FIXED.** Citation corrected, with the error recorded in place rather than silently replaced. A reader checking the claim by grepping would have concluded the enforcement was missing. Every identifier-shaped string in `governance/` and `specs/003-interactive-cli/` was then swept against the crate's actual definitions; this was the only test citation that did not resolve |
 
-None of the three was caught by a test before it was found by reading.
+**Newline and tab are deliberately not escaped**, and that is a stated residual rather than an
+oversight: `generate::verify` embeds cargo's stderr verbatim, so escaping `\n` would turn a compiler
+error into one unreadable line. A newline injected through a *non-final* path component therefore
+still reaches the terminal. In the final component — the one renvor creates — RULE 1b refuses it.
 
-**This does not weaken the independent-review requirement in §8 — it strengthens the case for it.**
-Three defects in one day's work, found by the author only because he went looking a second time, is
-evidence about how much a first pass misses.
+### 6.0.2 Two findings that did NOT need action, and why
+
+| Finding | Verdict |
+|---|---|
+| **E/S1** — *"`--path`'s final component bypasses the character-set rule"*, reproduced by that reviewer at an earlier commit with an embedded newline and a trailing dot-space | **STALE for the part that mattered, DELIBERATE for the rest** — and re-tested rather than assumed. `renvor new x --path 'out/inject⏎LINE'` now answers `destination_rejected`, `rule = name_control_character`, and creates nothing: RULE 1b (finding C-S1) had already closed the control-character and trailing-dot-space cases before this review ran. The remaining half — that `weird!@#name` is accepted as a *directory* name while being refused as a *project* name — is **intended**, is documented in RULE 1b's own comment, and has a control test proving `my.project`, `my project`, and `v1.2.3` still work. Refusing them would break ordinary use to prevent nothing |
+| **F/minor** — the new `let _ = parent.remove_dir_all(&name)` cleanup is best-effort; a double failure could still orphan a staging directory | **ACCEPTED, and stated.** Correct. It is a strictly narrower recurrence of the bug it fixes, on a path that requires the cleanup to fail *as well as* the `open_dir` that triggered it. Escalating it means deciding what a program does when it cannot clean up after itself, which is a design question rather than a sweep |
+
+### 6.0.5 Two of this repository's own guards caught the fix for S-1
+
+Worth recording, because both are guards written earlier in this phase doing exactly what they were
+built for, against code written to satisfy an advisory finding:
+
+1. **`renvor-core`'s `diagnostics` suite refused the new tests.** It forbids an assertion message in
+   a **credential-handling file** from interpolating a rendered value, and named all ten sites. The
+   reasoning is exact and I had not thought of it: on a redaction regression, the value being
+   asserted about *is* the leaked credential, so the failure message prints it into the test log —
+   the one run where that matters most. Every message is now fixed text or an index, with the tables
+   kept so a reader can still see what is covered.
+2. **`cargo xtask verify` step 5 refused the new doc comment**, because `[`line`]` is ambiguous
+   between the function and the `line!` macro. Disambiguated to `[`line()`]`.
+
+Neither was found by me. Both were found by tooling this phase had already put in place, which is
+the argument for the tooling.
+
+### 6.0.3 What the reviews confirmed held
+
+Recorded because a list of what was attacked and did not break is a result, not filler:
+
+- **Every destination kind refused** — empty directory, non-empty directory (contents verified
+  intact), regular file, live symlink, **dangling** symlink, FIFO, socket; `found` correctly
+  classified in each.
+- **The `bc84c49` staging cleanup attacked directly** against both halves of its safety argument,
+  using a standalone program against the pinned `cap-std` 4.0.2 rather than racing: `create_dir`
+  returned `AlreadyExists` on all five occupied-name variants **including a dangling symlink** (it
+  is not dereferenced to create at the link's target), and `remove_dir_all` on a name swapped for a
+  symlink — pointing both inside and outside the parent — removed only the dentry and left the
+  victim directory and its contents intact. The claim *"it can only ever remove our own just-created
+  directory"* holds under adversarial testing of both preconditions.
+- **Fail-closed is structural**, not merely tested: every `symlink_metadata` match in both files has
+  exactly one proceed arm. Forced live with a 300-character component → `destination_rejected` /
+  `destination_unverifiable`, original OS error preserved, no crash.
+- **No bypass** from a trailing slash, a case-only collision on case-insensitive APFS, a symlinked
+  parent, or Unicode full-width lookalikes for `..`.
+- **Redaction held** on secret-shaped destinations in both output modes and on error paths.
+- **The registry** was cross-read site by site: every code that promises `details.*` keys attaches
+  them at every emit site.
+- **The amendment's scope** was verified by `diff` against `08d3f89:CONSTITUTION.md`: only the one
+  sentence changed; the four following paragraphs are byte-identical. No `W-007` in the ledger.
+
+### 6.0.4 What the reviews explicitly could not reach
+
+Carried forward into §8 as work for the independent human, not left implicit:
+
+- **Windows**, entirely — all four ran on macOS. The non-atomic `MoveFileEx` rename, the
+  open-handle-blocks-delete path, reserved device names, and trailing dot/space stripping are
+  untested by these reviews. CI exercises them; no adversary has.
+- **A live TOCTOU race** against either the `create_dir`→`open_dir` window or the rename window.
+  Reviewer G tested the equivalent worst case by direct API substitution — stronger in one sense,
+  since it grants the attacker full control rather than requiring them to win a race, and not
+  identical to winning one under real scheduling.
+- **The TLS consent gate against a real OS keychain**, template and subprocess injection in
+  `render.rs`/`verify.rs` beyond reading, and the whole `docker` surface.
+- **Whether S-1 is reachable through any input other than `--path`**, and broader Unicode work —
+  RTL overrides, zero-width characters, homoglyphs.
+- Reviewer F did not run `cargo test` at all; its cross-checks were manual reading.
 
 ### 6.1 Standing label
 
 **All three reviews below are NON-INDEPENDENT and ADVISORY.** They predate the 2026-08-18 rulings
-and describe the code as it stood before them; see §6.0 for what happened to the post-ruling reviews. They were performed by AI agents in
+and describe the code as it stood before them; §6.0 covers the four reviews run *after* the rulings. They were performed by AI agents in
 clean context — each was given the repository, the specification, and an adversarial brief, and none
 was given this session's history or any account of what the author believed to be true. That design
 is what made them useful. It does **not** make them independent, and they do **not** discharge the
@@ -425,12 +487,18 @@ the fix second.
 | **B-R3** | Low | The redaction "corpus" is two values through one injection point; no dry-run-specific case | **PARTIALLY FIXED.** A successful-run case through both output modes is added (this is what caught A-R4). Broadening to more `SECRET_KEYS` and an explicit dry-run case is not done. |
 | **C-S1** | Low-Med | The **path-derived** directory name reached no character check, so `--path $'…/inject\nLINE'` created a directory with an embedded newline and `…/trailing. ' created one Windows silently renames — while the same strings in the NAME position were correctly refused | **FIXED.** Control characters and a trailing dot or space are refused on the destination's final component, with distinct rules. Deliberately **narrower** than the package-name rule, with a control test proving `my.project`, `my project`, and `v1.2.3` still work. |
 
-**Totals after the 2026-08-18 rulings: 20 findings — 18 FIXED, 1 PARTIALLY FIXED (B-R3), 0 ACCEPTED
-and unfixed, 1 no action.**
+**Totals across all seven advisory reviews: 22 findings — 20 FIXED, 1 PARTIALLY FIXED (B-R3),
+1 ACCEPTED and stated (the best-effort staging cleanup), 1 no action, 1 stale-and-re-tested.**
+
+Broken out: the three pre-ruling reviews produced **20** (0 Critical, 4 High, 7 Medium, 9 Low); the
+four post-ruling reviews produced **2 new** (0 Critical, 0 High, 2 Medium), both fixed, plus one
+finding re-tested and found already closed. Every High was in the first group and every one is
+fixed. **No review at any point produced a Critical finding.**
 
 Before those rulings the totals were 15 FIXED, 2 PARTIALLY FIXED, 2 ACCEPTED, 1 no action. The
 maintainer took all three carried findings — A-R6, A-R8, A-R9 — and directed fixes; §6.3 records the
 earlier disposition alongside the later one rather than overwriting it, so the sequence is legible.
+The two post-ruling findings, G/S-1 and F/R-1, are dispositioned in §6.0.1.
 
 **B-R3 remains PARTIALLY FIXED** and is the only finding not closed: the redaction corpus is
 broadened by one successful-run case through both output modes, and broadening it to more

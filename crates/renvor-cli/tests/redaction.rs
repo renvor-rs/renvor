@@ -159,3 +159,98 @@ fn a_successful_run_redacts_in_json_as_well_as_human() {
 fn crate_redaction_marker() -> &'static str {
     "[redacted]"
 }
+
+#[test]
+#[cfg(unix)]
+fn no_raw_control_byte_from_a_path_ever_reaches_a_human_stream() {
+    // ── ADVISORY SECURITY FINDING S-1, 2026-08-18, REPRODUCED AS A TEST ────────────────
+    //
+    // `Destination::open` RULE 1b refuses a control character in the directory renvor is about to
+    // **create**. It says nothing about the components *above* it — and a directory that already
+    // exists two levels up is opened by RULE 3 and its name interpolated into the success message
+    // and into two error messages.
+    //
+    // The reviewer measured it with `od -c` and found the raw `ESC` bytes going straight to the
+    // terminal, which renders the destination in colour instead of showing it. That is the operator
+    // being shown a path that is not the one on disk — the exact thing RULE 1b's own message says
+    // it refuses control characters to prevent.
+    //
+    // Windows-excluded because the fixture needs a directory name containing `ESC`, which is not a
+    // legal filename character there. The neutraliser itself is platform-independent and is unit
+    // tested on every platform in `output::redact::tests`.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let hostile = base.path().join("\u{1b}[31mRED\u{1b}[0m");
+    std::fs::create_dir(&hostile).expect("the hostile parent is created");
+
+    // ── The success path ──────────────────────────────────────────────────────────────
+    let (exit, stdout, stderr) = renvor(
+        &[
+            "new",
+            "demo",
+            "--path",
+            hostile.join("demo").to_str().expect("utf-8"),
+            "--yes",
+        ],
+        base.path(),
+    );
+    // Fixed messages throughout this test: `renvor-core`'s `diagnostics` suite refuses an
+    // interpolated rendering in an assertion message inside a credential-handling file, because on
+    // a regression the thing being printed is the leak itself.
+    assert_eq!(
+        exit, 0,
+        "the run into a hostile parent should still succeed"
+    );
+    assert!(
+        !stdout.contains('\u{1b}') && !stderr.contains('\u{1b}'),
+        "a raw ESC byte reached a human stream on the success path"
+    );
+    assert!(
+        stdout.contains("\\u{1b}[31m") || stderr.contains("\\u{1b}[31m"),
+        "the sequence must be SHOWN rather than stripped, or the operator still cannot tell the \
+         path is not what it looks like"
+    );
+
+    // ── An error path, which builds its message differently ───────────────────────────
+    let (_, _, stderr) = renvor(
+        &[
+            "new",
+            "demo",
+            "--path",
+            hostile.join("absent").join("demo").to_str().expect("utf-8"),
+            "--yes",
+        ],
+        base.path(),
+    );
+    assert!(
+        !stderr.contains('\u{1b}'),
+        "a raw ESC byte reached stderr on the error path"
+    );
+
+    // ── JSON IS NOT DOUBLE-ESCAPED ────────────────────────────────────────────────────
+    //
+    // `serde_json` already escapes these bytes correctly, so the neutraliser must NOT run there.
+    // If it did, the document would carry a literal `\u{1b}` whose backslash serde then escapes
+    // again — corrupting the contract to fix a problem this path does not have.
+    let (_, stdout, _) = renvor(
+        &[
+            "new",
+            "second",
+            "--path",
+            hostile.join("second").to_str().expect("utf-8"),
+            "--yes",
+            "--output",
+            "json",
+        ],
+        base.path(),
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("the JSON document still parses");
+    let destination = document["result"]["destination"]
+        .as_str()
+        .expect("a destination string");
+    assert!(
+        destination.contains('\u{1b}'),
+        "JSON must carry the real bytes, escaped by serde and decoded back by the consumer"
+    );
+    assert!(!destination.contains("\\u{1b}"), "JSON was double-escaped");
+}

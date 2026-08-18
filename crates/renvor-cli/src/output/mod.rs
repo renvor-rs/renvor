@@ -113,7 +113,15 @@ impl Reporter {
 
     /// Writes a diagnostic line to `stderr`, redacted.
     pub fn note(&self, message: &str) {
-        let _ = writeln!(std::io::stderr(), "{}", redact::line(message));
+        // `for_terminal` AFTER `line`: redaction first, so a secret is replaced before anything
+        // else looks at it, then control-sequence neutralisation on what survives. Both are needed
+        // and neither subsumes the other — one hides values, the other stops the text reprogramming
+        // the terminal it is printed to.
+        let _ = writeln!(
+            std::io::stderr(),
+            "{}",
+            redact::for_terminal(&redact::line(message))
+        );
     }
 
     /// Writes the command's result to `stdout` and returns the exit code.
@@ -129,7 +137,7 @@ impl Reporter {
     /// one, a broken pipe is treated as success: the consumer got what it asked for and left.
     pub fn finish(&self, command: &str, human: &str, result: serde_json::Value) -> Exit {
         let payload = match self.format {
-            Format::Human => redact::line(human),
+            Format::Human => redact::for_terminal(&redact::line(human)),
             Format::Json => {
                 match serde_json::to_string_pretty(&json::Envelope::success(command, result)) {
                     Ok(text) => text,

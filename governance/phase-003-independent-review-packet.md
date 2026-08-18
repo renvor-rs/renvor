@@ -85,7 +85,7 @@ git checkout feat/phase-003-interactive-cli
 cargo xtask verify          # 11 checks: fmt, clippy, tests, rustdoc -D warnings,
                             # cargo-deny, architecture invariants, secret scan,
                             # docs build, link check, working-tree cleanliness
-cargo test --workspace      # 212 tests in renvor-cli, 557 across the workspace
+cargo test --workspace      # 218 tests in renvor-cli, 563 across the workspace
 ```
 
 Nothing requires network access. Nothing requires Docker. The generated projects declare no
@@ -103,7 +103,8 @@ Stated up front so you spend your time on what nobody has found yet.
 | 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
 | 3c | **The "renvor never deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. | review pack §5.3 |
 | 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | evidence §6.3 |
-| 3e | **The post-ruling code carries NO advisory review.** Four were commissioned after the 2026-08-18 rulings and none reported. The three advisory reviews on record predate those rulings and describe earlier code. What stands in their place is the author's own re-reading — which found three real defects, and is exactly as weak as that sounds. | evidence §6.0 |
+| 3e | **Human output escapes control characters; `\n` and `\t` are exempt.** So a newline injected through a **non-final** `--path` component still reaches the terminal. Deliberate — cargo's multi-line stderr must stay readable — and a stated residual. | evidence §6.0.1; review pack S14 |
+| 3f | **Windows has had no adversarial review at all.** All seven advisory reviews ran on macOS. CI exercises Windows; no reviewer has attacked it. | evidence §6.0.4 |
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
 | 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | evidence §3.1 |
 | 6 | **Data-model §5 rule 8 has no `details.rule`** — containment is structural. | review pack §4 |
