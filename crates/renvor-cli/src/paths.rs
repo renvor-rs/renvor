@@ -629,6 +629,25 @@ mod tests {
                 .expect("symlink");
             cases.push((link, "symlink"));
             cases.push((dangling, "symlink"));
+
+            // A UNIX-DOMAIN SOCKET — neither directory, file, nor link.
+            //
+            // Added after probing the shipped binary against a FIFO and a socket: both are refused
+            // as `found = "other"`, which is the contract's fifth value and had no test. Without
+            // this case the `other` arm of `describe` is reachable from nothing, and an arm no test
+            // reaches is an arm that can be wrong for as long as nobody looks.
+            //
+            // `UnixListener` is `std`, so this needs no dependency. A FIFO would need `mkfifo`,
+            // which does, so the socket is the one that earns its place.
+            //
+            // `bind` fails if the path exceeds ~104 bytes, which a temporary directory can. That is
+            // a limit of the test's fixture and not of the code, so the case is **skipped** rather
+            // than failed — and skipped by simply not being pushed, rather than by an assertion
+            // that quietly always holds.
+            let socket = base.path().join("s");
+            if std::os::unix::net::UnixListener::bind(&socket).is_ok() {
+                cases.push((socket, "other"));
+            }
         }
 
         for (path, expected) in cases {

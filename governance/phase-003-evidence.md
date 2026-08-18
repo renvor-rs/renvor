@@ -463,8 +463,26 @@ and rule `paths.rs` RULE 4 uses for the same condition, and
 `both_fail_closed_arms_report_the_same_code_and_rule` fails if `placement_failed` returns to that
 arm — demonstrated by putting it back.
 
-Neither defect was found by a test. Both were found by re-reading the diff against the published
-contract, which is the check the registry gate cannot perform: it verifies the code **set** and the
+### 6.8 An adversarial probe of the destination check, run by the author
+
+**Not a review** — same caveat as §6.5. The tests cover five entry kinds; the contract publishes a
+sixth value, `other`, and nothing reached it. The shipped binary was therefore driven against entry
+kinds no test had:
+
+| Destination | Exit | Code | `details.found` |
+|---|---|---|---|
+| a **FIFO** | 3 | `destination_exists` | `other` |
+| a **UNIX-domain socket** | 3 | `destination_exists` | `other` |
+| a **self-referential symlink** (`selfloop -> .`) | 3 | `destination_exists` | `symlink` |
+| a symlink to a directory | 3 | `destination_exists` | `symlink` |
+
+All four refused, nothing created, nothing destroyed. The **socket** case is now an asserted test
+inside `every_kind_of_existing_destination_is_refused`, using `std::os::unix::net::UnixListener`
+so it needs no dependency; a FIFO would have needed one, so it stays a probe. Before this the
+`other` arm of `paths::describe` was reachable from no test at all.
+
+Neither defect above was found by a test. Both were found by re-reading the diff against the
+published contract, which is the check the registry gate cannot perform: it verifies the code **set** and the
 **exit** column, and says nothing about which code a given site emits or which details it carries.
 That limitation is worth stating plainly rather than leaving a reader to assume the gate is stronger
 than it is.
