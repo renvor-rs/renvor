@@ -27,10 +27,15 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**54 of 95 tasks complete. This section states what is built and what is not, because a task list
+**55 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
+
+**FR-012 is checked against the case that only just became reachable.** A failure before placement
+must leave a **pre-existing empty** destination exactly as it was — still present, still empty — and
+leave no staging behind. A version that removed the destination eagerly at the start of `place`
+would pass every other test in that file.
 
 **The residue promise is tested, not just documented (T019).** A run is killed with no chance to
 run a destructor; the staging directory survives, is **beside** the destination rather than inside

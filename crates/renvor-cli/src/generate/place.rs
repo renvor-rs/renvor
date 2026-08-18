@@ -386,6 +386,50 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_before_placement_leaves_a_pre_existing_empty_destination_untouched() {
+        // FR-012: "On cancellation or any failure, the destination MUST be left exactly as it was."
+        //
+        // The pre-existing **empty** destination is the case that only became reachable when this
+        // module started accepting one, and it is the one where "exactly as it was" has content:
+        // the directory must still be there, and still be empty. A version that removed it eagerly
+        // at the start of `place` would pass every other test in this file.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
+        let target = destination(base.path(), "demo");
+
+        {
+            let staging = Staging::create(&target).expect("creates");
+            staging.dir().write("f", b"x").expect("write");
+            // Dropped without placing — every failure from validate through verify ends here.
+        }
+
+        assert!(
+            base.path().join("demo").is_dir(),
+            "a failure removed the operator's own directory"
+        );
+        let contents: Vec<String> = std::fs::read_dir(base.path().join("demo"))
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            contents.is_empty(),
+            "a failure left {contents:?} in the destination"
+        );
+
+        let residue: Vec<String> = std::fs::read_dir(base.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".renvor-staging-"))
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "a failure left staging behind: {residue:?}"
+        );
+    }
+
+    #[test]
     fn a_destination_that_gained_contents_after_validation_is_refused_by_the_kernel() {
         // The safety of the fix above rests on `remove_dir` refusing a non-empty directory — the
         // emptiness check and the removal are ONE atomic operation, not a check followed by a
