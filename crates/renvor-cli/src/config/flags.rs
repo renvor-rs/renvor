@@ -329,6 +329,133 @@ mod tests {
     }
 
     #[test]
+    fn every_governed_choice_of_principle_seven_is_classified() {
+        // ── CONSTITUTION v3.0.0, PRINCIPLE VII, AMENDED 2026-08-18 ─────────────────────
+        //
+        // > "The governed choice set is target, transport, persistence model, database, auth
+        // > starter, frontend, compatible render mode, styling profile where applicable, desktop
+        // > option, capabilities, and local tooling; each becomes mandatory in both interfaces on
+        // > the day its capability ships, and none of them may be dropped from this set by an
+        // > implementation that has not shipped it."
+        //
+        // The amendment's danger is precisely that last clause: "ask for what you can honour" is
+        // trivially satisfiable by honouring nothing, and an implementation that quietly stopped
+        // reserving `--database` would satisfy every other test in this file. So each of the
+        // eleven is listed here and must be in exactly one of three states:
+        //
+        //   RESERVED  — declared, parsed, and refused with the phase that will support it
+        //   HONOURED  — a real flag the generator acts on, which the wizard therefore asks about
+        //   DEFAULTED — a single supported value, defaulted without prompting and RECORDED
+        //
+        // A choice in none of them has been dropped, which the constitution forbids.
+        enum How {
+            Reserved(&'static str),
+            Honoured(&'static [&'static str]),
+            Defaulted(&'static str),
+        }
+        use How::{Defaulted, Honoured, Reserved};
+
+        let governed: [(&str, How); 11] = [
+            ("target", Defaulted("--target")),
+            ("transport", Reserved("--transport")),
+            ("persistence model", Reserved("--orm")),
+            ("database", Reserved("--database")),
+            ("auth starter", Reserved("--auth")),
+            ("frontend", Reserved("--frontend")),
+            ("compatible render mode", Reserved("--render-mode")),
+            ("styling profile where applicable", Reserved("--styling")),
+            ("desktop option", Reserved("--desktop")),
+            (
+                "capabilities",
+                Honoured(&["--example-domain", "--seed-data", "--container"]),
+            ),
+            (
+                "local tooling",
+                Honoured(&["--local-domain", "--local-https"]),
+            ),
+        ];
+
+        for (choice, how) in governed {
+            match how {
+                Reserved(flag) => {
+                    assert!(
+                        RESERVED.iter().any(|(reserved, _)| *reserved == flag),
+                        "`{choice}` is a governed choice this phase does not ship, so `{flag}` \
+                         must be a reserved input — dropping it from the reserved table drops the \
+                         choice from the governed set, which the constitution forbids"
+                    );
+                    let (_, phase) = RESERVED
+                        .iter()
+                        .find(|(reserved, _)| *reserved == flag)
+                        .expect("checked above");
+                    assert!(
+                        !phase.is_empty(),
+                        "`{flag}` must fail explicitly WITH the phase that will introduce support"
+                    );
+                }
+                Honoured(flags) => {
+                    for flag in flags {
+                        assert!(
+                            !RESERVED.iter().any(|(reserved, _)| reserved == flag),
+                            "`{flag}` cannot be both honoured and reserved"
+                        );
+                        let mut argv = vec!["renvor", "new", "demo", flag];
+                        if *flag == "--local-domain" {
+                            argv.push("demo.test");
+                        }
+                        let cli = Cli::try_parse_from(&argv)
+                            .unwrap_or_else(|error| panic!("`{flag}` must parse: {error}"));
+                        let Command::New(args) = cli.command else {
+                            panic!("expected new")
+                        };
+                        // `--seed-data` alone is a documented cross-choice conflict, so the only
+                        // thing asserted here is that the flag is NOT refused as belonging to a
+                        // later phase. A honoured choice that answered `reserved_for_later_phase`
+                        // would be a choice the wizard asks about and the generator will not act
+                        // on, which is the exact failure the amendment forbids.
+                        if let Err(error) = args.into_answers() {
+                            assert_ne!(
+                                error.code,
+                                Code::ReservedForLaterPhase,
+                                "`{flag}` is asked about but refused as a later phase's"
+                            );
+                        }
+                    }
+                }
+                Defaulted(flag) => {
+                    assert!(
+                        !RESERVED.iter().any(|(reserved, _)| *reserved == flag),
+                        "`{flag}` is defaulted, not reserved"
+                    );
+                    // Defaulted without prompting: parsing with no `--target` yields the value.
+                    let cli = Cli::try_parse_from(["renvor", "new", "demo"]).expect("parses");
+                    let Command::New(args) = cli.command else {
+                        panic!("expected new")
+                    };
+                    assert_eq!(
+                        args.target, "api",
+                        "`{choice}` must be defaulted without prompting"
+                    );
+                    // And RECORDED. `renvor.toml` carries `target = "api"`; the manifest text is
+                    // asserted by `commands::new::tests` and the round trip by
+                    // `config::model::tests`. What matters here is that the single supported value
+                    // is the one that gets defaulted — a default outside the supported set would
+                    // record a choice the generator cannot honour.
+                    assert!(
+                        crate::config::model::Target::parse("api").is_ok(),
+                        "the defaulted value must be a supported one"
+                    );
+                    assert!(
+                        crate::config::model::Target::parse("nope").is_err(),
+                        "if every value parsed, `{choice}` would not be single-valued and could \
+                         not be defaulted without prompting"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_reserved_flag_in_the_table_is_declared_on_the_struct() {
         // Guards the pairing in both directions. A flag on the struct with no table row would fall
         // through to "a later phase" with no phase named; a row with no flag is dead text.

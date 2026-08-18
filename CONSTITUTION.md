@@ -10,6 +10,33 @@
 
   AMENDMENT HISTORY
 
+  2026-08-18 — 2.0.0 to 3.0.0 (MAJOR). Authority: maintainer ruling of 2026-08-18, item 3.
+    Proposal, impact analysis, and migration plan: governance/constitution-amendment-3.0.0.md.
+    Change: principle VII's wizard-scope sentence is redefined for staged delivery. The rule
+      "The wizard MUST ask for target, transport, persistence model, database, auth starter,
+      frontend, compatible render mode, styling profile where applicable, desktop option,
+      capabilities, and local tooling" becomes a rule about what the CURRENT generator can
+      honour, with four supporting clauses: a single-valued choice MAY be defaulted and MUST be
+      recorded; unsupported choices MUST NOT be solicited or recorded; unsupported choices MUST
+      be exposed as reserved inputs failing with the phase that will introduce support; and a
+      choice becomes mandatory in BOTH interfaces once its capability ships.
+    Why MAJOR: the Governance section defines MAJOR as "removes or redefines a governing
+      principle or compatibility promise". The old sentence stated eleven unconditional
+      obligations and this redefines when each of them binds. PATCH is excluded because
+      required behavior changes. MINOR is excluded because nothing was added: an obligation was
+      redefined. The eleven-item set is PRESERVED, not shortened.
+    Why not a waiver: a waiver is a time-bounded exception to a rule that stays correct. The old
+      rule was not correct — it required questions for capabilities that do not exist, which
+      conflicts with the same principle's requirement that generated output reflect the
+      selections actually acted on. An exception would have expired and left the conflict.
+    Not changed: every other sentence of principle VII. Generation still MUST validate before
+      writing, render in owned staging, verify, commit atomically where the platform permits,
+      leave the destination unchanged on cancellation or failure, never overwrite existing user
+      files, and produce an accurate --dry-run manifest without writes. The styling-profile
+      first-party requirement, the generated-code quality requirements, and the package
+      lifecycle requirements are unchanged.
+    Ratified date preserved at 2026-08-11. Last Amended set to 2026-08-18.
+
   2026-08-17 — 1.0.0 to 2.0.0 (MAJOR). Authority: ADR-0010, superseding ADR-0001.
     Change: principles VII and XIII name the executable's commands normatively. `renover new`
       becomes `renvor new`; `renover add` becomes `renvor add`. Three normative sentences
@@ -74,7 +101,7 @@ Browser bearer and refresh credentials MUST NOT be stored in `localStorage` or `
 
 ### VII. Deterministic and Safe Generation
 
-`renvor new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling.
+`renvor new` MUST provide an interactive wizard and an equivalent non-interactive flag for every choice. Both interfaces MUST resolve to the same validated configuration and project manifest. The wizard MUST ask for every meaningful choice the current generator can honour. A choice with only one supported value MAY be defaulted without prompting and MUST be recorded. The wizard MUST NOT solicit or record unsupported choices. Unsupported choices MUST be exposed as reserved inputs that fail explicitly with the phase that will introduce support. Once a capability ships, its choice becomes mandatory in both the wizard and non-interactive interface. The governed choice set is target, transport, persistence model, database, auth starter, frontend, compatible render mode, styling profile where applicable, desktop option, capabilities, and local tooling; each becomes mandatory in both interfaces on the day its capability ships, and none of them may be dropped from this set by an implementation that has not shipped it.
 
 Next.js, Yew, Dioxus, and Leptos MUST each offer plain CSS, SCSS, and Tailwind CSS as explicit styling choices. All three are first-party profiles with equivalent functionality, accessibility, auth flows, theme support, and verification. Only selected styling dependencies and files may be generated.
 
@@ -199,4 +226,4 @@ Constitution versions follow semantic versioning:
 
 Every phase review and release review MUST include a constitution check. Exceptions are allowed only through a time-bounded written waiver naming the violated rule, reason, compensating controls, owner, expiry, and removal plan. Security release blockers cannot be waived for a public release.
 
-**Version:** 2.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-17
+**Version:** 3.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-18

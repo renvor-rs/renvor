@@ -7,7 +7,7 @@
 **Status**: Draft
 
 **Input**: Phase 003 of `PLAN.md` §20, elaborated from §9 (Interactive CLI contract), §7.3 (planned
-workspace), and §7.4 (feature isolation), under the Renvor Constitution v2.0.0 — principally VII
+workspace), and §7.4 (feature isolation), under the Renvor Constitution v3.0.0 — principally VII
 (deterministic and safe generation), IV (deterministic lifecycle and failure semantics), III
 (package-first boundaries), V (contract-first compatibility), and VI (security, privacy, and
 fail-closed defaults).
@@ -52,10 +52,15 @@ fail-closed defaults).
   reserved so that an unclassified failure is distinguishable from a classified one, because an
   unclassified failure is a defect rather than an outcome.
 
-## Known non-compliance with Constitution principle VII
+## Constitution principle VII — resolved by amendment, not by waiver
 
-**This is stated as non-compliance, not as a narrowing.** The clarification session called the
-shorter wizard a "narrowing", and that framing was too soft: constitution v2.0.0 principle VII says
+**This section previously recorded a live non-compliance.** It is kept, rather than deleted, because
+the non-compliance was real, and a specification that quietly stops mentioning a violation it once
+declared is worse than one that never declared it.
+
+### What was true, and stayed true for the whole phase
+
+Constitution **v2.0.0** principle VII said:
 
 > *"The wizard **MUST** ask for target, transport, persistence model, database, auth starter,
 > frontend, compatible render mode, styling profile where applicable, desktop option, capabilities,
@@ -64,23 +69,35 @@ shorter wizard a "narrowing", and that framing was too soft: constitution v2.0.0
 FR-005a asks for **none of the first nine**, because no subsystem behind them exists — Phase 004 is
 the first transport, and persistence, auth, and frontends come later still. Asking would produce a
 manifest recording choices the generator did not honour, which breaks FR-031 and is its own
-violation.
+violation. Phase 003 was therefore in violation of a MUST, **structurally**: no implementation work
+within this phase could have satisfied that sentence without breaking another one.
 
-So the position is:
+### How it was resolved
+
+The maintainer ruled on 2026-08-18 that the rule itself was wrong, and amended it. Constitution
+**v3.0.0** principle VII now reads, in the amended sentence:
+
+> *"The wizard MUST ask for every meaningful choice the current generator can honour. A choice with
+> only one supported value MAY be defaulted without prompting and MUST be recorded. The wizard MUST
+> NOT solicit or record unsupported choices. Unsupported choices MUST be exposed as reserved inputs
+> that fail explicitly with the phase that will introduce support. Once a capability ships, its
+> choice becomes mandatory in both the wizard and non-interactive interface. The governed choice set
+> is target, transport, persistence model, database, auth starter, frontend, compatible render mode,
+> styling profile where applicable, desktop option, capabilities, and local tooling; …"*
 
 | | |
 |---|---|
-| **What is true** | Phase 003 ships a `renvor new` that does **not** satisfy principle VII's wizard clause |
-| **Why** | The subsystems the clause names do not exist yet. Compliance is not deferrable by effort; it is blocked by sequence |
-| **What is NOT claimed** | That principle VII is satisfied, that the gap is minor, or that "narrowing" makes it compliant |
-| **What satisfies it** | The phase that completes the wizard once the subsystems exist — `PLAN.md` §20 Phase 025, the unified full-stack generator |
-| **Who decides the waiver question** | **The maintainer.** The constitution permits exceptions only through a time-bounded written waiver naming the violated rule. Whether one is required here — or whether a partially implemented command is simply not yet subject to the clause — is a governance ruling, and this specification does not make it |
+| **Instrument** | A **MAJOR constitutional amendment**, 2.0.0 → 3.0.0 |
+| **Not** | A waiver. No waiver was created; **W-007 does not exist**. A waiver is a time-bounded exception to a rule that stays correct, and this rule was not correct |
+| **What the amendment preserves** | All eleven governed choices. None was dropped; each binds when its capability ships |
+| **Record** | [`../../governance/constitution-amendment-3.0.0.md`](../../governance/constitution-amendment-3.0.0.md) — proposal, impact analysis, migration plan, and recorded maintainer ruling |
+| **Phase 003's status** | **COMPLIANT** under v3.0.0, verified clause by clause in that record §5 and enforced by `config::flags::tests::every_governed_choice_of_principle_seven_is_classified` |
 
-**Principle VII's other clauses ARE satisfied**: both interfaces resolve to one validated
-configuration; generation validates before writing, stages in an owned directory, verifies, and
-commits atomically; cancellation and failure leave the destination unchanged; existing files are
-never overwritten; and `--dry-run` produces an accurate manifest without writes. The gap is the
-wizard's question set, and only that.
+**Principle VII's other clauses were satisfied throughout and are unchanged by the amendment**: both
+interfaces resolve to one validated configuration; generation validates before writing, stages in an
+owned directory, verifies, and commits atomically; cancellation and failure leave the destination
+unchanged; existing files are never overwritten; and `--dry-run` produces an accurate manifest
+without writes.
 
 ## User Scenarios & Testing *(mandatory)*
 
