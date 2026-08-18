@@ -496,7 +496,16 @@ kinds no test had:
 | a **self-referential symlink** (`selfloop -> .`) | 3 | `destination_exists` | `symlink` |
 | a symlink to a directory | 3 | `destination_exists` | `symlink` |
 
-All four refused, nothing created, nothing destroyed. The **socket** case is now an asserted test
+All four refused, nothing created, nothing destroyed.
+
+A second probe swept **every refusal class in one directory** — an occupied directory, an empty
+directory, a regular file, a dangling symlink, a reserved device name, a traversal path, an invalid
+project name, and a missing parent — eight refused runs back to back. Afterwards: **zero
+`.renvor-staging-*` entries**, and all four of the operator's own entries still present and
+unmodified. This is the residue promise checked across the refusal surface rather than at one point
+of it, and it is the property the `Staging::create` leak in §6.8 would have broken.
+
+The **socket** case is now an asserted test
 inside `every_kind_of_existing_destination_is_refused`, using `std::os::unix::net::UnixListener`
 so it needs no dependency; a FIFO would have needed one, so it stays a probe. Before this the
 `other` arm of `paths::describe` was reachable from no test at all.
