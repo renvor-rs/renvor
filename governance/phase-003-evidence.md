@@ -867,4 +867,17 @@ denominator move while the work was being reviewed against it.
 **No Phase 003 phase-level waiver exists or has been drafted, and this document does not assume one
 is available** (FR-046). Items 4 and 5 are the whole of what remains.
 
+### 8.1 The review is COMMISSIONED as of 2026-08-19
+
+[`phase-003-independent-review-packet.md`](phase-003-independent-review-packet.md) is issued for
+review rather than prepared for it. Its §-1 hard-binds the exact head, names the two superseded
+heads by SHA so neither can be picked up by accident, states this as the single open blocker, and
+carries a **sign-off log** that must be filled in and committed before the phase closes.
+
+**Windows coverage is a stated requirement of that review**, not an optional extra: all seven
+advisory reviews ran on macOS, and §-1.2 enumerates the five Windows behaviours this phase depends
+on that no human has examined. A review silent about Windows does not discharge the blocker.
+
+**PR #28 is not merge-ready and is not marked as such.** It is open, unmerged, with zero approvals.
+
 **None of the four is engineering work the author can complete.** All four are decisions.

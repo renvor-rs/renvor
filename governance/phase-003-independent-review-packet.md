@@ -6,34 +6,115 @@ This packet is self-contained. You should not need to be briefed by anyone on th
 should not accept a briefing from anyone on the project about whether the code is correct — that is
 the thing you are here to decide.
 
-> **REVISION 2 — 2026-08-18.** Revision 1 pointed at head `08d3f89`. That head is **superseded**:
-> the maintainer denied approval of the `paths.rs`/`place.rs` review pack and directed a change to
-> the destination policy, the error registry, and constitution principle VII. **Review the head named
-> in §-1, not `08d3f89`.**
+> **REVISION 3 — 2026-08-19. COMMISSIONED.** This packet is now issued for review rather than
+> prepared for it. Two earlier heads are **superseded** and must not be reviewed — `08d3f89` and
+> `323bef3`; §-1 names both and says why. **Review only the head §-1 binds.**
 
 ---
 
-## -1. The exact head to review
+## -1. The exact head, the one open blocker, and where to sign
+
+### -1.1 The head this review is bound to
 
 | | |
 |---|---|
+| **Repository** | `renvor-rs/renvor` |
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Content head** | `dfe58978447cf9751866863a71a478955330d168` |
-| **Branch tip** | one commit later — the commit that wrote this table, touching only this file and `phase-003-review-pack.md` |
-| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28), open and unmerged. Its description names the exact tip SHA |
-| **Superseded head** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` — do **not** review this one |
+| **Content head** | `CONTENT_HEAD` |
+| **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file and `phase-003-review-pack.md`, and nothing else |
+| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28) — **open, unmerged, 0 approvals**. Its description names the exact tip SHA |
+| **Superseded — do NOT review** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` and `323bef34c69c75e2989baf926303ec0ff3bc9347` |
+
+**Verify before reading anything else.** A review of the wrong commit is worse than no review,
+because it produces a sign-off that looks valid:
 
 ```sh
 git fetch origin feat/phase-003-interactive-cli
 git checkout feat/phase-003-interactive-cli
-git diff dfe58978447cf9751866863a71a478955330d168..HEAD --stat    # must list exactly two governance files, and nothing else
+git rev-parse HEAD                                  # the tip
+git diff CONTENT_HEAD..HEAD --stat                  # MUST list exactly two governance files
+git status --porcelain                              # MUST be empty
 ```
 
-A stamp cannot contain its own commit's SHA, which is why this names the content head and bounds
-what came after it. Everything in this packet, and every line reference in the review pack,
-describes that head.
+A stamp cannot contain its own commit's SHA, which is why this names the **content** head and bounds
+exactly what came after it. Everything in this packet, and every `file.rs:NNN` reference in the
+review pack, describes that head.
 
+**Why the two superseded heads are listed by SHA rather than just "older commits".** Both were
+circulated as the head to review, and both are wrong for reasons that would not be obvious from
+reading them:
 
+- `08d3f89` predates the maintainer's 2026-08-18 rulings. Its destination policy **deletes an
+  existing empty directory**, its error registry is `schemaVersion` 1, and constitution principle
+  VII is unamended.
+- `323bef3` carries a **false doc comment** on `redact.rs`'s `path()` — it claims newline and tab
+  are deliberately left unescaped, which is the opposite of what that function does. A security
+  reviewer reading it would be reading a description of the *previous* fix.
+
+### -1.2 The only remaining open blocker
+
+Phase 003 has **one** unmet requirement. Everything else — the engineering, the testing, the
+documentation, the governance, seven advisory reviews, and full CI on three platforms and two
+toolchains — is complete and recorded.
+
+> **BLOCKER — a qualified independent human requirements review and security review, explicitly
+> signed off, with Windows coverage.**
+
+| Requirement | State |
+|---|---|
+| Independent human **requirements** review | **OPEN** |
+| Independent human **security** review, concentrating on `crates/renvor-cli/src/paths.rs` and `crates/renvor-cli/src/generate/place.rs` | **OPEN** |
+| **Windows coverage**, by a human | **OPEN — and this is the widest gap in the phase** |
+
+**Windows is a hard requirement of this review, not a nice-to-have.** All seven advisory reviews ran
+on macOS. CI runs Windows on both toolchains and it is green, but CI runs the tests the *author*
+wrote — it cannot notice a test nobody wrote. Windows is where this phase's most expensive defects
+have historically been: a rename that fails with `os error 32` while every Unix test passed, and a
+trycmd contract regenerated on macOS that silently dropped the `[EXE]` placeholder. The specific
+Windows behaviour this phase depends on and **no human has examined**:
+
+1. `MoveFileEx` rename semantics — POSIX-equivalent atomicity is **not** claimed, and the contract
+   says so. Is the weaker guarantee actually sufficient for C-5?
+2. The open-handle-blocks-delete path (`os error 32`) and the `Option<Dir>` drop ordering that
+   works around it.
+3. Reserved device names, drive-relative paths (`C:name`), and the silent stripping of a trailing
+   dot or space — `paths.rs` refuses these on **every** platform, reasoned from Windows behaviour
+   that was never observed on Windows.
+4. `destination_exists` classification for a **junction or reparse point**, which has no Unix
+   analogue. The `describe` function tests `is_symlink()` first for a reason that is **reasoned, not
+   measured** — its own doc comment says so.
+5. Whether the control-character escaping in `output/redact.rs` behaves the same against a Windows
+   console host.
+
+A review that cannot reach a Windows machine should say so plainly and scope itself; **a review that
+is silent about Windows does not discharge this blocker.**
+
+### -1.3 Sign-off log — the review is not complete until this is filled in and committed
+
+**PR #28 is NOT merge-ready and MUST NOT be marked merge-ready until this table is completed in
+this file and committed.** An approval delivered by any other route — a comment, a message, a
+verbal "looks fine" — does not count, because the point of logging it here is that the evidence
+travels with the artefact.
+
+| Field | Requirements review | Security review |
+|---|---|---|
+| Reviewer name | | |
+| Affiliation / role | | |
+| Not the author, not the maintainer (§0) | ☐ confirmed | ☐ confirmed |
+| Head reviewed (must equal §-1.1) | | |
+| Date | | |
+| Platforms actually exercised | | |
+| **Windows examined?** | ☐ yes ☐ no — if no, say what was not covered | ☐ yes ☐ no — if no, say what was not covered |
+| Findings: Critical / High / Medium / Low | / / / | / / / |
+| Findings document attached at | | |
+| Verdict | ☐ approve ☐ approve with conditions ☐ reject | ☐ approve ☐ approve with conditions ☐ reject |
+| Signature | | |
+
+**If either verdict is "reject" or "approve with conditions", the phase stays open.** Saying the
+work is not ready is the expected outcome of a real review, not a problem to be managed — see §0.
+
+**Nothing in this packet may be edited by the project to make a review easier to pass.** If you find
+this document overstates what was done, that is itself a finding, and §7 tells you how to report it.
 
 ---
 
@@ -157,14 +238,23 @@ phase has repeatedly had and the one its authors are least able to see.
 only speculative concerns, or that is silent about its own scope, does not discharge the
 requirement.
 
+**Then record the verdict in the §-1.3 sign-off log and have it committed.** That is what closes the
+blocker; a findings document on its own does not, because the evidence has to travel with the
+artefact rather than sitting in somebody's inbox. Attach or link your findings from the
+"Findings document attached at" row.
+
 ## 8. Explicitly out of scope
 
 - Phases 004 and later. Reserved flags refuse with `details.phase`; that is this phase's contract.
 - Publication, deployment, DNS, VPS, Kubernetes. None occurs in this phase.
 - The other three repositories (`site`, `site-2`, `infra`). Untouched by Phase 003.
 - Whether the *product* is a good idea.
+- **Merging.** You approve or you do not; the merge is the maintainer's action afterwards. Nothing
+  in this packet asks you to merge, and PR #28 stays open and unmerged until §-1.3 is filled in.
 
 ---
 
-**Branch**: `feat/phase-003-interactive-cli` · **PR**: #28 (open, unmerged) ·
+**Status**: **COMMISSIONED**, 2026-08-19 · **Blocker**: one, see §-1.2 ·
+**PR #28 is NOT merge-ready** until §-1.3 is completed and committed ·
+**Branch**: `feat/phase-003-interactive-cli` · **PR**: #28 (open, unmerged, 0 approvals) ·
 **Packet revision 2**: 2026-08-18 · **Head to review**: see §-1
