@@ -1,0 +1,357 @@
+//! Acceptance criteria that are properties of the whole program rather than of one module.
+//!
+//! Each test below names the criterion it discharges. Where a criterion is only **partially**
+//! discharged, the test says so in its own comment rather than in a document somebody has to find.
+
+use std::path::Path;
+use std::process::Command;
+
+/// Runs `renvor` and returns (exit code, stdout, stderr).
+fn renvor(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> (i32, String, String) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_renvor"));
+    command.args(args).current_dir(directory);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let output = command.output().expect("renvor runs");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+// ── Fail closed on hostile destinations ─────────────────────────────────────────────────────
+
+#[test]
+fn every_hostile_destination_is_refused_and_writes_nothing() {
+    // "malicious paths, symlinks, and overwrite attempts fail closed."
+    //
+    // Asserted from OUTSIDE the process, so it covers the wiring as well as the validator. A unit
+    // test on `Destination::open` proves the rule exists; this proves the rule is reached.
+    let base = tempfile::tempdir().expect("tempdir");
+    let outside = base.path().join("outside");
+    std::fs::create_dir_all(&outside).expect("mkdir");
+    std::fs::write(outside.join("precious"), b"do not touch").expect("write");
+    let work = base.path().join("work");
+    std::fs::create_dir_all(&work).expect("mkdir");
+
+    // An existing, non-empty destination.
+    std::fs::create_dir_all(work.join("occupied")).expect("mkdir");
+    std::fs::write(work.join("occupied/theirs"), b"theirs").expect("write");
+
+    // A symlink pointing out of the tree.
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, work.join("linked")).expect("symlink");
+
+    let hostile: Vec<&str> = {
+        let mut cases = vec!["../escape", "occupied", "..", "."];
+        if cfg!(unix) {
+            cases.push("linked");
+        }
+        cases
+    };
+
+    for case in hostile {
+        let (code, stdout, _) = renvor(
+            &["new", "demo", "--path", case, "--yes", "--output", "json"],
+            &work,
+            &[],
+        );
+        assert_eq!(
+            code, 3,
+            "`{case}` must be refused with a validation exit, got {code}"
+        );
+        let document: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("one JSON document even on failure");
+        assert_eq!(document["status"], "failure", "{case}");
+        assert!(
+            document["error"]["code"].is_string(),
+            "{case} produced no stable error code"
+        );
+    }
+
+    // NOTHING was written anywhere by any of them.
+    assert_eq!(
+        std::fs::read_to_string(outside.join("precious")).expect("read"),
+        "do not touch",
+        "a refused destination still reached outside the tree"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work.join("occupied/theirs")).expect("read"),
+        "theirs",
+        "an occupied destination was overwritten"
+    );
+    let residue: Vec<String> = std::fs::read_dir(&work)
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".renvor-staging-"))
+        .collect();
+    assert!(
+        residue.is_empty(),
+        "refused runs left staging behind: {residue:?}"
+    );
+}
+
+#[test]
+fn an_ordinary_destination_is_still_accepted() {
+    // POSITIVE CONTROL for the test above. A generator that refused every path would satisfy every
+    // assertion there and be useless.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, _, stderr) = renvor(&["new", "fine", "--yes"], base.path(), &[]);
+    assert_eq!(code, 0, "an ordinary destination was refused:\n{stderr}");
+    assert!(base.path().join("fine/Cargo.toml").is_file());
+}
+
+// ── Local TLS trust ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn requesting_local_https_issues_nothing_and_touches_no_trust_store() {
+    // FR-036: "local TLS trust is explicit and never installed silently."
+    //
+    // The strongest available assertion for "never installed silently" is that the generated tree
+    // contains no key, no certificate, and no invocation of a trust-store tool — checked over the
+    // WHOLE tree rather than over the files we expected to write.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, _, stderr) = renvor(
+        &["new", "secure", "--yes", "--local-https"],
+        base.path(),
+        &[],
+    );
+    assert_eq!(code, 0, "{stderr}");
+
+    let project = base.path().join("secure");
+    let mut offenders = Vec::new();
+    let mut stack = vec![project.clone()];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(&directory).expect("read_dir").flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if name.ends_with(".pem") || name.ends_with(".key") || name.ends_with(".crt") {
+                offenders.push(format!("{name} (a key or certificate)"));
+            }
+            let contents = std::fs::read_to_string(&path).unwrap_or_default();
+            for tool in [
+                "mkcert",
+                "security add-trusted-cert",
+                "certutil",
+                "update-ca-certificates",
+            ] {
+                if contents.contains(tool) {
+                    offenders.push(format!("{name} invokes `{tool}`"));
+                }
+            }
+            if contents.contains("BEGIN CERTIFICATE") || contents.contains("BEGIN PRIVATE KEY") {
+                offenders.push(format!("{name} embeds PEM material"));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "`--local-https` produced trust material: {offenders:?}"
+    );
+
+    // And the intent IS recorded, so a later phase can act on it without asking again.
+    let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("read");
+    assert!(
+        manifest.contains("local_https = \"requested\""),
+        "the request was not recorded:\n{manifest}"
+    );
+}
+
+// ── Offline ─────────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn generation_completes_with_every_proxy_pointed_at_a_closed_port() {
+    // FR-043: "no command in this phase requires network access to complete its local flows, and
+    // this MUST be demonstrated with networking unavailable rather than asserted."
+    //
+    // ── WHAT THIS DOES AND DOES NOT DEMONSTRATE ────────────────────────────────────────────
+    //
+    // Every proxy variable cargo and curl honour is pointed at a closed local port, so any attempt
+    // to reach a registry or a host fails immediately rather than silently succeeding from a warm
+    // cache. Generation — including the `cargo build` and `cargo test` that pre-placement
+    // verification runs — must still complete.
+    //
+    // This is NOT full network isolation. A direct connection that ignores proxy variables would
+    // not be blocked by it, and demonstrating that needs a network namespace, which is not
+    // portable across the three platforms this suite runs on. **The gap is stated here rather than
+    // left for a reader to assume it was covered.** What makes the result meaningful anyway is the
+    // structural fact asserted below: the generated project declares no dependencies at all, so
+    // there is no registry for cargo to reach.
+    let base = tempfile::tempdir().expect("tempdir");
+    let blackhole = "http://127.0.0.1:1";
+    let env: Vec<(&str, &str)> = vec![
+        ("http_proxy", blackhole),
+        ("https_proxy", blackhole),
+        ("HTTP_PROXY", blackhole),
+        ("HTTPS_PROXY", blackhole),
+        ("ALL_PROXY", blackhole),
+        ("all_proxy", blackhole),
+        ("CARGO_NET_OFFLINE", "true"),
+        ("no_proxy", ""),
+        ("NO_PROXY", ""),
+    ];
+
+    let (code, _, stderr) = renvor(
+        &["new", "offline", "--yes", "--example-domain", "--seed-data"],
+        base.path(),
+        &env,
+    );
+    assert_eq!(code, 0, "generation needed the network:\n{stderr}");
+
+    // THE STRUCTURAL HALF, which is what makes the above more than a cache hit.
+    let manifest = std::fs::read_to_string(base.path().join("offline/Cargo.toml")).expect("read");
+    let dependencies = manifest
+        .split("[dependencies]")
+        .nth(1)
+        .expect("a dependencies section")
+        .trim();
+    assert!(
+        dependencies.is_empty(),
+        "the generated project declares dependencies, so `cargo build` needs a registry and the \
+         offline claim rests on a warm cache rather than on there being nothing to fetch:\n\
+         {dependencies}"
+    );
+}
+
+#[test]
+fn doctor_completes_with_every_proxy_pointed_at_a_closed_port() {
+    // Same caveat as above. `doctor` runs local executables with `--version`; nothing resolves a
+    // name.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, stderr) = renvor(
+        &["doctor", "--output", "json"],
+        base.path(),
+        &[
+            ("http_proxy", "http://127.0.0.1:1"),
+            ("https_proxy", "http://127.0.0.1:1"),
+        ],
+    );
+    assert_eq!(code, 0, "doctor needed the network:\n{stderr}");
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one document");
+    assert!(document["result"]["probes"].is_array());
+}
+
+// ── The wizard and the flags produce one configuration ──────────────────────────────────────
+
+#[test]
+fn every_generated_manifest_round_trips_through_renvor_check() {
+    // THE GATE THAT WOULD HAVE CAUGHT THE `True` DEFECT.
+    //
+    // MiniJinja renders a boolean as `True`, so `renvor.toml` carried `example_domain = True` —
+    // invalid TOML. Every other test passed: the project compiled, formatted, tested, and ran,
+    // because nothing read the manifest back. `renvor check` is the tool's own validator, and a
+    // generator whose output its own validator rejects is broken in a way no build gate notices.
+    //
+    // Run over every variant, because the defect only appeared where a flag was true.
+    for flags in [
+        &[][..],
+        &["--example-domain"],
+        &["--example-domain", "--seed-data"],
+        &["--example-domain", "--seed-data", "--container"],
+        &["--container"],
+        &["--local-https"],
+    ] {
+        let base = tempfile::tempdir().expect("tempdir");
+        let mut args = vec!["new", "rt", "--yes"];
+        args.extend_from_slice(flags);
+        let (code, _, stderr) = renvor(&args, base.path(), &[]);
+        assert_eq!(code, 0, "generation failed for {flags:?}:\n{stderr}");
+
+        let project = base.path().join("rt");
+        let (code, stdout, stderr) = renvor(
+            &[
+                "check",
+                project.to_str().expect("utf-8"),
+                "--output",
+                "json",
+            ],
+            base.path(),
+            &[],
+        );
+        assert_eq!(
+            code, 0,
+            "renvor check rejected renvor's own output for {flags:?}:\n{stderr}"
+        );
+        let document: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("one JSON document");
+        assert_eq!(document["status"], "success", "{flags:?}");
+
+        // And it is valid TOML by an independent parser, not only by our own reader.
+        let text = std::fs::read_to_string(project.join("renvor.toml")).expect("read");
+        toml::from_str::<toml::Value>(&text)
+            .unwrap_or_else(|error| panic!("{flags:?} produced invalid TOML: {error}\n{text}"));
+    }
+}
+
+#[test]
+fn the_non_interactive_path_is_reachable_without_a_terminal_and_never_blocks() {
+    // FR-010. `cargo test` gives us no terminal, which is exactly the condition under test: the
+    // command must complete rather than wait for input that can never arrive.
+    //
+    // The stronger half of SC-003 — that a wizard run and a flag run serialise byte-identically —
+    // is structural rather than tested here: `prompts::fill` returns `Answers`, the same type the
+    // flag parser produces, and `ProjectConfiguration::resolve` is the only constructor. Driving a
+    // real wizard needs a pseudo-terminal harness, which is task T042 and is NOT done. This test
+    // does not claim to discharge it.
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, _, stderr) = renvor(
+        &[
+            "new",
+            "flags",
+            "--yes",
+            "--local-domain",
+            "flags.test",
+            "--example-domain",
+        ],
+        base.path(),
+        &[],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let manifest = std::fs::read_to_string(base.path().join("flags/renvor.toml")).expect("read");
+    assert!(
+        manifest.contains("local_domain = \"flags.test\""),
+        "{manifest}"
+    );
+    assert!(manifest.contains("example_domain = true"), "{manifest}");
+    // Lowercase, deliberately asserted: `True` is what MiniJinja produces by default and is
+    // invalid TOML.
+    assert!(
+        !manifest.contains("True"),
+        "the manifest is not valid TOML:\n{manifest}"
+    );
+}
+
+#[test]
+fn an_unsupported_combination_fails_before_anything_is_created() {
+    // "unsupported combinations fail before filesystem writes."
+    let base = tempfile::tempdir().expect("tempdir");
+    let (code, stdout, _) = renvor(
+        &["new", "bad", "--yes", "--seed-data", "--output", "json"],
+        base.path(),
+        &[],
+    );
+    assert_eq!(code, 3);
+    let document: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one document");
+    assert_eq!(document["error"]["code"], "unsupported_combination");
+    assert!(
+        !base.path().join("bad").exists(),
+        "the destination was created anyway"
+    );
+    let residue: Vec<String> = std::fs::read_dir(base.path())
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(residue.is_empty(), "a refused combination left {residue:?}");
+}

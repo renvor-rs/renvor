@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**29 of 95 tasks complete. This section states what is built and what is not, because a task list
+**33 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -46,6 +46,21 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-i. **Two defects found by writing the acceptance tests outside-in, both of which every
+   existing test had missed.**
+
+   - **`renvor new --path ../escape` was accepted with exit 0.** The cap-std migration dropped the
+     spec's "no traversal component" rule on the reasoning that the operator typed the parent path.
+     FR-039 and SC-009 require it refused. The unit tests kept passing because the only traversal
+     test covered a path *ending* in `..`, which a **different** rule catches — a test passing for
+     the wrong reason. Rule restored, with a regression test over five spellings that asserts
+     `details.rule == "no_traversal"` specifically.
+   - **Every generated `renvor.toml` with a true flag was invalid TOML.** MiniJinja renders a
+     boolean as `True`; TOML wants `true`. The project still compiled, formatted, tested, and ran,
+     so no build gate noticed — **`renvor check` would have rejected renvor's own output.** Fixed
+     with an explicit `toml_bool` filter, and gated by a new acceptance test that round-trips every
+     variant's manifest through `renvor check` **and** through an independent `toml::Value` parse.
+
 2a. **A Windows-only correctness bug in the transaction, found by the advisory platform matrix.**
    `Staging` held an open `cap_std::fs::Dir` handle on the directory its `Drop` then removed and
    its `place` then renamed. On Unix that is fine; **Windows refuses both with `os error 32`**, so
@@ -69,13 +84,17 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
 ### Not built. Each is real work, not a formality
 
-- **T008** — the nine named test-module skeletons. Equivalent coverage exists in unit tests and in
-  `tests/generated.rs`, but the enumerated files do not exist, so the suite is not organised the way
-  this plan says it is.
+- **T008** — of the nine named test files, `generated.rs`, `acceptance.rs`, and `redaction.rs`
+  exist; `transaction.rs`, `hostile.rs`, `parity.rs`, `cli.rs`, `bounds.rs`, `offline.rs`, and
+  `tls_consent.rs` do not. Their properties are covered by unit tests and by the three files above,
+  but the suite is not organised the way this plan says it is.
 - **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;
   they were **not** written failing-first, and that ordering was the point.
-- **T042–T052** — the non-interactive parity work as specified, including the byte-identical
-  serialisation comparison between the two interfaces.
+- **T042–T052** — the non-interactive parity work as specified. SC-003 is currently **structural**:
+  `prompts::fill` returns the same `Answers` type the flag parser produces and
+  `ProjectConfiguration::resolve` is the only constructor, so the two interfaces cannot diverge.
+  **Driving a real wizard needs a pseudo-terminal harness, which is not built**, so the
+  byte-identical comparison between an actual prompt run and an actual flag run is not made.
 - **T053–T060** — the hostile-path suite as a named file.
 - **T061–T075** — dry-run and JSON edge cases beyond those in `tests/generated.rs`.
 - **T076–T095** — `doctor`/`dev`/`docker` hardening, the TLS-consent suite, offline proof, and the

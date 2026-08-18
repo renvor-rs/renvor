@@ -251,6 +251,19 @@ impl<'a> Renderer<'a> {
         // `crate_name` is the one project-specific transform: Cargo package names allow `-`, Rust
         // identifiers do not, and a generated `use my-app::…` would not compile.
         environment.add_filter("crate_name", |value: String| value.replace('-', "_"));
+        // `toml_bool` EXISTS BECAUSE OF A REAL DEFECT, not for symmetry.
+        //
+        // MiniJinja renders a boolean as `True` / `False` — Python's spelling. TOML's booleans are
+        // lowercase, so `{{ container }}` in a `.toml` template produced `container = True`, which
+        // is **invalid TOML**: every generated project that set any flag had a manifest that would
+        // not parse, and `renvor check` would have rejected renvor's own output.
+        //
+        // Found by an outside-in acceptance test, not by reading the rendered file — which is the
+        // argument for having the test.
+        environment.add_filter(
+            "toml_bool",
+            |value: bool| if value { "true" } else { "false" },
+        );
 
         for entry in &set.entries {
             environment
@@ -505,6 +518,40 @@ mod tests {
             let error = renderer.render_into(&root.dir, &ctx()).unwrap_err();
             assert_eq!(error.code, Code::RenderFailed, "{body} was reachable");
         }
+    }
+
+    #[test]
+    fn a_boolean_renders_as_toml_rather_than_as_python() {
+        // THE REGRESSION TEST. Bare `{{ flag }}` yields `True`, which is invalid TOML.
+        #[derive(Serialize)]
+        struct Flags {
+            yes: bool,
+            no: bool,
+        }
+        let templates = set(&[TemplateEntry {
+            path: "a.toml",
+            body: "a = {{ yes | toml_bool }}\nb = {{ no | toml_bool }}\nbare = {{ yes }}\n",
+        }]);
+        let renderer = Renderer::new(templates).expect("builds");
+        let root = staged();
+        renderer
+            .render_into(
+                &root.dir,
+                &Flags {
+                    yes: true,
+                    no: false,
+                },
+            )
+            .expect("renders");
+        let rendered = root.dir.read_to_string("a.toml").expect("read");
+        assert!(rendered.contains("a = true"), "{rendered}");
+        assert!(rendered.contains("b = false"), "{rendered}");
+        // NEGATIVE CONTROL, and the reason the filter is needed at all: the bare form is wrong.
+        assert!(
+            rendered.contains("bare = True"),
+            "MiniJinja no longer renders a bare bool as `True`; if that changed upstream, the \
+             `toml_bool` filter may be removable — but verify before removing it: {rendered}"
+        );
     }
 
     #[test]

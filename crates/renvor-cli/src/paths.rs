@@ -115,6 +115,33 @@ impl Destination {
                 .with("destination", requested.display().to_string())
         };
 
+        // RULE 0 — NO TRAVERSAL COMPONENT ANYWHERE IN THE REQUESTED PATH.
+        //
+        // ── THIS RULE WAS DROPPED AND RESTORED, AND THE REASON IS WORTH KEEPING ────────────
+        //
+        // The first cap-std version of this module removed it, reasoning that the operator typed
+        // the parent path so honouring `..` in it is correct. That reasoning is defensible for a
+        // shell and wrong here: FR-039 and SC-009 require traversal to be **refused**, and
+        // `renvor new --path ../escape` was accepted with exit 0 until an outside-in acceptance
+        // test caught it.
+        //
+        // The unit tests missed it because they only covered a **trailing** `..`. The rule is
+        // about `..` anywhere, and those are not the same check.
+        //
+        // Note this is a *policy* rule rather than a containment one — containment below the
+        // destination is structural, via the `Dir` handle. This exists so the destination itself
+        // cannot land somewhere the operator did not mean.
+        if requested
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+        {
+            return Err(rejected(
+                "no_traversal",
+                "the destination contains a `..` component, which could place the project outside \
+                 the directory you named; give the path you mean without `..`",
+            ));
+        }
+
         // RULE 1 — the final component is a single ordinary name.
         //
         // Checked structurally with `Component`, not by searching the string: a textual `..` test
@@ -337,17 +364,27 @@ mod tests {
             );
         }
     }
-
     #[test]
-    fn a_destination_ending_in_a_traversal_component_is_refused() {
-        let error = Destination::open(Path::new("some/where/..")).unwrap_err();
-        assert_eq!(error.code, Code::DestinationRejected);
-        assert!(
-            error
-                .details
-                .iter()
-                .any(|(key, value)| key == "rule" && value == "final_component_is_a_name")
-        );
+    fn a_traversal_component_anywhere_is_refused() {
+        // THE REGRESSION TEST. `../escape` was accepted with exit 0 by the first cap-std version
+        // of this module, because the only traversal test covered a path *ending* in `..` — and a
+        // trailing `..` is caught by a different rule, so it kept passing while the real one was
+        // gone. A test that passes for the wrong reason is worse than no test.
+        for case in ["../escape", "a/../b", "../../x", "./../y", "some/where/.."] {
+            let error = match Destination::open(Path::new(case)) {
+                Err(error) => error,
+                Ok(accepted) => panic!("`{case}` was accepted as `{}`", accepted.name()),
+            };
+            assert_eq!(error.code, Code::DestinationRejected, "{case}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(key, value)| key == "rule" && value == "no_traversal"),
+                "`{case}` was refused by a different rule than the one meant to catch it: {:?}",
+                error.details
+            );
+        }
     }
 
     #[test]
