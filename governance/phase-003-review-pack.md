@@ -30,7 +30,7 @@ reconstruct the design from the code.
 | | |
 |---|---|
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Content head** | `15330732eba0c6583c73e80bf80dc04c77021680` |
+| **Content head** | `bb6454864d8c4fa829cfafa02b4c620b5f45191b` |
 | **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file and `phase-003-independent-review-packet.md`, and nothing else |
 | **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28), open and unmerged. Its description names the exact tip SHA |
 | **Revision** | 2, 2026-08-18 |
@@ -41,7 +41,7 @@ exactly what the one commit after it contains. That is verifiable rather than ap
 
 ```bash
 git rev-parse HEAD                          # the tip; must match the SHA in PR #28's description
-git diff 15330732eba0c6583c73e80bf80dc04c77021680..HEAD --stat          # must list exactly these two governance files
+git diff bb6454864d8c4fa829cfafa02b4c620b5f45191b..HEAD --stat          # must list exactly these two governance files
 git status --porcelain                      # must be empty
 ```
 
