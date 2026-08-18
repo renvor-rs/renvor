@@ -327,9 +327,46 @@ _same_fixtures_succeeds` and `an_unrecognised_injection_point_is_not_a_failure` 
 
 ## 6. Advisory reviews (T092) and their disposition (T093)
 
+### 6.0 The post-ruling advisory reviews were commissioned and DID NOT REPORT
+
+Recorded first, because the honest answer is a negative one and burying it below three successful
+reviews would misrepresent the state of this section.
+
+The maintainer's instruction of 2026-08-18 item 8 required *"new clean-context requirements and
+security advisory reviews"* against the corrected code. **Four were commissioned** — two broad
+(requirements, security) and, when those did not return, two deliberately narrowed with an explicit
+work budget. **None returned a report within the session.** They were asked to report five, four,
+three, two, and one time respectively; each request explicitly said a partial report was preferable
+to none.
+
+**So the post-ruling code carries no new advisory review**, and nothing in this document should be
+read as if it does. What was done instead is weaker and is named as such:
+
+| Instead of | What was actually done | Why it is weaker |
+|---|---|---|
+| A clean-context requirements review | The author re-read the whole diff against the published contracts, and cross-checked the four representations of the task counts and the three of the error registry by script (§6.7, §9) | The author knows what the code is supposed to do, so this can find disagreements between documents but not requirements nobody thought of |
+| A clean-context security review | The author traced every error path in `paths.rs` and `place.rs` by hand, probed the shipped binary against entry kinds no test covered, and swept every refusal class for residue (§6.8, §6.9) | Same. It attacks the design the author has in mind, not the one an adversary would look for |
+
+**It was not fruitless, which is the argument for recording it rather than skipping it.** Three real
+defects came out of it, all in code written the same day to satisfy the rulings:
+
+1. `destination_exists` carried the contract's published `details` at one emit site and not the
+   other (§6.7);
+2. `place.rs`'s fail-closed arm reported `placement_failed` — reintroducing the exact category error
+   that finding A-R6 was about, inside the commit that fixed A-R6 (§6.7);
+3. `Staging::create` orphaned the staging directory it had just created if `open_dir` failed, while
+   reporting *"Nothing was written"* (§6.8).
+
+None of the three was caught by a test before it was found by reading.
+
+**This does not weaken the independent-review requirement in §8 — it strengthens the case for it.**
+Three defects in one day's work, found by the author only because he went looking a second time, is
+evidence about how much a first pass misses.
+
 ### 6.1 Standing label
 
-**All three reviews below are NON-INDEPENDENT and ADVISORY.** They were performed by AI agents in
+**All three reviews below are NON-INDEPENDENT and ADVISORY.** They predate the 2026-08-18 rulings
+and describe the code as it stood before them; see §6.0 for what happened to the post-ruling reviews. They were performed by AI agents in
 clean context — each was given the repository, the specification, and an adversarial brief, and none
 was given this session's history or any account of what the author believed to be true. That design
 is what made them useful. It does **not** make them independent, and they do **not** discharge the
@@ -675,6 +712,11 @@ adversarial — and they are **not** an independent human review. Specifically:
 So **two** of the four remain, and both are the same thing: a qualified independent human who is not
 the author, not the maintainer, and not an agent.
 
+**And the gap is wider than it was**, not narrower: §6.0 records that the four advisory reviews
+commissioned against the post-ruling code did not report, so the corrected `paths.rs` and `place.rs`
+have had **no** adversarial reading by anything other than their author. The three advisory reviews
+on record describe the code as it stood before the rulings changed it.
+
 **No Phase 003 phase-level waiver has been created, and this document does not assume one is
 available.** A self-contained packet for an independent reviewer is prepared and referenced in the
 checkpoint that accompanies this document.
@@ -708,7 +750,7 @@ denominator move while the work was being reviewed against it.
 | 2 | A decision on whether the missed failing-first ordering blocks closure | **RULED** — it does not block closure; T008 and T015–T024 stay permanently MISSED |
 | 3 | The two carried advisory findings, A-R6 and A-R9 (and A-R8, carried as partial) | **RULED and FIXED** — see §6.3. Three new registry codes, `schemaVersion` 2, and the removal branch deleted |
 | 4 | **A qualified independent human requirements review** | **OPEN.** Advisory reviews do not satisfy it |
-| 5 | **A qualified independent human security review**, on `paths.rs` and `place.rs`, against the **final** head | **OPEN.** Advisory reviews do not satisfy it |
+| 5 | **A qualified independent human security review**, on `paths.rs` and `place.rs`, against the **final** head | **OPEN.** Advisory reviews do not satisfy it — and for the post-ruling code there are none: see §6.0 |
 
 **No Phase 003 phase-level waiver exists or has been drafted, and this document does not assume one
 is available** (FR-046). Items 4 and 5 are the whole of what remains.

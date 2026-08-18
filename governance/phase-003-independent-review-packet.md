@@ -98,6 +98,7 @@ Stated up front so you spend your time on what nobody has found yet.
 | 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
 | 3c | **The "renvor never deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. | review pack §5.3 |
 | 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | evidence §6.3 |
+| 3e | **The post-ruling code carries NO advisory review.** Four were commissioned after the 2026-08-18 rulings and none reported. The three advisory reviews on record predate those rulings and describe earlier code. What stands in their place is the author's own re-reading — which found three real defects, and is exactly as weak as that sounds. | evidence §6.0 |
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
 | 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | evidence §3.1 |
 | 6 | **Data-model §5 rule 8 has no `details.rule`** — containment is structural. | review pack §4 |
