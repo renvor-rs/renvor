@@ -20,7 +20,7 @@ the thing you are here to decide.
 |---|---|
 | **Repository** | `renvor-rs/renvor` |
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Content head** | `CONTENT_HEAD` |
+| **Content head** | `5c33976e6712a9172678272c8de21643afbdb54b` |
 | **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file and `phase-003-review-pack.md`, and nothing else |
 | **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28) — **open, unmerged, 0 approvals**. Its description names the exact tip SHA |
 | **Superseded — do NOT review** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` and `323bef34c69c75e2989baf926303ec0ff3bc9347` |
@@ -32,7 +32,7 @@ because it produces a sign-off that looks valid:
 git fetch origin feat/phase-003-interactive-cli
 git checkout feat/phase-003-interactive-cli
 git rev-parse HEAD                                  # the tip
-git diff CONTENT_HEAD..HEAD --stat                  # MUST list exactly two governance files
+git diff 5c33976e6712a9172678272c8de21643afbdb54b..HEAD --stat                  # MUST list exactly two governance files
 git status --porcelain                              # MUST be empty
 ```
 
