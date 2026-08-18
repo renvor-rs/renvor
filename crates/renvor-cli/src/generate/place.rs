@@ -131,63 +131,96 @@ impl<'a> Staging<'a> {
     /// [`Code::PlacementFailed`] for anything else. **The destination is unchanged either way.**
     pub fn place(mut self, destination: &Destination) -> Result<(), CliError> {
         let target = destination.name();
+        let named = |code, detail: String| {
+            CliError::new(code, detail).with(
+                "destination",
+                destination.display_path().display().to_string(),
+            )
+        };
 
-        // ── THE EXISTING-EMPTY-DESTINATION CASE ─────────────────────────────────────────
+        // ── STEP 1: make room, or refuse ────────────────────────────────────────────────
         //
-        // FR-013 refuses a destination that "exists and is **not empty**", which means an existing
-        // *empty* one must work. `Destination::open` accepts it — and until 2026-08-18 this method
-        // refused it, so `renvor new existing-empty-dir` validated, rendered, ran the full
-        // pre-placement verification, and then failed with a message that was **actively false**:
-        // "appeared while the project was being generated", when it had been there all along.
+        // FR-013 refuses a destination that "exists and is **not empty**", so an existing *empty*
+        // one must work — `Destination::open` accepts it, and this method must agree. An earlier
+        // version did not, so `renvor new` into an empty directory validated, rendered, ran the
+        // full pre-placement verification, and only then failed with a message claiming the
+        // directory had "appeared" mid-run.
         //
-        // Two components disagreeing about what a valid destination is, with the disagreement only
-        // observable seconds into a run.
-        //
-        // `remove_dir` is what makes the fix safe. **The kernel refuses to remove a non-empty
-        // directory**, so there is no window in which this could delete somebody's files — the
-        // emptiness check and the removal are one atomic operation rather than a check followed by
-        // a hopeful delete. If the directory gained an entry since `open`, the removal fails and
-        // the run stops with the destination untouched.
+        // `remove_dir` is what makes this safe: **the kernel refuses to remove a non-empty
+        // directory**, so the emptiness check and the removal are one atomic operation rather than
+        // a check followed by a hopeful delete.
+        let mut removed_a_pre_existing_directory = false;
         match self.parent.symlink_metadata(target) {
-            // Nothing there. The ordinary path.
+            // Absent. The ordinary path.
             Err(_) => {}
             Ok(metadata) if metadata.is_dir() => {
                 self.parent.remove_dir(target).map_err(|error| {
-                    CliError::new(
+                    named(
                         Code::DestinationNotEmpty,
                         format!(
                             "`{}` exists and could not be replaced: {error}. Nothing was written \
-                             there; if it has contents, renvor will not merge into it",
+                             there; renvor does not merge into an existing project",
                             destination.display_path().display()
                         ),
                     )
-                    .with(
-                        "destination",
-                        destination.display_path().display().to_string(),
-                    )
                 })?;
+                removed_a_pre_existing_directory = true;
             }
+            // A file, or a symlink that appeared after validation.
             Ok(_) => {
-                // A file, or a symlink that appeared after validation.
-                return Err(CliError::new(
+                return Err(named(
                     Code::DestinationNotEmpty,
                     format!(
                         "`{}` exists and is not a directory; nothing was written there and the \
                          staged tree has been removed",
                         destination.display_path().display()
                     ),
-                )
-                .with(
-                    "destination",
-                    destination.display_path().display().to_string(),
                 ));
             }
         }
 
-        self.parent
-            .rename(&self.name, self.parent, target)
-            .map_err(|error| {
-                CliError::new(
+        // ── STEP 2: close our handle BEFORE renaming ────────────────────────────────────
+        //
+        // Windows refuses to rename or delete a directory that has an open handle, with
+        // `os error 32`. On Unix this is harmless. Measured, not assumed: seven tests failed on
+        // both Windows toolchains before this line existed.
+        drop(self.handle.take());
+
+        // ── STEP 3: the rename ──────────────────────────────────────────────────────────
+        if let Err(error) = self.parent.rename(&self.name, self.parent, target) {
+            // CLASSIFY FROM THE KERNEL'S OWN ANSWER, not from a second observation.
+            //
+            // An earlier version decided by re-stating the destination, which is itself racy: with
+            // sixteen threads contending, a loser could fail with `ENOTEMPTY` and then find the
+            // path absent a moment later, and get reported as `placement_failed` — "the move
+            // mechanism broke", which sends an operator to debug their filesystem when a second
+            // `renvor new` simply beat them to it.
+            //
+            // The error already carries the answer. The re-stat is kept only as a fallback for
+            // kinds this match does not name.
+            let lost_the_race = matches!(
+                error.kind(),
+                std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::AlreadyExists
+            ) || self.parent.symlink_metadata(target).is_ok();
+
+            // Put the operator's directory back. FR-012 requires a failure to leave the
+            // destination exactly as it was, and FR-014 forbids deleting what renvor did not
+            // create — so removing it in step 1 and then failing must not be observable.
+            if removed_a_pre_existing_directory && !lost_the_race {
+                let _ = self.parent.create_dir(target);
+            }
+
+            return Err(if lost_the_race {
+                named(
+                    Code::DestinationNotEmpty,
+                    format!(
+                        "`{}` appeared while the project was being generated — another run reached \
+                         it first. Nothing was written there and the staged tree has been removed",
+                        destination.display_path().display()
+                    ),
+                )
+            } else {
+                named(
                     Code::PlacementFailed,
                     format!(
                         "the generated project could not be moved into place atomically: {error}. \
@@ -195,11 +228,8 @@ impl<'a> Staging<'a> {
                         destination.display_path().display()
                     ),
                 )
-                .with(
-                    "destination",
-                    destination.display_path().display().to_string(),
-                )
-            })?;
+            });
+        }
 
         self.placed = true;
         Ok(())
@@ -388,6 +418,84 @@ mod tests {
         assert!(
             !base.path().join(&name).exists(),
             "a non-empty staging directory survived its owner"
+        );
+    }
+
+    #[test]
+    fn racing_placements_produce_one_winner_and_correctly_classified_losers() {
+        // THE PRECISE VERSION OF THE CONCURRENCY PROPERTY.
+        //
+        // `tests/acceptance.rs` races whole processes, which is the honest end-to-end check — but
+        // each of those runs a full `cargo build` for pre-placement verification, so racing twelve
+        // of them stresses cargo far more than it stresses this rename. **That is a test-design
+        // flaw, not a stronger test.**
+        //
+        // This races the placement itself: sixteen threads, no subprocess, no build. It hits the
+        // window orders of magnitude more often and finishes in milliseconds.
+        use std::sync::{Arc, Barrier};
+
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let threads = 16;
+        // A barrier so every thread reaches `place` at the same instant. Without it they queue up
+        // behind their own setup and the race is never contended.
+        let barrier = Arc::new(Barrier::new(threads));
+
+        let handles: Vec<_> = (0..threads)
+            .map(|index| {
+                let barrier = Arc::clone(&barrier);
+                let root = base.path().to_path_buf();
+                std::thread::spawn(move || {
+                    let target = Destination::open(&root.join("contended")).expect("opens");
+                    let staging = Staging::create(&target).expect("creates");
+                    staging
+                        .dir()
+                        .write("f", index.to_string().as_bytes())
+                        .expect("write");
+                    barrier.wait();
+                    staging
+                        .place(&target)
+                        .map_err(|error| (error.code, error.message))
+                })
+            })
+            .collect();
+
+        let mut winners = 0;
+        for handle in handles {
+            match handle.join().expect("thread") {
+                Ok(()) => winners += 1,
+                Err((code, message)) => assert_eq!(
+                    code,
+                    Code::DestinationNotEmpty,
+                    "a loser must report that someone else got there, not that the move mechanism \
+                     broke: {message}"
+                ),
+            }
+        }
+        assert_eq!(winners, 1, "exactly one placement must win");
+
+        // The survivor is one whole tree, not a merge: exactly one file, whose contents are one
+        // thread's index rather than a mixture.
+        let placed: Vec<_> = std::fs::read_dir(base.path().join("contended"))
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            placed,
+            vec!["f".to_owned()],
+            "the placed tree is a merge: {placed:?}"
+        );
+
+        // And no staging residue from the fifteen losers.
+        let residue: Vec<String> = std::fs::read_dir(base.path())
+            .expect("read_dir")
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".renvor-staging-"))
+            .collect();
+        assert!(
+            residue.is_empty(),
+            "losers left staging behind: {residue:?}"
         );
     }
 

@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**51 of 95 tasks complete. This section states what is built and what is not, because a task list
+**52 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -61,11 +61,28 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    directory, so the emptiness check and the removal are one atomic operation rather than a check
    followed by a hopeful delete.
 
+2a-00000000. **A process failure of mine, recorded because the commit history is misleading
+   without it.** Commit `1417ed6` is titled *"…and classify a lost race correctly"* and
+   **contains no classification code**. Five successive string-replacement edits were made to
+   `Staging::place`; two of them silently matched nothing (a no-op replace is not an error), and the
+   result was committed without re-reading the function. Both the classification **and** the
+   Windows handle-drop had vanished from it.
+   Consequences that were reported as fact and were not: the classification was **not** fixed in
+   that commit, and macOS CI passing on it was **not** evidence the fix worked — the race simply did
+   not trigger. The Windows failures were the honest signal and were misattributed.
+   `place` has since been **rewritten as one deliberate piece** rather than patched further, and
+   verified by running the thread-race test **25 times against a single build: 25 passed, where the
+   pre-rewrite code failed 4 of 6**. Every edit now asserts that its pattern matched.
+
 2a-0000000. **A lost race was misclassified, found by the concurrency test on CI after five clean
    local runs.** Between the pre-rename check and the rename, another run can place its project.
    A loser then reported `placement_failed` — which says the move *mechanism* broke and sends an
    operator to debug their filesystem — instead of `destination_not_empty`, which says another run
-   got there first. `place` now re-stats after a failed rename to tell the two apart. **The local
+   got there first. `place` now classifies from **the kernel's own `ErrorKind`**
+   (`DirectoryNotEmpty` / `AlreadyExists`) rather than by re-stating the destination — a re-stat is
+   itself racy, and that is exactly how `placement_failed` kept leaking through. It also **restores
+   a removed empty destination** when the rename fails, closing an FR-012 violation that the
+   empty-destination fix had itself introduced. **The local
    machine never hit the window and both macOS and Windows CI did**, which is the argument for
    keeping the platform matrix and for not trimming a slow concurrency test.
 
