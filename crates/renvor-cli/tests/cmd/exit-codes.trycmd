@@ -9,7 +9,7 @@ $ renvor new demo --nonsense
 
   tip: to pass '--nonsense' as a value, use '-- --nonsense'
 
-Usage: renvor new <NAME>
+Usage: renvor[EXE] new <NAME>
 
 For more information, try '--help'.
 

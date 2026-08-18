@@ -7,7 +7,7 @@ Create and run Renvor projects.
 
 Exit codes: 0 success, 1 internal defect, 2 usage, 3 validation, 4 cancelled, 5 environment.
 
-Usage: renvor [OPTIONS] <COMMAND>
+Usage: renvor[EXE] [OPTIONS] <COMMAND>
 
 Commands:
   new     Create a project

@@ -9,7 +9,7 @@ Create a project.
 Boxed because `NewArgs` is 272 bytes and every other variant is a handful — an unboxed variant would
 make every `Command` value pay for the largest one, including `Doctor`, which carries nothing.
 
-Usage: renvor new [OPTIONS] [NAME]
+Usage: renvor[EXE] new [OPTIONS] [NAME]
 
 Arguments:
   [NAME]
