@@ -60,15 +60,27 @@ impl<'a> Staging<'a> {
     /// parent is not writable, and is worth saying plainly rather than failing later.
     pub fn create(destination: &'a Destination) -> Result<Self, CliError> {
         let parent = destination.parent();
+        // THE NAME HAS THREE PARTS, AND THE THIRD IS NOT DECORATION.
+        //
+        // `pid` separates processes. The clock reading separates runs across processes that reuse
+        // a pid. **The counter separates threads within one process**, which the clock does not:
+        // an earlier version used only pid + nanoseconds and claimed in a comment that "two runs
+        // in one process never collide" — which is false, because two threads can read the same
+        // nanosecond, and a sixteen-thread race on macOS proved it by failing to create a staging
+        // directory whose name was already taken.
+        //
+        // The CLI is single-threaded, so this was not reachable through `renvor new`. It was still
+        // a false statement in a comment about a uniqueness property, and the fix makes the
+        // statement true rather than deleting it.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let name = format!(
-            ".renvor-staging-{}-{}",
+            ".renvor-staging-{}-{}-{}",
             std::process::id(),
-            // A monotonic-ish discriminator so two runs in one process never collide. Not
-            // security-relevant; uniqueness within a parent directory is all that is needed.
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
 
         let failed = |error: std::io::Error| {
@@ -274,6 +286,28 @@ mod tests {
             !base.path().join("demo").exists(),
             "the destination was created early"
         );
+    }
+
+    #[test]
+    fn staging_names_are_unique_within_one_process() {
+        // THE REGRESSION TEST. `pid` + nanoseconds alone is not unique across threads — two can
+        // read the same nanosecond, which a sixteen-thread race on macOS CI demonstrated by
+        // failing to create a directory whose name was already taken. Asserted directly rather
+        // than by racing, so the guarantee is checked deterministically instead of probabilistically.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let target = destination(base.path(), "demo");
+        let mut names = std::collections::BTreeSet::new();
+        let mut held = Vec::new();
+        for _ in 0..256 {
+            let staging = Staging::create(&target).expect("creates");
+            assert!(
+                names.insert(staging.name.clone()),
+                "two staging directories in one process share the name `{}`",
+                staging.name
+            );
+            held.push(staging);
+        }
+        assert_eq!(names.len(), 256);
     }
 
     #[test]

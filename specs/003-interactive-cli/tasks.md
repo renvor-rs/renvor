@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**52 of 95 tasks complete. This section states what is built and what is not, because a task list
+**53 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -60,6 +60,16 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    rename. **`remove_dir` is what makes that safe**: the kernel refuses to remove a non-empty
    directory, so the emptiness check and the removal are one atomic operation rather than a check
    followed by a hopeful delete.
+
+2a-000000000. **A false uniqueness claim in a comment, proved false by a sixteen-thread race on
+   macOS CI.** `Staging::create` named its directory `.renvor-staging-{pid}-{nanos}` and the comment
+   beside it read *"a monotonic-ish discriminator so two runs in one process never collide"*. Two
+   threads can read the same nanosecond, so the claim was untrue — the race failed to create a
+   staging directory whose name was already taken. **Not reachable through `renvor new`**, which is
+   single-threaded; it was nonetheless a false statement about a uniqueness property, and the fix
+   makes the statement true (a process-wide atomic counter) rather than deleting the claim.
+   Verified deterministically — 256 staging directories in one process, all distinct — rather than
+   by racing, plus 40 consecutive race runs.
 
 2a-00000000. **A process failure of mine, recorded because the commit history is misleading
    without it.** Commit `1417ed6` is titled *"…and classify a lost race correctly"* and
