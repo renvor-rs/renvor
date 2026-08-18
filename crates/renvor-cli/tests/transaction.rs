@@ -93,7 +93,11 @@ fn the_wizard_asks_exactly_these_prompts() {
     // than as a cancellation test that quietly never runs.
     let root = tempfile::tempdir().expect("a temporary directory");
     let mut terminal = Terminal::spawn(
-        &["new", "--path", root.path().join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            root.path().join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
@@ -131,7 +135,8 @@ fn cancelling_at_each_prompt_exits_four_and_creates_no_destination() {
         let exit = terminal.wait();
 
         assert_eq!(
-            exit, 4,
+            exit,
+            4,
             "cancelling at {prompt:?} must exit 4\n--- transcript ---\n{}",
             terminal.visible()
         );
@@ -153,13 +158,21 @@ fn declining_the_review_screen_still_prints_the_equivalent_command() {
     // question rather than on the success path: declining must not lose the answers.
     let root = tempfile::tempdir().expect("a temporary directory");
     let destination = root.path().join("demo");
-    let mut terminal =
-        Terminal::spawn(&["new", "--path", destination.to_str().expect("utf-8")], root.path(), &[]);
+    let mut terminal = Terminal::spawn(
+        &["new", "--path", destination.to_str().expect("utf-8")],
+        root.path(),
+        &[],
+    );
     drive_to(&mut terminal, PROMPTS.len() - 1);
     terminal.send_line("n");
     let exit = terminal.wait();
 
-    assert_eq!(exit, 4, "declining is a cancellation\n{}", terminal.visible());
+    assert_eq!(
+        exit,
+        4,
+        "declining is a cancellation\n{}",
+        terminal.visible()
+    );
     assert!(!destination.exists(), "declining created a destination");
     let visible = terminal.visible();
     assert!(
@@ -184,10 +197,18 @@ const MUTATING_STEPS: [&str; 5] = ["stage", "render", "verify", "manifest", "pla
 
 /// Runs a flag-driven generation into `base`, optionally injecting a failure.
 fn generate_into(base: &Path, inject: Option<&str>) -> (i32, String, String) {
-    let environment: Vec<(&str, &str)> =
-        inject.map(|step| vec![("RENVOR_FAIL_AT", step)]).unwrap_or_default();
+    let environment: Vec<(&str, &str)> = inject
+        .map(|step| vec![("RENVOR_FAIL_AT", step)])
+        .unwrap_or_default();
     renvor(
-        &["new", "demo", "--yes", "--example-domain", "--output", "json"],
+        &[
+            "new",
+            "demo",
+            "--yes",
+            "--example-domain",
+            "--output",
+            "json",
+        ],
         base,
         &environment,
     )
@@ -202,15 +223,19 @@ fn a_failure_at_any_mutating_step_leaves_an_absent_destination_absent() {
         let (exit, stdout, stderr) = generate_into(base.path(), Some(step));
 
         assert_ne!(exit, 0, "injecting at `{step}` must fail the run: {stderr}");
-        let document: serde_json::Value = serde_json::from_str(&stdout)
-            .unwrap_or_else(|error| panic!("failing at `{step}` wrote no JSON document: {error}\n{stdout}"));
+        let document: serde_json::Value = serde_json::from_str(&stdout).unwrap_or_else(|error| {
+            panic!("failing at `{step}` wrote no JSON document: {error}\n{stdout}")
+        });
         assert_eq!(document["status"], "failure", "at `{step}`");
         assert_eq!(
             document["error"]["details"]["injected"], step,
             "the failure that occurred must be the one that was injected, not an unrelated one"
         );
 
-        assert!(!destination.exists(), "failing at `{step}` created the destination");
+        assert!(
+            !destination.exists(),
+            "failing at `{step}` created the destination"
+        );
         assert!(
             staging_residue(base.path()).is_empty(),
             "failing at `{step}` left staging behind: {:?}",
@@ -273,9 +298,18 @@ fn an_uninjected_run_into_the_same_fixtures_succeeds() {
         );
         let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
         assert_eq!(document["status"], "success");
-        assert!(destination.join("renvor.toml").is_file(), "a project was produced");
-        assert!(destination.join("src/domain.rs").is_file(), "the project is complete");
-        assert!(staging_residue(base.path()).is_empty(), "a successful run left staging behind");
+        assert!(
+            destination.join("renvor.toml").is_file(),
+            "a project was produced"
+        );
+        assert!(
+            destination.join("src/domain.rs").is_file(),
+            "the project is complete"
+        );
+        assert!(
+            staging_residue(base.path()).is_empty(),
+            "a successful run left staging behind"
+        );
     }
 }
 
@@ -286,9 +320,11 @@ fn an_unrecognised_injection_point_is_not_a_failure() {
     // pass for the wrong reason, and would also make the mechanism unusable for finding which
     // step actually broke.
     let base = tempfile::tempdir().expect("a temporary directory");
-    let (exit, _, stderr) =
-        generate_into(base.path(), Some("not-a-step-of-contract-c-5"));
-    assert_eq!(exit, 0, "an unknown injection point must be inert: {stderr}");
+    let (exit, _, stderr) = generate_into(base.path(), Some("not-a-step-of-contract-c-5"));
+    assert_eq!(
+        exit, 0,
+        "an unknown injection point must be inert: {stderr}"
+    );
     assert!(base.path().join("demo/renvor.toml").is_file());
 }
 

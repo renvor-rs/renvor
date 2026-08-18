@@ -220,12 +220,9 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
             // the review screen; a general-purpose "assume yes" that also installs a certificate
             // authority is precisely the accident `commands::tls` exists to prevent, so `yes` is
             // deliberately not consulted here.
-            TlsAction::Trust { consent } => commands::tls::trust(
-                reporter,
-                consent,
-                std::io::stdin().is_terminal(),
-                dry_run,
-            ),
+            TlsAction::Trust { consent } => {
+                commands::tls::trust(reporter, consent, std::io::stdin().is_terminal(), dry_run)
+            }
         },
     }
 }

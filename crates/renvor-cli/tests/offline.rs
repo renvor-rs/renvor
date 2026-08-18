@@ -70,7 +70,10 @@ fn every_generated_variant_is_produced_with_networking_unavailable() {
         let name = variant[1];
         let (exit, _, stderr) = renvor(&variant, base.path(), &offline());
         assert_eq!(exit, 0, "{variant:?} needed the network:\n{stderr}");
-        assert!(base.path().join(name).join("renvor.toml").is_file(), "{variant:?}");
+        assert!(
+            base.path().join(name).join("renvor.toml").is_file(),
+            "{variant:?}"
+        );
     }
 }
 
@@ -80,7 +83,11 @@ fn the_generated_project_declares_no_dependencies_so_there_is_nothing_to_resolve
     // template ever gains a dependency, `CARGO_NET_OFFLINE=true` makes that a loud failure — but
     // only if the manifest is what we think it is, and only this checks that.
     let base = tempfile::tempdir().expect("a temporary directory");
-    let (exit, _, stderr) = renvor(&["new", "demo", "--yes", "--example-domain"], base.path(), &offline());
+    let (exit, _, stderr) = renvor(
+        &["new", "demo", "--yes", "--example-domain"],
+        base.path(),
+        &offline(),
+    );
     assert_eq!(exit, 0, "{stderr}");
 
     let manifest = std::fs::read_to_string(base.path().join("demo/Cargo.toml")).expect("readable");
@@ -123,13 +130,20 @@ fn every_other_command_completes_with_networking_unavailable() {
     // The `docker` commands validate that the project actually has container controls before
     // anything else, so they need a project generated with `--container`. That refusal is correct
     // behaviour — it names the field and the constraint — and it is not what this test is about.
-    let (exit, _, stderr) = renvor(&["new", "boxed", "--yes", "--container"], base.path(), &offline());
+    let (exit, _, stderr) = renvor(
+        &["new", "boxed", "--yes", "--container"],
+        base.path(),
+        &offline(),
+    );
     assert_eq!(exit, 0, "{stderr}");
     let containerised = base.path().join("boxed");
 
     for (arguments, working_directory) in [
         (vec!["doctor"], base.path().to_path_buf()),
-        (vec!["doctor", "--output", "json"], base.path().to_path_buf()),
+        (
+            vec!["doctor", "--output", "json"],
+            base.path().to_path_buf(),
+        ),
         (vec!["check"], project.clone()),
         (vec!["check", "--output", "json"], project.clone()),
         (vec!["dev", "--dry-run"], project.clone()),
@@ -141,7 +155,10 @@ fn every_other_command_completes_with_networking_unavailable() {
         (vec!["--version"], base.path().to_path_buf()),
     ] {
         let (exit, _, stderr) = renvor(&arguments, &working_directory, &offline());
-        assert_eq!(exit, 0, "{arguments:?} did not complete offline (exit {exit}):\n{stderr}");
+        assert_eq!(
+            exit, 0,
+            "{arguments:?} did not complete offline (exit {exit}):\n{stderr}"
+        );
     }
 }
 
@@ -150,10 +167,16 @@ fn a_dry_run_generation_also_completes_with_networking_unavailable() {
     // SC-006 makes the dry run produce the same manifest as a real run, which means it renders and
     // verifies too — so it has the same network exposure and needs the same proof.
     let base = tempfile::tempdir().expect("a temporary directory");
-    let (exit, stdout, stderr) =
-        renvor(&["new", "demo", "--yes", "--dry-run", "--output", "json"], base.path(), &offline());
+    let (exit, stdout, stderr) = renvor(
+        &["new", "demo", "--yes", "--dry-run", "--output", "json"],
+        base.path(),
+        &offline(),
+    );
     assert_eq!(exit, 0, "{stderr}");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
     assert_eq!(document["status"], "success");
-    assert!(!base.path().join("demo").exists(), "a dry run wrote to the destination");
+    assert!(
+        !base.path().join("demo").exists(),
+        "a dry run wrote to the destination"
+    );
 }

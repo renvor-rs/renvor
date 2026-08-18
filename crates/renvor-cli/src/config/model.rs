@@ -285,7 +285,10 @@ impl ProjectConfiguration {
         let mut parts = vec![
             "renvor new".to_owned(),
             shell_quote(&self.name),
-            format!("--path {}", shell_quote(&self.destination.display().to_string())),
+            format!(
+                "--path {}",
+                shell_quote(&self.destination.display().to_string())
+            ),
             format!(
                 "--target {}",
                 match self.target {

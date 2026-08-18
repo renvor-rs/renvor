@@ -101,9 +101,12 @@ fn extract_version(line: &str) -> Option<semver::Version> {
             semver::Version::parse(token).ok().or_else(|| {
                 // `1.94` → `1.94.0`, but only when it really is two numeric components.
                 let parts: Vec<&str> = token.split('.').collect();
-                (parts.len() == 2 && parts.iter().all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())))
-                    .then(|| semver::Version::parse(&format!("{token}.0")).ok())
-                    .flatten()
+                (parts.len() == 2
+                    && parts
+                        .iter()
+                        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())))
+                .then(|| semver::Version::parse(&format!("{token}.0")).ok())
+                .flatten()
             })
         })
 }
@@ -121,8 +124,10 @@ fn probe(tool: &str, required: bool, minimum: Option<&str>, remedy: &str) -> Pro
             let found_version = extract_version(&line);
             // Incompatible ONLY when a minimum is declared AND a version was parsed AND it is
             // below. An unparseable version leaves `compatible` true; see `Probe::compatible`.
-            let compatible = match (minimum.and_then(|m| semver::Version::parse(m).ok()), &found_version)
-            {
+            let compatible = match (
+                minimum.and_then(|m| semver::Version::parse(m).ok()),
+                &found_version,
+            ) {
                 (Some(floor), Some(found)) => *found >= floor,
                 _ => true,
             };
@@ -205,18 +210,29 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
             format!(
                 "`{}` is {}, below the required {}",
                 bad.tool,
-                bad.found_version.clone().unwrap_or_else(|| "an unknown version".to_owned()),
+                bad.found_version
+                    .clone()
+                    .unwrap_or_else(|| "an unknown version".to_owned()),
                 bad.required_version.clone().unwrap_or_default()
             )
         } else {
-            format!("`{}` is required and was not found or could not be run", bad.tool)
+            format!(
+                "`{}` is required and was not found or could not be run",
+                bad.tool
+            )
         };
         return Err(CliError::new(crate::exit::Code::ToolMissing, why)
             .with("tool", bad.tool.clone())
             .with("required", "true")
             .with("found", bad.found.to_string())
-            .with("foundVersion", bad.found_version.clone().unwrap_or_default())
-            .with("requiredVersion", bad.required_version.clone().unwrap_or_default())
+            .with(
+                "foundVersion",
+                bad.found_version.clone().unwrap_or_default(),
+            )
+            .with(
+                "requiredVersion",
+                bad.required_version.clone().unwrap_or_default(),
+            )
             .with("remedy", bad.remedy.clone().unwrap_or_default()));
     }
 
@@ -224,30 +240,32 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
 
     let mut human = probes
         .iter()
-        .map(|probe| match (&probe.version, probe.compatible, probe.required) {
-            (Some(version), true, _) => format!("ok       {:<8} {version}", probe.tool),
-            (Some(version), false, _) => format!(
-                "TOO OLD  {:<8} {version} — needs {}; {}",
-                probe.tool,
-                probe.required_version.clone().unwrap_or_default(),
-                probe.remedy.clone().unwrap_or_default()
-            ),
-            (None, _, true) => format!(
-                "MISSING  {:<8} required{}; {}",
-                probe.tool,
-                probe
-                    .required_version
-                    .as_ref()
-                    .map(|v| format!(" (>= {v})"))
-                    .unwrap_or_default(),
-                probe.remedy.clone().unwrap_or_default()
-            ),
-            (None, _, false) => format!(
-                "absent   {:<8} optional; {}",
-                probe.tool,
-                probe.remedy.clone().unwrap_or_default()
-            ),
-        })
+        .map(
+            |probe| match (&probe.version, probe.compatible, probe.required) {
+                (Some(version), true, _) => format!("ok       {:<8} {version}", probe.tool),
+                (Some(version), false, _) => format!(
+                    "TOO OLD  {:<8} {version} — needs {}; {}",
+                    probe.tool,
+                    probe.required_version.clone().unwrap_or_default(),
+                    probe.remedy.clone().unwrap_or_default()
+                ),
+                (None, _, true) => format!(
+                    "MISSING  {:<8} required{}; {}",
+                    probe.tool,
+                    probe
+                        .required_version
+                        .as_ref()
+                        .map(|v| format!(" (>= {v})"))
+                        .unwrap_or_default(),
+                    probe.remedy.clone().unwrap_or_default()
+                ),
+                (None, _, false) => format!(
+                    "absent   {:<8} optional; {}",
+                    probe.tool,
+                    probe.remedy.clone().unwrap_or_default()
+                ),
+            },
+        )
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -305,7 +323,10 @@ mod tests {
     #[test]
     fn an_optional_tool_being_absent_is_not_a_required_failure() {
         // The rule that keeps `doctor` runnable in a container without docker.
-        let optional: Vec<_> = TOOLS.iter().filter(|(_, required, _, _)| !*required).collect();
+        let optional: Vec<_> = TOOLS
+            .iter()
+            .filter(|(_, required, _, _)| !*required)
+            .collect();
         assert!(!optional.is_empty(), "at least one tool must be optional");
     }
 
@@ -327,7 +348,10 @@ mod tests {
             ("cargo 1.94.0 (a1b2c3d4e 2026-01-05)", "1.94.0"),
             ("git version 2.39.5", "2.39.5"),
             ("Docker version 27.0.3, build 7d4bcd8", "27.0.3"),
-            ("cargo 1.95.0-nightly (deadbeef 2026-02-01)", "1.95.0-nightly"),
+            (
+                "cargo 1.95.0-nightly (deadbeef 2026-02-01)",
+                "1.95.0-nightly",
+            ),
             // Two components padded to three, which some tools print.
             ("something 1.94", "1.94.0"),
         ] {
@@ -345,7 +369,10 @@ mod tests {
         // that prints something this parser does not understand is unknown, not too old.
         assert!(extract_version("some-tool built from source").is_none());
         let probe = probe("cargo", true, Some("1.94.0"), "update");
-        assert!(probe.compatible || probe.found_version.is_some(), "{probe:?}");
+        assert!(
+            probe.compatible || probe.found_version.is_some(),
+            "{probe:?}"
+        );
     }
 
     #[test]
@@ -353,13 +380,27 @@ mod tests {
         // The case T065 exists for, and the one that cannot be produced by running a real tool:
         // `cargo` on this machine is not going to be old. Driven through `probe` with an
         // impossible floor instead, so the comparison itself is what is under test.
-        let probe = probe("cargo", true, Some("999.0.0"), "install Rust from https://rustup.rs");
+        let probe = probe(
+            "cargo",
+            true,
+            Some("999.0.0"),
+            "install Rust from https://rustup.rs",
+        );
         assert!(probe.found, "cargo must be runnable");
-        assert!(!probe.compatible, "cargo cannot satisfy a 999.0.0 floor: {probe:?}");
-        assert_eq!(probe.required_version.as_deref(), Some("999.0.0"));
-        assert!(probe.found_version.is_some(), "the found version must be reported too");
         assert!(
-            probe.remedy.as_deref().is_some_and(|remedy| !remedy.is_empty()),
+            !probe.compatible,
+            "cargo cannot satisfy a 999.0.0 floor: {probe:?}"
+        );
+        assert_eq!(probe.required_version.as_deref(), Some("999.0.0"));
+        assert!(
+            probe.found_version.is_some(),
+            "the found version must be reported too"
+        );
+        assert!(
+            probe
+                .remedy
+                .as_deref()
+                .is_some_and(|remedy| !remedy.is_empty()),
             "an incompatible tool needs a remedy as much as a missing one: {probe:?}"
         );
     }

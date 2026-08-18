@@ -743,7 +743,10 @@ mod tests {
 
         assert_eq!(error.code, Code::BoundExceeded);
         assert!(
-            error.details.iter().any(|(key, value)| key == "bound" && value == "output_file_count"),
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "bound" && value == "output_file_count"),
             "{:?}",
             error.details
         );
@@ -766,8 +769,13 @@ mod tests {
         let entries = many(bounds::MAX_FILES, "x");
         let renderer = Renderer::new(set(&entries)).expect("builds");
         let root = staged();
-        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
-        assert_eq!(root.dir.entries().expect("readable").count(), bounds::MAX_FILES);
+        renderer
+            .render_into(&root.dir, &ctx())
+            .expect("exactly the limit is allowed");
+        assert_eq!(
+            root.dir.entries().expect("readable").count(),
+            bounds::MAX_FILES
+        );
     }
 
     #[test]
@@ -784,7 +792,10 @@ mod tests {
 
         assert_eq!(error.code, Code::BoundExceeded);
         assert!(
-            error.details.iter().any(|(key, value)| key == "bound" && value == "total_output_bytes"),
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "bound" && value == "total_output_bytes"),
             "{:?}",
             error.details
         );
@@ -805,7 +816,9 @@ mod tests {
         let count = bounds::MAX_TOTAL_BYTES / bounds::MAX_FILE_BYTES;
         let renderer = Renderer::new(set(&many(count, body))).expect("builds");
         let root = staged();
-        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
+        renderer
+            .render_into(&root.dir, &ctx())
+            .expect("exactly the limit is allowed");
     }
 
     #[test]
@@ -813,10 +826,15 @@ mod tests {
         // The boundary control for `a_file_above_the_per_file_limit_is_a_bound_not_a_write`, which
         // existed without one.
         let body: &'static str = Box::leak("x".repeat(bounds::MAX_FILE_BYTES).into_boxed_str());
-        let renderer =
-            Renderer::new(set(&[TemplateEntry { path: "a.txt", body }])).expect("builds");
+        let renderer = Renderer::new(set(&[TemplateEntry {
+            path: "a.txt",
+            body,
+        }]))
+        .expect("builds");
         let root = staged();
-        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
+        renderer
+            .render_into(&root.dir, &ctx())
+            .expect("exactly the limit is allowed");
     }
 
     #[test]

@@ -311,7 +311,10 @@ mod tests {
         let outcome = probe(program, arguments, std::time::Duration::from_millis(500));
         let elapsed = started.elapsed();
 
-        assert!(outcome.is_err(), "a command that outlives its deadline must not report success");
+        assert!(
+            outcome.is_err(),
+            "a command that outlives its deadline must not report success"
+        );
         assert!(
             elapsed < std::time::Duration::from_secs(10),
             "the probe waited {elapsed:?} for a 500ms deadline, so the bound is not enforced"
@@ -342,7 +345,11 @@ mod tests {
         // Both return `Err(())` from `probe`, and `availability` turns them into different reasons
         // depending on WHICH probe produced it. This pins the first half.
         assert_eq!(
-            probe("renvor-definitely-not-a-real-executable", &[], PROBE_TIMEOUT),
+            probe(
+                "renvor-definitely-not-a-real-executable",
+                &[],
+                PROBE_TIMEOUT
+            ),
             Err(())
         );
     }
@@ -374,15 +381,24 @@ mod tests {
         // "Never silently skip": each way the runtime can be unusable has to produce a different
         // `details.reason` AND a different instruction. Two reasons sharing one remedy is a
         // distinction that helps a consumer and not the operator.
-        let all = [Unavailable::Absent, Unavailable::DaemonStopped, Unavailable::DaemonSilent];
-        let reasons: std::collections::BTreeSet<&str> =
-            all.iter().map(|u| u.reason()).collect();
-        assert_eq!(reasons.len(), all.len(), "two states share a reason: {reasons:?}");
-        let remedies: std::collections::BTreeSet<&str> =
-            all.iter().map(|u| u.remedy()).collect();
+        let all = [
+            Unavailable::Absent,
+            Unavailable::DaemonStopped,
+            Unavailable::DaemonSilent,
+        ];
+        let reasons: std::collections::BTreeSet<&str> = all.iter().map(|u| u.reason()).collect();
+        assert_eq!(
+            reasons.len(),
+            all.len(),
+            "two states share a reason: {reasons:?}"
+        );
+        let remedies: std::collections::BTreeSet<&str> = all.iter().map(|u| u.remedy()).collect();
         assert_eq!(remedies.len(), all.len(), "two states share a remedy");
         for unavailable in all {
-            assert!(!unavailable.remedy().is_empty(), "{unavailable:?} has no remedy");
+            assert!(
+                !unavailable.remedy().is_empty(),
+                "{unavailable:?} has no remedy"
+            );
         }
     }
 

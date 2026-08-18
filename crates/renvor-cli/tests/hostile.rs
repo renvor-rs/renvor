@@ -47,12 +47,21 @@ const RESERVED_DEVICE_NAMES: [&str; 22] = [
 /// Runs `renvor new` and returns the parsed failure document, insisting the run failed.
 fn refused(arguments: &[&str], working_directory: &Path) -> serde_json::Value {
     let (exit, stdout, stderr) = renvor(arguments, working_directory, &[]);
-    assert_ne!(exit, 0, "{arguments:?} was ACCEPTED; it must be refused\n{stderr}");
-    assert_eq!(exit, 3, "{arguments:?} must fail validation (exit 3), not {exit}\n{stderr}");
+    assert_ne!(
+        exit, 0,
+        "{arguments:?} was ACCEPTED; it must be refused\n{stderr}"
+    );
+    assert_eq!(
+        exit, 3,
+        "{arguments:?} must fail validation (exit 3), not {exit}\n{stderr}"
+    );
     let document: serde_json::Value = serde_json::from_str(stdout.trim())
         .unwrap_or_else(|error| panic!("{arguments:?} wrote no JSON document: {error}\n{stdout}"));
     assert_eq!(document["status"], "failure", "{arguments:?}");
-    assert!(document["error"]["code"].is_string(), "{arguments:?} produced no stable error code");
+    assert!(
+        document["error"]["code"].is_string(),
+        "{arguments:?} produced no stable error code"
+    );
     document
 }
 
@@ -78,14 +87,26 @@ fn every_traversal_spelling_is_refused_by_the_traversal_rule() {
     let work = base.path().join("work");
     std::fs::create_dir_all(&work).expect("the working directory is created");
 
-    for case in ["../escape", "a/../../b", "./../escape", "x/../../../y", "../"] {
-        let document = refused(&["new", "demo", "--path", case, "--yes", "--output", "json"], &work);
+    for case in [
+        "../escape",
+        "a/../../b",
+        "./../escape",
+        "x/../../../y",
+        "../",
+    ] {
+        let document = refused(
+            &["new", "demo", "--path", case, "--yes", "--output", "json"],
+            &work,
+        );
         assert_eq!(
             document["error"]["details"]["rule"], "no_traversal",
             "`{case}` was refused by a different rule than the one meant to catch it: {document}"
         );
     }
-    assert!(staging_residue(&work).is_empty(), "refused runs left staging behind");
+    assert!(
+        staging_residue(&work).is_empty(),
+        "refused runs left staging behind"
+    );
 }
 
 #[test]
@@ -94,7 +115,11 @@ fn an_absolute_path_in_the_name_position_is_refused() {
     // path component that becomes a package name, so an absolute path there must be refused
     // rather than quietly treated as a destination.
     let base = tempfile::tempdir().expect("a temporary directory");
-    for case in ["/etc/renvor-injected", "/tmp/renvor-injected", "//srv/renvor"] {
+    for case in [
+        "/etc/renvor-injected",
+        "/tmp/renvor-injected",
+        "//srv/renvor",
+    ] {
         let document = refused(&["new", case, "--yes", "--output", "json"], base.path());
         assert!(
             document["error"]["code"].is_string(),
@@ -114,9 +139,15 @@ fn every_reserved_device_name_is_refused_on_every_platform() {
     // generated on one platform is opened on another.
     let base = tempfile::tempdir().expect("a temporary directory");
     for reserved in RESERVED_DEVICE_NAMES {
-        for spelling in [reserved.to_owned(), reserved.to_lowercase(), format!("{reserved}.txt")] {
-            let document =
-                refused(&["new", &spelling, "--yes", "--output", "json"], base.path());
+        for spelling in [
+            reserved.to_owned(),
+            reserved.to_lowercase(),
+            format!("{reserved}.txt"),
+        ] {
+            let document = refused(
+                &["new", &spelling, "--yes", "--output", "json"],
+                base.path(),
+            );
             assert_eq!(
                 document["error"]["code"], "invalid_project_name",
                 "`{spelling}` must be refused as a name: {document}"
@@ -131,7 +162,10 @@ fn every_reserved_device_name_is_refused_on_every_platform() {
             );
         }
     }
-    assert!(staging_residue(base.path()).is_empty(), "refused runs left staging behind");
+    assert!(
+        staging_residue(base.path()).is_empty(),
+        "refused runs left staging behind"
+    );
 }
 
 #[test]
@@ -148,7 +182,12 @@ fn a_destination_that_is_a_symlink_to_another_directory_is_refused() {
     std::fs::create_dir_all(&work).expect("the working directory is created");
     std::os::unix::fs::symlink(&outside, work.join("linked")).expect("the symlink is created");
 
-    let document = refused(&["new", "demo", "--path", "linked", "--yes", "--output", "json"], &work);
+    let document = refused(
+        &[
+            "new", "demo", "--path", "linked", "--yes", "--output", "json",
+        ],
+        &work,
+    );
     assert_eq!(
         document["error"]["details"]["rule"], "not_a_symlink",
         "the symlink must be refused as a symlink: {document}"
@@ -168,13 +207,20 @@ fn an_existing_non_empty_destination_is_refused_without_being_touched() {
     std::fs::create_dir_all(&occupied).expect("the occupied destination is created");
     std::fs::write(occupied.join("theirs"), b"theirs").expect("their file is written");
 
-    let document =
-        refused(&["new", "demo", "--path", "occupied", "--yes", "--output", "json"], base.path());
+    let document = refused(
+        &[
+            "new", "demo", "--path", "occupied", "--yes", "--output", "json",
+        ],
+        base.path(),
+    );
     assert_eq!(
         document["error"]["code"], "destination_not_empty",
         "the code must say WHY it was rejected, not merely that it was: {document}"
     );
-    assert_eq!(document["error"]["details"]["rule"], "destination_absent_or_empty", "{document}");
+    assert_eq!(
+        document["error"]["details"]["rule"], "destination_absent_or_empty",
+        "{document}"
+    );
     assert_eq!(
         std::fs::read_to_string(occupied.join("theirs")).expect("their file survives"),
         "theirs",
@@ -185,7 +231,10 @@ fn an_existing_non_empty_destination_is_refused_without_being_touched() {
         1,
         "an occupied destination gained entries"
     );
-    assert!(staging_residue(base.path()).is_empty(), "a refused run left staging behind");
+    assert!(
+        staging_residue(base.path()).is_empty(),
+        "a refused run left staging behind"
+    );
 }
 
 // ── T021: the positive control ──────────────────────────────────────────────────────────────
@@ -234,7 +283,10 @@ fn no_shipped_template_can_write_outside_the_destination() {
         let destination = base.path().join(name);
         let mut outside = Vec::new();
         fn walk(directory: &Path, allowed: &Path, outside: &mut Vec<String>) {
-            for entry in std::fs::read_dir(directory).expect("readable").filter_map(Result::ok) {
+            for entry in std::fs::read_dir(directory)
+                .expect("readable")
+                .filter_map(Result::ok)
+            {
                 let path = entry.path();
                 if !path.starts_with(allowed) {
                     outside.push(path.display().to_string());
@@ -245,7 +297,10 @@ fn no_shipped_template_can_write_outside_the_destination() {
             }
         }
         walk(&destination, &destination, &mut outside);
-        assert!(outside.is_empty(), "{variant:?} produced paths outside the destination: {outside:?}");
+        assert!(
+            outside.is_empty(),
+            "{variant:?} produced paths outside the destination: {outside:?}"
+        );
     }
 
     assert_eq!(

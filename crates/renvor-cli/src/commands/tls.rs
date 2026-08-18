@@ -71,7 +71,10 @@ fn describe(reporter: &Reporter) {
         "  1. generate a local certificate authority and store its PRIVATE KEY under renvor's \
          configuration directory",
     );
-    reporter.note(&format!("  2. install that authority's certificate into {}", trust_store_description()));
+    reporter.note(&format!(
+        "  2. install that authority's certificate into {}",
+        trust_store_description()
+    ));
     reporter.note(
         "  3. issue a leaf certificate for the project's local development domain, signed by it",
     );

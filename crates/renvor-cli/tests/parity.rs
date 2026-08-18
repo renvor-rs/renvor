@@ -41,11 +41,18 @@ fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
         entries.sort_by_key(std::fs::DirEntry::file_name);
         for entry in entries {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let relative = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+            let relative = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
             if entry.file_type().expect("a file type is readable").is_dir() {
                 walk(&entry.path(), &relative, files);
             } else {
-                files.insert(relative, std::fs::read(entry.path()).expect("a file is readable"));
+                files.insert(
+                    relative,
+                    std::fs::read(entry.path()).expect("a file is readable"),
+                );
             }
         }
     }
@@ -89,12 +96,21 @@ fn a_wizard_run_and_a_flag_run_with_equivalent_answers_produce_byte_identical_pr
     std::fs::create_dir_all(&flag_parent).expect("the parent is created");
 
     let mut terminal = Terminal::spawn(
-        &["new", "--path", wizard_parent.join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            wizard_parent.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
     let wizard_exit = drive_wizard_accepting_defaults(&mut terminal);
-    assert_eq!(wizard_exit, 0, "the wizard run succeeds\n--- transcript ---\n{}", terminal.visible());
+    assert_eq!(
+        wizard_exit,
+        0,
+        "the wizard run succeeds\n--- transcript ---\n{}",
+        terminal.visible()
+    );
 
     // The equivalent non-interactive command. `--example-domain` because the wizard's default for
     // that prompt is yes; every other prompt defaults to no, which is the flag being absent.
@@ -146,7 +162,11 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     std::fs::create_dir_all(&answered_parent).expect("the parent is created");
 
     let mut defaults = Terminal::spawn(
-        &["new", "--path", defaults_parent.join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            defaults_parent.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
@@ -154,7 +174,11 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
 
     // The same wizard, answering the container prompt YES instead of accepting the default.
     let mut answered = Terminal::spawn(
-        &["new", "--path", answered_parent.join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            answered_parent.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
@@ -173,11 +197,19 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     answered.expect("Create this project?");
     answered.enter();
     let exit = answered.wait();
-    assert_eq!(exit, 0, "the answered run succeeds\n--- transcript ---\n{}", answered.visible());
+    assert_eq!(
+        exit,
+        0,
+        "the answered run succeeds\n--- transcript ---\n{}",
+        answered.visible()
+    );
 
     let from_defaults = tree(&defaults_parent.join("demo"));
     let from_answers = tree(&answered_parent.join("demo"));
-    assert_ne!(from_defaults, from_answers, "answering differently must produce a different project");
+    assert_ne!(
+        from_defaults, from_answers,
+        "answering differently must produce a different project"
+    );
     assert!(
         !from_defaults.contains_key("compose.yaml") && from_answers.contains_key("compose.yaml"),
         "the container answer is what differs: {:?} vs {:?}",
@@ -199,7 +231,11 @@ fn the_wizard_runs_only_because_stdin_is_a_terminal() {
     let with_terminal = root.path().join("t");
     std::fs::create_dir_all(&with_terminal).expect("the parent is created");
     let mut terminal = Terminal::spawn(
-        &[arguments[0], arguments[1], with_terminal.join("demo").to_str().expect("utf-8")],
+        &[
+            arguments[0],
+            arguments[1],
+            with_terminal.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
@@ -215,11 +251,18 @@ fn the_wizard_runs_only_because_stdin_is_a_terminal() {
     let without_terminal = root.path().join("p");
     std::fs::create_dir_all(&without_terminal).expect("the parent is created");
     let (exit, stdout, stderr) = renvor(
-        &[arguments[0], arguments[1], without_terminal.join("demo").to_str().expect("utf-8")],
+        &[
+            arguments[0],
+            arguments[1],
+            without_terminal.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
-    assert_eq!(exit, 0, "the same command without a terminal completes rather than waiting: {stderr}");
+    assert_eq!(
+        exit, 0,
+        "the same command without a terminal completes rather than waiting: {stderr}"
+    );
     assert!(
         !stdout.contains("Project name") && !stderr.contains("Project name"),
         "FR-010: no prompt may be rendered when stdin is not a terminal\nstdout: {stdout}\nstderr: {stderr}"
@@ -248,7 +291,10 @@ fn without_a_terminal_an_answer_nothing_determines_is_refused_rather_than_invent
         "the refusal names what was missing rather than saying only that something was"
     );
     assert!(
-        std::fs::read_dir(root.path()).expect("readable").next().is_none(),
+        std::fs::read_dir(root.path())
+            .expect("readable")
+            .next()
+            .is_none(),
         "nothing was created"
     );
 }
@@ -266,7 +312,10 @@ fn the_help_text_documents_every_default_the_non_interactive_path_applies() {
         "Defaults to `./<name>`",
         "Defaults to `<name>.test`",
     ] {
-        assert!(stdout.contains(documented), "`--help` must document: {documented}\n{stdout}");
+        assert!(
+            stdout.contains(documented),
+            "`--help` must document: {documented}\n{stdout}"
+        );
     }
 }
 
@@ -334,7 +383,11 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
 
     // 1. Drive the wizard and DECLINE, so nothing is written and the command is printed anyway.
     let mut declined = Terminal::spawn(
-        &["new", "--path", from_command.join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            from_command.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
@@ -367,7 +420,10 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
 
     // 2. It must be OUR command, in the surface's own spelling.
     let arguments = split_command(&printed);
-    assert_eq!(arguments[0], "renvor", "the printed command names the executable: {printed}");
+    assert_eq!(
+        arguments[0], "renvor",
+        "the printed command names the executable: {printed}"
+    );
     assert_eq!(arguments[1], "new", "{printed}");
     assert!(
         !arguments.iter().any(|argument| argument == "--name"),
@@ -377,19 +433,34 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
 
     // 3. RUN IT, verbatim, with nothing edited.
     let (exit, _, stderr) = renvor(
-        &arguments[1..].iter().map(String::as_str).collect::<Vec<_>>(),
+        &arguments[1..]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
         root.path(),
         &[],
     );
-    assert_eq!(exit, 0, "the wizard's own equivalent command must run: `{printed}`\n{stderr}");
+    assert_eq!(
+        exit, 0,
+        "the wizard's own equivalent command must run: `{printed}`\n{stderr}"
+    );
 
     // 4. And produce exactly what accepting the wizard would have produced.
     let mut accepted = Terminal::spawn(
-        &["new", "--path", from_wizard.join("demo").to_str().expect("utf-8")],
+        &[
+            "new",
+            "--path",
+            from_wizard.join("demo").to_str().expect("utf-8"),
+        ],
         root.path(),
         &[],
     );
-    assert_eq!(drive_wizard_accepting_defaults(&mut accepted), 0, "{}", accepted.visible());
+    assert_eq!(
+        drive_wizard_accepting_defaults(&mut accepted),
+        0,
+        "{}",
+        accepted.visible()
+    );
 
     assert_eq!(
         tree(&from_command.join("demo")),

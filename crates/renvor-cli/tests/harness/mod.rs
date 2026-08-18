@@ -44,7 +44,12 @@ impl Terminal {
     /// Spawns `renvor` with `args`, in `directory`, attached to a pty.
     pub fn spawn(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> Self {
         let pty = native_pty_system()
-            .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows: 40,
+                cols: 120,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .expect("a pseudo-terminal can be opened");
 
         let mut command = CommandBuilder::new(env!("CARGO_BIN_EXE_renvor"));
@@ -60,7 +65,10 @@ impl Terminal {
             command.env(key, value);
         }
 
-        let child = pty.slave.spawn_command(command).expect("renvor starts on the pty");
+        let child = pty
+            .slave
+            .spawn_command(command)
+            .expect("renvor starts on the pty");
         // The slave handle must be dropped or the master never sees EOF when the child exits.
         drop(pty.slave);
 
@@ -83,7 +91,12 @@ impl Terminal {
             }
         });
 
-        Self { writer, receiver, child, transcript: String::new() }
+        Self {
+            writer,
+            receiver,
+            child,
+            transcript: String::new(),
+        }
     }
 
     /// Reads until `needle` appears in the transcript.
@@ -94,8 +107,15 @@ impl Terminal {
         let deadline = Instant::now() + EXPECT_TIMEOUT;
         while !self.visible().contains(needle) {
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "timed out waiting for {needle:?}\n--- transcript ---\n{}", self.visible());
-            match self.receiver.recv_timeout(remaining.min(Duration::from_millis(250))) {
+            assert!(
+                !remaining.is_zero(),
+                "timed out waiting for {needle:?}\n--- transcript ---\n{}",
+                self.visible()
+            );
+            match self
+                .receiver
+                .recv_timeout(remaining.min(Duration::from_millis(250)))
+            {
                 Ok(byte) => self.transcript.push(byte as char),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {

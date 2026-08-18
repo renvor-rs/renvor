@@ -126,13 +126,25 @@ fn the_snapshot_can_detect_a_change() {
     assert!(!before.is_empty(), "the fixture snapshot is empty");
 
     std::fs::write(anchors.join("added.crt"), b"a new authority").expect("written");
-    assert_ne!(before, fingerprint(std::slice::from_ref(&anchors)), "an added file was not noticed");
+    assert_ne!(
+        before,
+        fingerprint(std::slice::from_ref(&anchors)),
+        "an added file was not noticed"
+    );
 
     std::fs::remove_file(anchors.join("added.crt")).expect("removed");
-    assert_eq!(before, fingerprint(std::slice::from_ref(&anchors)), "removal did not restore the snapshot");
+    assert_eq!(
+        before,
+        fingerprint(std::slice::from_ref(&anchors)),
+        "removal did not restore the snapshot"
+    );
 
     std::fs::write(anchors.join("existing.crt"), b"tampered").expect("written");
-    assert_ne!(before, fingerprint(&[anchors]), "a modified file was not noticed");
+    assert_ne!(
+        before,
+        fingerprint(&[anchors]),
+        "a modified file was not noticed"
+    );
 }
 
 /// Runs `arguments`, and returns the exit code, having asserted the trust store did not move.
@@ -151,8 +163,14 @@ fn no_command_in_this_phase_modifies_the_trust_store() {
     let base = tempfile::tempdir().expect("a temporary directory");
 
     assert_eq!(unchanged_by(&["new", "plain", "--yes"], base.path()), 0);
-    assert_eq!(unchanged_by(&["new", "secured", "--yes", "--local-https"], base.path()), 0);
-    assert_eq!(unchanged_by(&["new", "boxed", "--yes", "--container"], base.path()), 0);
+    assert_eq!(
+        unchanged_by(&["new", "secured", "--yes", "--local-https"], base.path()),
+        0
+    );
+    assert_eq!(
+        unchanged_by(&["new", "boxed", "--yes", "--container"], base.path()),
+        0
+    );
 
     let project = base.path().join("secured");
     let containerised = base.path().join("boxed");
@@ -160,7 +178,10 @@ fn no_command_in_this_phase_modifies_the_trust_store() {
     assert_eq!(unchanged_by(&["doctor"], base.path()), 0);
     assert_eq!(unchanged_by(&["dev", "--dry-run"], &project), 0);
     for action in ["up", "down", "status", "logs"] {
-        assert_eq!(unchanged_by(&["docker", action, "--dry-run"], &containerised), 0);
+        assert_eq!(
+            unchanged_by(&["docker", action, "--dry-run"], &containerised),
+            0
+        );
     }
 
     // And the manifest records the intent, so this is not passing because the selection was lost.
@@ -197,7 +218,11 @@ fn yes_does_not_grant_trust_store_consent() {
     // installs a certificate authority is exactly the accident this boundary exists to prevent.
     let base = tempfile::tempdir().expect("a temporary directory");
     let before = snapshot();
-    let (exit, stdout, _) = renvor(&["tls", "trust", "--yes", "--output", "json"], base.path(), &[]);
+    let (exit, stdout, _) = renvor(
+        &["tls", "trust", "--yes", "--output", "json"],
+        base.path(),
+        &[],
+    );
     assert_eq!(before, snapshot());
     assert_eq!(exit, 2, "`--yes` must not satisfy the consent gate");
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
@@ -213,15 +238,31 @@ fn consent_granted_still_modifies_nothing_because_the_operation_is_unavailable()
     let base = tempfile::tempdir().expect("a temporary directory");
     let before = snapshot();
     let (exit, stdout, _) = renvor(
-        &["tls", "trust", "--i-understand-this-modifies-my-system-trust-store", "--output", "json"],
+        &[
+            "tls",
+            "trust",
+            "--i-understand-this-modifies-my-system-trust-store",
+            "--output",
+            "json",
+        ],
         base.path(),
         &[],
     );
-    assert_eq!(before, snapshot(), "GRANTING CONSENT MODIFIED THE TRUST STORE");
-    assert_eq!(exit, 3, "the operation must be refused as belonging to a later phase, not succeed");
+    assert_eq!(
+        before,
+        snapshot(),
+        "GRANTING CONSENT MODIFIED THE TRUST STORE"
+    );
+    assert_eq!(
+        exit, 3,
+        "the operation must be refused as belonging to a later phase, not succeed"
+    );
 
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
-    assert_eq!(document["error"]["code"], "reserved_for_later_phase", "{document}");
+    assert_eq!(
+        document["error"]["code"], "reserved_for_later_phase",
+        "{document}"
+    );
     assert_eq!(document["error"]["details"]["trustStoreModifications"], "0");
     assert!(
         document["error"]["details"]["phase"]
@@ -249,7 +290,10 @@ fn the_description_precedes_the_question_and_names_this_platforms_store() {
     let description_at = visible
         .find("would, if it were available")
         .expect("the description is on screen");
-    assert!(description_at < question_at, "the description must PRECEDE the question:\n{visible}");
+    assert!(
+        description_at < question_at,
+        "the description must PRECEDE the question:\n{visible}"
+    );
 
     let expected = if cfg!(target_os = "macos") {
         "login.keychain-db"
@@ -269,8 +313,17 @@ fn the_description_precedes_the_question_and_names_this_platforms_store() {
 
     terminal.send_line("n");
     let exit = terminal.wait();
-    assert_eq!(exit, 4, "withholding consent is a cancellation\n{}", terminal.visible());
-    assert_eq!(before, snapshot(), "withholding consent modified the trust store");
+    assert_eq!(
+        exit,
+        4,
+        "withholding consent is a cancellation\n{}",
+        terminal.visible()
+    );
+    assert_eq!(
+        before,
+        snapshot(),
+        "withholding consent modified the trust store"
+    );
 }
 
 #[test]
@@ -284,9 +337,14 @@ fn granting_consent_at_the_prompt_also_modifies_nothing() {
     terminal.send_line("y");
     let exit = terminal.wait();
 
-    assert_eq!(before, snapshot(), "GRANTING CONSENT AT THE PROMPT MODIFIED THE TRUST STORE");
     assert_eq!(
-        exit, 3,
+        before,
+        snapshot(),
+        "GRANTING CONSENT AT THE PROMPT MODIFIED THE TRUST STORE"
+    );
+    assert_eq!(
+        exit,
+        3,
         "the operation must be refused as belonging to a later phase\n{}",
         terminal.visible()
     );
@@ -301,10 +359,16 @@ fn granting_consent_at_the_prompt_also_modifies_nothing() {
 fn a_dry_run_asks_nothing_and_changes_nothing() {
     let base = tempfile::tempdir().expect("a temporary directory");
     let before = snapshot();
-    let (exit, stdout, _) =
-        renvor(&["tls", "trust", "--dry-run", "--output", "json"], base.path(), &[]);
+    let (exit, stdout, _) = renvor(
+        &["tls", "trust", "--dry-run", "--output", "json"],
+        base.path(),
+        &[],
+    );
     assert_eq!(before, snapshot());
-    assert_eq!(exit, 0, "a dry run that asks nothing and does nothing is a success");
+    assert_eq!(
+        exit, 0,
+        "a dry run that asks nothing and does nothing is a success"
+    );
     let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
     assert_eq!(document["result"]["trustStoreModifications"], 0);
     assert_eq!(document["result"]["dryRun"], true);

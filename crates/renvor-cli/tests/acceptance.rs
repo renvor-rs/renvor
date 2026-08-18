@@ -23,7 +23,6 @@ fn renvor(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> (i32, String
 
 // ── Fail closed on hostile destinations ─────────────────────────────────────────────────────
 
-
 // ── Local TLS trust ─────────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -89,7 +88,6 @@ fn requesting_local_https_issues_nothing_and_touches_no_trust_store() {
 }
 
 // ── Offline ─────────────────────────────────────────────────────────────────────────────────
-
 
 // ── The wizard and the flags produce one configuration ──────────────────────────────────────
 
@@ -475,7 +473,6 @@ fn a_closed_stdout_is_not_a_panic() {
     // `Reporter::write_stdout` makes this exit 1 instead of 0. A gate nobody has watched fail is a
     // gate nobody knows works.
 }
-
 
 #[test]
 fn doctor_reports_orphaned_staging_and_does_not_remove_it() {
