@@ -411,12 +411,27 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
     );
 
     let visible = declined.visible();
-    let printed = visible
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("equivalent command: "))
-        .map(str::trim)
+    // FOUND BY SUBSTRING, NOT BY LINE.
+    //
+    // ConPTY mirrors the screen rather than the bytes written, and on Windows it merged the review
+    // screen's last file-list entry with the line after it — `    src/main.rs  equivalent command:
+    // renvor new …`. No line *started* with the prefix, so a line-oriented search found nothing
+    // while the text was plainly there. The program's output was correct; the harness's assumption
+    // about line structure was not.
+    let start = visible
+        .find("equivalent command: ")
         .unwrap_or_else(|| panic!("no equivalent command was printed\n{visible}"))
+        + "equivalent command: ".len();
+    let printed = visible[start..]
+        .split(['\r', '\n'])
+        .next()
+        .expect("a first segment always exists")
+        .trim()
         .to_owned();
+    assert!(
+        !printed.is_empty(),
+        "the equivalent command was empty\n{visible}"
+    );
 
     // 2. It must be OUR command, in the surface's own spelling.
     let arguments = split_command(&printed);

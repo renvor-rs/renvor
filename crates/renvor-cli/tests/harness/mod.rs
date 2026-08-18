@@ -53,9 +53,20 @@ impl Terminal {
     /// Spawns `renvor` with `args`, in `directory`, attached to a pty.
     pub fn spawn(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> Self {
         let pty = native_pty_system()
+            // DELIBERATELY VERY WIDE, AND THIS IS NOT COSMETIC.
+            //
+            // A pty wraps output at its column count, and ConPTY mirrors the resulting **screen**
+            // rather than the bytes the program wrote. At 120 columns a Windows temporary path
+            // pushed the review screen's "equivalent command" line past the edge, so the transcript
+            // contained a wrapped and partly merged rendering of a command that the program had
+            // emitted as one line. A test that then parsed it got a truncated command.
+            //
+            // 1000 columns is wider than anything these tests print, so no wrapping decision by the
+            // emulator can change what the transcript says. The alternative — teaching the harness
+            // to un-wrap — means modelling the screen, which is writing a terminal emulator.
             .openpty(PtySize {
-                rows: 40,
-                cols: 120,
+                rows: 200,
+                cols: 1000,
                 pixel_width: 0,
                 pixel_height: 0,
             })
