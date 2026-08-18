@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**33 of 95 tasks complete. This section states what is built and what is not, because a task list
+**34 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -86,7 +86,8 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
 - **T008** — of the nine named test files, `generated.rs`, `acceptance.rs`, and `redaction.rs`
   exist; `transaction.rs`, `hostile.rs`, `parity.rs`, `cli.rs`, `bounds.rs`, `offline.rs`, and
-  `tls_consent.rs` do not. Their properties are covered by unit tests and by the three files above,
+  `tls_consent.rs` do not — though `capabilities.rs` now covers FR-040 and the structural half of
+  FR-043 (T023), and was **demonstrated failing** by adding `flate2` before being kept. Their properties are covered by unit tests and by the three files above,
   but the suite is not organised the way this plan says it is.
 - **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;
   they were **not** written failing-first, and that ordering was the point.
@@ -142,7 +143,7 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 - [ ] T020 Write `crates/renvor-cli/tests/hostile.rs` with the destination corpus: path traversal, absolute-path injection, a destination that is a symlink to another directory, and Windows reserved device names (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`), each asserted refused **before any write**
 - [ ] T021 Add the **positive control** to `crates/renvor-cli/tests/hostile.rs`: an ordinary legitimate destination still generates successfully (SC-009 explicitly requires this)
 - [ ] T022 Add template-escape coverage to `crates/renvor-cli/tests/hostile.rs`: a template entry whose output path escapes the staging root is rejected at **load** time, so it cannot exist in a shipped binary
-- [ ] T023 Add a structural assertion to `crates/renvor-cli/tests/hostile.rs` that the built executable carries **no archive-extraction capability** (FR-040), with a control proving the assertion fails if such a dependency is introduced
+- [x] T023 Add a structural assertion to `crates/renvor-cli/tests/hostile.rs` that the built executable carries **no archive-extraction capability** (FR-040), with a control proving the assertion fails if such a dependency is introduced
 
 ### Failing-first parity harness
 
