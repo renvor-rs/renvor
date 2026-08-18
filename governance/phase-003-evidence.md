@@ -259,62 +259,93 @@ and `platform (windows-latest, stable)`.
 
 ---
 
-## 6. Advisory reviews (T092) and their disposition (T093) — **NOT OBTAINED**
+## 6. Advisory reviews (T092) and their disposition (T093)
 
-### 6.1 What was attempted
+### 6.1 Standing label
 
-T092 asks for two clean-context advisory reviews — one requirements, one security — each labelled
-**NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings"
-statement naming what was checked.
+**All three reviews below are NON-INDEPENDENT and ADVISORY.** They were performed by AI agents in
+clean context — each was given the repository, the specification, and an adversarial brief, and none
+was given this session's history or any account of what the author believed to be true. That design
+is what made them useful. It does **not** make them independent, and they do **not** discharge the
+independent-review requirement. See §8.
 
-**Four review agents were dispatched on 2026-08-18** — two with a broad brief, two with a tightened,
-time-bounded brief after the first pair went quiet. Each was given the repository, the specification,
-an adversarial instruction, and no account of what the author believed to be true. Each was told to
-report observations rather than inferences, to attempt attacks rather than describe them, and to
-state explicitly if it found nothing and what it had checked.
+Each was instructed to report what it **observed** rather than what it inferred, to attempt attacks
+rather than describe them, and to state explicitly if it found nothing at a severity and what it had
+checked in reaching that.
 
-**None of the four delivered a report.** Repeated requests for partial results, including "report now
-with whatever you have", produced nothing.
-
-### 6.2 Disposition
-
-**T092 is OPEN. T093 is OPEN**, because there are no findings to disposition.
-
-This is recorded as a failure to obtain the reviews rather than resolved by substituting something
-else. In particular:
-
-- **The author's own reading is not a substitute.** T092 says *clean-context*; the author has the
-  opposite of clean context, and a self-review by the person who wrote the code is the weakest form
-  of the thing being asked for, not a weaker version of it.
-- **The mutation pass in §6.3 is not a substitute either**, and is deliberately filed under its own
-  heading rather than under this one. It answers "can these tests fail?", which is one question a
-  reviewer would ask. It cannot answer "what did nobody think to test?", which is the question that
-  makes a review worth having.
-
-**Consequence for the phase**: two more tasks are OPEN than would otherwise be, and the final counts
-in §9 reflect that.
-
-### 6.3 What was obtained instead: a mutation pass over the load-bearing guards
-
-**This is verification evidence, not a review.** It was produced by the author, with full knowledge
-of the code, and it can only find tests that fail to fail — never tests that were never written.
-
-Each guard below was **deliberately broken**, the suite was run, and the guard was then restored and
-the suite re-run green. The working tree was verified clean after every one.
-
-| Guard broken | How | Result |
+| Review | Scope | Findings |
 |---|---|---|
-| RULE 0, the `..` traversal rule | condition short-circuited to `false` | `every_traversal_spelling_is_refused_by_the_traversal_rule` **FAILED** (7 passed, 1 failed) |
-| Secret redaction | `redact::line` made an identity function | **2 of 3 redaction tests FAILED**; `ordinary_output_is_not_mangled_by_redaction` correctly still passed — it is the control, and a control that fails when the thing it controls for is removed would be measuring the wrong property |
-| The TLS consent gate | `--yes` made to grant trust-store consent | `yes_does_not_grant_trust_store_consent` **FAILED** |
-| FR-012's restore path | the `place` injection point moved past the empty-destination removal | `a_failure_at_any_mutating_step_leaves_a_pre_existing_empty_destination_exactly_as_it_was` **FAILED**, naming the exact violation |
-| The prompt census | an eighth, uncovered prompt added to `prompts::fill` | `the_wizard_asks_exactly_these_prompts` **FAILED**, with the diagnosis showing *child STILL RUNNING* and `? An eighth prompt nobody covered?` on screen |
-| FR-040's no-archive assertion | `flate2` added as a dependency (earlier in the phase) | `the_executable_reaches_no_archive_crate` **FAILED**, naming `["flate2"]` |
-| FR-009's equivalent command | *(no mutation needed — it was already broken)* | running the wizard's printed command produced clap's *"unexpected argument '--name'"* |
+| **A — requirements** | spec, contracts C-1…C-5, data-model I-1…I-17, quickstart, research D1–D15, tasks.md, all of `src/` and `tests/`, templates, docs, workflows | **16** (0 Critical, 4 High, 6 Medium, 6 Low) |
+| **B — requirements** | 13 requirements, prioritising "a test that cannot fail"; ran mutations | **3** (0 Critical, 0 High, 1 Medium, 2 Low) |
+| **C — security** | containment, data loss, redaction, TLS consent; attacks run against the real binary | **1** (0 Critical, 0 High, 1 Low-Medium) |
 
-**Seven guards, seven detections.** What this establishes is narrow and worth stating exactly: these
-particular tests are capable of failing. It establishes nothing about coverage of anything they do
-not test.
+**No Critical finding in any review.** Review A specifically probed for and could not fault: the
+transactional core, the `cap-std` containment boundary, the SC-010 trust-store guarantee ("the
+best-tested area of the phase"), FR-013, FR-018/I-3, FR-021/SC-006, the panic hook and broken-pipe
+handling, and FR-040/FR-043's structural assertions. Review C attacked containment, data loss,
+redaction, and the consent gate and reported all of them held.
+
+### 6.2 The finding that matters most, in the reviewers' own framing
+
+Review A's summary: **R1, R2, R3, R5 and R11 are one defect recurring, not five — the evidence layer
+is weaker than the implementation layer.** The behaviour is largely correct; what was unreliable is
+the machinery that would report it *stopping* being correct.
+
+That is the same defect this phase had already found twice in its own history, and it had it three
+more times. It is the argument for the review having happened.
+
+### 6.3 Disposition — every finding, individually (T093)
+
+**All four High findings are FIXED**, each verified by observing the failure first and demonstrating
+the fix second.
+
+| # | Sev | Finding | Disposition |
+|---|---|---|---|
+| **A-R1** | **High** | **Six of sixteen quickstart gates used a `cargo test` filter matching no test** — each ran 0 tests and exited 0, so six success criteria were "verified" by commands that verified nothing | **FIXED.** Reproduced (`--test transaction -- cancellation` → *running 0 tests … ok*), all six filters corrected to real test names and each confirmed to run ≥1 test. Added **Gate 0**, a gate-of-gates that fails on any `0 passed`. |
+| **A-R2** | **High** | `no_shipped_template_can_write_outside_the_destination` **could not fail** — the walk was seeded `directory == allowed == destination`, so its `outside` vector was provably always empty | **FIXED.** Confirmed by reading. Rewritten to snapshot the **parent** before and after and require that only the destination appeared. **Demonstrated failing** by making `place` write a stray file into the parent: *"wrote outside its destination `plain`: [\"stray-file-outside-the-destination\"]"*. This test was written by the author earlier the same day; the review caught it within hours. |
+| **A-R3** | **High** | **Nothing lint-checked the generated project**, while FR-029 says "formatting, **linting**, building, and testing" and both `tasks.md` T036 and quickstart gate 5 claimed clippy ran | **FIXED.** Confirmed (`grep -rn clippy crates/renvor-cli/` → 0). `cargo clippy -- -D warnings` added to `verify::CHECKS`. **Demonstrated firing** by planting a lintable construct in a template: `render_failed`, `details.check = "cargo clippy -- -D warnings"`, destination absent. |
+| **A-R4** | **High** | **The JSON success path did not redact.** `Envelope::failure` redacted; `Envelope::success` did not, so one input gave two answers | **FIXED.** Reproduced: same destination rendered `token=abc123secret` in JSON and `token=[redacted]` in human. `redact_value` now walks the whole result. A test drives a **successful** run through both modes, and **was demonstrated failing** with the fix reverted. |
+| **A-R5** | Medium | `availability()` — the function making FR-035's not-installed/not-running distinction — was **called by no test** | **FIXED.** Split into `classify(client, daemon)`, doing the deciding without the I/O, with all six combinations asserted directly. |
+| **A-R6** | Medium | Three stable registry codes emitted outside their published meaning (`manifest_invalid` for a failing `cargo test` and a missing `compose.yaml`; `placement_failed` when staging cannot be **created**) | **ACCEPTED, NOT FIXED.** Real and correctly reported. Fixing it means either widening three published registry entries or adding new codes, and `schemaVersion` is part of the contract — that is a deliberate contract change, cheap now only because no consumer exists, and it should be a decision rather than a side effect of a review sweep. Carried to the maintainer with §9. |
+| **A-R7** | Medium | Pre-placement verification never **started** the generated binary, though C-5 step 5 and FR-029 both say it must | **FIXED** with A-R3: `cargo run --quiet` added to `CHECKS`. |
+| **A-R8** | Medium | An existing **empty** destination is deleted and replaced; mode `0700` → `0755` and the inode changes — recorded in no document | **PARTIALLY FIXED.** The behaviour is now documented in contract C-5, in `docs/docs/cli.mdx`, and in the review pack's approval statement, so nobody agrees to it unknowingly. **Preserving the metadata is not implemented** — that changes what placement does and belongs with A-R6 as a decision, not a sweep. |
+| **A-R9** | Medium | The restore branch that puts back a removed empty destination after a failed rename is **unreachable from any test** | **ACCEPTED, NOT FIXED.** Correct: the injector deliberately sits *before* the removal, and reaching the branch needs a second injection point. Recorded rather than closed, because adding an injection point to reach one branch is the kind of change that should be reviewed on its own. |
+| **A-R10** | Medium | `renvor new --help` published an internal note about Rust enum memory layout as its description, frozen into the trycmd contract | **FIXED.** The boxing note is now a `//` comment; `New` has a real description. Contract regenerated **and read** — which caught the regeneration silently replacing `renvor[EXE]` with `renvor`, a Windows regression the file's own header warns about. |
+| **A-R11** | Low | The doctor test named for "unparseable ≠ incompatible" passed via an unrelated disjunct; the rule was untested | **FIXED.** Extracted `compatible(minimum, found)` and stated all six combinations, including the `(Some, None)` row no real tool can produce. |
+| **A-R12** | Low | `prompts.rs` claimed the wizard asks about **target**; it does not — overstating principle VII compliance by one of eleven | **FIXED.** Corrected to "two of them", with a note that this number feeds the §7 referral. |
+| **A-R13** | Low | A fourth `details.reason` value, `command_failed`, emitted as a bare literal outside the enum the docs call a closed set | **FIXED.** `Unavailable::CommandFailed` added, with its own remedy and covered by the distinctness test. |
+| **A-R14** | Low | `renvor tls trust` absent from contract C-1's command table | **FIXED.** Row added, naming the consent flag and that this phase is consent-only. |
+| **A-R15** | Low | C-4's recursion-depth row describes `{% include %}`, which this build does not understand; quickstart gate 13 misdescribed what `--test bounds` runs | **FIXED.** Both corrected to say what is true. |
+| **A-R16** | Low | `tasks.md` T036 claimed clippy and start; "107 tests" against a measured 200 | **FIXED.** T036's claim is now true (see A-R3/A-R7); the count is re-measured. |
+| **B-R1** | Low | *Confirmation*: disabled RULE 0 and the traversal test failed correctly | **NO ACTION.** Independently reproduces the author's own mutation result. |
+| **B-R2** | Medium | `redact.rs` claimed a test asserting "every configuration field is inert … fails when a new field is added". **No such test existed** | **FIXED.** Written as an **exhaustive destructuring** of `ProjectConfiguration`, so adding a field is a compile error. **Demonstrated**: adding an `auth_token` field produced `error[E0027]: pattern does not mention field`. |
+| **B-R3** | Low | The redaction "corpus" is two values through one injection point; no dry-run-specific case | **PARTIALLY FIXED.** A successful-run case through both output modes is added (this is what caught A-R4). Broadening to more `SECRET_KEYS` and an explicit dry-run case is not done. |
+| **C-S1** | Low-Med | The **path-derived** directory name reached no character check, so `--path $'…/inject\nLINE'` created a directory with an embedded newline and `…/trailing. ' created one Windows silently renames — while the same strings in the NAME position were correctly refused | **FIXED.** Control characters and a trailing dot or space are refused on the destination's final component, with distinct rules. Deliberately **narrower** than the package-name rule, with a control test proving `my.project`, `my project`, and `v1.2.3` still work. |
+
+**Totals: 20 findings — 15 FIXED, 2 PARTIALLY FIXED, 2 ACCEPTED and not fixed, 1 no action.**
+
+Nothing was suppressed, dismissed, or closed by editing a requirement to match the code. The two
+accepted findings (A-R6, A-R9) are real, are stated as real, and are carried forward rather than
+argued away.
+
+### 6.4 What the reviews could not do
+
+Review C listed what it did **not** reach: the TOCTOU race in `place.rs` (reasoned from code, not
+raced); the TLS gate at the OS/keychain level (read, not fuzzed); template and subprocess injection
+in `render.rs`/`verify.rs` beyond reading; Windows-specific behaviour, because it ran on macOS; and
+the container surface. Review B listed 20 requirements it did not check.
+
+**Those gaps are why §8 exists.** An advisory review that names its own scope is more useful than one
+that does not, and still not a substitute for the independent one.
+
+### 6.5 The author's own mutation pass, filed separately on purpose
+
+Run before the reviews arrived, and **not a review**: it was produced by the author with full
+knowledge of the code, so it can only find tests that fail to fail, never tests nobody wrote. Seven
+load-bearing guards were deliberately broken and all seven were caught, the working tree verified
+clean after each: RULE 0 traversal, secret redaction, the TLS consent gate, FR-012's restore
+promise, the prompt census, FR-040's no-archive assertion (earlier, via `flate2`), and FR-009's
+equivalent command. Review B independently reproduced the first of these.
 
 ## 7. T093a — Constitution principle VII, referred to the maintainer
 
@@ -447,21 +478,22 @@ Counted against each task's own acceptance wording, not asserted. The definition
 
 | Status | Count | Which |
 |---|---|---|
-| **COMPLETED** | **77** | Full acceptance wording met, with something that fails if it stops being met |
+| **COMPLETED** | **79** | Full acceptance wording met, with something that fails if it stops being met |
 | **WITHDRAWN** | **4** | T009–T012 — the requirement was removed by adopting `cap-std`, not waived |
 | **MISSED** | **11** | T008, T015–T024 — the behaviour is built and tested; the **failing-first ordering** did not happen and cannot be created retrospectively |
 | **HUMAN-GATED** | **1** | T093a — the constitution principle VII ruling |
-| **OPEN** | **2** | T092, T093 — the two advisory reviews were not obtained |
+| **OPEN** | **0** | — |
 | **Total** | **95** | |
 
 ### What is required before Phase 003 can close
 
-1. **Two clean-context advisory reviews** (T092), and every finding dispositioned (T093).
-2. **The T093a ruling** on constitution principle VII — §7. Two options are stated; neither is taken.
-3. **A decision on whether the missed failing-first ordering blocks closure** — `tasks.md`,
+1. **The T093a ruling** on constitution principle VII — §7. Two options are stated; neither is taken.
+2. **A decision on whether the missed failing-first ordering blocks closure** — `tasks.md`,
    "Ordering requirements that were missed".
-4. **A qualified independent human requirements review and security review** — §8. Advisory reviews
+3. **A qualified independent human requirements review and security review** — §8. Advisory reviews
    do not satisfy this, and **no Phase 003 waiver exists or has been drafted**.
+4. **A decision on the two accepted advisory findings** — A-R6 (three registry codes used outside
+   their published meaning) and A-R9 (an untested restore branch). Both are real; both are contract
+   or injection-point changes that should be decided rather than swept in.
 
-Items 2, 3, and 4 are **not** engineering work and are not the author's to decide. Item 1 is
-engineering work that was attempted and failed.
+**None of the four is engineering work the author can complete.** All four are decisions.

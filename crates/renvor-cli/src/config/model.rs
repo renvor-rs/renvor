@@ -480,6 +480,65 @@ mod tests {
     }
 
     #[test]
+    fn every_configuration_field_is_inert_and_a_new_one_cannot_be_added_unclassified() {
+        // THE TEST `output/redact.rs` HAS ALWAYS CLAIMED TO HAVE, AND DID NOT.
+        //
+        // Its module header said: *"the value is in the **test**, which asserts that every
+        // configuration field is inert, and which fails when a new field is added without being
+        // classified."* No such test existed. `tests/redaction.rs` plants a secret in the
+        // **destination** and nowhere else, so it exercised one field of eight. An advisory review
+        // found the claim by looking for the test it described.
+        //
+        // The load-bearing line is the destructuring below. It is **exhaustive**, so adding a field
+        // to `ProjectConfiguration` stops this compiling until somebody comes here and says which
+        // of the two categories the new field is in. That is the guard the comment promised: not a
+        // runtime assertion that can be true by accident, but a compile error.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.container = true;
+        answers.local_https = true;
+        answers.example_domain = true;
+        answers.seed_data = true;
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers).expect("resolves");
+
+        let ProjectConfiguration {
+            // ── CATEGORY 1: cannot hold a secret because it cannot hold a string ────────
+            //
+            // A `bool` and a two-variant enum have no room for a credential. Invariant I-3 is
+            // structural for these.
+            container: _,
+            local_https: _,
+            seed_data: _,
+            example_domain: _,
+            target: _,
+
+            // ── CATEGORY 2: strings, and therefore checked ─────────────────────────────
+            name,
+            local_domain,
+            destination,
+        } = configuration.clone();
+
+        // `name` and `local_domain` are validated to character sets that exclude `=` and `:`, so
+        // they cannot carry a `key=value` shape at all. Asserted rather than assumed, because that
+        // is the property doing the work.
+        for (field, value) in [("name", &name), ("local_domain", &local_domain)] {
+            assert!(
+                !value.contains('=') && !value.contains(':'),
+                "{field} can carry a key=value shape, so it needs redaction coverage"
+            );
+        }
+
+        // `destination` is the one field an operator can put anything into, and it is the one
+        // `tests/redaction.rs` plants a secret in — on both a failing run and, since 2026-08-18, a
+        // successful one.
+        assert!(
+            !destination.as_os_str().is_empty(),
+            "the destination is the field redaction coverage must exercise"
+        );
+    }
+
+    #[test]
     fn the_equivalent_command_carries_every_answered_choice() {
         // NAMED FOR WHAT IT CHECKS. It was called `…_round_trips_to_the_same_configuration`, and
         // it does not round-trip anything — it asserts that four substrings are present. The

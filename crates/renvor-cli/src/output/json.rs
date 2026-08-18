@@ -53,13 +53,32 @@ pub struct Envelope {
 
 impl Envelope {
     /// A success envelope carrying a command-specific result.
+    ///
+    /// # The result is redacted, and it was not until 2026-08-18
+    ///
+    /// FR-041 requires redaction in **every** output mode — "human output, JSON output, the dry-run
+    /// manifest, error messages". [`Envelope::failure`] redacted; this did not. So one input gave
+    /// two different answers:
+    ///
+    /// ```text
+    /// human: created 6 files (879 bytes) in /tmp/token=[redacted]
+    /// json : "destination": "/tmp/token=abc123secret/demo"
+    /// ```
+    ///
+    /// The destination is operator-supplied and lands in the success result verbatim, so any
+    /// credential in a path — a checkout under a token-bearing directory, a CI workspace — reached
+    /// `stdout` in JSON mode and, from there, a log file.
+    ///
+    /// It survived because `tests/redaction.rs` planted its secrets only in inputs that **fail**,
+    /// which exercises `failure` and never `success`. An advisory review found it by running the
+    /// same input through both modes and diffing the answers.
     #[must_use]
     pub fn success(command: &str, result: serde_json::Value) -> Self {
         Self {
             schema_version: SCHEMA_VERSION,
             status: Status::Success,
             command: command.to_owned(),
-            result: Some(result),
+            result: Some(redact_value(result)),
             error: None,
         }
     }
@@ -91,6 +110,27 @@ impl Envelope {
                 details,
             }),
         }
+    }
+}
+
+/// Applies [`super::redact::line`] to every string in a JSON value, recursively.
+///
+/// **Keys are redacted as well as values.** A key is a name this program chose, so it should never
+/// carry a secret — but "should never" is the reasoning that produced the defect above, and walking
+/// both costs nothing.
+fn redact_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(text) => serde_json::Value::String(super::redact::line(&text)),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(redact_value).collect())
+        }
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .map(|(key, value)| (super::redact::line(&key), redact_value(value)))
+                .collect(),
+        ),
+        // Numbers, booleans, and null cannot carry a credential shape.
+        other => other,
     }
 }
 

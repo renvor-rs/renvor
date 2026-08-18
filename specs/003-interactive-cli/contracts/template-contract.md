@@ -39,7 +39,7 @@ Every bound has a documented value and a test that demonstrates it holds (FR-026
 
 | Bound | Applies to |
 |---|---|
-| Maximum recursion depth | Template inclusion and expansion |
+| Maximum recursion depth | Template inclusion and expansion. **Declared, and unreachable in this feature set**: `multi_template` and `macros` are off, so `{% include %}` is not a statement the compiled grammar knows and an entry using it is refused when the catalogue **loads**. There is therefore no over-bound test, and `render.rs::the_recursion_bound_has_no_reachable_trigger_and_that_is_the_point` fails if either feature is ever enabled. |
 | Maximum total output bytes | The whole render |
 | Maximum output file count | The whole render |
 | Maximum single-file output bytes | Any one rendered file |

@@ -4,10 +4,11 @@ message naming the phase; see `exit-codes.trycmd`.
 
 ```
 $ renvor new --help
-Create a project.
+Create a project, from prompts or from flags.
 
-Boxed because `NewArgs` is 272 bytes and every other variant is a handful — an unboxed variant would
-make every `Command` value pay for the largest one, including `Doctor`, which carries nothing.
+With a terminal, `renvor new` asks only the questions this phase can honour and shows a review
+screen before writing anything. Without one, it takes the same answers as flags. Generation is
+transactional: a failure before placement leaves the destination untouched.
 
 Usage: renvor[EXE] new [OPTIONS] [NAME]
 

@@ -63,11 +63,20 @@ pub struct Cli {
 /// The commands this phase implements. Nothing is stubbed.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create a project.
+    // `NewArgs` is boxed because it is 272 bytes and every other variant is a handful; an unboxed
+    // variant would make every `Command` value pay for the largest one, including `Doctor`, which
+    // carries nothing.
+    //
+    // THIS IS A `//` COMMENT ON PURPOSE. It was a `///` doc comment, and clap publishes a
+    // subcommand's doc comment as its `--help` description — so `renvor new --help` opened with a
+    // paragraph about Rust enum memory layout, and `tests/cmd/help-new.trycmd` had frozen that as
+    // the public contract. FR-002 makes the help text a public contract; an internal note is not a
+    // description of what the command does.
+    /// Create a project, from prompts or from flags.
     ///
-    /// Boxed because `NewArgs` is 272 bytes and every other variant is a handful — an unboxed
-    /// variant would make every `Command` value pay for the largest one, including `Doctor`, which
-    /// carries nothing.
+    /// With a terminal, `renvor new` asks only the questions this phase can honour and shows a
+    /// review screen before writing anything. Without one, it takes the same answers as flags.
+    /// Generation is transactional: a failure before placement leaves the destination untouched.
     New(Box<NewArgs>),
     /// Report environment readiness.
     Doctor,

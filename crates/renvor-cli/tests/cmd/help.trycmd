@@ -10,7 +10,7 @@ Exit codes: 0 success, 1 internal defect, 2 usage, 3 validation, 4 cancelled, 5 
 Usage: renvor[EXE] [OPTIONS] <COMMAND>
 
 Commands:
-  new     Create a project
+  new     Create a project, from prompts or from flags
   doctor  Report environment readiness
   check   Validate a project without building it
   dev     Run the local development loop

@@ -35,11 +35,11 @@ by the table below, which was produced by checking each task against its own acc
 
 | Status | Count | Meaning |
 |---|---|---|
-| **COMPLETED** | **77** | The task's full acceptance wording is met, and something fails if it stops being met. |
+| **COMPLETED** | **79** | The task's full acceptance wording is met, and something fails if it stops being met. |
 | **WITHDRAWN** | **4** | T009–T012. The requirement was removed, not waived — see D6 revision 2. |
 | **MISSED** | **11** | T008, T015–T024. The behaviour is built and tested; the **failing-first ordering** the task asked for did not happen and cannot be created retrospectively. |
 | **HUMAN-GATED** | **1** | T093a. The constitution principle VII ruling is the maintainer's to make. |
-| **OPEN** | **2** | T092, T093. Two advisory reviews were dispatched four times over and none was delivered; recorded as not obtained rather than replaced with a self-review. |
+| **OPEN** | **0** | — |
 | **Total** | **95** | |
 
 The 4 WITHDRAWN tasks are ticked because the requirement no longer exists. The 11 MISSED and the 1
@@ -195,7 +195,7 @@ five times before being committed.
 leaves the destination untouched. `renvor doctor`, `renvor check`, `renvor dev`, and
 `renvor docker up|down|status|logs`. The complete flag surface including reserved-flag refusal.
 The JSON envelope and error-code registry. Redaction on every output path. The interactive wizard and the FR-009 review-and-confirm screen.
-The embedded template catalogue and bounded rendering. **107 tests**, `cargo xtask verify` green on
+The embedded template catalogue and bounded rendering. **206 tests** (measured by `cargo test -p renvor-cli`, not counted by hand — it said 107, which was true of an earlier tree and had not been re-measured since), `cargo xtask verify` green on
 all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
 ### Two governing-document changes made during implementation, both recorded rather than assumed
@@ -491,8 +491,8 @@ builds; cancel at each prompt and assert the destination is absent.
 - [x] T089 Work through all 69 items of `checklists/{requirements,generation-safety,contracts}.md` and record each verdict
 - [x] T090 Run `cargo xtask verify` on **both** 1.94.0 and current stable and record both results in `governance/phase-003-evidence.md` (SC-014)
 - [x] T091 Record in `governance/phase-003-evidence.md` which platforms `.github/workflows/ci.yml` actually exercised, and **claim no platform CI did not run** (SC-014)
-- [ ] T092 Obtain, and record in `governance/phase-003-evidence.md`, two clean-context advisory reviews of the phase — one requirements, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings" statement naming what was checked **[OPEN — four advisory review agents were dispatched and none delivered a report. Recorded as not obtained rather than substituted. See `governance/phase-003-evidence.md` §6.]**
-- [ ] T093 Disposition every review finding individually in `governance/phase-003-evidence.md` **[OPEN with T092 — there are no findings to disposition.]**
+- [x] T092 Obtain, and record in `governance/phase-003-evidence.md`, two clean-context advisory reviews of the phase — one requirements, one security — each labelled **NON-INDEPENDENT and ADVISORY**, each producing enumerated findings or an explicit "no findings" statement naming what was checked
+- [x] T093 Disposition every review finding individually in `governance/phase-003-evidence.md`
 - [ ] T093a Refer the constitution principle VII question to the maintainer in `governance/phase-003-evidence.md`: whether a time-bounded waiver naming the violated clause is required, or whether a partially implemented command is not yet subject to it. **Record the ruling; do not make it** **[HUMAN-GATED — the ruling is the maintainer's.]**
 - [x] T094 Record in `governance/phase-003-evidence.md` that the **independent human requirements and security review remains open**, that advisory reviews are not independent, and that this phase does **not** assume a waiver is available (FR-046)
 ---
@@ -548,4 +548,4 @@ By status — see "Implementation status" above for what each word means:
 
 | COMPLETED | WITHDRAWN | MISSED | HUMAN-GATED | OPEN | Total |
 |---|---|---|---|---|---|
-| 77 | 4 | 11 | 1 | 2 | **95** |
+| 79 | 4 | 11 | 1 | 0 | **95** |

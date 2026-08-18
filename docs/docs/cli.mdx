@@ -148,6 +148,12 @@ validate → stage → render → verify → manifest → review → place → r
   --check`, `cargo build`, and `cargo test` must pass. A project that does not build is a
   *generation* failure, not something you discover later.
 - **Placement is a single rename.** It never falls back to a copy.
+- **An existing *empty* destination directory is removed and replaced.** FR-013 refuses a
+  destination that "exists and is **not** empty", so an existing empty one is a legal target — and
+  the way `renvor` uses it is to `remove_dir` it and rename staging into its place. The directory
+  you get back is a **new** one: its permissions, ownership, and extended attributes are the
+  defaults, not the ones you set. A deliberate `chmod 700` on an empty destination will come back
+  as `755`. If the rename fails, the removed directory is recreated.
 - **A failure anywhere before placement leaves the destination exactly as it was**, and leaves no
   staging directory behind.
 

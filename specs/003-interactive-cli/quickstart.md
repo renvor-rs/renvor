@@ -30,10 +30,31 @@ has failed and nothing below is meaningful.
 
 ---
 
+## Gate 0 — every gate below must actually run something
+
+```bash
+# A `cargo test` filter that matches no test runs zero tests and exits 0. Six of the gates below
+# did exactly that until 2026-08-18, so six success criteria were "verified" by commands that
+# verified nothing. Run this first.
+grep -oE 'cargo test -p renvor-cli --test [a-z_]+( -- [a-z_]+)?' quickstart.md | sort -u |
+while read -r cmd; do
+  out=$(eval "$cmd" 2>&1 | grep -E '^test result' | head -1)
+  case "$out" in
+    *"0 passed"*) echo "GATE RUNS NOTHING: $cmd -> $out"; exit 1 ;;
+    *)            echo "ok: $cmd -> $out" ;;
+  esac
+done
+```
+
+**Expected**: no line beginning `GATE RUNS NOTHING`. A gate that reports `0 passed; 0 failed` has
+told you nothing and exited `0` while doing so, which is worse than a gate that fails.
+
+---
+
 ## Gate 1 — Cancellation leaves nothing (SC-001)
 
 ```bash
-cargo test -p renvor-cli --test transaction -- cancellation
+cargo test -p renvor-cli --test transaction -- cancelling_at_each_prompt
 ```
 
 Drives the wizard to **each** prompt in turn and cancels there. After every one: the destination path
@@ -47,7 +68,7 @@ the first prompt.
 ## Gate 2 — Injected failure leaves nothing (SC-002)
 
 ```bash
-cargo test -p renvor-cli --test transaction -- injected_failure
+cargo test -p renvor-cli --test transaction -- a_failure_at_any_mutating_step
 ```
 
 Fails the render at each step, against **both** a destination that does not exist and one that exists
@@ -75,7 +96,7 @@ configuration type — not of two interfaces agreeing by luck.
 ## Gate 4 — Unsupported input is refused before any write (SC-004)
 
 ```bash
-cargo test -p renvor-cli --test cli -- unsupported
+cargo test -p renvor-cli --test generated -- a_reserved_flag_exits_three
 "$RENVOR" new demo --transport rest --output json 2>/dev/null | jq -r '.error.code, .error.details.phase'
 ```
 
@@ -88,7 +109,7 @@ A reserved flag must **not** report "unknown flag" — see [`contracts/command-s
 ## Gate 5 — The generated project is real (SC-005)
 
 ```bash
-cargo test -p renvor-cli --test generated -- skeleton_builds
+cargo test -p renvor-cli --test generated -- every_generated_variant
 ```
 
 Generates into a temporary location and then, inside it, runs `cargo fmt --check`, `cargo clippy`,
@@ -117,7 +138,7 @@ actual manifests.
 ## Gate 7 — One JSON document, always (SC-007)
 
 ```bash
-cargo test -p renvor-cli --test cli -- json_contract
+cargo test -p renvor-cli --test cli -- every_json_document
 "$RENVOR" new / --output json 2>/dev/null | jq -e '.status == "failure" and .schemaVersion == 1' >/dev/null && echo "failure is still one valid document: ok"
 ```
 
@@ -205,8 +226,12 @@ D12 — because the requirement has two distinct failure modes.
 cargo test -p renvor-cli --test bounds
 ```
 
-One test per documented bound: recursion depth, total output bytes, output file count, single-file
-size.
+`tests/bounds.rs` covers the one bound an operator can aim at — `manifest_bytes`, reachable because
+`renvor check` takes a directory from the command line — with an over-bound **and** a boundary case.
+**The four template bounds are unit tests in `src/generate/render.rs`, which this command does not
+run**: every template is embedded, so no external input reaches the renderer. That file's header
+tabulates where each bound's over-bound and boundary tests live. A fifth, `RECURSION_DEPTH`, has no
+reachable trigger at all.
 
 **Expected**: each bound is enforced, each violation reports `bound_exceeded` with the bound named,
 and the destination is untouched in every case.
@@ -242,7 +267,7 @@ actually resolved.
 ## Gate 16 — Generation is reproducible (SC-016)
 
 ```bash
-cargo test -p renvor-cli --test generated -- reproducible
+cargo test -p renvor-cli --test generated -- generating_the_same_configuration_twice
 ```
 
 Generates twice from the same generator version, template version, and configuration.

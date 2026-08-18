@@ -16,6 +16,12 @@
 //! configuration field is inert, and which fails when a new field is added without being classified.
 //! A redaction function that never fires proves nothing; a test that notices a new field does.
 //!
+//! **That test is `config::model::tests::every_configuration_field_is_inert_and_a_new_one_cannot_be_added_unclassified`,
+//! and until 2026-08-18 it did not exist** — this paragraph described a guard nobody had written,
+//! which an advisory review found by going to look for it. It exists now, and it works by
+//! exhaustively destructuring `ProjectConfiguration`, so adding a field is a **compile error**
+//! until somebody classifies it.
+//!
 //! # What is redacted
 //!
 //! Anything matching a credential-shaped pattern in text bound for `stdout` or `stderr`. The

@@ -298,18 +298,50 @@ fn an_ordinary_legitimate_destination_still_generates() {
 #[test]
 fn no_shipped_template_can_write_outside_the_destination() {
     // T022's observable half. `Renderer::new` refuses an entry whose path escapes the staging root
-    // at LOAD time, so such an entry "cannot exist in a shipped binary"; `render.rs` unit-tests
-    // that refusal directly, including for `../escape`, `/etc/passwd`, `a/../../b` and an empty
-    // path, and a catalogue-wide test loads every entry the binary carries.
+    // at LOAD time, so such an entry "cannot exist in a shipped binary"; `render.rs` unit-tests that
+    // refusal directly, including for `../escape`, `/etc/passwd`, `a/../../b` and an empty path.
     //
-    // What THIS test adds is the end-to-end consequence, measured on a real filesystem: generate
-    // every variant and assert that nothing appeared anywhere except inside the destination. A
-    // load-time rule that was somehow bypassed at render time would show up here as a file outside
-    // the tree, which no amount of unit-testing the rule can rule out.
+    // ── THE FIRST VERSION OF THIS TEST COULD NOT FAIL, AND AN ADVISORY REVIEW FOUND IT ─
+    //
+    // It walked the DESTINATION looking for paths not starting with the destination — seeded with
+    // `walk(&destination, &destination, …)`, recursing only into children of `destination`. Every
+    // path it could ever examine satisfied the predicate, so its `outside` vector was provably
+    // always empty. It asserted a tautology, in a file whose entire subject is tests that pass for
+    // the wrong reason.
+    //
+    // What it does now is compare the DESTINATION'S PARENT before and after, and require that the
+    // only thing that appeared is the destination itself. Anything a template wrote elsewhere in
+    // the parent shows up as an unexpected entry, and anything it wrote further afield is caught by
+    // the sentinel below.
     let base = tempfile::tempdir().expect("a temporary directory");
     let sentinel = base.path().join("sentinel");
     std::fs::create_dir_all(&sentinel).expect("the sentinel directory is created");
     std::fs::write(sentinel.join("witness"), b"untouched").expect("the witness is written");
+
+    /// Every path under `root`, relative to it, sorted.
+    fn snapshot(root: &Path) -> Vec<String> {
+        let mut found = Vec::new();
+        fn walk(directory: &Path, root: &Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(directory)
+                .expect("readable")
+                .filter_map(Result::ok)
+            {
+                let path = entry.path();
+                found.push(
+                    path.strip_prefix(root)
+                        .expect("under the root by construction")
+                        .display()
+                        .to_string(),
+                );
+                if entry.file_type().expect("a file type").is_dir() {
+                    walk(&path, root, found);
+                }
+            }
+        }
+        walk(root, root, &mut found);
+        found.sort();
+        found
+    }
 
     for variant in [
         vec!["new", "plain", "--yes"],
@@ -319,29 +351,27 @@ fn no_shipped_template_can_write_outside_the_destination() {
         vec!["new", "secured", "--yes", "--local-https"],
     ] {
         let name = variant[1];
+        let before = snapshot(base.path());
         let (exit, _, stderr) = renvor(&variant, base.path(), &[]);
         assert_eq!(exit, 0, "{variant:?} failed: {stderr}");
+        let after = snapshot(base.path());
 
-        let destination = base.path().join(name);
-        let mut outside = Vec::new();
-        fn walk(directory: &Path, allowed: &Path, outside: &mut Vec<String>) {
-            for entry in std::fs::read_dir(directory)
-                .expect("readable")
-                .filter_map(Result::ok)
-            {
-                let path = entry.path();
-                if !path.starts_with(allowed) {
-                    outside.push(path.display().to_string());
-                }
-                if entry.file_type().expect("a file type").is_dir() {
-                    walk(&path, allowed, outside);
-                }
-            }
-        }
-        walk(&destination, &destination, &mut outside);
+        // Everything that appeared must be the destination or live inside it.
+        let appeared: Vec<&String> = after.iter().filter(|path| !before.contains(path)).collect();
         assert!(
-            outside.is_empty(),
-            "{variant:?} produced paths outside the destination: {outside:?}"
+            !appeared.is_empty(),
+            "{variant:?} created nothing, so this comparison proves nothing"
+        );
+        let stray: Vec<&&String> = appeared
+            .iter()
+            .filter(|path| {
+                let path = std::path::Path::new(path.as_str());
+                path != std::path::Path::new(name) && !path.starts_with(name)
+            })
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "{variant:?} wrote outside its destination `{name}`: {stray:?}"
         );
     }
 
@@ -351,4 +381,88 @@ fn no_shipped_template_can_write_outside_the_destination() {
         "a template wrote outside every destination"
     );
     assert!(staging_residue(base.path()).is_empty());
+}
+
+#[test]
+fn the_directory_name_taken_from_a_path_is_checked_too() {
+    // ── FOUND BY AN ADVISORY SECURITY REVIEW, 2026-08-18 ──────────────────────────────
+    //
+    // `validate_project_name` guards the **NAME** argument. When the operator supplies a name
+    // separately, the directory name comes from `--path`'s final component and reached no such
+    // check — so `renvor new x --path $'…/inject\nLINE'` created a directory whose name contained
+    // a literal newline, and `--path '…/trailing. '` created one Windows would silently rename.
+    // The same strings in the NAME position were correctly refused, which is what made the gap
+    // invisible: the rule existed and guarded one of the two ways in.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let parent = base.path().join("out");
+    std::fs::create_dir(&parent).expect("the parent is created");
+
+    for (case, expected_rule) in [
+        (
+            format!("{}/inject\nLINE", parent.display()),
+            "name_control_character",
+        ),
+        (
+            format!("{}/tab\there", parent.display()),
+            "name_control_character",
+        ),
+        (
+            format!("{}/trailing. ", parent.display()),
+            "name_trailing_dot_or_space",
+        ),
+        (
+            format!("{}/trailing.", parent.display()),
+            "name_trailing_dot_or_space",
+        ),
+        (
+            format!("{}/trailing ", parent.display()),
+            "name_trailing_dot_or_space",
+        ),
+    ] {
+        let document = refused(
+            &["new", "x", "--path", &case, "--yes", "--output", "json"],
+            base.path(),
+        );
+        assert_eq!(
+            document["error"]["details"]["rule"], expected_rule,
+            "the path-derived name was refused by the wrong rule: {document}"
+        );
+    }
+
+    assert_eq!(
+        std::fs::read_dir(&parent).expect("readable").count(),
+        0,
+        "a refused path-derived name still created a directory"
+    );
+}
+
+#[test]
+fn an_ordinary_punctuated_directory_name_is_still_accepted() {
+    // THE CONTROL for the test above, and it is doing real work: the fix deliberately rejects only
+    // control characters and a trailing dot or space, NOT the full ASCII-alphanumeric rule that
+    // guards a package name. An operator may reasonably write `--path ./my.project` or a path with
+    // a space in it, and refusing those would break ordinary use to prevent nothing.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    for name in ["my.project", "my project", "weird!@#name", "v1.2.3"] {
+        let destination = base.path().join(name);
+        let (exit, _, stderr) = renvor(
+            &[
+                "new",
+                "app",
+                "--path",
+                destination.to_str().expect("utf-8"),
+                "--yes",
+            ],
+            base.path(),
+            &[],
+        );
+        assert_eq!(
+            exit, 0,
+            "`{name}` is an ordinary directory name and was refused:\n{stderr}"
+        );
+        assert!(
+            destination.join("renvor.toml").is_file(),
+            "`{name}` produced no project"
+        );
+    }
 }

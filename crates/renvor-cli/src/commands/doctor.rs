@@ -129,13 +129,12 @@ fn probe(tool: &str, required: bool, minimum: Option<&str>, remedy: &str) -> Pro
             let found_version = extract_version(&line);
             // Incompatible ONLY when a minimum is declared AND a version was parsed AND it is
             // below. An unparseable version leaves `compatible` true; see `Probe::compatible`.
-            let compatible = match (
-                minimum.and_then(|m| semver::Version::parse(m).ok()),
-                &found_version,
-            ) {
-                (Some(floor), Some(found)) => *found >= floor,
-                _ => true,
-            };
+            let compatible = compatible(
+                minimum
+                    .and_then(|m| semver::Version::parse(m).ok())
+                    .as_ref(),
+                found_version.as_ref(),
+            );
             Probe {
                 tool: tool.to_owned(),
                 found: true,
@@ -159,6 +158,28 @@ fn probe(tool: &str, required: bool, minimum: Option<&str>, remedy: &str) -> Pro
             compatible: false,
             remedy: Some(remedy.to_owned()),
         },
+    }
+}
+
+/// Decides whether a found version satisfies a declared minimum.
+///
+/// # Why this is a separate function
+///
+/// The rule has an asymmetry worth isolating: **an unparseable or absent version is NOT reported as
+/// incompatible**. A tool that prints its version in a shape this parser does not recognise is
+/// *unknown*, not *too old*, and refusing to run because of it would be a diagnostic breaking the
+/// environment it exists to describe.
+///
+/// It was inline, and the test named for that rule passed for an unrelated reason: it asserted
+/// `probe.compatible || probe.found_version.is_some()`, and cargo's version always parses, so the
+/// second disjunct was independently true and `compatible` was never evaluated for truth. Inverting
+/// the rule left the test green. Found by an advisory review reading the assertion rather than its
+/// name. Extracted so all six combinations can be stated directly.
+fn compatible(minimum: Option<&semver::Version>, found: Option<&semver::Version>) -> bool {
+    match (minimum, found) {
+        (Some(floor), Some(found)) => found >= floor,
+        // No minimum declared, or a version we could not read: not a failure.
+        _ => true,
     }
 }
 
@@ -366,6 +387,41 @@ mod tests {
                 "failed on {line:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_compatibility_rule_is_stated_over_all_six_combinations() {
+        // The rule itself, with no disjunct able to carry the assertion. An inverted implementation
+        // fails these rows; the test it replaces passed under inversion.
+        let low = semver::Version::parse("1.0.0").expect("parses");
+        let high = semver::Version::parse("2.0.0").expect("parses");
+
+        assert!(
+            compatible(Some(&low), Some(&high)),
+            "above the floor is compatible"
+        );
+        assert!(
+            compatible(Some(&low), Some(&low)),
+            "exactly the floor is compatible"
+        );
+        assert!(
+            !compatible(Some(&high), Some(&low)),
+            "below the floor is NOT compatible"
+        );
+
+        // THE ASYMMETRIC ROW, and the one no real tool could produce here: the only tool with a
+        // declared minimum is cargo, whose version always parses. Unreachable through `probe`,
+        // reachable directly, and the rule the doc comment is actually about.
+        assert!(
+            compatible(Some(&high), None),
+            "an unreadable version is UNKNOWN, not too old — a diagnostic must not break the \
+             environment it describes"
+        );
+        assert!(
+            compatible(None, Some(&low)),
+            "no declared minimum is always compatible"
+        );
+        assert!(compatible(None, None), "neither known is compatible");
     }
 
     #[test]

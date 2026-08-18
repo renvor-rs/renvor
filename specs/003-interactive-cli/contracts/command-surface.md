@@ -12,6 +12,7 @@
 | `renvor check` | Validate a project without building it | **Full** |
 | `renvor dev` | Run the local development loop | **Full** |
 | `renvor docker up\|down\|status\|logs` | Container development controls | **Full** |
+| `renvor tls trust` | The consent boundary for a trust-store change. **In this phase: consent only — it describes what would change, requires explicit consent, and then declines.** Non-interactive consent is `--i-understand-this-modifies-my-system-trust-store`; `--yes` does not grant it. |
 
 `PLAN.md` §9.3 lists further commands — `generate`, `migrate`, `seed`, `routes`, `openapi`, and the
 package-ecosystem surface. **They are not implemented here and are not stubbed.** A stub that exits

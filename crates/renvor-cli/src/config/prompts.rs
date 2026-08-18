@@ -11,8 +11,16 @@
 //!
 //! Principle VII lists eleven things the wizard should ask about: target, transport, persistence
 //! model, database, auth starter, frontend, render mode, styling, desktop option, capabilities, and
-//! local tooling. **This wizard asks about three of them** — target, local tooling (container and
-//! local HTTPS), and capabilities (example domain, seed data).
+//! local tooling. **This wizard asks about two of them** — local tooling (container and local
+//! HTTPS) and capabilities (example domain, seed data).
+//!
+//! It said "three of them — target, local tooling, and capabilities" until 2026-08-18, and **there
+//! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
+//! option would be a question with one answer. An advisory review caught the overstatement by
+//! comparing this comment with `fill` below. It matters because the number in this comment is the
+//! one the principle VII referral in `governance/phase-003-evidence.md` §7 has to be counted
+//! against, and overstating compliance by one category in a comment is how it ends up overstated
+//! in the referral.
 //!
 //! The other eight correspond to flags this phase **reserves and refuses**, because the phases that
 //! implement them have not happened. Asking an operator to choose a database that the generator

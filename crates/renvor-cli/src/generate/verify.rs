@@ -43,10 +43,28 @@ use crate::exit::{CliError, Code};
 /// The checks run, in order, each with the failure it reports.
 ///
 /// Ordered cheapest-first so the common failure is reported in a second rather than in a minute.
-const CHECKS: [(&str, &[&str], &str); 3] = [
+const CHECKS: [(&str, &[&str], &str); 5] = [
     ("cargo", &["fmt", "--check"], "is not correctly formatted"),
+    // FR-029 names FOUR things — "formatting, **linting**, building, and testing" — and until
+    // 2026-08-18 this array had three. Nothing lint-checked the generated project: not this
+    // verifier, not `tests/generated.rs`, not CI, and not a `[lints]` table in the generated
+    // manifest. `grep -rn clippy crates/renvor-cli/` returned nothing, while `tasks.md` T036 and
+    // `quickstart.md` gate 5 both stated that clippy ran. An advisory review found the gap by
+    // reading the array instead of the prose.
+    //
+    // `-D warnings` because SC-005 says "0 warnings escalated to errors", which is only meaningful
+    // if they are escalated.
+    (
+        "cargo",
+        &["clippy", "--", "-D", "warnings"],
+        "does not pass its own lints",
+    ),
     ("cargo", &["build"], "does not compile"),
     ("cargo", &["test"], "does not pass its own tests"),
+    // FR-029's fifth verb — "and MUST start" — and contract C-5 step 5 says the same. The
+    // generated `main` prints its name and exits, so this terminates; a template that made it block
+    // would hang generation, which is why the template suite keeps `main` trivial.
+    ("cargo", &["run", "--quiet"], "does not start"),
 ];
 
 /// Runs the generated project's own checks while it is still in staging.

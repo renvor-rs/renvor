@@ -64,6 +64,14 @@ enum Unavailable {
     DaemonStopped,
     /// The executable runs, the daemon accepts the call, and never replies.
     DaemonSilent,
+    /// The runtime ran and reported a failure of its own.
+    ///
+    /// Added 2026-08-18. `"command_failed"` was already being emitted as a bare literal further
+    /// down, **outside this enum**, while the type's own doc claimed a closed set and the published
+    /// registry listed three values. A consumer matching the documented three fell through on an
+    /// ordinary `docker compose` failure. Found by an advisory review reading the emit sites rather
+    /// than the enum.
+    CommandFailed,
 }
 
 impl Unavailable {
@@ -72,6 +80,7 @@ impl Unavailable {
             Self::Absent => "not_installed",
             Self::DaemonStopped => "not_running",
             Self::DaemonSilent => "not_responding",
+            Self::CommandFailed => "command_failed",
         }
     }
 
@@ -84,6 +93,9 @@ impl Unavailable {
             Self::DaemonStopped => {
                 "the runtime is installed but its daemon is not answering; start \
                                  it and try again"
+            }
+            Self::CommandFailed => {
+                "the container runtime ran and reported a failure of its own; its output is above"
             }
             Self::DaemonSilent => {
                 "the runtime is installed and its daemon accepted the request but did not reply \
@@ -134,19 +146,38 @@ fn probe(program: &str, arguments: &[&str], timeout: std::time::Duration) -> Res
 /// `docker info` requires the daemon. Running both is what makes the distinction real rather than
 /// guessed from an error string.
 fn availability() -> Result<(), Unavailable> {
-    // The client. Fast, local, and answers even with the daemon down — which is the whole point of
-    // asking it separately. A timeout here means something is very wrong with the executable
-    // itself, so it is reported as "not installed" rather than inventing a fourth state.
-    match probe("docker", &["--version"], PROBE_TIMEOUT) {
-        Ok(true) => {}
-        Ok(false) | Err(()) => return Err(Unavailable::Absent),
-    }
+    classify(
+        // The client. Fast, local, and answers even with the daemon down — which is the whole
+        // point of asking it separately.
+        probe("docker", &["--version"], PROBE_TIMEOUT),
+        // The daemon. This is the call that can block forever, and the reason `probe` exists.
+        probe("docker", &["info"], PROBE_TIMEOUT),
+    )
+}
 
-    // The daemon. This is the call that can block forever, and the reason `probe` exists.
-    match probe("docker", &["info"], PROBE_TIMEOUT) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(Unavailable::DaemonStopped),
-        Err(()) => Err(Unavailable::DaemonSilent),
+/// Turns two probe outcomes into the FR-035 distinction.
+///
+/// # Why this is a separate function
+///
+/// FR-035's whole content is *"MUST distinguish 'runtime not installed' from 'runtime installed but
+/// not running'"* — and until 2026-08-18 the code making that distinction was **called by no test**.
+/// An advisory review found it with `grep -rn "availability("`: two hits, the definition and the one
+/// production call. Invert the logic and the suite stayed green. The tests that looked like FR-035
+/// coverage compared enum constants to each other or drove `sleep`/`true`/`false` through `probe`;
+/// none of them exercised the mapping.
+///
+/// `availability` does the I/O and this does the deciding, so the deciding can be tested over all
+/// six combinations without a container runtime.
+///
+/// A client timeout is reported as [`Unavailable::Absent`] rather than inventing a fourth state:
+/// `docker --version` is local and answers in milliseconds, so a timeout there means the executable
+/// itself is unusable, which is what "not installed" tells an operator to go and fix.
+const fn classify(client: Result<bool, ()>, daemon: Result<bool, ()>) -> Result<(), Unavailable> {
+    match (client, daemon) {
+        (Ok(false) | Err(()), _) => Err(Unavailable::Absent),
+        (Ok(true), Ok(true)) => Ok(()),
+        (Ok(true), Ok(false)) => Err(Unavailable::DaemonStopped),
+        (Ok(true), Err(())) => Err(Unavailable::DaemonSilent),
     }
 }
 
@@ -227,7 +258,8 @@ pub fn run(
             Code::ContainerRuntimeUnavailable,
             "the container runtime reported a failure; its output is above",
         )
-        .with("reason", "command_failed"));
+        .with("reason", Unavailable::CommandFailed.reason())
+        .with("remedy", Unavailable::CommandFailed.remedy()));
     }
 
     Ok(reporter.finish(
@@ -374,6 +406,33 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn every_probe_outcome_maps_to_the_right_unavailability() {
+        // ALL SIX COMBINATIONS. FR-035's distinction is the point of this command, and the function
+        // that makes it had no test at all — `grep -rn "availability("` found the definition and
+        // one production call. This exercises the decision without needing a container runtime.
+        assert_eq!(
+            classify(Ok(true), Ok(true)),
+            Ok(()),
+            "both up means available"
+        );
+        assert_eq!(
+            classify(Ok(true), Ok(false)),
+            Err(Unavailable::DaemonStopped),
+            "client up, daemon refusing: installed but not running"
+        );
+        assert_eq!(
+            classify(Ok(true), Err(())),
+            Err(Unavailable::DaemonSilent),
+            "client up, daemon silent: installed, running, not answering"
+        );
+        // A client that fails or hangs is "not installed" whatever the daemon says, including when
+        // the daemon probe somehow succeeds — which is the row an inverted implementation gets wrong.
+        assert_eq!(classify(Ok(false), Ok(true)), Err(Unavailable::Absent));
+        assert_eq!(classify(Ok(false), Ok(false)), Err(Unavailable::Absent));
+        assert_eq!(classify(Err(()), Ok(true)), Err(Unavailable::Absent));
     }
 
     #[test]

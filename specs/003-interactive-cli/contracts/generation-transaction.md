@@ -5,6 +5,23 @@
 Everything else in this phase is a convenience. This is the part that must not be wrong, because it
 is the part that touches a directory somebody cares about.
 
+## An existing empty destination is REPLACED, not written into
+
+FR-013 refuses a destination that "exists and is **not** empty", so an existing **empty** one is a
+legal target. What placement does with it is `remove_dir` followed by the rename — so the directory
+the operator ends up with is a **different** directory: a new inode, with default permissions,
+ownership, and extended attributes rather than whatever was set on the original.
+
+Measured, not assumed: a destination created with mode `0700` comes back as `0755`, and the inode
+changes.
+
+**This is recorded because it was true and written down nowhere** — not in this contract, not in the
+spec, not in the published documentation — until an advisory review measured it on 2026-08-18. It is
+a consequence of `remove_dir` being what makes the emptiness check atomic (the kernel refuses to
+remove a non-empty directory, so check-and-remove are one operation rather than a check followed by
+a hopeful delete), and that trade is worth keeping. Silently discarding an operator's deliberate
+`chmod` is not worth keeping quiet about.
+
 ## The protocol
 
 ```text

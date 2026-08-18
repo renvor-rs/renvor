@@ -202,6 +202,54 @@ impl Destination {
             }
         };
 
+        // RULE 1b — the directory name renvor is about to CREATE is hygienic.
+        //
+        // ── FOUND BY AN ADVISORY SECURITY REVIEW, 2026-08-18 ──────────────────────────────
+        //
+        // `validate_project_name` refuses control characters and odd punctuation — but it guards the
+        // **project name**, and when the operator supplies a NAME separately the directory name comes
+        // from `--path`'s final component instead and reached no such check. Measured, not reasoned:
+        //
+        //   renvor new x --path '/tmp/out/weird!@#name'   -> exit 0, directory `weird!@#name`
+        //   renvor new x --path $'/tmp/out/inject\nLINE'  -> exit 0, directory with a literal newline
+        //   renvor new x --path '/tmp/out/trailing. '     -> exit 0, directory `trailing. `
+        //
+        // while the same strings in the NAME position were correctly refused. The module's own doc
+        // comment says a project name "becomes both a directory name and a Rust package name", and
+        // that was true of one of the two ways to supply it.
+        //
+        // ── WHY THIS IS NARROWER THAN `validate_project_name` ────────────────────────────
+        //
+        // It rejects **control characters** and a **trailing dot or space**, and nothing else. The
+        // full ASCII-alphanumeric rule is right for a package name and wrong here: an operator may
+        // legitimately write `--path ./my.project` or a path with a space in it, and refusing that
+        // would break ordinary use to prevent nothing. What these two classes have in common is that
+        // they make the name **lie**:
+        //
+        //   - a control character can rewrite a terminal line or forge a log entry, so the directory
+        //     an operator is told about is not the one on disk;
+        //   - Windows silently strips a trailing dot or space, so `trailing. ` is created as
+        //     `trailing` — and this program refuses reserved device names on every platform for
+        //     exactly the same reason: a tree made on one platform is opened on another.
+        if let Some(offending) = name.chars().find(|c| c.is_control()) {
+            return Err(rejected(
+                "name_control_character",
+                &format!(
+                    "the destination's final component contains a control character \
+                     (U+{:04X}); a directory name that can rewrite a terminal line or a log entry \
+                     is refused",
+                    offending as u32
+                ),
+            ));
+        }
+        if name.ends_with('.') || name.ends_with(' ') {
+            return Err(rejected(
+                "name_trailing_dot_or_space",
+                "the destination's final component ends in a `.` or a space; Windows strips those \
+                 silently, so the directory created there would not be the one you named",
+            ));
+        }
+
         // RULE 2 — not a platform-reserved device name. A name, not a path, so no capability can
         // decide it.
         let stem = name.split('.').next().unwrap_or(&name);
