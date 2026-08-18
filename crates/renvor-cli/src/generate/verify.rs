@@ -71,14 +71,24 @@ const CHECKS: [(&str, &[&str], &str); 5] = [
 ///
 /// # Errors
 ///
-/// [`Code::RenderFailed`] if any check fails — the project was generated and is **wrong**, which
-/// is a generation failure — or [`Code::ToolMissing`] if `cargo` cannot be run at all.
+/// [`Code::ProjectVerificationFailed`] if any check fails — the project was generated and is
+/// **wrong**, which is a generation failure — or [`Code::ToolMissing`] if `cargo` cannot be run at
+/// all.
+///
+/// # Not `render_failed`, which it was until 2026-08-18
+///
+/// That code is published as *"template rendering failed"*, and rendering is exactly what did
+/// **not** fail here: the templates produced a tree, and the tree then failed its own build, lint,
+/// format, test, or start check. A consumer matching the registry would have looked for a template
+/// defect over a compile error. This is the same class of misreporting as A-R6's three sites, found
+/// in the same sweep and corrected with them.
 pub fn in_staging(staging: &Path) -> Result<(), CliError> {
     let target = tempfile::tempdir().map_err(|error| {
         CliError::new(
-            Code::RenderFailed,
+            Code::ProjectVerificationFailed,
             format!("a build directory for verification could not be created: {error}"),
         )
+        .with("stage", "pre-placement verification")
     })?;
 
     for (program, arguments, complaint) in CHECKS {
@@ -105,7 +115,7 @@ pub fn in_staging(staging: &Path) -> Result<(), CliError> {
             // somebody to re-read their flags for a bug in a template.
             let detail = String::from_utf8_lossy(&output.stderr);
             return Err(CliError::new(
-                Code::RenderFailed,
+                Code::ProjectVerificationFailed,
                 format!(
                     "the generated project {complaint}; nothing was written to the destination. \
                      This is a defect in renvor's templates, not in your command.\n{}",
@@ -148,7 +158,7 @@ mod tests {
     fn a_project_that_does_not_compile_is_a_generation_failure() {
         let dir = project("fn main() { this is not rust }\n");
         let error = in_staging(dir.path()).unwrap_err();
-        assert_eq!(error.code, Code::RenderFailed);
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
         assert!(
             error
                 .details
@@ -165,7 +175,7 @@ mod tests {
         // shipped it.
         let dir = project("fn main() {   }");
         let error = in_staging(dir.path()).unwrap_err();
-        assert_eq!(error.code, Code::RenderFailed);
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
         assert!(
             error
                 .details

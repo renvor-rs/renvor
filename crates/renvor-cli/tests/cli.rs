@@ -219,8 +219,29 @@ fn every_json_document_matches_its_recorded_shape() {
         ),
     );
     shapes.insert(
-        "destination_not_empty".into(),
+        "destination_exists (non-empty directory)".into(),
         document_shape(&["new", "made", "--yes", "--output", "json"], base.path()),
+    );
+    // The EMPTY directory, which schemaVersion 1 accepted and generated into. It is a distinct
+    // shape entry rather than a duplicate: it is the case the 2026-08-18 ruling changed, and a
+    // regression would show here as a `result` where an `error` belongs.
+    std::fs::create_dir(base.path().join("empty-dir")).expect("mkdir");
+    shapes.insert(
+        "destination_exists (empty directory)".into(),
+        document_shape(
+            &["new", "empty-dir", "--yes", "--output", "json"],
+            base.path(),
+        ),
+    );
+    // And a regular file at the destination.
+    std::fs::write(base.path().join("a-file"), b"x").expect("write");
+    shapes.insert(
+        "destination_exists (file)".into(),
+        document_shape(&["new", "a-file", "--yes", "--output", "json"], base.path()),
+    );
+    shapes.insert(
+        "container_controls_missing".into(),
+        document_shape(&["docker", "up", "--output", "json"], &project),
     );
     shapes.insert(
         "manifest_invalid".into(),

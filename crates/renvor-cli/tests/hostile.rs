@@ -230,9 +230,22 @@ fn a_destination_that_is_a_symlink_to_another_directory_is_refused() {
         ],
         &work,
     );
+    // Since the 2026-08-18 destination policy this is refused by the same rule as every other
+    // existing entry — `destination_absent` — and `details.found` is what says it was a symlink.
+    // There is no longer a separate symlink rule, because there is no longer any existing entry
+    // that is acceptable, so a special case for one of them would only be a special case.
     assert_eq!(
-        document["error"]["details"]["rule"], "not_a_symlink",
-        "the symlink must be refused as a symlink: {document}"
+        document["error"]["code"], "destination_exists",
+        "the symlink must be refused: {document}"
+    );
+    assert_eq!(
+        document["error"]["details"]["rule"], "destination_absent",
+        "{document}"
+    );
+    assert_eq!(
+        document["error"]["details"]["found"], "symlink",
+        "the refusal must still say it was a symlink, not merely that something was there: \
+         {document}"
     );
     assert_eq!(
         std::fs::read_to_string(outside.join("precious")).expect("the witness survives"),
@@ -256,11 +269,11 @@ fn an_existing_non_empty_destination_is_refused_without_being_touched() {
         base.path(),
     );
     assert_eq!(
-        document["error"]["code"], "destination_not_empty",
+        document["error"]["code"], "destination_exists",
         "the code must say WHY it was rejected, not merely that it was: {document}"
     );
     assert_eq!(
-        document["error"]["details"]["rule"], "destination_absent_or_empty",
+        document["error"]["details"]["rule"], "destination_absent",
         "{document}"
     );
     assert_eq!(

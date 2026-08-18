@@ -77,7 +77,7 @@ moment something went wrong.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "success",
   "command": "new",
   "result": { "destination": "…", "dryRun": false, "manifest": [], "templateVersion": "1" }
@@ -86,18 +86,21 @@ moment something went wrong.
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "failure",
   "command": "new",
   "error": {
-    "code": "destination_not_empty",
+    "code": "destination_exists",
     "message": "…",
-    "details": { "destination": "…", "rule": "destination_absent_or_empty" }
+    "details": { "destination": "…", "rule": "destination_absent", "found": "directory" }
   }
 }
 ```
 
-- `schemaVersion` is an **integer**, and is bumped if any name below changes.
+- `schemaVersion` is an **integer**, and is bumped if any name below changes. It is **`2`**: on
+  2026-08-18 `destination_not_empty` was retired and `destination_exists`,
+  `project_verification_failed`, `container_controls_missing`, and `staging_failed` were added. If
+  you match `destination_not_empty`, you are matching a code renvor no longer emits.
 - `result` and `error` are **exclusive**: exactly one is present.
 - `details` values are always **strings**. Match on `code`, never on `message`.
 
@@ -119,16 +122,19 @@ has to be known while the command line is still unparseable.
 | `unsupported_combination` | 3 | Individually valid choices that conflict. Both are named. |
 | `reserved_for_later_phase` | 3 | A flag, value, or operation a later phase will support. `details.phase` names it. |
 | `invalid_project_name` | 3 | Empty, not a usable package name, or a reserved device name. |
-| `destination_not_empty` | 3 | The destination exists and is not empty. |
-| `destination_rejected` | 3 | The destination failed a path-boundary rule. `details.rule` names which. |
+| `destination_exists` | 3 | Something is already at the destination. `details.found` is `directory`, `file`, `symlink`, or `other`. |
+| `destination_rejected` | 3 | The destination failed a path-boundary rule. `details.rule` names which — including `destination_unverifiable`, when renvor could not read the destination's state at all. |
 | `destination_parent_missing` | 3 | The destination's parent does not exist or does not resolve. |
 | `manifest_invalid` | 3 | `renvor.toml` failed validation. The field and the constraint are named. |
+| `project_verification_failed` | 3 | A project's own checks failed, or could not be run. `details.check` names the check. |
+| `container_controls_missing` | 3 | The project has no `compose.yaml`; generate it with `--container`. |
 | `render_failed` | 3 | Template rendering failed. The destination is untouched. |
 | `bound_exceeded` | 3 | A documented bound was exceeded. `details.bound` and `details.limit` say which and what. |
+| `staging_failed` | 3 | The staging directory could not be created — usually the destination's parent is not writable. Nothing was staged. |
 | `placement_failed` | 3 | The final move could not be performed. |
 | `cancelled` | 4 | You cancelled, declined, or interrupted. |
 | `tool_missing` | 5 | A required tool is absent or too old. |
-| `container_runtime_unavailable` | 5 | `details.reason` is `not_installed`, `not_running`, or `not_responding`. |
+| `container_runtime_unavailable` | 5 | `details.reason` is `not_installed`, `not_running`, `not_responding`, or `command_failed`. |
 | `internal` | 1 | Unclassified. **A defect.** |
 
 ## `renvor new` is transactional
@@ -144,16 +150,20 @@ validate → stage → render → verify → manifest → review → place → r
 - **Rendering happens in a staging directory** created inside the destination's *parent* — never
   the system temporary directory, so the final step can be a rename rather than a copy across
   filesystems.
-- **The generated project is verified while it is still in staging**: its own `cargo fmt
-  --check`, `cargo build`, and `cargo test` must pass. A project that does not build is a
-  *generation* failure, not something you discover later.
+- **The generated project is verified while it is still in staging**: its own `cargo fmt --check`,
+  `cargo clippy -- -D warnings`, `cargo build`, `cargo test`, and `cargo run` must all pass. A
+  project that does not build is a *generation* failure reported as `project_verification_failed`,
+  not something you discover later.
 - **Placement is a single rename.** It never falls back to a copy.
-- **An existing *empty* destination directory is removed and replaced.** FR-013 refuses a
-  destination that "exists and is **not** empty", so an existing empty one is a legal target — and
-  the way `renvor` uses it is to `remove_dir` it and rename staging into its place. The directory
-  you get back is a **new** one: its permissions, ownership, and extended attributes are the
-  defaults, not the ones you set. A deliberate `chmod 700` on an empty destination will come back
-  as `755`. If the rename fails, the removed directory is recreated.
+- **The destination must not exist, and `renvor` never deletes one.** An empty directory, a
+  non-empty directory, a file, and a symbolic link are all refused with `destination_exists`, before
+  anything is staged. If renvor cannot even tell what is there, it refuses rather than guessing.
+  Nothing you already have is deleted, renamed, `chmod`-ed, replaced, or restored.
+
+  *Changed on 2026-08-18.* Until then an existing **empty** directory was accepted and then
+  removed and recreated, so a deliberate `chmod 700` came back as `755` and the inode changed. If
+  you were relying on generating into a directory you had already made, create the parent and let
+  `renvor` make the last component.
 - **A failure anywhere before placement leaves the destination exactly as it was**, and leaves no
   staging directory behind.
 

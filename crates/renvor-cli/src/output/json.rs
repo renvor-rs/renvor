@@ -10,7 +10,23 @@ use serde::Serialize;
 use crate::exit::CliError;
 
 /// Incremented on any breaking shape change. Never a string.
-pub const SCHEMA_VERSION: u32 = 1;
+///
+/// # `1` to `2`, 2026-08-18
+///
+/// The error-code registry is a **closed set**: contract C-2 says a code comes "from the registry
+/// below", so a consumer may legitimately treat an unlisted code as a protocol error and may
+/// exhaustively match the listed ones. Both assumptions break when the set changes.
+///
+/// `destination_not_empty` was **removed** — the destination policy now refuses an existing empty
+/// directory too, and reporting that with a code whose name says "not empty" would be a false
+/// statement — and four codes were **added**: `destination_exists` in its place, plus
+/// `project_verification_failed`, `container_controls_missing`, and `staging_failed`, which
+/// replace three sites that were emitting codes whose published meaning did not cover them.
+///
+/// A removal from a closed set is a breaking change. The bump is not a formality here: a consumer
+/// pinned to `1` and matching `destination_not_empty` would silently stop recognising the single
+/// most common `renvor new` failure, and the version is the only thing that tells it so.
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The `status` field, as a closed set rather than a free string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -143,7 +159,7 @@ mod tests {
     fn a_success_envelope_carries_a_result_and_no_error() {
         let envelope = Envelope::success("new", serde_json::json!({"files": 14}));
         let value = serde_json::to_value(&envelope).expect("serialises");
-        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["schemaVersion"], 2);
         assert_eq!(value["status"], "success");
         assert_eq!(value["command"], "new");
         assert_eq!(value["result"]["files"], 14);
@@ -155,11 +171,11 @@ mod tests {
 
     #[test]
     fn a_failure_envelope_carries_an_error_and_no_result() {
-        let error = CliError::new(Code::DestinationNotEmpty, "it exists").with("rule", "r");
+        let error = CliError::new(Code::DestinationExists, "it exists").with("rule", "r");
         let envelope = Envelope::failure("new", &error);
         let value = serde_json::to_value(&envelope).expect("serialises");
         assert_eq!(value["status"], "failure");
-        assert_eq!(value["error"]["code"], "destination_not_empty");
+        assert_eq!(value["error"]["code"], "destination_exists");
         assert_eq!(value["error"]["details"]["rule"], "r");
         assert!(
             value.get("result").is_none(),

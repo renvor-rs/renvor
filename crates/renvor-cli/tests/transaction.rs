@@ -282,34 +282,104 @@ fn an_uninjected_run_into_the_same_fixtures_succeeds() {
     // T017, and it is not a formality. Without it, a harness that refused **everything** — a typo
     // in the argument list, a broken fixture, a `renvor` that cannot start at all — satisfies both
     // T016 tests completely, because both assert only that the run fails and writes nothing.
-    for prepare_empty_destination in [false, true] {
-        let base = tempfile::tempdir().expect("a temporary directory");
-        let destination = base.path().join("demo");
-        if prepare_empty_destination {
-            std::fs::create_dir(&destination).expect("the empty destination is created");
-        }
+    //
+    // ── THE SECOND CASE MOVED OUT ON 2026-08-18 ───────────────────────────────────────
+    //
+    // This used to loop over `[false, true]`, the second arm creating an **empty** destination
+    // first and expecting the run to succeed. The maintainer ruling made every existing
+    // destination a refusal, so that arm is now a refusal test and lives in
+    // `an_existing_empty_destination_is_refused_before_anything_is_staged` below. It was moved
+    // rather than deleted: the case still matters, its expected answer changed.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let destination = base.path().join("demo");
 
-        let (exit, stdout, stderr) = generate_into(base.path(), None);
+    let (exit, stdout, stderr) = generate_into(base.path(), None);
+    assert_eq!(
+        exit, 0,
+        "the same fixture must succeed when nothing is injected: {stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    assert_eq!(document["status"], "success");
+    assert!(
+        destination.join("renvor.toml").is_file(),
+        "a project was produced"
+    );
+    assert!(
+        destination.join("src/domain.rs").is_file(),
+        "the project is complete"
+    );
+    assert!(
+        staging_residue(base.path()).is_empty(),
+        "a successful run left staging behind"
+    );
+}
+
+#[test]
+fn an_existing_empty_destination_is_refused_before_anything_is_staged() {
+    // THE END-TO-END TEST OF THE 2026-08-18 DESTINATION POLICY.
+    //
+    // Its predecessor asserted the opposite outcome for exactly this fixture — that an existing
+    // empty destination was generated INTO — so this fails against the previous implementation on
+    // its first assertion, and it fails for the right reason rather than by construction.
+    //
+    // Three separate things are checked, and the third is the one the ruling turns on:
+    //
+    //   1. the run is refused, with `destination_exists` and `details.rule = destination_absent`;
+    //   2. the operator's directory is still there, still empty, and — on Unix — still the SAME
+    //      inode with the same mode and ownership, which is what "not replaced" means;
+    //   3. **no staging directory was ever created**. The refusal happens in `Destination::open`,
+    //      before `Staging::create`, so a failed run does not even briefly put a `.renvor-staging-`
+    //      directory in the operator's parent. Residue here would mean the check moved.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let destination = base.path().join("demo");
+    std::fs::create_dir(&destination).expect("the empty destination is created");
+    let before = std::fs::metadata(&destination).expect("metadata");
+
+    let (exit, stdout, stderr) = generate_into(base.path(), None);
+    assert_eq!(
+        exit, 3,
+        "an existing empty destination must be refused, not generated into: {stdout}{stderr}"
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    assert_eq!(document["status"], "failure");
+    assert_eq!(
+        document["error"]["code"], "destination_exists",
+        "{document}"
+    );
+    assert_eq!(
+        document["error"]["details"]["rule"], "destination_absent",
+        "{document}"
+    );
+    assert_eq!(
+        document["error"]["details"]["found"], "directory",
+        "{document}"
+    );
+
+    let after = std::fs::metadata(&destination).expect("the operator's directory was removed");
+    assert!(after.is_dir());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
         assert_eq!(
-            exit, 0,
-            "the same fixture must succeed when nothing is injected \
-             (pre-existing empty destination: {prepare_empty_destination}): {stderr}"
-        );
-        let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
-        assert_eq!(document["status"], "success");
-        assert!(
-            destination.join("renvor.toml").is_file(),
-            "a project was produced"
-        );
-        assert!(
-            destination.join("src/domain.rs").is_file(),
-            "the project is complete"
-        );
-        assert!(
-            staging_residue(base.path()).is_empty(),
-            "a successful run left staging behind"
+            (before.ino(), before.mode(), before.uid(), before.gid()),
+            (after.ino(), after.mode(), after.uid(), after.gid()),
+            "the operator's directory was deleted and recreated: a different inode, mode, or \
+             owner is exactly the replacement finding A-R8 recorded"
         );
     }
+    #[cfg(not(unix))]
+    let _ = before;
+
+    let contents: Vec<_> = std::fs::read_dir(&destination)
+        .expect("read_dir")
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert!(contents.is_empty(), "the refusal wrote {contents:?}");
+    assert!(
+        staging_residue(base.path()).is_empty(),
+        "a destination refused before staging must not have created staging"
+    );
 }
 
 #[test]
@@ -342,7 +412,7 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
     // ── THIS TEST FOUND A REAL DEFECT THAT LOCAL RUNS COULD NOT ────────────────────────
     //
     // Five clean local runs, then **macOS and Windows CI both failed**: a loser reported
-    // `placement_failed` rather than `destination_not_empty` — the window between the pre-rename
+    // `placement_failed` rather than the destination-exists code — the window between the pre-rename
     // check and the rename, narrow enough that a fast idle machine never lands in it and wide
     // enough that a loaded runner does.
     //
@@ -398,7 +468,7 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
                     serde_json::from_slice(&output.stdout).expect("a loser wrote no document");
                 assert_eq!(document["status"], "failure");
                 assert_eq!(
-                    document["error"]["code"], "destination_not_empty",
+                    document["error"]["code"], "destination_exists",
                     "a loser failed for an unexpected reason"
                 );
                 failed_cleanly += 1;

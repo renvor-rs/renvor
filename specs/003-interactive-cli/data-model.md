@@ -116,8 +116,7 @@ the D6 decision record** ([`research.md`](research.md)).
 | Final component is a single name | a name containing a separator |
 | Not a platform-reserved device name | `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` on Windows |
 | Parent exists and canonicalises | a destination under a path that does not resolve |
-| Destination does not exist, or exists and is empty | FR-013 |
-| Destination is not a symbolic link | writing through a link to somewhere else |
+| Destination does not exist **at all** | FR-013 — an empty directory, a non-empty directory, a regular file, and a symbolic link are all refused, and so is an entry whose state cannot be established |
 | Canonical destination is inside the canonical parent | symlink escape |
 
 ### Invariants

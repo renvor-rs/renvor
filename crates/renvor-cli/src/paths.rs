@@ -69,9 +69,20 @@ const RESERVED_DEVICE_NAMES: [&str; 22] = [
 ///    than by re-observing the filesystem, because a re-observation is itself racy and is exactly
 ///    how a lost race used to be misreported as `placement_failed`.
 ///
-/// Closing the window entirely needs an atomic create-directory-or-fail rename, which POSIX does
-/// not provide portably: `rename(2)` silently replaces an empty destination directory, and
-/// `renameat2(RENAME_NOREPLACE)` is Linux-only. So the residual risk is stated here rather than
+/// # The one case the rename itself can still replace, stated plainly
+///
+/// POSIX `rename(2)` **silently replaces an existing empty destination directory**. So if another
+/// process creates an empty directory at the destination in the window between `Staging::place`'s
+/// own absence check and the rename, that directory is replaced rather than preserved. This is a
+/// property of the system call, not a decision this program makes, and it is the *entire* residual
+/// after the 2026-08-18 ruling: renvor no longer deletes or replaces a destination deliberately
+/// anywhere.
+///
+/// Closing the window entirely needs an atomic create-directory-or-fail rename. POSIX does not
+/// provide one — `renameat2(RENAME_NOREPLACE)` is Linux-only — and the obvious portable
+/// substitute, `create_dir` the destination first and rename onto it, is not portable either:
+/// Windows `MoveFileEx` refuses a rename onto an existing directory, so the trick that closes the
+/// window on Unix would break the command on Windows. The residual is therefore stated rather than
 /// designed around, and `tests/transaction.rs` asserts the *consequence* — that concurrent runs
 /// produce exactly one project and clean failures for the rest — rather than asserting an
 /// impossibility that does not hold.
@@ -132,7 +143,7 @@ impl Destination {
     /// # Errors
     ///
     /// [`Code::InvalidProjectName`], [`Code::DestinationRejected`],
-    /// [`Code::DestinationParentMissing`], or [`Code::DestinationNotEmpty`]. Every rejection names
+    /// [`Code::DestinationParentMissing`], or [`Code::DestinationExists`]. Every rejection names
     /// the rule that fired in `details.rule`, so a refusal is a diagnosis rather than a verdict.
     pub fn open(requested: &Path) -> Result<Self, CliError> {
         let rejected = |rule: &'static str, why: &str| {
@@ -290,49 +301,90 @@ impl Destination {
             .with("parent", parent_input.display().to_string())
             })?;
 
-        // RULE 4 — the destination is not a symbolic link.
+        // RULE 4 — THE DESTINATION MUST BE ABSENT. Every existing entry is refused, and an entry
+        // whose state cannot be established is refused too.
         //
-        // `symlink_metadata` does NOT follow the link; `metadata` would report the target and
-        // defeat the check entirely. Note that this is now belt-and-braces: writing *through* the
-        // link would be refused by the handle anyway. It is kept because a clear message beats an
-        // opaque `PermissionDenied` three steps later.
-        if let Ok(metadata) = parent.symlink_metadata(&name)
-            && metadata.is_symlink()
-        {
-            return Err(rejected(
-                "not_a_symlink",
-                "the destination is a symbolic link; renvor will not write through it",
-            ));
-        }
-
-        // RULE 5 — the destination is absent, or present and empty.
-        match parent.read_dir(&name) {
-            Ok(mut entries) => {
-                if entries.next().is_some() {
-                    return Err(CliError::new(
-                        Code::DestinationNotEmpty,
-                        format!(
-                            "`{}` already exists and is not empty; merging into an existing \
-                             project is not supported",
-                            parent_input.join(&name).display()
-                        ),
-                    )
-                    .with("rule", "destination_absent_or_empty")
-                    .with(
-                        "destination",
-                        parent_input.join(&name).display().to_string(),
-                    ));
-                }
-            }
+        // ── THIS RULE WAS TIGHTENED BY MAINTAINER RULING, 2026-08-18 ──────────────────────
+        //
+        // The previous rule accepted an existing **empty** directory, and `Staging::place` then
+        // deleted it and let the rename create a fresh one. Three things were wrong with that, and
+        // all three were found by advisory review rather than by a test:
+        //
+        //   - **It replaced a path the operator owned.** The new directory has a different inode,
+        //     the process's own umask-derived mode, and the process's ownership. An operator who
+        //     had `mkdir -m 0700 out` got `0755` back, silently (A-R8).
+        //   - **The restore-after-failed-rename branch was unreachable from any test**, and its
+        //     one recovery action ignored its own error (A-R9).
+        //   - It made `renvor new` a program that can delete a directory. It no longer is.
+        //
+        // The replacement is not a softer check; it is a *broader* one. Empty directory, non-empty
+        // directory, regular file, symbolic link, and anything else all fail here, before a single
+        // byte is staged.
+        //
+        // ── WHY `symlink_metadata` AND WHY IT IS THE ONLY CALL ───────────────────────────
+        //
+        // It reports **any** entry, and it does **not follow a symbolic link** — `metadata` would
+        // report the link's target and would answer `NotFound` for a dangling link, which is the
+        // one form of "existing entry" most worth catching. One call replaces the old pair, so
+        // there is no longer a second observation whose disagreement with the first has to be
+        // reasoned about.
+        //
+        // ── FAIL CLOSED, AND WHY THE OLD CODE DID NOT ────────────────────────────────────
+        //
+        // The old `Err(_)` arm asked `symlink_metadata` a second question and, **if that also
+        // failed, fell through to `Ok`** — so a destination whose state could not be read at all
+        // was treated as absent, and generation proceeded. Any error that is not an authoritative
+        // `NotFound` now refuses, and the original OS error is carried into the message and into
+        // `details.error` rather than being discarded. An unknown filesystem state is not absence.
+        match parent.symlink_metadata(&name) {
+            // The ONLY arm that proceeds.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => {
-                // Present, and not a readable directory — a regular file, most likely.
-                if parent.symlink_metadata(&name).is_ok() {
-                    return Err(rejected(
-                        "destination_absent_or_empty",
-                        "the destination exists and is not a directory",
-                    ));
-                }
+            Ok(metadata) => {
+                let found = if metadata.is_symlink() {
+                    "symlink"
+                } else if metadata.is_dir() {
+                    "directory"
+                } else if metadata.is_file() {
+                    "file"
+                } else {
+                    "other"
+                };
+                return Err(CliError::new(
+                    Code::DestinationExists,
+                    format!(
+                        "`{}` already exists (it is a {found}); renvor generates into a path that \
+                         does not exist yet, and will not delete, replace, or merge into one you \
+                         already have. Choose a different destination, or remove that one yourself",
+                        parent_input.join(&name).display()
+                    ),
+                )
+                .with("rule", "destination_absent")
+                .with("found", found)
+                .with(
+                    "destination",
+                    parent_input.join(&name).display().to_string(),
+                ));
+            }
+            Err(error) => {
+                // FAIL CLOSED. Reported as `destination_rejected` rather than as
+                // `destination_exists`, because claiming something is there would be as
+                // unevidenced as claiming it is not. What is known is that renvor could not tell,
+                // and that is what the message and `details.error` say.
+                return Err(CliError::new(
+                    Code::DestinationRejected,
+                    format!(
+                        "`{}` could not be inspected, so renvor cannot establish that it is \
+                         absent: {error}. Generation is refused rather than risking writing over \
+                         something that is there",
+                        parent_input.join(&name).display()
+                    ),
+                )
+                .with("rule", "destination_unverifiable")
+                .with("error", error.to_string())
+                .with(
+                    "destination",
+                    parent_input.join(&name).display().to_string(),
+                ));
             }
         }
 
@@ -515,30 +567,144 @@ mod tests {
         assert_eq!(destination.name(), "demo");
     }
 
+    /// The `details.rule` a refusal named, or `None`.
+    fn rule(error: &CliError) -> Option<&str> {
+        error
+            .details
+            .iter()
+            .find(|(key, _)| key == "rule")
+            .map(|(_, value)| value.as_str())
+    }
+
     #[test]
-    fn a_non_empty_destination_is_refused() {
+    fn every_kind_of_existing_destination_is_refused() {
+        // THE MAINTAINER RULING OF 2026-08-18, ASSERTED OVER ITS WHOLE SURFACE.
+        //
+        // The ruling enumerates five classes, and this enumerates the same five. Before it, the
+        // first of them — an existing **empty** directory — was ACCEPTED, and `Staging::place`
+        // then deleted it. So this test fails against the previous implementation on its very
+        // first case, which is what makes it a test of the change rather than a description of it.
         let base = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
-        std::fs::write(base.path().join("demo/f"), b"x").expect("write");
-        let error = Destination::open(&base.path().join("demo")).unwrap_err();
-        assert_eq!(error.code, Code::DestinationNotEmpty);
+
+        let empty = base.path().join("empty");
+        std::fs::create_dir(&empty).expect("mkdir");
+
+        let full = base.path().join("full");
+        std::fs::create_dir(&full).expect("mkdir");
+        std::fs::write(full.join("f"), b"x").expect("write");
+
+        let file = base.path().join("file");
+        std::fs::write(&file, b"x").expect("write");
+
+        let mut cases = vec![(empty, "directory"), (full, "directory"), (file, "file")];
+
+        #[cfg(unix)]
+        {
+            // A symbolic link to a directory, and a DANGLING one. The dangling case is the reason
+            // this check uses `symlink_metadata`: `metadata` follows the link and would answer
+            // `NotFound`, so a dangling link would read as an absent destination and generation
+            // would proceed onto a name that is already taken.
+            let elsewhere = base.path().join("elsewhere");
+            std::fs::create_dir(&elsewhere).expect("mkdir");
+            let link = base.path().join("link");
+            std::os::unix::fs::symlink(&elsewhere, &link).expect("symlink");
+            let dangling = base.path().join("dangling");
+            std::os::unix::fs::symlink(base.path().join("nothing-here"), &dangling)
+                .expect("symlink");
+            cases.push((link, "symlink"));
+            cases.push((dangling, "symlink"));
+        }
+
+        for (path, expected) in cases {
+            let error = match Destination::open(&path) {
+                Err(error) => error,
+                Ok(_) => panic!("`{}` was accepted", path.display()),
+            };
+            assert_eq!(
+                error.code,
+                Code::DestinationExists,
+                "`{}` was refused with the wrong code",
+                path.display()
+            );
+            assert_eq!(
+                rule(&error),
+                Some("destination_absent"),
+                "{}",
+                path.display()
+            );
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(key, value)| key == "found" && value == expected),
+                "`{}` should have reported found={expected}: {:?}",
+                path.display(),
+                error.details
+            );
+        }
     }
 
     #[test]
     #[cfg(unix)]
-    fn a_symlinked_destination_is_refused_by_name_before_it_is_refused_by_the_handle() {
+    fn a_destination_whose_state_cannot_be_established_fails_closed() {
+        // THE FAIL-CLOSED RULE, WITH A REAL UNREADABLE PARENT RATHER THAN A SIMULATION.
+        //
+        // The old code asked `read_dir` first and, when that failed, asked `symlink_metadata` — and
+        // **if that failed too it fell through to `Ok`**, treating "I could not tell" as "it is not
+        // there". A parent directory with no execute permission produces exactly that: every
+        // lookup inside it returns `PermissionDenied`, never `NotFound`.
+        //
+        use std::os::unix::fs::PermissionsExt as _;
+
         let base = tempfile::tempdir().expect("tempdir");
-        let elsewhere = base.path().join("elsewhere");
-        std::fs::create_dir(&elsewhere).expect("mkdir");
-        std::os::unix::fs::symlink(&elsewhere, base.path().join("demo")).expect("symlink");
-        let error = Destination::open(&base.path().join("demo")).unwrap_err();
-        assert_eq!(error.code, Code::DestinationRejected);
-        assert!(
-            error
-                .details
-                .iter()
-                .any(|(key, value)| key == "rule" && value == "not_a_symlink")
+        let opaque = base.path().join("opaque");
+        std::fs::create_dir(&opaque).expect("mkdir");
+        // `rw-` — readable, and **not traversable**. A lookup inside answers `PermissionDenied`,
+        // which is the "not NotFound" case the fall-through mishandled.
+        std::fs::set_permissions(&opaque, std::fs::Permissions::from_mode(0o600))
+            .expect("chmod 600");
+
+        // Root ignores the permission bits, and so do some filesystems and container mounts. Probe
+        // rather than guess: if the denial did not take effect, this test can assert nothing, and
+        // pretending otherwise would make it a test that passes without checking anything.
+        let denied = matches!(
+            std::fs::symlink_metadata(opaque.join("demo")),
+            Err(ref error) if error.kind() != std::io::ErrorKind::NotFound
         );
+        if !denied {
+            std::fs::set_permissions(&opaque, std::fs::Permissions::from_mode(0o700))
+                .expect("chmod");
+            return;
+        }
+
+        let outcome = Destination::open(&opaque.join("demo"));
+
+        // Restore before asserting, so a failing assertion still leaves a removable tempdir.
+        std::fs::set_permissions(&opaque, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+
+        let error = match outcome {
+            Err(error) => error,
+            Ok(_) => panic!("an unreadable destination was treated as absent"),
+        };
+        // Either refusal is correct and both fail closed: on some platforms the parent cannot even
+        // be OPENED, which RULE 3 catches first. What must never happen is `Ok`.
+        assert!(
+            matches!(
+                error.code,
+                Code::DestinationRejected | Code::DestinationParentMissing
+            ),
+            "unexpected code {}: {}",
+            error.code,
+            error.message
+        );
+        if error.code == Code::DestinationRejected {
+            assert_eq!(rule(&error), Some("destination_unverifiable"));
+            assert!(
+                error.details.iter().any(|(key, _)| key == "error"),
+                "the original OS error must be preserved, not discarded: {:?}",
+                error.details
+            );
+        }
     }
 
     #[test]

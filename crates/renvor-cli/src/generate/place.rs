@@ -56,8 +56,13 @@ impl<'a> Staging<'a> {
     ///
     /// # Errors
     ///
-    /// [`Code::PlacementFailed`] if the directory cannot be created — which usually means the
-    /// parent is not writable, and is worth saying plainly rather than failing later.
+    /// [`Code::StagingFailed`] if the directory cannot be created — which usually means the parent
+    /// is not writable, and is worth saying plainly rather than failing later.
+    ///
+    /// **Not** [`Code::PlacementFailed`], which it was until 2026-08-18. That code's published
+    /// meaning is *"the final move could not be performed"*, and at this point there is nothing to
+    /// move: nothing has been staged, so nothing can have been left behind. A consumer matching
+    /// the published meaning would have concluded the opposite (A-R6).
     pub fn create(destination: &'a Destination) -> Result<Self, CliError> {
         let parent = destination.parent();
         // THE NAME HAS THREE PARTS, AND THE THIRD IS NOT DECORATION.
@@ -85,12 +90,17 @@ impl<'a> Staging<'a> {
 
         let failed = |error: std::io::Error| {
             CliError::new(
-                Code::PlacementFailed,
+                Code::StagingFailed,
                 format!(
                     "a staging directory could not be created beside the destination in `{}`: \
-                     {error}",
+                     {error}. Nothing was written; this usually means the destination's parent is \
+                     not writable",
                     destination.display_path().display()
                 ),
+            )
+            .with(
+                "destination",
+                destination.display_path().display().to_string(),
             )
         };
 
@@ -136,9 +146,13 @@ impl<'a> Staging<'a> {
     /// Both sides of the rename are the **same** `Dir` handle, so this cannot cross a filesystem
     /// boundary and cannot name anything outside it.
     ///
+    /// The one thing the rename can still replace is an **empty directory created by another
+    /// process** after STEP 1's check — POSIX `rename(2)` replaces one silently. See invariant
+    /// I-17 in `paths.rs`, which states that residual and why closing it is not portable.
+    ///
     /// # Errors
     ///
-    /// [`Code::DestinationNotEmpty`] if the destination appeared while we were rendering — the
+    /// [`Code::DestinationExists`] if the destination appeared while we were rendering — the
     /// concurrency case, converted into a clean failure rather than an overwrite — or
     /// [`Code::PlacementFailed`] for anything else. **The destination is unchanged either way.**
     pub fn place(mut self, destination: &Destination) -> Result<(), CliError> {
@@ -157,41 +171,47 @@ impl<'a> Staging<'a> {
         // report an FR-012 violation caused by where the injector sits rather than by the code.
         crate::inject::fail_at("place")?;
 
-        // ── STEP 1: make room, or refuse ────────────────────────────────────────────────
+        // ── STEP 1: refuse an existing destination. NOTHING IS REMOVED HERE ─────────────
         //
-        // FR-013 refuses a destination that "exists and is **not empty**", so an existing *empty*
-        // one must work — `Destination::open` accepts it, and this method must agree. An earlier
-        // version did not, so `renvor new` into an empty directory validated, rendered, ran the
-        // full pre-placement verification, and only then failed with a message claiming the
-        // directory had "appeared" mid-run.
+        // ── WHAT THIS BLOCK USED TO DO, AND WHY IT NO LONGER DOES ───────────────────────
         //
-        // `remove_dir` is what makes this safe: **the kernel refuses to remove a non-empty
-        // directory**, so the emptiness check and the removal are one atomic operation rather than
-        // a check followed by a hopeful delete.
-        let mut removed_a_pre_existing_directory = false;
+        // It used to `remove_dir` an existing **empty** destination to make room, and restore it
+        // if the rename then failed. The 2026-08-18 maintainer ruling removed both halves:
+        //
+        //   - the removal replaced a directory the operator owned with a fresh one carrying this
+        //     process's mode and ownership (A-R8);
+        //   - the restore branch was reachable from no test, and swallowed its own error (A-R9).
+        //
+        // `renvor new` is now a program that creates a destination and never removes one. The
+        // deleted code is not replaced by a safer deletion; it is replaced by a refusal.
+        //
+        // `Destination::open` already refused every existing destination before anything was
+        // staged. This is the same rule applied a second time at the last possible moment, because
+        // between those two points a whole render, verification, and manifest pass has run.
+        //
+        // Errors OTHER than an authoritative `NotFound` refuse too — the same fail-closed rule as
+        // `paths.rs` RULE 4, for the same reason: an unknown filesystem state is not absence.
         match self.parent.symlink_metadata(target) {
-            // Absent. The ordinary path.
-            Err(_) => {}
-            Ok(metadata) if metadata.is_dir() => {
-                self.parent.remove_dir(target).map_err(|error| {
-                    named(
-                        Code::DestinationNotEmpty,
-                        format!(
-                            "`{}` exists and could not be replaced: {error}. Nothing was written \
-                             there; renvor does not merge into an existing project",
-                            destination.display_path().display()
-                        ),
-                    )
-                })?;
-                removed_a_pre_existing_directory = true;
-            }
-            // A file, or a symlink that appeared after validation.
+            // The ONLY arm that proceeds.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Ok(_) => {
                 return Err(named(
-                    Code::DestinationNotEmpty,
+                    Code::DestinationExists,
                     format!(
-                        "`{}` exists and is not a directory; nothing was written there and the \
-                         staged tree has been removed",
+                        "`{}` appeared while the project was being generated. Nothing was written \
+                         there and the staged tree has been removed; renvor will not delete or \
+                         replace a destination you already have",
+                        destination.display_path().display()
+                    ),
+                ));
+            }
+            Err(error) => {
+                return Err(named(
+                    Code::PlacementFailed,
+                    format!(
+                        "`{}` could not be inspected before placement, so renvor cannot establish \
+                         that it is absent: {error}. Nothing was written there and the staged tree \
+                         has been removed",
                         destination.display_path().display()
                     ),
                 ));
@@ -234,16 +254,13 @@ impl<'a> Staging<'a> {
                 std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::AlreadyExists
             ) || self.parent.symlink_metadata(target).is_ok();
 
-            // Put the operator's directory back. FR-012 requires a failure to leave the
-            // destination exactly as it was, and FR-014 forbids deleting what renvor did not
-            // create — so removing it in step 1 and then failing must not be observable.
-            if removed_a_pre_existing_directory && !lost_the_race {
-                let _ = self.parent.create_dir(target);
-            }
+            // NOTHING IS RESTORED HERE, because nothing was removed. The block that used to put
+            // back a destination this method had deleted is gone with the deletion — see STEP 1.
+            // FR-012's "left exactly as it was" is now satisfied by never having touched it.
 
             return Err(if lost_the_race {
                 named(
-                    Code::DestinationNotEmpty,
+                    Code::DestinationExists,
                     format!(
                         "`{}` appeared while the project was being generated — another run reached \
                          it first. Nothing was written there and the staged tree has been removed",
@@ -386,89 +403,46 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_empty_destination_is_generated_into() {
-        // FR-013 refuses a destination that exists and is **not empty**, so an existing empty one
-        // must work. Until 2026-08-18 `Destination::open` accepted it and this method refused it,
-        // seconds later, with a message claiming it had "appeared" mid-run.
-        let base = tempfile::tempdir().expect("a temporary directory");
-        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
-        let target = destination(base.path(), "demo");
-        let staging = Staging::create(&target).expect("creates");
-        staging.dir().write("f", b"x").expect("write");
-        staging
-            .place(&target)
-            .expect("an existing EMPTY destination must be generated into");
-        assert!(
-            base.path().join("demo/f").exists(),
-            "the tree did not arrive"
-        );
-    }
-
-    #[test]
-    fn a_failure_before_placement_leaves_a_pre_existing_empty_destination_untouched() {
-        // FR-012: "On cancellation or any failure, the destination MUST be left exactly as it was."
+    fn an_empty_destination_that_appears_mid_run_is_refused_and_not_replaced() {
+        // THE TEST THAT FAILS WITHOUT THE 2026-08-18 CORRECTION.
         //
-        // The pre-existing **empty** destination is the case that only became reachable when this
-        // module started accepting one, and it is the one where "exactly as it was" has content:
-        // the directory must still be there, and still be empty. A version that removed it eagerly
-        // at the start of `place` would pass every other test in this file.
+        // Until then this method deliberately `remove_dir`-ed an existing empty destination and
+        // let the rename create a fresh one, so this scenario SUCCEEDED and the operator's
+        // directory was silently replaced — different inode, this process's mode and ownership.
+        //
+        // The empty case is the one that distinguishes the old behaviour from the new. A non-empty
+        // directory was refused before and is refused now, so a test using one proves nothing
+        // about the change.
         let base = tempfile::tempdir().expect("a temporary directory");
-        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
-        let target = destination(base.path(), "demo");
-
-        {
-            let staging = Staging::create(&target).expect("creates");
-            staging.dir().write("f", b"x").expect("write");
-            // Dropped without placing — every failure from validate through verify ends here.
-        }
-
-        assert!(
-            base.path().join("demo").is_dir(),
-            "a failure removed the operator's own directory"
-        );
-        let contents: Vec<String> = std::fs::read_dir(base.path().join("demo"))
-            .expect("read_dir")
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .collect();
-        assert!(
-            contents.is_empty(),
-            "a failure left {contents:?} in the destination"
-        );
-
-        let residue: Vec<String> = std::fs::read_dir(base.path())
-            .expect("read_dir")
-            .filter_map(Result::ok)
-            .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| name.starts_with(".renvor-staging-"))
-            .collect();
-        assert!(
-            residue.is_empty(),
-            "a failure left staging behind: {residue:?}"
-        );
-    }
-
-    #[test]
-    fn a_destination_that_gained_contents_after_validation_is_refused_by_the_kernel() {
-        // The safety of the fix above rests on `remove_dir` refusing a non-empty directory — the
-        // emptiness check and the removal are ONE atomic operation, not a check followed by a
-        // hopeful delete. This asserts that guarantee rather than assuming it.
-        let base = tempfile::tempdir().expect("a temporary directory");
-        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
         let target = destination(base.path(), "demo");
         let staging = Staging::create(&target).expect("creates");
         staging.dir().write("ours", b"ours").expect("write");
 
-        // It was empty at validation; now it is not.
-        std::fs::write(base.path().join("demo/theirs"), b"theirs").expect("write");
+        // Someone else creates the destination — EMPTY — while we were rendering.
+        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
+        let before = std::fs::metadata(base.path().join("demo")).expect("metadata");
 
         let error = staging.place(&target).unwrap_err();
-        assert_eq!(error.code, Code::DestinationNotEmpty);
-        assert_eq!(
-            std::fs::read_to_string(base.path().join("demo/theirs")).expect("read"),
-            "theirs",
-            "the other party's file was destroyed"
+        assert_eq!(error.code, Code::DestinationExists);
+
+        let after = std::fs::metadata(base.path().join("demo")).expect("the directory was removed");
+        assert!(
+            after.is_dir(),
+            "the directory was replaced by something else"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            assert_eq!(
+                (before.ino(), before.mode(), before.uid(), before.gid()),
+                (after.ino(), after.mode(), after.uid(), after.gid()),
+                "the operator's directory was replaced: renvor must not delete, recreate, chmod, \
+                 or chown a path it did not make"
+            );
+        }
+        #[cfg(not(unix))]
+        let _ = before;
+
         assert!(
             !base.path().join("demo/ours").exists(),
             "our tree leaked in"
@@ -476,7 +450,7 @@ mod tests {
     }
 
     #[test]
-    fn a_destination_that_appears_mid_run_is_a_clean_failure_not_an_overwrite() {
+    fn a_non_empty_destination_that_appears_mid_run_is_a_clean_failure_not_an_overwrite() {
         let base = tempfile::tempdir().expect("a temporary directory");
         let target = destination(base.path(), "demo");
         let staging = Staging::create(&target).expect("creates");
@@ -487,15 +461,79 @@ mod tests {
         std::fs::write(base.path().join("demo/theirs"), b"theirs").expect("write");
 
         let error = staging.place(&target).unwrap_err();
-        assert_eq!(error.code, Code::DestinationNotEmpty);
-        assert!(
-            base.path().join("demo/theirs").exists(),
-            "the other run's file was destroyed; this is the overwrite the whole contract exists \
+        assert_eq!(error.code, Code::DestinationExists);
+        assert_eq!(
+            std::fs::read_to_string(base.path().join("demo/theirs")).expect("read"),
+            "theirs",
+            "the other party's file was destroyed; this is the overwrite the whole contract exists \
              to prevent"
         );
         assert!(
             !base.path().join("demo/ours").exists(),
             "our tree leaked in"
+        );
+    }
+
+    #[test]
+    fn a_file_that_appears_at_the_destination_mid_run_is_refused_and_left_alone() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let target = destination(base.path(), "demo");
+        let staging = Staging::create(&target).expect("creates");
+        staging.dir().write("ours", b"ours").expect("write");
+
+        std::fs::write(base.path().join("demo"), b"theirs").expect("write");
+
+        let error = staging.place(&target).unwrap_err();
+        assert_eq!(error.code, Code::DestinationExists);
+        assert_eq!(
+            std::fs::read_to_string(base.path().join("demo")).expect("read"),
+            "theirs",
+            "the operator's file was destroyed"
+        );
+    }
+
+    #[test]
+    fn no_production_path_removes_the_destination() {
+        // ── ASSERTED AGAINST THE SOURCE, DELIBERATELY ───────────────────────────────────
+        //
+        // The behavioural tests above prove that the paths they walk do not delete the
+        // destination. They cannot prove that no *other* path does, and the maintainer ruling is
+        // about the whole module, not about the cases somebody thought to write.
+        //
+        // So this reads this file. `remove_dir` and `remove_dir_all` may appear exactly once each,
+        // both in `Drop`, and both applied to `self.name` — the staging directory this process
+        // created. Any occurrence naming `target` or `destination` is the deletion the ruling
+        // removed, coming back.
+        //
+        // A source-text assertion is a blunt instrument and is used knowingly: the alternative is
+        // trusting that a future edit will remember, and the deleted code was written by someone
+        // who also believed it was safe.
+        // Assembled with `concat!` so that THIS TEST'S OWN SOURCE does not contain the string it
+        // searches for. Spelling it literally makes the scan match its own machinery, which is a
+        // self-inflicted failure that teaches a future reader to loosen the check.
+        const REMOVAL: &str = concat!("remove_", "dir");
+        let source = include_str!("place.rs");
+
+        let offending: Vec<&str> = source
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(""))
+            .filter(|code| code.contains(REMOVAL))
+            .collect();
+
+        // POSITIVE CONTROL FIRST: a scan that matched nothing would pass every assertion below
+        // while verifying nothing — which is precisely the defect an advisory review found in a
+        // different test this same phase.
+        assert_eq!(
+            offending.len(),
+            1,
+            "expected exactly one removal in this module — the staging cleanup in `Drop` — and \
+             found {}: {offending:?}",
+            offending.len()
+        );
+        assert!(
+            offending[0].contains("&self.name"),
+            "this module removes something that is not this process's own staging directory: {}",
+            offending[0].trim()
         );
     }
 
@@ -562,7 +600,7 @@ mod tests {
                 Ok(()) => winners += 1,
                 Err((code, message)) => assert_eq!(
                     code,
-                    Code::DestinationNotEmpty,
+                    Code::DestinationExists,
                     "a loser must report that someone else got there, not that the move mechanism \
                      broke: {message}"
                 ),

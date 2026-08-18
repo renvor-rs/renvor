@@ -186,7 +186,7 @@ const fn classify(client: Result<bool, ()>, daemon: Result<bool, ()>) -> Result<
 /// # Errors
 ///
 /// [`Code::ContainerRuntimeUnavailable`] (exit `5`) with `details.reason`, or
-/// [`Code::ManifestInvalid`] when the project has no container controls to drive.
+/// [`Code::ContainerControlsMissing`] when the project has no container controls to drive.
 pub fn run(
     reporter: &Reporter,
     path: &std::path::Path,
@@ -194,16 +194,19 @@ pub fn run(
     dry_run: bool,
 ) -> Result<Exit, CliError> {
     if !path.join("compose.yaml").is_file() {
+        // `container_controls_missing` since 2026-08-18. This used to report `manifest_invalid`
+        // — published as *"`renvor.toml` failed validation"* — for a project whose `renvor.toml`
+        // is perfectly valid and simply was not generated with `--container` (A-R6).
         return Err(CliError::new(
-            Code::ManifestInvalid,
+            Code::ContainerControlsMissing,
             format!(
                 "`{}` has no `compose.yaml`; generate the project with `--container` to get \
                  container development controls",
                 path.display()
             ),
         )
-        .with("field", "compose.yaml")
-        .with("constraint", "must exist; generate with `--container`"));
+        .with("expected", "compose.yaml")
+        .with("remedy", "generate the project with `--container`"));
     }
 
     // `--dry-run` IS GLOBAL, AND THIS COMMAND HAS SIDE EFFECTS.
@@ -286,12 +289,20 @@ mod tests {
             false,
         )
         .unwrap_err();
-        assert_eq!(error.code, Code::ManifestInvalid);
+        assert_eq!(error.code, Code::ContainerControlsMissing);
         assert!(
             error
                 .details
                 .iter()
-                .any(|(k, v)| k == "field" && v == "compose.yaml")
+                .any(|(k, v)| k == "expected" && v == "compose.yaml")
+        );
+        // The old `details.field` named a manifest field, because the old code claimed the
+        // manifest was invalid. Nothing in `renvor.toml` is called `compose.yaml`, and a consumer
+        // that went looking for it found nothing.
+        assert!(
+            !error.details.iter().any(|(k, _)| k == "field"),
+            "the manifest-shaped details must not survive the code change: {:?}",
+            error.details
         );
     }
 

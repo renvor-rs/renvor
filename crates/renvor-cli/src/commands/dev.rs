@@ -17,8 +17,9 @@ use crate::output::Reporter;
 ///
 /// # Errors
 ///
-/// [`Code::ToolMissing`] (exit `5`) if `cargo` cannot be run, or [`Code::ManifestInvalid`] if the
-/// directory is not a renvor project.
+/// [`Code::ToolMissing`] (exit `5`) if `cargo` cannot be run, [`Code::ManifestInvalid`] if the
+/// directory is not a renvor project, or [`Code::ProjectVerificationFailed`] if the project's own
+/// tests fail.
 pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result<Exit, CliError> {
     if !path.join("renvor.toml").is_file() {
         return Err(CliError::new(
@@ -60,12 +61,17 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
     if !status.success() {
         // NOT an internal error and NOT a renvor failure: the operator's tests failed, which is
         // information rather than a defect. Exit 3 says "the thing you asked about is not ok".
+        //
+        // `project_verification_failed` since 2026-08-18. This used to report `manifest_invalid`
+        // — published as *"`renvor.toml` failed validation"* — with `details.field = "project"`,
+        // a field name that exists in no manifest. A consumer matching the registry would have
+        // sent somebody to look at a TOML file over a failing unit test (A-R6).
         return Err(CliError::new(
-            Code::ManifestInvalid,
+            Code::ProjectVerificationFailed,
             "the project's own tests failed; the output above is from `cargo test`",
         )
-        .with("field", "project")
-        .with("constraint", "`cargo test` must pass"));
+        .with("check", "cargo test")
+        .with("stage", "renvor dev"));
     }
 
     Ok(reporter.finish(

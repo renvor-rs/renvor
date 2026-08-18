@@ -325,15 +325,25 @@ by inspection that the trust store is unchanged.
   case rather than the exceptional one.
 - **FR-012**: On cancellation or any failure, the destination MUST be left exactly as it was, and
   only the process's own temporary location MUST be removed.
-- **FR-013**: A destination that exists and is not empty MUST be refused. Merging into an existing
-  project is out of scope for this phase and MUST NOT be attempted.
+- **FR-013**: A destination that **already exists MUST be refused**, in every form: an empty
+  directory, a non-empty directory, a regular file, a symbolic link, and an entry whose state cannot
+  be established. The refusal MUST happen before anything is written or staged, MUST carry a stable
+  error code, and MUST name the rule in `details.rule`. Generation MUST NOT delete, rename, change
+  the permissions of, replace, or restore any path the operator already has. Merging into an
+  existing project is out of scope for this phase and MUST NOT be attempted.
+
+  *Revised 2026-08-18 by maintainer ruling.* The previous wording refused only a destination that
+  "exists and is not empty", which made an existing **empty** directory a legal target — and
+  placement then deleted and recreated it, so the operator got a different inode with this process's
+  mode and ownership (finding A-R8). A generator that can delete a directory is a different program
+  from one that cannot, and this one cannot.
 - **FR-014**: Generation MUST NOT overwrite, truncate, or delete any file it did not create.
 - **FR-015**: Concurrent runs targeting the same destination MUST NOT interleave into a corrupt
   result; at most one MUST succeed and the other MUST fail cleanly.
 - **FR-016**: If the destination cannot be produced atomically, the operation MUST fail with a
   message saying so rather than falling back to a non-atomic copy. **The limit MUST be stated rather
-  than assumed away**: FR-011's staging makes the rename same-filesystem, and FR-013 guarantees the
-  destination does not already exist, but the atomicity of renaming a directory onto a
+  than assumed away**: FR-011's staging makes the rename same-filesystem, and FR-013 requires the
+  destination to be absent, but the atomicity of renaming a directory onto a
   non-existent path is a platform property and MUST be documented per platform rather than claimed
   uniformly.
 

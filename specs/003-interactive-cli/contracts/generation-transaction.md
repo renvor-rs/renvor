@@ -5,22 +5,50 @@
 Everything else in this phase is a convenience. This is the part that must not be wrong, because it
 is the part that touches a directory somebody cares about.
 
-## An existing empty destination is REPLACED, not written into
+## The destination MUST NOT EXIST. Nothing here deletes
 
-FR-013 refuses a destination that "exists and is **not** empty", so an existing **empty** one is a
-legal target. What placement does with it is `remove_dir` followed by the rename — so the directory
-the operator ends up with is a **different** directory: a new inode, with default permissions,
-ownership, and extended attributes rather than whatever was set on the original.
+*Revised 2026-08-18 by maintainer ruling. This section previously described the opposite behaviour;
+what it described was real, and is what the ruling removed.*
 
-Measured, not assumed: a destination created with mode `0700` comes back as `0755`, and the inode
-changes.
+FR-013 refuses **every** existing destination, before anything is staged:
 
-**This is recorded because it was true and written down nowhere** — not in this contract, not in the
-spec, not in the published documentation — until an advisory review measured it on 2026-08-18. It is
-a consequence of `remove_dir` being what makes the emptiness check atomic (the kernel refuses to
-remove a non-empty directory, so check-and-remove are one operation rather than a check followed by
-a hopeful delete), and that trade is worth keeping. Silently discarding an operator's deliberate
-`chmod` is not worth keeping quiet about.
+| What is there | Answer |
+|---|---|
+| nothing | the only case that proceeds |
+| an empty directory | `destination_exists`, `details.found = "directory"` |
+| a non-empty directory | `destination_exists`, `details.found = "directory"` |
+| a regular file | `destination_exists`, `details.found = "file"` |
+| a symbolic link, including a dangling one | `destination_exists`, `details.found = "symlink"` |
+| anything whose state cannot be established | `destination_rejected`, `details.rule = "destination_unverifiable"`, carrying the original OS error |
+
+`details.rule` is `destination_absent` for every row but the last: the rule that was violated is
+that the destination must be absent.
+
+**No production path in this transaction removes the destination.** The previous version deleted an
+existing *empty* destination with `remove_dir` and let the rename create a fresh one — so the
+operator's directory came back with a different inode and this process's mode and ownership, a
+`0700` directory returning as `0755` (finding A-R8) — and restored it, ignoring its own error, if
+the rename then failed (finding A-R9). Both halves are gone. `crates/renvor-cli/src/generate/place.rs`
+carries a test, `no_production_path_removes_the_destination`, that reads the module's own source and
+fails if any removal names anything but this process's own staging directory.
+
+### What "fail closed" means here
+
+An error from inspecting the destination is only treated as absence when it is an authoritative
+`NotFound`. Any other error — a permission denial, an I/O error, an unreadable parent — refuses.
+The previous code asked a second question after the first failed and, when that also failed, **fell
+through to success**, so a destination whose state could not be read at all was treated as absent
+and generation proceeded.
+
+### The one residual, stated rather than designed around
+
+POSIX `rename(2)` **silently replaces an empty destination directory**. Steps 1 and 6 both check for
+absence, but another process can create an empty directory in the window between the last check and
+the rename, and that directory is then replaced. Closing this needs an atomic
+create-directory-or-fail rename, which no portable API provides: `renameat2(RENAME_NOREPLACE)` is
+Linux-only, and the portable-looking substitute — create the destination first, then rename onto it
+— fails on Windows, where `MoveFileEx` refuses a rename onto an existing directory. See invariant
+I-17.
 
 ## The protocol
 
@@ -83,7 +111,7 @@ without a supervising process, and it is specified rather than ignored:
 
 Two runs targeting one destination: **at most one succeeds**, and the other fails cleanly (FR-015).
 Each stages in its own uniquely named directory, so the renders never interleave; the loser's rename
-finds the destination occupied and reports `destination_not_empty`.
+finds the destination occupied and reports `destination_exists`.
 
 ## The race this narrows and does not eliminate
 
@@ -98,7 +126,9 @@ path spells now.
 **What remains.** A process with write access to that same directory can still create the
 destination *name* inside it between the re-check and the rename. The rename targets a path that
 must not exist, so the outcome is a **clean failure rather than an overwrite** — and the staged tree
-is removed by `Drop`, so the destination is untouched either way.
+is removed by `Drop`, so the destination is untouched either way. The **one** exception is an empty
+directory created in that window, which POSIX `rename(2)` replaces silently; see *The one residual*
+above.
 
 **This contract does not claim the race is closed.** Closing it needs an atomic
 create-or-fail rename primitive, which POSIX `renameat` does not provide and `renameat2` provides

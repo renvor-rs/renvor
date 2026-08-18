@@ -22,7 +22,7 @@ well formed and the request is refused.
 $ renvor new demo --database postgres --output json
 ? 3
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "status": "failure",
   "command": "new",
   "error": {
