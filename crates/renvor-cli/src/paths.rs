@@ -168,8 +168,9 @@ impl Destination {
             Some(parent) => parent.to_path_buf(),
             None => PathBuf::from("."),
         };
-        let parent = Dir::open_ambient_dir(&parent_input, ambient_authority()).map_err(|error| {
-            CliError::new(
+        let parent =
+            Dir::open_ambient_dir(&parent_input, ambient_authority()).map_err(|error| {
+                CliError::new(
                 Code::DestinationParentMissing,
                 format!(
                     "the destination's parent directory `{}` does not exist or cannot be opened: \
@@ -179,7 +180,7 @@ impl Destination {
             )
             .with("rule", "parent_opens")
             .with("parent", parent_input.display().to_string())
-        })?;
+            })?;
 
         // RULE 4 — the destination is not a symbolic link.
         //
@@ -209,7 +210,10 @@ impl Destination {
                         ),
                     )
                     .with("rule", "destination_absent_or_empty")
-                    .with("destination", parent_input.join(&name).display().to_string()));
+                    .with(
+                        "destination",
+                        parent_input.join(&name).display().to_string(),
+                    ));
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -224,7 +228,11 @@ impl Destination {
             }
         }
 
-        Ok(Self { parent, parent_display: parent_input, name })
+        Ok(Self {
+            parent,
+            parent_display: parent_input,
+            name,
+        })
     }
 }
 
@@ -286,7 +294,10 @@ mod tests {
         // Deliberately not `#[cfg(windows)]`. A project generated on Linux gets checked out on
         // Windows, and finding out then is worse.
         for name in ["con", "CON", "Nul", "com1", "LPT9"] {
-            assert!(validate_project_name(name).is_err(), "{name} must be refused");
+            assert!(
+                validate_project_name(name).is_err(),
+                "{name} must be refused"
+            );
         }
     }
 
@@ -304,8 +315,19 @@ mod tests {
 
     #[test]
     fn names_that_are_not_usable_as_package_names_are_refused() {
-        for name in ["", "1app", "-app", "my app", "my/app", "app!", &"x".repeat(65)] {
-            assert!(validate_project_name(name).is_err(), "{name:?} must be refused");
+        for name in [
+            "",
+            "1app",
+            "-app",
+            "my app",
+            "my/app",
+            "app!",
+            &"x".repeat(65),
+        ] {
+            assert!(
+                validate_project_name(name).is_err(),
+                "{name:?} must be refused"
+            );
         }
     }
 
@@ -313,10 +335,12 @@ mod tests {
     fn a_destination_ending_in_a_traversal_component_is_refused() {
         let error = Destination::open(Path::new("some/where/..")).unwrap_err();
         assert_eq!(error.code, Code::DestinationRejected);
-        assert!(error
-            .details
-            .iter()
-            .any(|(key, value)| key == "rule" && value == "final_component_is_a_name"));
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "rule" && value == "final_component_is_a_name")
+        );
     }
 
     #[test]
@@ -351,10 +375,12 @@ mod tests {
         std::os::unix::fs::symlink(&elsewhere, base.path().join("demo")).expect("symlink");
         let error = Destination::open(&base.path().join("demo")).unwrap_err();
         assert_eq!(error.code, Code::DestinationRejected);
-        assert!(error
-            .details
-            .iter()
-            .any(|(key, value)| key == "rule" && value == "not_a_symlink"));
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "rule" && value == "not_a_symlink")
+        );
     }
 
     #[test]
@@ -373,11 +399,22 @@ mod tests {
         std::os::unix::fs::symlink(&outside, inside.join("link")).expect("symlink");
 
         let handle = Dir::open_ambient_dir(&inside, ambient_authority()).expect("opens");
-        assert!(handle.write("link/planted", b"x").is_err(), "wrote through a symlink");
-        assert!(handle.write("../planted", b"x").is_err(), "wrote through a traversal");
-        assert!(!outside.join("planted").exists(), "a file escaped the boundary");
+        assert!(
+            handle.write("link/planted", b"x").is_err(),
+            "wrote through a symlink"
+        );
+        assert!(
+            handle.write("../planted", b"x").is_err(),
+            "wrote through a traversal"
+        );
+        assert!(
+            !outside.join("planted").exists(),
+            "a file escaped the boundary"
+        );
 
         // POSITIVE CONTROL: the same handle must still be able to do its job.
-        handle.write("legitimate", b"x").expect("an ordinary write must still work");
+        handle
+            .write("legitimate", b"x")
+            .expect("an ordinary write must still work");
     }
 }

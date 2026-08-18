@@ -86,13 +86,18 @@ impl Reporter {
         }
     }
 
-    /// The selected format.
-    #[must_use]
-    pub fn format(&self) -> Format {
-        self.format
-    }
-
-    /// Whether styling is active.
+    /// Whether styling would be active.
+    ///
+    /// # This phase emits no styling at all, and that is stated rather than implied
+    ///
+    /// `--no-color` is in contract C-1 and is accepted. Its observable requirement — that output
+    /// carry no escape sequences — is satisfied **trivially**, because nothing here writes any.
+    /// No colour dependency is taken, and none is needed until there is something to colour.
+    ///
+    /// The resolution logic is still computed and still tested, so that the phase which introduces
+    /// styling inherits a correct answer instead of re-deriving one. It is `#[cfg(test)]` because
+    /// shipping an accessor no shipped code reads would advertise a capability that does not exist.
+    #[cfg(test)]
     #[must_use]
     pub fn colour(&self) -> bool {
         self.colour
@@ -125,16 +130,15 @@ impl Reporter {
     pub fn finish(&self, command: &str, human: &str, result: serde_json::Value) -> Exit {
         let payload = match self.format {
             Format::Human => redact::line(human),
-            Format::Json => match serde_json::to_string_pretty(&json::Envelope::success(
-                command,
-                result,
-            )) {
-                Ok(text) => text,
-                Err(error) => {
-                    self.note(&format!("the result could not be serialised: {error}"));
-                    return Exit::Unclassified;
+            Format::Json => {
+                match serde_json::to_string_pretty(&json::Envelope::success(command, result)) {
+                    Ok(text) => text,
+                    Err(error) => {
+                        self.note(&format!("the result could not be serialised: {error}"));
+                        return Exit::Unclassified;
+                    }
                 }
-            },
+            }
         };
         self.write_stdout(&payload)
     }
@@ -160,7 +164,9 @@ impl Reporter {
                         error.exit()
                     }
                     Err(serialisation) => {
-                        self.note(&format!("the error could not be serialised: {serialisation}"));
+                        self.note(&format!(
+                            "the error could not be serialised: {serialisation}"
+                        ));
                         Exit::Unclassified
                     }
                 }
@@ -175,7 +181,9 @@ impl Reporter {
             // The consumer closed the pipe. It got what it asked for; this is not our failure.
             Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Exit::Success,
             Err(error) => {
-                self.note(&format!("the result could not be written to stdout: {error}"));
+                self.note(&format!(
+                    "the result could not be written to stdout: {error}"
+                ));
                 Exit::Unclassified
             }
         }
@@ -194,7 +202,10 @@ mod tests {
         let error = Format::parse("yaml").unwrap_err();
         assert_eq!(error.code, Code::UnsupportedValue);
         assert!(
-            error.details.iter().any(|(k, v)| k == "supported" && v == "human, json"),
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "supported" && v == "human, json"),
             "an unsupported value must name what IS supported"
         );
     }

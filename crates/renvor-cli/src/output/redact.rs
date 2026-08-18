@@ -88,7 +88,10 @@ pub fn line(input: &str) -> String {
         }
         let key = input[key_start..cursor].trim_start_matches('-');
 
-        if !SECRET_KEYS.iter().any(|secret| secret.eq_ignore_ascii_case(key)) {
+        if !SECRET_KEYS
+            .iter()
+            .any(|secret| secret.eq_ignore_ascii_case(key))
+        {
             cursor += 1;
             continue;
         }
@@ -163,9 +166,14 @@ mod tests {
         // getting this wrong is a panic on a slice boundary rather than a wrong answer.
         let input = "créé 3 fichiers — token=sk-1 — terminé";
         let out = line(input);
-        assert!(out.contains("créé 3 fichiers"), "{out}");
-        assert!(out.contains("terminé"), "{out}");
-        assert!(!out.contains("sk-1"), "{out}");
+        // Fixed messages: this input carries a credential, and a failure here means redaction is
+        // broken, which is the worst moment to interpolate the value into a log.
+        assert!(
+            out.contains("créé 3 fichiers"),
+            "text before the secret was damaged"
+        );
+        assert!(out.contains("terminé"), "text after the secret was damaged");
+        assert!(!out.contains("sk-1"), "the secret survived redaction");
     }
 
     #[test]

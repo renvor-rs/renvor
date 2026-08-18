@@ -75,7 +75,12 @@ impl<'a> Staging<'a> {
 
         parent.create_dir(&name).map_err(failed)?;
         let handle = parent.open_dir(&name).map_err(failed)?;
-        Ok(Self { parent, name, handle, placed: false })
+        Ok(Self {
+            parent,
+            name,
+            handle,
+            placed: false,
+        })
     }
 
     /// The capability every render and manifest operation goes through.
@@ -121,7 +126,10 @@ impl<'a> Staging<'a> {
                     destination.display_path().display()
                 ),
             )
-            .with("destination", destination.display_path().display().to_string()));
+            .with(
+                "destination",
+                destination.display_path().display().to_string(),
+            ));
         }
 
         self.parent
@@ -135,7 +143,10 @@ impl<'a> Staging<'a> {
                         destination.display_path().display()
                     ),
                 )
-                .with("destination", destination.display_path().display().to_string())
+                .with(
+                    "destination",
+                    destination.display_path().display().to_string(),
+                )
             })?;
 
         self.placed = true;
@@ -172,7 +183,10 @@ mod tests {
         let staging = Staging::create(&target).expect("creates");
         let name = staging.name.clone();
         assert!(base.path().join(&name).is_dir(), "staging is not a sibling");
-        assert!(!base.path().join("demo").exists(), "the destination was created early");
+        assert!(
+            !base.path().join("demo").exists(),
+            "the destination was created early"
+        );
     }
 
     #[test]
@@ -180,8 +194,16 @@ mod tests {
         let base = tempfile::tempdir().expect("a temporary directory");
         let target = destination(base.path(), "demo");
         let staging = Staging::create(&target).expect("creates");
-        assert!(staging.name.starts_with(".renvor-staging-"), "{}", staging.name);
-        assert!(staging.name.contains(&std::process::id().to_string()), "{}", staging.name);
+        assert!(
+            staging.name.starts_with(".renvor-staging-"),
+            "{}",
+            staging.name
+        );
+        assert!(
+            staging.name.contains(&std::process::id().to_string()),
+            "{}",
+            staging.name
+        );
     }
 
     #[test]
@@ -193,8 +215,14 @@ mod tests {
             staging.dir().write("f", b"x").expect("write");
             staging.name.clone()
         };
-        assert!(!base.path().join(&name).exists(), "the staging directory outlived its owner");
-        assert!(!base.path().join("demo").exists(), "the destination was created anyway");
+        assert!(
+            !base.path().join(&name).exists(),
+            "the staging directory outlived its owner"
+        );
+        assert!(
+            !base.path().join("demo").exists(),
+            "the destination was created anyway"
+        );
     }
 
     #[test]
@@ -207,8 +235,14 @@ mod tests {
         let staged = staging.name.clone();
         staging.dir().write("f", b"x").expect("write");
         staging.place(&target).expect("places");
-        assert!(base.path().join("demo/f").exists(), "the tree did not arrive");
-        assert!(!base.path().join(&staged).exists(), "the staging directory was left behind");
+        assert!(
+            base.path().join("demo/f").exists(),
+            "the tree did not arrive"
+        );
+        assert!(
+            !base.path().join(&staged).exists(),
+            "the staging directory was left behind"
+        );
     }
 
     #[test]
@@ -229,7 +263,10 @@ mod tests {
             "the other run's file was destroyed; this is the overwrite the whole contract exists \
              to prevent"
         );
-        assert!(!base.path().join("demo/ours").exists(), "our tree leaked in");
+        assert!(
+            !base.path().join("demo/ours").exists(),
+            "our tree leaked in"
+        );
     }
 
     #[test]
@@ -242,6 +279,9 @@ mod tests {
         assert!(staging.dir().write("/tmp/renvor-escaped", b"x").is_err());
         assert!(!base.path().join("escaped").exists());
         // POSITIVE CONTROL.
-        staging.dir().write("legitimate", b"x").expect("ordinary writes must still work");
+        staging
+            .dir()
+            .write("legitimate", b"x")
+            .expect("ordinary writes must still work");
     }
 }

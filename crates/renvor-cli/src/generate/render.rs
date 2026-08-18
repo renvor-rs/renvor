@@ -92,12 +92,23 @@ pub struct TemplateEntry {
 }
 
 /// A versioned, embedded, inert set of templates.
-#[derive(Debug, Clone, Copy)]
+///
+/// # Why `entries` is a `Vec` of `Copy` entries rather than a `&'static` slice
+///
+/// The **catalogue** is static; the **selection** is not. A configuration without container
+/// controls must not render a `Dockerfile`, so the set handed to a [`Renderer`] is chosen at
+/// runtime from the catalogue. Each entry is still two `&'static str`s, so the `Vec` allocates
+/// pointers and copies nothing.
+///
+/// The load-time guarantee is preserved by [`crate::templates`]'s own test, which validates the
+/// **whole catalogue** rather than whichever subset a run selected — so a malformed entry fails the
+/// build, not a user's generation.
+#[derive(Debug, Clone)]
 pub struct TemplateSet {
     /// Recorded in every generated `renvor.toml` (FR-024).
     pub version: &'static str,
     /// The entries, in declaration order.
-    pub entries: &'static [TemplateEntry],
+    pub entries: Vec<TemplateEntry>,
 }
 
 impl TemplateSet {
@@ -116,18 +127,23 @@ impl TemplateSet {
         let defect = |path: &str, why: &str| {
             CliError::new(
                 Code::Internal,
-                format!("embedded template entry `{path}` {why}; this is a defect in renvor itself"),
+                format!(
+                    "embedded template entry `{path}` {why}; this is a defect in renvor itself"
+                ),
             )
             .with("entry", path.to_owned())
         };
 
         let mut seen = BTreeSet::new();
-        for entry in self.entries {
+        for entry in &self.entries {
             if entry.path.is_empty() {
                 return Err(defect(entry.path, "has an empty output path"));
             }
             if entry.path.contains('\\') {
-                return Err(defect(entry.path, "uses a backslash; entry paths are forward-slashed"));
+                return Err(defect(
+                    entry.path,
+                    "uses a backslash; entry paths are forward-slashed",
+                ));
             }
             let candidate = Path::new(entry.path);
             if candidate.is_absolute() {
@@ -148,7 +164,10 @@ impl TemplateSet {
                 }
             }
             if !seen.insert(entry.path) {
-                return Err(defect(entry.path, "appears twice; the later one would overwrite the earlier"));
+                return Err(defect(
+                    entry.path,
+                    "appears twice; the later one would overwrite the earlier",
+                ));
             }
         }
         Ok(())
@@ -195,6 +214,16 @@ impl<'a> Renderer<'a> {
         environment.set_fuel(Some(bounds::FUEL));
         environment.set_recursion_limit(bounds::RECURSION_DEPTH);
 
+        // KEEP THE FILE'S FINAL NEWLINE.
+        //
+        // MiniJinja defaults this to `false`, which strips the trailing newline from every rendered
+        // template. For a web page that is invisible; for a source file it means the generated
+        // project fails `cargo fmt --check` on its first run — which is exactly the "generated
+        // skeleton formats, compiles, tests, and starts" acceptance criterion.
+        //
+        // Found by running that criterion, not by reading the documentation.
+        environment.set_keep_trailing_newline(true);
+
         // NO `set_debug` CALL, AND THAT IS THE POINT.
         //
         // MiniJinja's debug mode attaches the template source and the surrounding variables to
@@ -223,27 +252,23 @@ impl<'a> Renderer<'a> {
         // identifiers do not, and a generated `use my-app::…` would not compile.
         environment.add_filter("crate_name", |value: String| value.replace('-', "_"));
 
-        for entry in set.entries {
-            environment.add_template(entry.path, entry.body).map_err(|error| {
-                CliError::new(
-                    Code::Internal,
-                    format!(
-                        "embedded template `{}` does not compile: {error}; this is a defect in \
+        for entry in &set.entries {
+            environment
+                .add_template(entry.path, entry.body)
+                .map_err(|error| {
+                    CliError::new(
+                        Code::Internal,
+                        format!(
+                            "embedded template `{}` does not compile: {error}; this is a defect in \
                          renvor itself",
-                        entry.path
-                    ),
-                )
-                .with("entry", entry.path.to_owned())
-            })?;
+                            entry.path
+                        ),
+                    )
+                    .with("entry", entry.path.to_owned())
+                })?;
         }
 
         Ok(Self { environment, set })
-    }
-
-    /// The template set's version, for the generated manifest.
-    #[must_use]
-    pub fn version(&self) -> &'static str {
-        self.set.version
     }
 
     /// Renders every entry into `root`, enforcing every bound.
@@ -282,15 +307,20 @@ impl<'a> Renderer<'a> {
 
         let mut total = 0usize;
 
-        for entry in self.set.entries {
+        for entry in &self.set.entries {
             let template = self.environment.get_template(entry.path).map_err(|error| {
                 CliError::new(
                     Code::Internal,
-                    format!("template `{}` was registered and is now missing: {error}", entry.path),
+                    format!(
+                        "template `{}` was registered and is now missing: {error}",
+                        entry.path
+                    ),
                 )
             })?;
 
-            let rendered = template.render(context).map_err(|error| classify(entry.path, &error))?;
+            let rendered = template
+                .render(context)
+                .map_err(|error| classify(entry.path, &error))?;
 
             if rendered.len() > bounds::MAX_FILE_BYTES {
                 return Err(exceeded(
@@ -324,18 +354,22 @@ impl<'a> Renderer<'a> {
                 root.create_dir_all(parent).map_err(|error| {
                     CliError::new(
                         Code::RenderFailed,
-                        format!("could not create `{}` in staging: {error}", parent.display()),
+                        format!(
+                            "could not create `{}` in staging: {error}",
+                            parent.display()
+                        ),
                     )
                     .with("entry", entry.path.to_owned())
                 })?;
             }
-            root.write(entry.path, rendered.as_bytes()).map_err(|error| {
-                CliError::new(
-                    Code::RenderFailed,
-                    format!("could not write `{}` in staging: {error}", entry.path),
-                )
-                .with("entry", entry.path.to_owned())
-            })?;
+            root.write(entry.path, rendered.as_bytes())
+                .map_err(|error| {
+                    CliError::new(
+                        Code::RenderFailed,
+                        format!("could not write `{}` in staging: {error}", entry.path),
+                    )
+                    .with("entry", entry.path.to_owned())
+                })?;
         }
 
         Ok(())
@@ -394,44 +428,79 @@ mod tests {
         Ctx { name: "my-app" }
     }
 
-    fn set(entries: &'static [TemplateEntry]) -> TemplateSet {
-        TemplateSet { version: "test", entries }
+    fn set(entries: &[TemplateEntry]) -> TemplateSet {
+        TemplateSet {
+            version: "test",
+            entries: entries.to_vec(),
+        }
     }
 
     #[test]
     fn an_undefined_variable_is_an_error_not_an_empty_rendering() {
         // FR-028. The failure mode this prevents is a generated file that is silently missing a
         // value — which compiles, ships, and is discovered by a user.
-        let templates = set(&[TemplateEntry { path: "a.txt", body: "{{ absent }}" }]);
+        let templates = set(&[TemplateEntry {
+            path: "a.txt",
+            body: "{{ absent }}",
+        }]);
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
         let error = renderer.render_into(&root.dir, &ctx()).unwrap_err();
         assert_eq!(error.code, Code::RenderFailed);
-        assert!(root.dir.symlink_metadata("a.txt").is_err(), "a partial file was written");
+        assert!(
+            root.dir.symlink_metadata("a.txt").is_err(),
+            "a partial file was written"
+        );
+    }
+
+    #[test]
+    fn a_templates_final_newline_survives_rendering() {
+        // MiniJinja strips it by default. A source file without a trailing newline fails
+        // `cargo fmt --check`, so this is the difference between a skeleton that passes its own
+        // gates on the first run and one that does not.
+        let templates = set(&[TemplateEntry {
+            path: "a.rs",
+            body: "fn main() {}\n",
+        }]);
+        let renderer = Renderer::new(templates).expect("builds");
+        let root = staged();
+        renderer.render_into(&root.dir, &ctx()).expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {}\n",
+            "the trailing newline was stripped"
+        );
     }
 
     #[test]
     fn a_defined_variable_renders() {
         // POSITIVE CONTROL for the test above: an environment that failed every render would
         // satisfy it and be useless.
-        let templates = set(&[TemplateEntry { path: "a.txt", body: "{{ name }}" }]);
+        let templates = set(&[TemplateEntry {
+            path: "a.txt",
+            body: "{{ name }}",
+        }]);
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
         renderer.render_into(&root.dir, &ctx()).expect("renders");
-        assert_eq!(
-            root.dir.read_to_string("a.txt").expect("read"),
-            "my-app"
-        );
+        assert_eq!(root.dir.read_to_string("a.txt").expect("read"), "my-app");
     }
 
     #[test]
     fn no_builtin_filter_is_reachable_unless_it_is_on_the_allow_list() {
         // `Environment::new()` would make every one of these work. This test is what makes the
         // choice of `empty()` visible, and it will fail loudly if somebody "fixes" the constructor.
-        for body in ["{{ name|trim }}", "{{ name|title }}", "{{ name|length }}", "{{ range(3) }}"] {
-            let templates: &'static [TemplateEntry] =
-                Box::leak(Box::new([TemplateEntry { path: "a.txt", body }]));
-            let renderer = Renderer::new(set(templates)).expect("builds");
+        for body in [
+            "{{ name|trim }}",
+            "{{ name|title }}",
+            "{{ name|length }}",
+            "{{ range(3) }}",
+        ] {
+            let renderer = Renderer::new(set(&[TemplateEntry {
+                path: "a.txt",
+                body,
+            }]))
+            .expect("builds");
             let root = staged();
             let error = renderer.render_into(&root.dir, &ctx()).unwrap_err();
             assert_eq!(error.code, Code::RenderFailed, "{body} was reachable");
@@ -471,12 +540,22 @@ mod tests {
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
         // 2_000 × 2_000 = 4,000,000 iterations against a budget of 1,000,000 instructions.
-        let context = Wide { items: (0..2_000).collect() };
+        let context = Wide {
+            items: (0..2_000).collect(),
+        };
         let error = renderer.render_into(&root.dir, &context).unwrap_err();
         assert_eq!(error.code, Code::BoundExceeded);
-        assert!(error.details.iter().any(|(k, v)| k == "bound" && v == "template_fuel"));
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "bound" && v == "template_fuel")
+        );
         assert!(error.details.iter().any(|(k, _)| k == "limit"));
-        assert!(root.dir.symlink_metadata("a.txt").is_err(), "a partial file survived the bound");
+        assert!(
+            root.dir.symlink_metadata("a.txt").is_err(),
+            "a partial file survived the bound"
+        );
     }
 
     #[test]
@@ -494,21 +573,25 @@ mod tests {
         }]);
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
-        let context = Wide { items: (0..1_000).collect() };
-        renderer.render_into(&root.dir, &context).expect("a 1,000-iteration loop must fit");
-        assert_eq!(
-            root.dir.read_to_string("a.txt").expect("read").len(),
-            1_000
-        );
+        let context = Wide {
+            items: (0..1_000).collect(),
+        };
+        renderer
+            .render_into(&root.dir, &context)
+            .expect("a 1,000-iteration loop must fit");
+        assert_eq!(root.dir.read_to_string("a.txt").expect("read").len(), 1_000);
     }
 
     #[test]
     fn an_entry_path_that_escapes_is_refused_at_load_time() {
         // I-5. Each of these must fail before any render is attempted.
         for path in ["../escape", "/etc/passwd", "a/../../b", "./a", "a\\b", ""] {
-            let entries: &'static [TemplateEntry] =
-                Box::leak(Box::new([TemplateEntry { path: Box::leak(path.to_string().into_boxed_str()), body: "x" }]));
-            let error = Renderer::new(set(entries)).unwrap_err();
+            let leaked: &'static str = Box::leak(path.to_string().into_boxed_str());
+            let error = Renderer::new(set(&[TemplateEntry {
+                path: leaked,
+                body: "x",
+            }]))
+            .unwrap_err();
             assert_eq!(error.code, Code::Internal, "{path:?} was accepted");
         }
     }
@@ -516,8 +599,14 @@ mod tests {
     #[test]
     fn a_duplicate_entry_path_is_refused() {
         let templates = set(&[
-            TemplateEntry { path: "a.txt", body: "one" },
-            TemplateEntry { path: "a.txt", body: "two" },
+            TemplateEntry {
+                path: "a.txt",
+                body: "one",
+            },
+            TemplateEntry {
+                path: "a.txt",
+                body: "two",
+            },
         ]);
         assert_eq!(Renderer::new(templates).unwrap_err().code, Code::Internal);
     }
@@ -526,18 +615,29 @@ mod tests {
     fn a_nested_entry_path_is_accepted_and_its_directories_are_created() {
         // POSITIVE CONTROL for the load-time refusals: a validator that refused every path would
         // satisfy them all.
-        let templates = set(&[TemplateEntry { path: "src/bin/main.rs", body: "{{ name }}" }]);
+        let templates = set(&[TemplateEntry {
+            path: "src/bin/main.rs",
+            body: "{{ name }}",
+        }]);
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
         renderer.render_into(&root.dir, &ctx()).expect("renders");
-        assert!(root.dir.symlink_metadata("src/bin/main.rs").expect("stat").is_file());
+        assert!(
+            root.dir
+                .symlink_metadata("src/bin/main.rs")
+                .expect("stat")
+                .is_file()
+        );
     }
 
     #[test]
     fn a_file_above_the_per_file_limit_is_a_bound_not_a_write() {
         let body: &'static str = Box::leak(
-            format!("{{% for i in range_stub %}}{}{{% endfor %}}", "x".repeat(4096))
-                .into_boxed_str(),
+            format!(
+                "{{% for i in range_stub %}}{}{{% endfor %}}",
+                "x".repeat(4096)
+            )
+            .into_boxed_str(),
         );
         // `range_stub` is supplied by the context, so this stays inside the allow-list.
         #[derive(Serialize)]
@@ -545,19 +645,28 @@ mod tests {
             range_stub: Vec<u32>,
             name: &'static str,
         }
-        let entries: &'static [TemplateEntry] =
-            Box::leak(Box::new([TemplateEntry { path: "big.txt", body }]));
-        let templates = set(entries);
+        let templates = set(&[TemplateEntry {
+            path: "big.txt",
+            body,
+        }]);
         let renderer = Renderer::new(templates).expect("builds");
         let root = staged();
-        let context = Big { range_stub: (0..400).collect(), name: "my-app" };
+        let context = Big {
+            range_stub: (0..400).collect(),
+            name: "my-app",
+        };
         let error = renderer.render_into(&root.dir, &context).unwrap_err();
         assert_eq!(error.code, Code::BoundExceeded);
-        assert!(error
-            .details
-            .iter()
-            .any(|(k, v)| k == "bound" && v == "single_file_output_bytes"));
-        assert!(root.dir.symlink_metadata("big.txt").is_err(), "the oversized file was written");
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "bound" && v == "single_file_output_bytes")
+        );
+        assert!(
+            root.dir.symlink_metadata("big.txt").is_err(),
+            "the oversized file was written"
+        );
     }
 
     // Relationships between the bounds, checked at COMPILE time rather than in a test.

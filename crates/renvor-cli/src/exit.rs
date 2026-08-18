@@ -128,6 +128,10 @@ impl Code {
     }
 
     /// Every code, so tests can assert the registry is complete rather than sampling it.
+    ///
+    /// `#[cfg(test)]` because nothing at runtime iterates the registry; a shipped constant that no
+    /// shipped code reads is dead weight that reads like an API.
+    #[cfg(test)]
     pub const ALL: [Self; 16] = [
         Self::Usage,
         Self::UnsupportedValue,

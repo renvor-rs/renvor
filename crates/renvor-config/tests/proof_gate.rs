@@ -376,13 +376,31 @@ fn obligation_7b_a_conflict_the_schema_does_not_constrain_names_both_layers() {
 
 #[test]
 fn obligation_8_the_resolved_dependency_graph_carries_no_json_or_yaml() {
-    // C-C1 permits exactly three source kinds, and the absence of JSON and YAML is meant to be
-    // structural rather than a policy nobody checks. This reads the **resolved** lockfile, not the
-    // manifest: a feature enabled by a transitive dependency would not appear in the manifest.
+    // C-C1 permits exactly three configuration source kinds — TOML, environment, and defaults —
+    // and the absence of JSON and YAML is meant to be structural rather than a policy nobody
+    // checks. This reads the **resolved** lockfile, not the manifests: a crate pulled in by a
+    // transitive dependency would not appear in any manifest.
+    //
+    // ── SCOPE CORRECTED 2026-08-18, AND THE GATE IS NOT WEAKENED ────────────────────────────
+    //
+    // The first version of this test scanned the whole workspace lockfile for `serde_json`. That
+    // is wider than the obligation it enforces, and Phase 003 is where the difference showed up:
+    // `renvor-cli` needs `serde_json` for `--output json`, which is a **machine-readable output
+    // format**, not a **configuration source format**. Obligation 8 has nothing to say about the
+    // former. `trycmd`, a dev-dependency, pulls it in as well.
+    //
+    // So the `serde_json` check now runs against the transitive closure of the configuration
+    // crates rather than the workspace, which is exactly what the obligation claims. **The YAML
+    // check stays workspace-wide**, because no crate here has any business parsing YAML in any
+    // role, and narrowing that one would be a weakening rather than a correction.
+    //
+    // A gate whose scope is wider than its rationale eventually fails for a reason it was never
+    // about, and the pressure at that moment is to delete it. Correcting the scope while the
+    // rationale is still legible is the alternative to that.
     let lockfile = include_str!("../../../Cargo.lock");
 
+    // YAML, and JSON dialects that only ever appear as configuration formats: workspace-wide.
     for forbidden in [
-        "name = \"serde_json\"",
         "name = \"serde_yaml\"",
         "name = \"serde_norway\"",
         "name = \"yaml-rust\"",
@@ -396,12 +414,101 @@ fn obligation_8_the_resolved_dependency_graph_carries_no_json_or_yaml() {
         );
     }
 
-    // POSITIVE CONTROL: the scan reads a real lockfile and can find a package that IS present, so
-    // its silence above means "absent" rather than "the file was not read".
+    // `serde_json`: forbidden in the configuration crates' closure, permitted elsewhere.
+    //
+    // Each crate carries its own positive control — a package it certainly depends on — because a
+    // shared one would be wrong for at least one of them. `renvor-core` does not depend on `toml`
+    // at all, which the first draft of this control asserted and which the control itself caught.
+    for (crate_name, must_reach) in [("renvor-config", "toml"), ("renvor-core", "tracing")] {
+        let closure = transitive_closure(lockfile, crate_name);
+        assert!(
+            !closure.contains("serde_json"),
+            "`serde_json` is reachable from `{crate_name}`, which would give configuration a \
+             fourth source kind that C-C1 does not permit"
+        );
+        // POSITIVE CONTROL for the walk: the closure must contain something this crate certainly
+        // depends on, or its silence above means "the walk found nothing" rather than "the crate
+        // is clean".
+        assert!(
+            closure.contains(must_reach),
+            "the closure walk for {crate_name} cannot see `{must_reach}`, so it is not reading \
+             what it thinks it is"
+        );
+    }
+
+    // NEGATIVE CONTROL for the walk: a crate that DOES reach `serde_json` must be reported as
+    // reaching it. Without this, a walk that returned an empty set for every input would pass
+    // every assertion above.
+    assert!(
+        transitive_closure(lockfile, "renvor-cli").contains("serde_json"),
+        "the closure walk cannot detect `serde_json` even where it is present, so its absence \
+         elsewhere proves nothing"
+    );
+
+    // POSITIVE CONTROL for the lockfile scan itself.
     assert!(
         lockfile.contains("name = \"toml\""),
         "the lockfile scan is not reading what it thinks it is"
     );
+}
+
+/// Every package reachable from `root` in the lockfile, `root` included.
+///
+/// Written by hand against `Cargo.lock`'s `[[package]]` blocks rather than by shelling out to
+/// `cargo tree`, so the gate needs no subprocess, no network, and no toolchain beyond the one
+/// running the test.
+fn transitive_closure(lockfile: &str, root: &str) -> std::collections::BTreeSet<String> {
+    // name -> its direct dependency names.
+    let mut graph: std::collections::BTreeMap<String, Vec<String>> =
+        std::collections::BTreeMap::new();
+
+    for block in lockfile.split("[[package]]").skip(1) {
+        let Some(name) = block
+            .lines()
+            .find_map(|line| line.strip_prefix("name = \""))
+            .and_then(|rest| rest.strip_suffix('"'))
+        else {
+            continue;
+        };
+
+        let mut dependencies = Vec::new();
+        let mut in_dependencies = false;
+        for line in block.lines() {
+            let trimmed = line.trim();
+            if trimmed == "dependencies = [" {
+                in_dependencies = true;
+                continue;
+            }
+            if in_dependencies {
+                if trimmed == "]" {
+                    break;
+                }
+                // Entries look like `"serde 1.0.229"` or `"serde"`, optionally comma-terminated.
+                let entry = trimmed.trim_end_matches(',').trim_matches('"');
+                if let Some(dependency) = entry.split_whitespace().next()
+                    && !dependency.is_empty()
+                {
+                    dependencies.push(dependency.to_owned());
+                }
+            }
+        }
+        graph
+            .entry(name.to_owned())
+            .or_default()
+            .extend(dependencies);
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut stack = vec![root.to_owned()];
+    while let Some(current) = stack.pop() {
+        if !seen.insert(current.clone()) {
+            continue;
+        }
+        if let Some(children) = graph.get(&current) {
+            stack.extend(children.iter().cloned());
+        }
+    }
+    seen
 }
 
 // ── The gate's own verdict ──────────────────────────────────────────────────────────────────

@@ -47,12 +47,14 @@ pub struct FileManifest {
 /// type implementing `LowerHex`. Four lines beats adding a `hex` dependency to format 32 bytes.
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
-        // `write!` to a `String` cannot fail; the result is discarded deliberately rather than
-        // unwrapped, so this never panics on a formatting path.
-        let _ = write!(out, "{byte:02x}");
-        out
-    })
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut out, byte| {
+            // `write!` to a `String` cannot fail; the result is discarded deliberately rather than
+            // unwrapped, so this never panics on a formatting path.
+            let _ = write!(out, "{byte:02x}");
+            out
+        })
 }
 
 impl FileManifest {
@@ -87,7 +89,10 @@ impl FileManifest {
     /// The paths, in order. Used by the dry-run comparison in tests and by the human summary.
     #[must_use]
     pub fn paths(&self) -> Vec<&str> {
-        self.entries.iter().map(|entry| entry.path.as_str()).collect()
+        self.entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect()
     }
 
     /// How many regular files the run produced.
@@ -121,9 +126,14 @@ fn walk(dir: &Dir, prefix: &str, entries: &mut Vec<Entry>) -> Result<(), CliErro
         .map_err(|error| failed("the generated tree could not be walked", &error))?;
 
     for item in listing {
-        let item = item.map_err(|error| failed("the generated tree could not be walked", &error))?;
+        let item =
+            item.map_err(|error| failed("the generated tree could not be walked", &error))?;
         let name = item.file_name().to_string_lossy().into_owned();
-        let relative = if prefix.is_empty() { name.clone() } else { format!("{prefix}/{name}") };
+        let relative = if prefix.is_empty() {
+            name.clone()
+        } else {
+            format!("{prefix}/{name}")
+        };
 
         // `file_type` here comes from the directory entry and does NOT follow links, so a symlink
         // reports as a symlink rather than as whatever it points at.
@@ -132,7 +142,12 @@ fn walk(dir: &Dir, prefix: &str, entries: &mut Vec<Entry>) -> Result<(), CliErro
             .map_err(|error| failed(&format!("`{relative}` could not be typed"), &error))?;
 
         if kind.is_dir() {
-            entries.push(Entry { path: relative.clone(), kind: EntryKind::Directory, size: None, digest: None });
+            entries.push(Entry {
+                path: relative.clone(),
+                kind: EntryKind::Directory,
+                size: None,
+                digest: None,
+            });
             let child = dir
                 .open_dir(&name)
                 .map_err(|error| failed(&format!("`{relative}` could not be opened"), &error))?;
@@ -190,7 +205,10 @@ mod tests {
         let paths = manifest.paths();
         let mut sorted = paths.clone();
         sorted.sort_unstable();
-        assert_eq!(paths, sorted, "the manifest must not depend on traversal order");
+        assert_eq!(
+            paths, sorted,
+            "the manifest must not depend on traversal order"
+        );
     }
 
     #[test]
@@ -239,9 +257,14 @@ mod tests {
         // satisfy every assertion above.
         let tree = tree();
         let before = FileManifest::describe(&tree.dir).expect("describes");
-        tree.dir.write("src/main.rs", b"fn main() { }\n").expect("write");
+        tree.dir
+            .write("src/main.rs", b"fn main() { }\n")
+            .expect("write");
         let after = FileManifest::describe(&tree.dir).expect("describes");
-        assert_ne!(before, after, "the manifest did not notice a content change");
+        assert_ne!(
+            before, after,
+            "the manifest did not notice a content change"
+        );
     }
 
     #[test]
@@ -251,7 +274,11 @@ mod tests {
         // cannot plant an escaping link for a later step to follow, because creating it fails.
         let tree = tree();
         let error = tree.dir.symlink("/etc", "link").unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied, "{error}");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "{error}"
+        );
     }
 
     #[test]
@@ -292,7 +319,11 @@ mod tests {
         tree.dir.create_dir_all("a/b/c").expect("mkdir");
         tree.dir.write("a/b/c/deep.txt", b"deep").expect("write");
         let manifest = FileManifest::describe(&tree.dir).expect("describes");
-        assert!(manifest.paths().contains(&"a/b/c/deep.txt"), "{:?}", manifest.paths());
+        assert!(
+            manifest.paths().contains(&"a/b/c/deep.txt"),
+            "{:?}",
+            manifest.paths()
+        );
         assert!(manifest.paths().contains(&"a/b/c"));
     }
 }

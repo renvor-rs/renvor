@@ -10,7 +10,7 @@
 //! one. A value of this type **is** a validated configuration; there is no invalid state to
 //! forget to check. Data-model invariant I-1.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::Serialize;
 
@@ -190,12 +190,6 @@ impl ProjectConfiguration {
         &self.name
     }
 
-    /// The validated destination, **for display and for the manifest**. Not a capability.
-    #[must_use]
-    pub fn destination(&self) -> &Path {
-        &self.destination
-    }
-
     /// The local development domain.
     #[must_use]
     pub fn local_domain(&self) -> &str {
@@ -242,9 +236,12 @@ impl ProjectConfiguration {
             "renvor new".to_owned(),
             shell_quote(&self.destination.display().to_string()),
             format!("--name {}", shell_quote(&self.name)),
-            format!("--target {}", match self.target {
-                Target::Api => "api",
-            }),
+            format!(
+                "--target {}",
+                match self.target {
+                    Target::Api => "api",
+                }
+            ),
             format!("--local-domain {}", shell_quote(&self.local_domain)),
         ];
         if self.container {
@@ -285,7 +282,9 @@ fn validate_local_domain(domain: &str) -> Result<(), CliError> {
             .with("value", domain.to_owned())
     };
     if domain.is_empty() || domain.len() > 253 {
-        return Err(invalid("a local domain must be between 1 and 253 characters"));
+        return Err(invalid(
+            "a local domain must be between 1 and 253 characters",
+        ));
     }
     for label in domain.split('.') {
         if label.is_empty() || label.len() > 63 {
@@ -293,9 +292,7 @@ fn validate_local_domain(domain: &str) -> Result<(), CliError> {
                 "each label in a local domain must be between 1 and 63 characters",
             ));
         }
-        if !label
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-')
+        if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
             || label.starts_with('-')
             || label.ends_with('-')
         {
@@ -324,15 +321,6 @@ fn reserved(flag: &str, value: &str, phase: &str) -> CliError {
     .with("flag", flag.to_owned())
     .with("value", value.to_owned())
     .with("phase", phase.to_owned())
-}
-
-/// Refuses a flag whose whole subject belongs to a later phase.
-///
-/// # Errors
-///
-/// Always [`Code::ReservedForLaterPhase`].
-pub fn reserved_flag(flag: &str, value: &str, phase: &str) -> CliError {
-    reserved(flag, value, phase)
 }
 
 #[cfg(test)]
@@ -366,7 +354,12 @@ mod tests {
     fn an_unsupported_target_lists_what_is_supported() {
         let error = Target::parse("banana").unwrap_err();
         assert_eq!(error.code, Code::UnsupportedValue);
-        assert!(error.details.iter().any(|(k, v)| k == "supported" && v == "api"));
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "supported" && v == "api")
+        );
     }
 
     #[test]

@@ -73,7 +73,10 @@ impl Envelope {
     pub fn failure(command: &str, error: &CliError) -> Self {
         let mut details = serde_json::Map::new();
         for (key, value) in &error.details {
-            details.insert(key.clone(), serde_json::Value::String(super::redact::line(value)));
+            details.insert(
+                key.clone(),
+                serde_json::Value::String(super::redact::line(value)),
+            );
         }
         Self {
             schema_version: SCHEMA_VERSION,
@@ -104,7 +107,10 @@ mod tests {
         assert_eq!(value["status"], "success");
         assert_eq!(value["command"], "new");
         assert_eq!(value["result"]["files"], 14);
-        assert!(value.get("error").is_none(), "a success envelope carried an error");
+        assert!(
+            value.get("error").is_none(),
+            "a success envelope carried an error"
+        );
     }
 
     #[test]
@@ -115,7 +121,10 @@ mod tests {
         assert_eq!(value["status"], "failure");
         assert_eq!(value["error"]["code"], "destination_not_empty");
         assert_eq!(value["error"]["details"]["rule"], "r");
-        assert!(value.get("result").is_none(), "a failure envelope carried a result");
+        assert!(
+            value.get("result").is_none(),
+            "a failure envelope carried a result"
+        );
     }
 
     #[test]
@@ -123,7 +132,10 @@ mod tests {
         // Stated in the contract, and the kind of thing a serde attribute change breaks silently.
         let value = serde_json::to_value(Envelope::success("doctor", serde_json::json!({})))
             .expect("serialises");
-        assert!(value["schemaVersion"].is_u64(), "schemaVersion must not be a string");
+        assert!(
+            value["schemaVersion"].is_u64(),
+            "schemaVersion must not be a string"
+        );
     }
 
     #[test]
@@ -134,9 +146,19 @@ mod tests {
             .with("command", "psql --password=hunter2");
         let value = serde_json::to_value(Envelope::failure("doctor", &error)).expect("serialises");
         let message = value["error"]["message"].as_str().expect("a message");
-        let detail = value["error"]["details"]["command"].as_str().expect("a detail");
-        assert!(!message.contains("hunter2"), "{message}");
-        assert!(!detail.contains("hunter2"), "{detail}");
+        let detail = value["error"]["details"]["command"]
+            .as_str()
+            .expect("a detail");
+        // Fixed messages, deliberately. Interpolating the rendering here would print the
+        // credential into the test log on exactly the run where redaction regressed.
+        assert!(
+            !message.contains("hunter2"),
+            "the error message was not redacted"
+        );
+        assert!(
+            !detail.contains("hunter2"),
+            "the error detail was not redacted"
+        );
         assert!(message.contains(crate::output::redact::REDACTED));
     }
 
