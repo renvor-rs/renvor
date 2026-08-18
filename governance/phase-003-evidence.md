@@ -432,6 +432,13 @@ phase generates, so a prompt offering one option would be a question with one an
 So: **three of eleven asked, eight reserved-and-refused.** Counting generously, "target" is honoured
 as a flag with a single legal value, which would make it four of eleven.
 
+> **Under the amended principle (v3.0.0), this table is the compliant state rather than the gap.**
+> Every row is *"exposed as a reserved input that fails explicitly with the phase that will introduce
+> support"*, which is what the amended clause requires of a choice the current generator cannot
+> honour. The eight are not dropped: each becomes mandatory in both interfaces on the day its
+> capability ships, and `config::flags::tests::every_governed_choice_of_principle_seven_is_classified`
+> fails if any of them stops being reserved without being implemented.
+
 ### 7.4 Why they are not asked, stated as an argument rather than as a defence
 
 Asking an operator to choose a database that the generator cannot act on produces a **recorded choice
