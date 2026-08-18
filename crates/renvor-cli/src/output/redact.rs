@@ -46,19 +46,12 @@ const SECRET_KEYS: [&str; 8] = [
     "authorization",
 ];
 
-/// The **backstop**: neutralises terminal control sequences in an assembled human line.
+/// Escapes a path for a **human** stream: **every** control character, `\n` and `\t` included,
+/// via [`escape_every_control_character`].
 ///
-/// # This is the second line of defence, not the first
-///
-/// Untrusted values are escaped at the point they are interpolated — [`path`] for a path, [`detail`]
-/// for a `details` value — because that is where the program knows which half of a message came
-/// from outside it. This runs afterwards over the whole assembled line and catches anything a site
-/// forgot. `config::flags`'s source scan is what stops a site forgetting in the first place.
-///
-/// It is deliberately **more permissive** than [`path`]: `\n` and `\t` survive, because by this
-/// point the line may legitimately be multi-line — a dry run lists the files it would create, and
-/// `generate::verify` embeds cargo's own diagnostics. Flattening those would make the backstop the
-/// thing that ruins ordinary output, which is how a safety measure gets switched off.
+/// Applied at the point a path is interpolated into a message, because that is where the program
+/// knows which half of the text came from outside it. [`for_terminal`] is a second, more permissive
+/// pass over the assembled line; it is a backstop, not this.
 ///
 /// # The finding this exists for, reproduced before it was fixed
 ///
@@ -83,36 +76,41 @@ const SECRET_KEYS: [&str; 8] = [
 /// message gives for refusing control characters. The program already agreed this mattered; it
 /// enforced it in one place and not the other.
 ///
-/// # Why here and not in [`line()`]
+/// # Newline and tab are escaped here, and that is the point
+///
+/// The first fix for this finding exempted them, to keep multi-line output readable, and that left
+/// a real hole: a newline in an ancestor directory ends the line the operator is reading and starts
+/// one an attacker wrote, which forges a log entry as effectively as any escape sequence.
+///
+/// Nothing had to be traded to close it. The exemption belongs on the **assembled line**, where
+/// multi-line output legitimately lives, not on the **path**, which is never legitimately
+/// multi-line. So this escapes everything, [`for_terminal`] keeps the exemption, and a dry run's
+/// file list and cargo's embedded diagnostics still print as they should.
+///
+/// # Why not in [`line()`]
 ///
 /// [`line()`] is applied to the JSON path as well (see [`super::json`]), where `serde_json` already
 /// escapes these bytes correctly. Escaping them a second time would put a literal `\u{1b}` into a
 /// JSON string and then escape *its* backslash — corrupting the contract in order to fix a problem
-/// that path does not have. This runs only on the two human-mode writes in [`super::Reporter`].
+/// that path does not have. On the machine-readable side the bytes stay raw, which is what keeps
+/// `details.destination` a path a consumer can act on.
 ///
 /// # Why escaped rather than stripped
 ///
 /// Stripping makes the displayed path silently different from the real one, which is the same lie
 /// told more quietly. `\u{1b}` shows the operator exactly what is there.
-///
-/// # Newline and tab are deliberately left alone, and that is a residual
-///
-/// renvor's own messages are legitimately multi-line — `generate::verify` embeds cargo's stderr
-/// verbatim — so escaping `\n` would turn a compiler error into one unreadable line. A newline
-/// injected through a **non-final** path component therefore still reaches the terminal and can
-/// still forge a log line. In the **final** component, which is the one renvor creates, RULE 1b
-/// refuses it outright. The residual is stated rather than designed around.
 #[must_use]
 pub fn path(path: &std::path::Path) -> String {
     escape_every_control_character(&path.display().to_string())
 }
 
-/// Escapes a `details` value for a **human** stream.
+/// Escapes a `details` value for a **human** stream: **every** control character, `\n` and `\t`
+/// included, via [`escape_every_control_character`] — the same mechanism [`path`] uses.
 ///
-/// Strict, like [`path`], and for the same reason: a detail value is a path, a rule name, an OS
-/// error, or a flag — never legitimately multi-line. The JSON path does **not** use this; there the
-/// value stays raw and `serde_json` escapes it, which is what keeps `details.destination` the exact
-/// bytes a consumer needs.
+/// Strict for the same reason: a detail value is a path, a rule name, an OS error, or a flag —
+/// never legitimately multi-line, so there is nothing to trade away. The JSON path does **not** use
+/// this; there the value stays raw and `serde_json` escapes it, which is what keeps
+/// `details.destination` the exact bytes a consumer needs.
 #[must_use]
 pub fn detail(value: &str) -> String {
     escape_every_control_character(value)
@@ -141,6 +139,21 @@ fn escape_every_control_character(input: &str) -> String {
         .collect()
 }
 
+/// The **backstop**: neutralises terminal control sequences in an already-assembled human line.
+///
+/// # Second line of defence, and deliberately more permissive than [`path`]
+///
+/// Untrusted values are escaped where they are interpolated — [`path`] for a path, [`detail`] for a
+/// `details` value. This runs afterwards, over the whole line, and catches anything a site forgot;
+/// `no_production_site_interpolates_a_raw_path_into_a_message` is what stops a site forgetting in
+/// the first place.
+///
+/// **`\n` and `\t` survive here, on purpose.** By this point the line may legitimately be
+/// multi-line: a dry run lists the files it would create, and `generate::verify` embeds cargo's own
+/// diagnostics verbatim. Flattening those would make the backstop the thing that ruins ordinary
+/// output, which is how a safety measure gets switched off. The exemption is safe precisely because
+/// it is scoped to the assembled line — the untrusted *values* inside it have already had their
+/// newlines and tabs escaped by [`path`] and [`detail`].
 #[must_use]
 pub fn for_terminal(input: &str) -> String {
     // Fast path: the overwhelming majority of lines have nothing to escape, and allocating a new
