@@ -1,0 +1,262 @@
+---
+source: crates/renvor-cli/tests/cli.rs
+expression: "Value::Object(shapes)"
+---
+{
+  "check": {
+    "command": "check",
+    "result": {
+      "name": "<string>",
+      "target": "<string>",
+      "templateVersion": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "destination_not_empty": {
+    "command": "new",
+    "error": {
+      "code": "destination_not_empty",
+      "details": {
+        "destination": "<string>",
+        "rule": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "destination_rejected": {
+    "command": "new",
+    "error": {
+      "code": "destination_rejected",
+      "details": {
+        "destination": "<string>",
+        "rule": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "dev (dry run)": {
+    "command": "dev",
+    "result": {
+      "dryRun": "<boolean>",
+      "wouldRun": [
+        "<string>"
+      ]
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "docker status (dry run)": {
+    "command": "docker",
+    "result": {
+      "action": "<string>",
+      "dryRun": "<boolean>",
+      "wouldRun": [
+        "<string>"
+      ]
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "doctor": {
+    "command": "doctor",
+    "result": {
+      "orphanedStaging": [],
+      "probes": [
+        {
+          "compatible": "<boolean>",
+          "found": "<boolean>",
+          "foundVersion": "<string>",
+          "required": "<boolean>",
+          "requiredVersion": "<string>",
+          "tool": "<string>",
+          "version": "<string>"
+        }
+      ]
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "invalid_project_name": {
+    "command": "new",
+    "error": {
+      "code": "invalid_project_name",
+      "details": {
+        "name": "<string>",
+        "rule": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "manifest_invalid": {
+    "command": "check",
+    "error": {
+      "code": "manifest_invalid",
+      "details": {
+        "constraint": "<string>",
+        "field": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "new": {
+    "command": "new",
+    "result": {
+      "destination": "<string>",
+      "dryRun": "<boolean>",
+      "manifest": [
+        {
+          "digest": "<string>",
+          "kind": "<string>",
+          "path": "<string>",
+          "size": "<integer>"
+        }
+      ],
+      "templateVersion": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "new (container)": {
+    "command": "new",
+    "result": {
+      "destination": "<string>",
+      "dryRun": "<boolean>",
+      "manifest": [
+        {
+          "digest": "<string>",
+          "kind": "<string>",
+          "path": "<string>",
+          "size": "<integer>"
+        }
+      ],
+      "templateVersion": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "new (dry run)": {
+    "command": "new",
+    "result": {
+      "destination": "<string>",
+      "dryRun": "<boolean>",
+      "manifest": [
+        {
+          "digest": "<string>",
+          "kind": "<string>",
+          "path": "<string>",
+          "size": "<integer>"
+        }
+      ],
+      "templateVersion": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "reserved_for_later_phase": {
+    "command": "new",
+    "error": {
+      "code": "reserved_for_later_phase",
+      "details": {
+        "flag": "<string>",
+        "phase": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "tls consent given, operation unavailable": {
+    "command": "tls",
+    "error": {
+      "code": "reserved_for_later_phase",
+      "details": {
+        "flag": "<string>",
+        "phase": "<string>",
+        "trustStoreModifications": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "tls consent required": {
+    "command": "tls",
+    "error": {
+      "code": "usage",
+      "details": {
+        "required": "<string>",
+        "trustStoreModifications": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "tls trust (dry run)": {
+    "command": "tls",
+    "result": {
+      "dryRun": "<boolean>",
+      "trustStoreModifications": "<integer>",
+      "wouldModify": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "success"
+  },
+  "unsupported_combination": {
+    "command": "new",
+    "error": {
+      "code": "unsupported_combination",
+      "details": {
+        "flags": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "unsupported_value": {
+    "command": "new",
+    "error": {
+      "code": "unsupported_value",
+      "details": {
+        "flag": "<string>",
+        "supported": "<string>",
+        "value": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "usage (malformed command line)": {
+    "command": "renvor",
+    "error": {
+      "code": "usage",
+      "details": {},
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  },
+  "usage (nothing to go on)": {
+    "command": "new",
+    "error": {
+      "code": "usage",
+      "details": {
+        "missing": "<string>"
+      },
+      "message": "<string>"
+    },
+    "schemaVersion": 1,
+    "status": "failure"
+  }
+}

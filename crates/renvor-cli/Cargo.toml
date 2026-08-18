@@ -125,5 +125,11 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 tempfile = { version = "3.27.0", default-features = false }
 portable-pty = { version = "0.9.0", default-features = false }
 
+# research.md D14 — structured snapshots. `trycmd` records the command surface as byte-exact
+# expected output; this records the SHAPE of every JSON document, which is a different contract.
+# A value changing is not a schema change, and a test that cannot tell the two apart either breaks
+# on every unrelated edit or notices neither.
+insta = { version = "1.48.0", default-features = false, features = ["json"] }
+
 [lints]
 workspace = true

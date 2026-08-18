@@ -1,0 +1,180 @@
+---
+sidebar_position: 5
+title: Command-line interface
+description: The renvor executable — its commands, exit codes, and machine-readable output contract.
+---
+
+import Stamp from './_stamp.mdx';
+
+# Command-line interface
+
+<Stamp />
+
+:::danger Nothing is published
+
+`renvor` is **not on crates.io**, so there is no way to install it. This page documents the
+contract the executable already implements, because the specification requires the command
+surface, exit codes, and JSON shape to be **published** before the work counts as complete —
+not merely written down in a specification nobody outside the project reads.
+
+Everything below is implemented and tested. None of it is installable yet.
+
+:::
+
+## The executable is `renvor`
+
+The crate is `renvor-cli`; the executable it installs is `renvor`. Those are separate facts and
+both are deliberate. The executable name is a **compatibility promise** — it is the string you
+type and your shell resolves — and the build asserts it, with a control that fails if the name
+is changed.
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `renvor new [NAME]` | Create a project, from prompts or from flags. |
+| `renvor doctor` | Report what is installed, what version, and what is missing. |
+| `renvor check [PATH]` | Validate a project's `renvor.toml` without building it. |
+| `renvor dev` | Run the local development loop. |
+| `renvor docker up\|down\|status\|logs` | Container development controls. |
+| `renvor tls trust` | The consent boundary for a trust-store change. **Issues nothing.** |
+
+Commands that later phases will add — `generate`, `migrate`, `seed`, `routes`, `openapi` — are
+**absent**, not stubbed. A command that exits zero without doing the work reports success for
+something that did not happen.
+
+### Global options
+
+| Option | Effect |
+| --- | --- |
+| `--output human\|json` | Result format on `stdout`. Defaults to `human`. |
+| `--yes` | Accept the review screen. **Never waives validation**, and never grants trust-store consent. |
+| `--dry-run` | Compute and report; write nothing. Honoured by every command that can change anything. |
+| `--no-color` | Disable styling. Also off automatically when the stream is not a terminal. |
+
+## Exit codes
+
+Every command uses this taxonomy, and every error code maps to exactly one exit code.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Unclassified or internal failure. **A defect** — please report it. |
+| `2` | Usage error. The invocation was malformed. |
+| `3` | Validation failure. The invocation was well formed and the request was refused. |
+| `4` | Cancelled by the operator. |
+| `5` | Environment failure. |
+
+**`1` is reserved.** An unclassified failure is a bug, and a taxonomy that folds it into a
+general error code hides that. Rust's own default is to exit `101` on a panic; `renvor`
+installs a panic hook so that a panic exits `1` — and still emits one JSON document.
+
+## The machine-readable contract
+
+With `--output json`, `stdout` carries **exactly one JSON document**, for success and for
+failure alike. Not zero on failure: the moment a consumer most needs a parseable answer is the
+moment something went wrong.
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "success",
+  "command": "new",
+  "result": { "destination": "…", "dryRun": false, "manifest": [], "templateVersion": "1" }
+}
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "status": "failure",
+  "command": "new",
+  "error": {
+    "code": "destination_not_empty",
+    "message": "…",
+    "details": { "destination": "…", "rule": "destination_absent_or_empty" }
+  }
+}
+```
+
+- `schemaVersion` is an **integer**, and is bumped if any name below changes.
+- `result` and `error` are **exclusive**: exactly one is present.
+- `details` values are always **strings**. Match on `code`, never on `message`.
+
+This holds even when the command line itself cannot be parsed. `renvor new demo --nonsense
+--output json` produces a `usage` document rather than a bare parser error, because the format
+has to be known while the command line is still unparseable.
+
+### Streams
+
+`stdout` carries **only** the result. Progress, warnings, prompts, and diagnostics all go to
+`stderr`. A pipeline needs no filtering, and a closed `stdout` is handled rather than fatal.
+
+### Error codes
+
+| `code` | Exit | When |
+| --- | --- | --- |
+| `usage` | 2 | The invocation was malformed or an answer nothing determines was missing. |
+| `unsupported_value` | 3 | A flag value outside the supported set. `details.supported` lists them. |
+| `unsupported_combination` | 3 | Individually valid choices that conflict. Both are named. |
+| `reserved_for_later_phase` | 3 | A flag, value, or operation a later phase will support. `details.phase` names it. |
+| `invalid_project_name` | 3 | Empty, not a usable package name, or a reserved device name. |
+| `destination_not_empty` | 3 | The destination exists and is not empty. |
+| `destination_rejected` | 3 | The destination failed a path-boundary rule. `details.rule` names which. |
+| `destination_parent_missing` | 3 | The destination's parent does not exist or does not resolve. |
+| `manifest_invalid` | 3 | `renvor.toml` failed validation. The field and the constraint are named. |
+| `render_failed` | 3 | Template rendering failed. The destination is untouched. |
+| `bound_exceeded` | 3 | A documented bound was exceeded. `details.bound` and `details.limit` say which and what. |
+| `placement_failed` | 3 | The final move could not be performed. |
+| `cancelled` | 4 | You cancelled, declined, or interrupted. |
+| `tool_missing` | 5 | A required tool is absent or too old. |
+| `container_runtime_unavailable` | 5 | `details.reason` is `not_installed`, `not_running`, or `not_responding`. |
+| `internal` | 1 | Unclassified. **A defect.** |
+
+## `renvor new` is transactional
+
+Generation runs in this order, and the ordering is the guarantee:
+
+```text
+validate → stage → render → verify → manifest → review → place → report
+```
+
+- **Validation completes before anything is written.** The destination boundary is checked, the
+  name is checked, and cross-choice constraints are checked, all before a directory is created.
+- **Rendering happens in a staging directory** created inside the destination's *parent* — never
+  the system temporary directory, so the final step can be a rename rather than a copy across
+  filesystems.
+- **The generated project is verified while it is still in staging**: its own `cargo fmt
+  --check`, `cargo build`, and `cargo test` must pass. A project that does not build is a
+  *generation* failure, not something you discover later.
+- **Placement is a single rename.** It never falls back to a copy.
+- **A failure anywhere before placement leaves the destination exactly as it was**, and leaves no
+  staging directory behind.
+
+If a run is killed outright — `SIGKILL` runs no destructor — the staging directory survives on
+purpose. It is named `.renvor-staging-<pid>-…`, sits **beside** the destination rather than
+inside it, and `renvor doctor` reports it. `doctor` will **not** delete it: renvor cannot tell an
+abandoned staging directory from one belonging to a `renvor new` running in another terminal
+right now.
+
+### Prompts and flags produce the same project
+
+Every wizard question has an equivalent flag, both interfaces resolve to one validated
+configuration value, and the review screen prints **the exact command** that reproduces your
+answers — a command that is executed verbatim by the test suite, not merely printed.
+
+When `stdin` is not a terminal, the wizard does not prompt and does not block. Defaults that are
+documented in `--help` still apply; an answer that nothing you typed determines is refused rather
+than invented.
+
+## What this phase deliberately does not do
+
+- **No certificate is issued and no trust store is modified.** `--local-https` records the
+  intent and nothing else. `renvor tls trust` exists to build the consent boundary — it describes
+  exactly what would change, requires explicit consent, and then declines, because there is no
+  transport yet for a certificate to protect. The non-interactive consent flag is named
+  `--i-understand-this-modifies-my-system-trust-store`, and `--yes` deliberately does not grant it.
+- **No archive is ever extracted.** Every template is embedded in the executable. The build
+  asserts that no archive-extraction crate is reachable from the binary.
+- **No network access is required** by any local flow. The generated skeleton declares no
+  dependencies, so there is nothing to resolve.

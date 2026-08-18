@@ -25,6 +25,11 @@ use crate::output::Reporter;
 /// one of them — it is a boolean meaning "this command needs it", and an earlier version of this
 /// struct had it standing in for a version constraint that did not exist.
 #[derive(Debug, Clone, Serialize)]
+// camelCase because every other key in the C-2 envelope is camelCase — `schemaVersion`, `dryRun`,
+// `templateVersion`, `orphanedStaging`. The snake_case default shipped two inconsistent keys
+// (`found_version`, `required_version`) into the same document as `orphanedStaging`, which the JSON
+// shape snapshot in `tests/cli.rs` caught on the first run.
+#[serde(rename_all = "camelCase")]
 pub struct Probe {
     /// The executable.
     pub tool: String,

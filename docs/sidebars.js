@@ -17,6 +17,7 @@ const sidebars = {
       collapsed: false,
       items: ['support-policy', 'verification', 'governance'],
     },
+    'cli',
     'api-reference',
   ],
 };
