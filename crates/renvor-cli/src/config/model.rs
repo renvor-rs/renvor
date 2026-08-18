@@ -169,6 +169,25 @@ impl ProjectConfiguration {
     /// [`Code::InvalidProjectName`], which is also validation. Nothing here can produce a
     /// cancellation or an environment failure.
     pub fn resolve(answers: Answers) -> Result<(Self, Destination), CliError> {
+        // A NAME THE OPERATOR SUPPLIED IS CHECKED BEFORE THE FILESYSTEM IS CONSULTED.
+        //
+        // Both orders refuse the same inputs, so this is not a security change — it is a
+        // diagnosis change, and the old order produced diagnoses that depended on the machine.
+        // `renvor new /tmp/x` reported "a project name is a single directory name, not a path";
+        // `renvor new /absolute/path` reported "the destination's parent does not exist" — the
+        // same mistake by the same operator, explained two different ways, because `/tmp` happens
+        // to exist and `/absolute` happens not to.
+        //
+        // Checking the supplied name first makes the answer deterministic. It touches no
+        // filesystem, so FR-007's "validation before any write" is unaffected: both checks are
+        // pre-write, and this one is now the cheaper of the two as well as the more specific.
+        //
+        // A *derived* name still has to wait, because it cannot exist until the destination has
+        // been resolved. That asymmetry is inherent rather than an oversight.
+        if let Some(name) = answers.name.as_deref() {
+            validate_project_name(name)?;
+        }
+
         let destination = Destination::open(&answers.destination)?;
 
         let name = match answers.name {

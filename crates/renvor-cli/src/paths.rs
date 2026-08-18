@@ -279,17 +279,61 @@ impl Destination {
 ///
 /// [`Code::InvalidProjectName`], naming the constraint that failed.
 pub fn validate_project_name(name: &str) -> Result<(), CliError> {
-    let invalid = |why: &str| {
-        CliError::new(Code::InvalidProjectName, why.to_owned()).with("name", name.to_owned())
+    // EVERY refusal names the rule that fired, the same way `Destination::open` does.
+    //
+    // It did not until 2026-08-18: all five refusals below shared the code `invalid_project_name`
+    // and carried no `details.rule` at all, so a consumer could tell that a name was rejected and
+    // not which of five unrelated reasons applied. FR-014 and T049 ask for the rule, and
+    // `Destination::open` had it while this function — reached by the same command — did not.
+    let invalid = |rule: &'static str, why: &str| {
+        CliError::new(Code::InvalidProjectName, why.to_owned())
+            .with("name", name.to_owned())
+            .with("rule", rule)
     };
 
     if name.is_empty() {
-        return Err(invalid("a project name cannot be empty"));
+        return Err(invalid("name_not_empty", "a project name cannot be empty"));
     }
     if name.len() > 64 {
         return Err(invalid(
+            "name_length",
             "a project name is limited to 64 characters, so that it remains usable as a directory \
              name and a package name on every supported platform",
+        ));
+    }
+    // ABSOLUTE-PATH INJECTION AND SEPARATORS, CHECKED BEFORE THE GENERAL CHARACTER SET.
+    //
+    // This is data-model §5 rule 2 — "no absolute path where relative is expected" — and until
+    // now it had no implementation of its own. `renvor new /etc/renvor-injected` *was* refused,
+    // which is why no test caught it, but it was refused by the character-set rule below as though
+    // `/` were an unusual punctuation choice. The diagnosis matters: a name is one path component,
+    // and somebody who typed a path into the name position needs to be told that, not told their
+    // punctuation is unsupported.
+    if name.contains('/') || name.contains('\\') || name.contains(':') {
+        return Err(invalid(
+            "single_path_component",
+            "a project name is a single directory name, not a path; it may not contain `/`, `\\`, \
+             or `:`. To choose where the project goes, use `--path`",
+        ));
+    }
+    // RESERVED DEVICE NAMES, MATCHED ON THE STEM, AND CHECKED BEFORE THE CHARACTER SET.
+    //
+    // Windows resolves `CON.txt` to the console device, so the extension does not make the name
+    // safe — which is why this matches the part before the first `.`, exactly as the
+    // destination-side check in `Destination::open` does.
+    //
+    // It runs before the character-set rule because `.` is not in the allowed set, so a
+    // character-set check placed first answers `CON.txt` with "unsupported punctuation". That is
+    // true and useless; the operator's actual problem is that the name is a device.
+    let stem = name.split('.').next().unwrap_or(name);
+    if RESERVED_DEVICE_NAMES
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(stem))
+    {
+        return Err(invalid(
+            "reserved_device_name",
+            "this is a reserved device name on Windows and cannot be used as a directory name, \
+             with or without an extension",
         ));
     }
     if !name
@@ -297,6 +341,7 @@ pub fn validate_project_name(name: &str) -> Result<(), CliError> {
         .all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_')
     {
         return Err(invalid(
+            "name_character_set",
             "a project name may contain only ASCII letters, digits, `-`, and `_`, because it \
              becomes both a directory name and a Rust package name",
         ));
@@ -306,14 +351,9 @@ pub fn validate_project_name(name: &str) -> Result<(), CliError> {
         .next()
         .is_some_and(|first| first.is_ascii_alphabetic())
     {
-        return Err(invalid("a project name must start with an ASCII letter"));
-    }
-    if RESERVED_DEVICE_NAMES
-        .iter()
-        .any(|reserved| reserved.eq_ignore_ascii_case(name))
-    {
         return Err(invalid(
-            "this is a reserved device name on Windows and cannot be used as a directory name",
+            "name_starts_with_letter",
+            "a project name must start with an ASCII letter",
         ));
     }
     Ok(())

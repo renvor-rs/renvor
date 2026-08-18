@@ -114,22 +114,64 @@ fn an_absolute_path_in_the_name_position_is_refused() {
     // Absolute-path injection. The positional argument is the project NAME; a name is a single
     // path component that becomes a package name, so an absolute path there must be refused
     // rather than quietly treated as a destination.
+    //
+    // ── THIS TEST WAS PASSING FOR THE WRONG REASON UNTIL 2026-08-18 ────────────────────
+    //
+    // It asserted only that the run failed and that some code was present. It did — but by the
+    // character-set rule, as though `/` were an unusual punctuation choice, and with **no
+    // `details.rule` at all**, because `validate_project_name` emitted none for any of its five
+    // refusals. Data-model §5 rule 2 therefore had no implementation of its own, and this test
+    // was the thing standing in for one. Asserting the rule is what makes it a test of the rule.
     let base = tempfile::tempdir().expect("a temporary directory");
     for case in [
         "/etc/renvor-injected",
         "/tmp/renvor-injected",
         "//srv/renvor",
+        // Windows drive-relative: neither absolute nor a plain name, and exactly the shape a
+        // lexical check misses.
+        "C:renvor-injected",
     ] {
         let document = refused(&["new", case, "--yes", "--output", "json"], base.path());
-        assert!(
-            document["error"]["code"].is_string(),
-            "`{case}` produced no stable code: {document}"
+        assert_eq!(
+            document["error"]["details"]["rule"], "single_path_component",
+            "`{case}` must be refused as a path in the NAME position, not by some other rule: \
+             {document}"
         );
         assert!(
             !Path::new(case).exists(),
             "`{case}` was created on the real filesystem by a run that must write nothing"
         );
     }
+    assert!(staging_residue(base.path()).is_empty());
+}
+
+#[test]
+fn every_project_name_refusal_names_a_distinct_rule() {
+    // FR-014 wants a refusal to be a diagnosis. Five different problems sharing one code and no
+    // `details.rule` is a verdict — the operator learns their name was rejected and not which of
+    // five unrelated things is wrong with it.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let cases = [
+        ("x".repeat(65), "name_length"),
+        ("/absolute/path".to_owned(), "single_path_component"),
+        ("has space".to_owned(), "name_character_set"),
+        ("1leading-digit".to_owned(), "name_starts_with_letter"),
+        ("CON".to_owned(), "reserved_device_name"),
+    ];
+    let mut seen = std::collections::BTreeSet::new();
+    for (name, expected) in &cases {
+        let document = refused(&["new", name, "--yes", "--output", "json"], base.path());
+        assert_eq!(
+            document["error"]["details"]["rule"], *expected,
+            "`{name}` was refused by the wrong rule: {document}"
+        );
+        seen.insert(*expected);
+    }
+    assert_eq!(
+        seen.len(),
+        cases.len(),
+        "two cases collapsed onto one rule: {seen:?}"
+    );
 }
 
 #[test]

@@ -101,31 +101,59 @@ fn every_json_document_matches_its_recorded_shape() {
     // ── Success documents ───────────────────────────────────────────────────────────
     shapes.insert(
         "new (dry run)".into(),
-        document_shape(&["new", "dry", "--yes", "--dry-run", "--output", "json"], base.path()),
+        document_shape(
+            &["new", "dry", "--yes", "--dry-run", "--output", "json"],
+            base.path(),
+        ),
     );
     shapes.insert(
         "new".into(),
-        document_shape(&["new", "made", "--yes", "--example-domain", "--output", "json"], base.path()),
+        document_shape(
+            &[
+                "new",
+                "made",
+                "--yes",
+                "--example-domain",
+                "--output",
+                "json",
+            ],
+            base.path(),
+        ),
     );
     shapes.insert(
         "new (container)".into(),
-        document_shape(&["new", "boxed", "--yes", "--container", "--output", "json"], base.path()),
+        document_shape(
+            &["new", "boxed", "--yes", "--container", "--output", "json"],
+            base.path(),
+        ),
     );
     let project = base.path().join("made");
     let containerised = base.path().join("boxed");
-    shapes.insert("doctor".into(), document_shape(&["doctor", "--output", "json"], base.path()));
-    shapes.insert("check".into(), document_shape(&["check", "--output", "json"], &project));
+    shapes.insert(
+        "doctor".into(),
+        document_shape(&["doctor", "--output", "json"], base.path()),
+    );
+    shapes.insert(
+        "check".into(),
+        document_shape(&["check", "--output", "json"], &project),
+    );
     shapes.insert(
         "dev (dry run)".into(),
         document_shape(&["dev", "--dry-run", "--output", "json"], &project),
     );
     shapes.insert(
         "docker status (dry run)".into(),
-        document_shape(&["docker", "status", "--dry-run", "--output", "json"], &containerised),
+        document_shape(
+            &["docker", "status", "--dry-run", "--output", "json"],
+            &containerised,
+        ),
     );
     shapes.insert(
         "tls trust (dry run)".into(),
-        document_shape(&["tls", "trust", "--dry-run", "--output", "json"], base.path()),
+        document_shape(
+            &["tls", "trust", "--dry-run", "--output", "json"],
+            base.path(),
+        ),
     );
 
     // ── Failure documents, one per error code reachable without a terminal ──────────
@@ -135,19 +163,41 @@ fn every_json_document_matches_its_recorded_shape() {
     );
     shapes.insert(
         "usage (malformed command line)".into(),
-        document_shape(&["new", "demo", "--nonsense", "--output", "json"], base.path()),
+        document_shape(
+            &["new", "demo", "--nonsense", "--output", "json"],
+            base.path(),
+        ),
     );
     shapes.insert(
         "unsupported_value".into(),
-        document_shape(&["new", "demo", "--target", "nope", "--yes", "--output", "json"], base.path()),
+        document_shape(
+            &[
+                "new", "demo", "--target", "nope", "--yes", "--output", "json",
+            ],
+            base.path(),
+        ),
     );
     shapes.insert(
         "unsupported_combination".into(),
-        document_shape(&["new", "demo", "--seed-data", "--yes", "--output", "json"], base.path()),
+        document_shape(
+            &["new", "demo", "--seed-data", "--yes", "--output", "json"],
+            base.path(),
+        ),
     );
     shapes.insert(
         "reserved_for_later_phase".into(),
-        document_shape(&["new", "demo", "--database", "postgres", "--yes", "--output", "json"], base.path()),
+        document_shape(
+            &[
+                "new",
+                "demo",
+                "--database",
+                "postgres",
+                "--yes",
+                "--output",
+                "json",
+            ],
+            base.path(),
+        ),
     );
     shapes.insert(
         "invalid_project_name".into(),
@@ -155,7 +205,18 @@ fn every_json_document_matches_its_recorded_shape() {
     );
     shapes.insert(
         "destination_rejected".into(),
-        document_shape(&["new", "demo", "--path", "../escape", "--yes", "--output", "json"], base.path()),
+        document_shape(
+            &[
+                "new",
+                "demo",
+                "--path",
+                "../escape",
+                "--yes",
+                "--output",
+                "json",
+            ],
+            base.path(),
+        ),
     );
     shapes.insert(
         "destination_not_empty".into(),
@@ -172,7 +233,13 @@ fn every_json_document_matches_its_recorded_shape() {
     shapes.insert(
         "tls consent given, operation unavailable".into(),
         document_shape(
-            &["tls", "trust", "--i-understand-this-modifies-my-system-trust-store", "--output", "json"],
+            &[
+                "tls",
+                "trust",
+                "--i-understand-this-modifies-my-system-trust-store",
+                "--output",
+                "json",
+            ],
             base.path(),
         ),
     );
@@ -185,23 +252,47 @@ fn the_shape_function_can_tell_two_different_shapes_apart() {
     // The control. `shape` erases values on purpose, and an over-eager version that erased KEYS
     // too — or that returned a constant — would make the snapshot above pass through any schema
     // change at all, which is the one thing it exists to catch.
-    let original = json!({"schemaVersion": 1, "status": "success", "result": {"files": 7, "path": "/tmp/x"}});
+    let original =
+        json!({"schemaVersion": 1, "status": "success", "result": {"files": 7, "path": "/tmp/x"}});
 
     // A different VALUE is the same shape. This is the property that makes the snapshot stable.
-    let same = json!({"schemaVersion": 1, "status": "success", "result": {"files": 9, "path": "/other"}});
-    assert_eq!(shape(&original, None), shape(&same, None), "a value change must not read as a schema change");
+    let same =
+        json!({"schemaVersion": 1, "status": "success", "result": {"files": 9, "path": "/other"}});
+    assert_eq!(
+        shape(&original, None),
+        shape(&same, None),
+        "a value change must not read as a schema change"
+    );
 
     // A renamed key is a different shape.
     let renamed = json!({"schemaVersion": 1, "status": "success", "result": {"fileCount": 7, "path": "/tmp/x"}});
-    assert_ne!(shape(&original, None), shape(&renamed, None), "a renamed key must be visible");
+    assert_ne!(
+        shape(&original, None),
+        shape(&renamed, None),
+        "a renamed key must be visible"
+    );
 
     // A type change is a different shape.
     let retyped = json!({"schemaVersion": 1, "status": "success", "result": {"files": "7", "path": "/tmp/x"}});
-    assert_ne!(shape(&original, None), shape(&retyped, None), "an integer becoming a string must be visible");
+    assert_ne!(
+        shape(&original, None),
+        shape(&retyped, None),
+        "an integer becoming a string must be visible"
+    );
 
     // A changed contract-bearing VALUE is a different shape, because those are kept verbatim.
-    let recoded = json!({"schemaVersion": 2, "status": "success", "result": {"files": 7, "path": "/tmp/x"}});
-    assert_ne!(shape(&original, None), shape(&recoded, None), "a schemaVersion bump must be visible");
-    let refailed = json!({"schemaVersion": 1, "status": "failure", "result": {"files": 7, "path": "/tmp/x"}});
-    assert_ne!(shape(&original, None), shape(&refailed, None), "a status change must be visible");
+    let recoded =
+        json!({"schemaVersion": 2, "status": "success", "result": {"files": 7, "path": "/tmp/x"}});
+    assert_ne!(
+        shape(&original, None),
+        shape(&recoded, None),
+        "a schemaVersion bump must be visible"
+    );
+    let refailed =
+        json!({"schemaVersion": 1, "status": "failure", "result": {"files": 7, "path": "/tmp/x"}});
+    assert_ne!(
+        shape(&original, None),
+        shape(&refailed, None),
+        "a status change must be visible"
+    );
 }
