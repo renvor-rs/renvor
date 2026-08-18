@@ -396,7 +396,24 @@ only find tests that fail to fail.
 | The Principle VII compliance gate | `--database` renamed in the reserved table, row count preserved so it still compiles | **FAILED**: *"`database` is a governed choice this phase does not ship, so `--database` must be a reserved input — dropping it from the reserved table drops the choice from the governed set, which the constitution forbids"* |
 | Quickstart Gate 0's own pattern | — | Not a mutation but a **defect found by running it**: `*"0 passed"*` matches `10 passed`, so the gate reported a false alarm on its own suite. Corrected to `*". 0 passed;"*` and the discrimination demonstrated on `0 passed`, `10 passed`, and `100 passed` |
 
-`no_production_path_removes_the_destination` is **not** in this table, and that is deliberate: it
+### 6.7 One defect found by re-reading the diff against the contract
+
+Not by a test, and worth recording for that reason. `destination_exists` is emitted from **two**
+sites — `Destination::open`, before anything is staged, and `Staging::place` STEP 1, immediately
+before the rename. The contract publishes `details.rule` and `details.found` for that code, and only
+the first site carried them. A consumer's handling would therefore have depended on **which moment
+the destination happened to appear in**, which is a difference it cannot predict and the contract
+does not mention.
+
+Nothing failed. Every test passed, the registry gate passed — it checks the code set and the exit
+column, not the details — and the smoke run looked right, because the smoke run hit the first site.
+
+Fixed by extracting `paths::describe` and using it at both sites, with
+`both_emit_sites_of_destination_exists_carry_the_published_details` asserting the two are identical.
+The lost-race branch, which has no metadata in hand, reports `found = "unknown"` rather than
+inventing a value or omitting the key; `unknown` is published in the contract as a possible value.
+
+`no_production_path_removes_the_destination` is **not** in the §6.6 table, and that is deliberate: it
 carries its own inline positive control — it asserts the scan matched exactly one line before
 asserting anything about that line — because a source-text scan that matched nothing would otherwise
 pass while checking nothing.
