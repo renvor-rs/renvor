@@ -222,17 +222,19 @@ Both are now true in code as well as in prose.
 
 | Toolchain | `cargo xtask verify` | Where |
 |---|---|---|
-| **1.94.0** (declared MSRV) | 11/11 checks pass | CI job `verify (1.94.0)`, and locally |
-| **stable** | 11/11 checks pass | CI job `verify (stable)` |
+| **1.94.0** (declared MSRV) | 11/11 checks pass | CI job `verify (1.94.0)`, and locally — this is the pinned toolchain, so a bare `cargo` is 1.94.0 |
+| **stable** (1.97.1 as of 2026-08-18) | 11/11 checks pass | CI job `verify (stable)`, and locally via `cargo +stable xtask verify` |
 
 The eleven checks are: toolchain probe, formatting, lint, tests, API documentation
 (`RUSTDOCFLAGS=-D warnings`), dependency and licence policy, architecture invariants, secret scan
 (history **and** working tree), documentation site (install and build), link check, and working-tree
 cleanliness.
 
-**Locally the default toolchain *is* 1.94.0**, so a local run of "both" is one toolchain run twice.
-The two-toolchain claim rests on CI, where they are genuinely different jobs. Said explicitly
-because a local `rustc --version` showing `1.94.0` for both is not evidence of anything.
+**`rust-toolchain.toml` pins 1.94.0**, so a bare `cargo xtask verify` is the MSRV run, not the
+stable run. Until 2026-08-18 that meant a local run of "both" was one toolchain run twice, and the
+two-toolchain claim rested on CI alone. It no longer does: the stable run is now performed locally
+with an **explicit** `cargo +stable`, and `rustc +stable --version` was captured as `1.97.1` in the
+same invocation so the number is measured rather than assumed. Both remain separate CI jobs as well.
 
 ### 5.2 Platforms actually exercised
 
