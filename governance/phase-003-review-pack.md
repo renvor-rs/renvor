@@ -35,7 +35,10 @@ reconstruct the design from the code.
   │ Destination::open(requested)          paths.rs:137          │
   │   RULE 0  no `..` component ANYWHERE          paths.rs:144  │
   │   RULE 1  final component is one ordinary name paths.rs:171 │
-  │   RULE 2  not a reserved device name           paths.rs:205 │
+  │   RULE 1b no control chars, no trailing `.`/` ` (added after │
+  │           an advisory security review found the path-derived │
+  │           name reached no check at all)                      │
+  │   RULE 2  not a reserved device name                         │
   │   RULE 3  parent opens  ◄── THE ONE AMBIENT CALL paths.rs:224
   │   RULE 4  destination is not a symlink         paths.rs:245 │
   │   RULE 5  destination absent, or present and EMPTY paths.rs:260
@@ -72,6 +75,7 @@ reconstruct the design from the code.
 | **S3** | No `..` component is accepted anywhere in the requested path | `paths.rs:144` | Lexical, **in addition to** S1. Policy, not containment — see §4. |
 | **S4** | A project name is one path component | `paths.rs:307` | `/`, `\`, and `:` refused as `single_path_component`. |
 | **S5** | Reserved device names are refused **on every platform** | `paths.rs:48`, `:205`, `:307` | 22 names, matched on the **stem**, case-insensitively. A project made on Linux is opened on Windows. |
+| **S5b** | The directory name renvor **creates** carries no control character and no trailing dot or space | `paths.rs` RULE 1b | Added 2026-08-18 after an advisory security review created a directory with an embedded newline via `--path`. Deliberately **narrower** than the package-name rule: `my.project` and `my project` still work, because rejecting those would break ordinary use to prevent nothing. |
 | **S6** | Validation completes before **any** filesystem write | `model.rs::resolve` | `Destination::open` reads and opens; it creates nothing. |
 | **S7** | A failure before placement leaves the destination exactly as it was | `Drop` at `place.rs:270` | Runs on every path including panic. |
 | **S8** | Placement is one rename, never a copy | `place.rs:208` | Both sides are the same `Dir`, so it cannot cross a filesystem. |
@@ -197,6 +201,9 @@ racy, and that is exactly how `placement_failed` kept leaking through. A loser r
 | `a_destination_that_is_a_symlink_to_another_directory_is_refused` | `tests/hostile.rs` | Escape a lexical check cannot see; witness file outside proves nothing was written |
 | `every_project_name_refusal_names_a_distinct_rule` | `tests/hostile.rs` | 5 refusals, 5 distinct rules, no collapsing |
 | `an_ordinary_legitimate_destination_still_generates` | `tests/hostile.rs` | **Positive control.** Without it a generator that refuses everything passes the file |
+| `the_directory_name_taken_from_a_path_is_checked_too` | `tests/hostile.rs` | 5 cases: embedded newline, tab, trailing `. `, `.`, ` ` — each asserting its own rule |
+| `an_ordinary_punctuated_directory_name_is_still_accepted` | `tests/hostile.rs` | **Control for the above**: `my.project`, `my project`, `weird!@#name`, `v1.2.3` all still generate |
+| `no_shipped_template_can_write_outside_the_destination` | `tests/hostile.rs` | Diffs the destination's **parent** before and after. **Rewritten 2026-08-18** — the first version compared the destination against itself and could not fail |
 | `the_handle_refuses_an_escape_that_no_rule_in_this_module_checks_for` | `paths.rs` | The capability catches what the rules do not |
 | `a_failure_at_any_mutating_step_leaves_an_absent_destination_absent` | `tests/transaction.rs` | 5 injected C-5 failures |
 | `…leaves_a_pre_existing_empty_destination_exactly_as_it_was` | `tests/transaction.rs` | FR-012, incl. the restore path. **Demonstrated failing on purpose** by moving the injection point past the removal |
@@ -221,6 +228,12 @@ Suggested, in descending order of value:
 3. **Find a `details.rule` that fires for the wrong reason.** This has happened twice.
 4. **Find a Windows behaviour the tests do not exercise.** Two defects were Windows-only.
 5. **Challenge the I-17 trade-off** (§6). It is a stated residual risk, not a solved problem.
+6. **Two advisory findings were accepted and not fixed**, and both touch these files:
+   **A-R9** — the branch that restores a removed empty destination after a failed rename is
+   unreachable from any test, because the failure injector deliberately sits before the removal.
+   **A-R8** — the replacement discards the destination's permissions (`0700` becomes `0755`); it is
+   now documented but not preserved. Both are in
+   [`phase-003-evidence.md`](phase-003-evidence.md) §6.3 and are decisions rather than oversights.
 
 ---
 
