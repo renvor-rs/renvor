@@ -132,29 +132,57 @@ impl<'a> Staging<'a> {
     pub fn place(mut self, destination: &Destination) -> Result<(), CliError> {
         let target = destination.name();
 
-        // Re-check immediately before the rename. This does not close the race — the window is
-        // narrower than the old path-based version's, because both operations go through one
-        // directory handle rather than being re-resolved from a string, but it is not zero.
-        // What it does is convert the common case of a concurrent run into a named failure
-        // instead of letting `rename` decide.
-        if self.parent.symlink_metadata(target).is_ok() {
-            return Err(CliError::new(
-                Code::DestinationNotEmpty,
-                format!(
-                    "`{}` appeared while the project was being generated; nothing was written \
-                     there and the staged tree has been removed",
-                    destination.display_path().display()
-                ),
-            )
-            .with(
-                "destination",
-                destination.display_path().display().to_string(),
-            ));
+        // ── THE EXISTING-EMPTY-DESTINATION CASE ─────────────────────────────────────────
+        //
+        // FR-013 refuses a destination that "exists and is **not empty**", which means an existing
+        // *empty* one must work. `Destination::open` accepts it — and until 2026-08-18 this method
+        // refused it, so `renvor new existing-empty-dir` validated, rendered, ran the full
+        // pre-placement verification, and then failed with a message that was **actively false**:
+        // "appeared while the project was being generated", when it had been there all along.
+        //
+        // Two components disagreeing about what a valid destination is, with the disagreement only
+        // observable seconds into a run.
+        //
+        // `remove_dir` is what makes the fix safe. **The kernel refuses to remove a non-empty
+        // directory**, so there is no window in which this could delete somebody's files — the
+        // emptiness check and the removal are one atomic operation rather than a check followed by
+        // a hopeful delete. If the directory gained an entry since `open`, the removal fails and
+        // the run stops with the destination untouched.
+        match self.parent.symlink_metadata(target) {
+            // Nothing there. The ordinary path.
+            Err(_) => {}
+            Ok(metadata) if metadata.is_dir() => {
+                self.parent.remove_dir(target).map_err(|error| {
+                    CliError::new(
+                        Code::DestinationNotEmpty,
+                        format!(
+                            "`{}` exists and could not be replaced: {error}. Nothing was written \
+                             there; if it has contents, renvor will not merge into it",
+                            destination.display_path().display()
+                        ),
+                    )
+                    .with(
+                        "destination",
+                        destination.display_path().display().to_string(),
+                    )
+                })?;
+            }
+            Ok(_) => {
+                // A file, or a symlink that appeared after validation.
+                return Err(CliError::new(
+                    Code::DestinationNotEmpty,
+                    format!(
+                        "`{}` exists and is not a directory; nothing was written there and the \
+                         staged tree has been removed",
+                        destination.display_path().display()
+                    ),
+                )
+                .with(
+                    "destination",
+                    destination.display_path().display().to_string(),
+                ));
+            }
         }
-
-        // Close our handle on the staging directory BEFORE renaming it. See the field's docs:
-        // Windows treats an open handle as a reason to refuse.
-        drop(self.handle.take());
 
         self.parent
             .rename(&self.name, self.parent, target)
@@ -271,6 +299,52 @@ mod tests {
         assert!(
             !base.path().join(&staged).exists(),
             "the staging directory was left behind"
+        );
+    }
+
+    #[test]
+    fn an_existing_empty_destination_is_generated_into() {
+        // FR-013 refuses a destination that exists and is **not empty**, so an existing empty one
+        // must work. Until 2026-08-18 `Destination::open` accepted it and this method refused it,
+        // seconds later, with a message claiming it had "appeared" mid-run.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
+        let target = destination(base.path(), "demo");
+        let staging = Staging::create(&target).expect("creates");
+        staging.dir().write("f", b"x").expect("write");
+        staging
+            .place(&target)
+            .expect("an existing EMPTY destination must be generated into");
+        assert!(
+            base.path().join("demo/f").exists(),
+            "the tree did not arrive"
+        );
+    }
+
+    #[test]
+    fn a_destination_that_gained_contents_after_validation_is_refused_by_the_kernel() {
+        // The safety of the fix above rests on `remove_dir` refusing a non-empty directory — the
+        // emptiness check and the removal are ONE atomic operation, not a check followed by a
+        // hopeful delete. This asserts that guarantee rather than assuming it.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        std::fs::create_dir(base.path().join("demo")).expect("mkdir");
+        let target = destination(base.path(), "demo");
+        let staging = Staging::create(&target).expect("creates");
+        staging.dir().write("ours", b"ours").expect("write");
+
+        // It was empty at validation; now it is not.
+        std::fs::write(base.path().join("demo/theirs"), b"theirs").expect("write");
+
+        let error = staging.place(&target).unwrap_err();
+        assert_eq!(error.code, Code::DestinationNotEmpty);
+        assert_eq!(
+            std::fs::read_to_string(base.path().join("demo/theirs")).expect("read"),
+            "theirs",
+            "the other party's file was destroyed"
+        );
+        assert!(
+            !base.path().join("demo/ours").exists(),
+            "our tree leaked in"
         );
     }
 

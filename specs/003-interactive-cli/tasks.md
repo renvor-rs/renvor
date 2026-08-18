@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**49 of 95 tasks complete. This section states what is built and what is not, because a task list
+**51 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -51,6 +51,24 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-000000. **Two components disagreed about what a valid destination is.** FR-013 refuses a
+   destination that "exists and is **not empty**", so an existing *empty* one must work.
+   `Destination::open` accepted it and `Staging::place` refused it — so `renvor new` into an empty
+   directory validated, rendered, ran the **full pre-placement verification**, and only then failed,
+   with a message that was actively false: *"appeared while the project was being generated"*, when
+   it had been there all along. Fixed by removing the empty destination immediately before the
+   rename. **`remove_dir` is what makes that safe**: the kernel refuses to remove a non-empty
+   directory, so the emptiness check and the removal are one atomic operation rather than a check
+   followed by a hopeful delete.
+
+2a-0000000. **A lost race was misclassified, found by the concurrency test on CI after five clean
+   local runs.** Between the pre-rename check and the rename, another run can place its project.
+   A loser then reported `placement_failed` — which says the move *mechanism* broke and sends an
+   operator to debug their filesystem — instead of `destination_not_empty`, which says another run
+   got there first. `place` now re-stats after a failed rename to tell the two apart. **The local
+   machine never hit the window and both macOS and Windows CI did**, which is the argument for
+   keeping the platform matrix and for not trimming a slow concurrency test.
+
 2a-00000. **An unbounded input on a path the operator names.** FR-042 requires *every* input to be
    bounded with the bound documented; `renvor check` read `renvor.toml` with a plain
    `read_to_string`. Since `check` takes a **directory from the command line**, that is an

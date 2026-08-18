@@ -637,13 +637,25 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
     // placement is a rename onto a path that must not exist. So the losers fail cleanly rather
     // than merging into the winner's tree.
     //
-    // Run five times before being committed, all five identical — because a flaky concurrency
-    // test is worse than none: it trains people to re-run CI rather than to read it.
+    // ── THIS TEST FOUND A REAL DEFECT THAT LOCAL RUNS COULD NOT ────────────────────────
+    //
+    // Five clean local runs, then **macOS and Windows CI both failed**: a loser reported
+    // `placement_failed` rather than `destination_not_empty`. The cause is the window between the
+    // pre-rename check and the rename itself — narrow enough that a fast, idle machine never lands
+    // in it, and wide enough that a loaded CI runner does.
+    //
+    // Losing a race is `destination_not_empty`. `placement_failed` says the move mechanism broke,
+    // which sends an operator to debug their filesystem when a second `renvor new` simply beat
+    // them to it. `Staging::place` now re-stats after a failed rename to tell those apart.
+    //
+    // **A local pass does not verify this.** Twelve runs rather than six, to widen the odds, but
+    // the platform matrix is what actually exercises it — which is worth remembering before
+    // anybody trims this test for being slow.
     let base = tempfile::tempdir().expect("tempdir");
     let destination = base.path().join("contended");
 
     let mut children = Vec::new();
-    for _ in 0..6 {
+    for _ in 0..12 {
         children.push(
             Command::new(env!("CARGO_BIN_EXE_renvor"))
                 .args([
@@ -687,7 +699,7 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
     }
 
     assert_eq!(succeeded, 1, "exactly one run must win");
-    assert_eq!(failed_cleanly, 5, "every other run must lose cleanly");
+    assert_eq!(failed_cleanly, 11, "every other run must lose cleanly");
 
     // THE PROJECT MUST BE WHOLE, not a merge of six renders. Its own checks are the strongest
     // available statement of that, and they are what a corrupted tree would fail.
