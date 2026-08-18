@@ -105,7 +105,30 @@ impl<'a> Staging<'a> {
         };
 
         parent.create_dir(&name).map_err(failed)?;
-        let handle = parent.open_dir(&name).map_err(failed)?;
+
+        // ── THE DIRECTORY EXISTS NOW, AND `Drop` CANNOT CLEAN IT UP YET ────────────────
+        //
+        // `Drop for Staging` is what removes the staging tree on every failure path — but it only
+        // runs once a `Staging` exists, and between the `create_dir` above and the `Ok(Self)` below
+        // there is no `Staging`. So a failing `open_dir` used to return through `?` and leave the
+        // directory it had just created **orphaned in the operator's parent**, with nothing to
+        // remove it and a message that read "Nothing was written", which was then false.
+        //
+        // Reachable only through a race or resource exhaustion — opening a directory this process
+        // created a microsecond earlier does not ordinarily fail — and worth closing anyway: the
+        // whole point of the 2026-08-18 ruling is that a refused run leaves the operator's
+        // directory exactly as it found it, and residue is a way of failing that promise.
+        //
+        // Found by tracing the error paths of these two files by hand, not by a test.
+        let handle = match parent.open_dir(&name) {
+            Ok(handle) => handle,
+            Err(error) => {
+                // Best effort, and it can only ever remove OUR OWN just-created directory:
+                // `create_dir` refuses an existing name, so its success proves nothing was there.
+                let _ = parent.remove_dir_all(&name);
+                return Err(failed(error));
+            }
+        };
         Ok(Self {
             parent,
             name,
@@ -640,18 +663,32 @@ mod tests {
         // POSITIVE CONTROL FIRST: a scan that matched nothing would pass every assertion below
         // while verifying nothing — which is precisely the defect an advisory review found in a
         // different test this same phase.
+        //
+        // TWO removals are expected, and both remove **this process's own staging directory**:
+        //
+        //   1. `Drop`, the cleanup on every failure path once a `Staging` exists;
+        //   2. `Staging::create`'s `open_dir` failure arm, which is the window BEFORE a `Staging`
+        //      exists and therefore before `Drop` can run.
+        //
+        // The second one was added on 2026-08-18 and **this test caught it**, failing with
+        // *"expected exactly one removal … and found 2"*. That is the test doing its job: a new
+        // removal in this module has to be looked at and justified rather than merged quietly. The
+        // count is raised deliberately, with the justification above, and not loosened into
+        // "however many there are".
         assert_eq!(
             offending.len(),
-            1,
-            "expected exactly one removal in this module — the staging cleanup in `Drop` — and \
-             found {}: {offending:?}",
-            offending.len()
+            2,
+            "the number of removals in this module changed. Every one must be this process's own \
+             staging directory, and a new one needs a reason written down here: {offending:?}"
         );
-        assert!(
-            offending[0].contains("&self.name"),
-            "this module removes something that is not this process's own staging directory: {}",
-            offending[0].trim()
-        );
+        for line in &offending {
+            assert!(
+                line.contains("&self.name") || line.contains("(&name)"),
+                "this module removes something that is not this process's own staging directory: \
+                 {}",
+                line.trim()
+            );
+        }
     }
 
     #[test]

@@ -463,7 +463,27 @@ and rule `paths.rs` RULE 4 uses for the same condition, and
 `both_fail_closed_arms_report_the_same_code_and_rule` fails if `placement_failed` returns to that
 arm — demonstrated by putting it back.
 
-### 6.8 An adversarial probe of the destination check, run by the author
+### 6.8 A residue leak found by tracing the error paths by hand
+
+`Staging::create` calls `create_dir` and then `open_dir`. `Drop for Staging` is what removes the
+staging tree on every failure path — but it only runs once a `Staging` **exists**, and between those
+two calls there is none. So a failing `open_dir` returned through `?` and left the directory it had
+just created **orphaned in the operator's parent**, with nothing to remove it and an error message
+reading *"Nothing was written"*, which was then false.
+
+Reachable only through a race or resource exhaustion, and worth closing regardless: the point of the
+2026-08-18 ruling is that a refused run leaves the operator's directory as it found it, and residue
+is a way of failing that promise. The failure arm now removes its own directory before returning —
+safe by construction, because `create_dir` refuses an existing name, so its success proves nothing
+was there.
+
+**The `no_production_path_removes_the_destination` guard caught the fix**, failing with *"expected
+exactly one removal in this module — the staging cleanup in `Drop` — and found 2"*. That is the
+guard doing precisely its job: a new removal in this module has to be justified rather than merged
+quietly. The count was raised to 2 **with the reason written into the test**, not loosened to
+"however many there are", and re-mutating with a third removal naming something else fails it again.
+
+### 6.9 An adversarial probe of the destination check, run by the author
 
 **Not a review** — same caveat as §6.5. The tests cover five entry kinds; the contract publishes a
 sixth value, `other`, and nothing reached it. The shipped binary was therefore driven against entry
