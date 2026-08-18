@@ -97,13 +97,28 @@ struct RenvorTable {
     template_version: String,
 }
 
-/// The `[project]` table — only the fields `check` validates.
+/// The `[project]` table — **every key the generator writes**, not merely the validated ones.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProjectTable {
     name: String,
     target: String,
     local_domain: String,
+    // ── EVERY KEY THE GENERATOR WRITES MUST BE DECLARED HERE ────────────────────────────
+    //
+    // `deny_unknown_fields` turns an undeclared key into a rejection, so this struct is no longer
+    // "the fields `check` validates" — it is **the whole manifest**. Adding a field to
+    // `templates/renvor.toml.j2` without adding it here makes `renvor check` reject renvor's own
+    // output, which is exactly what happened when `deny_unknown_fields` was introduced and what
+    // `tests/acceptance.rs::every_generated_manifest_round_trips_through_renvor_check` caught
+    // within the hour.
+    //
+    // These four are recorded rather than validated: they describe honoured choices, and the
+    // generator has already acted on them.
+    container: bool,
+    local_https: String,
+    example_domain: bool,
+    seed_data: bool,
 }
 
 /// A generated `renvor.toml`.
@@ -199,6 +214,10 @@ template_version = "1"
 name = "commerce"
 target = "api"
 local_domain = "commerce.test"
+container = false
+local_https = "off"
+example_domain = false
+seed_data = false
 "#;
 
     #[test]

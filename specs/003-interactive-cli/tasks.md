@@ -27,10 +27,24 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**55 of 95 tasks complete. This section states what is built and what is not, because a task list
+**57 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
+
+**A typo in `renvor.toml` is a diagnosis rather than a silently ignored setting (T068).** serde
+ignores unknown keys by default, so `local_domian` was accepted and the operator was left wondering
+why their setting did nothing — a failure with no failure. `deny_unknown_fields` on every table.
+**The forward-compatibility cost is real and accepted deliberately**, recorded beside the attribute.
+It also makes the manifest struct **exhaustive**: adding a key to the template without adding it
+here makes `renvor check` reject renvor's own output — which is exactly what happened, and what the
+round-trip gate caught **within the hour**.
+
+**`renvor doctor` finds orphaned staging and refuses to delete it (T066).** Residue was
+identifiable; nothing helped anyone find it. Reported, never removed — renvor cannot tell an
+abandoned directory from one belonging to a `renvor new` running in another terminal right now, so
+the remedy is printed with the process id visible. Controlled by a test proving an ordinary
+directory is **not** reported as an orphan.
 
 **FR-012 is checked against the case that only just became reachable.** A failure before placement
 must leave a **pre-existing empty** destination exactly as it was — still present, still empty — and
@@ -368,9 +382,9 @@ builds; cancel at each prompt and assert the destination is absent.
 
 - [ ] T064 [US4] Implement `renvor doctor` in `crates/renvor-cli/src/commands/doctor.rs` reporting **what it checked**, since a check that reports nothing verified is not a pass (FR-032)
 - [ ] T065 [US4] Report each missing or incompatible prerequisite with required version, found version, and corrective action in `crates/renvor-cli/src/commands/doctor.rs`
-- [ ] T066 [US4] Report orphaned staging directories found beside a destination in `crates/renvor-cli/src/commands/doctor.rs`, and **do not delete them** without being asked (contract C-5)
+- [x] T066 [US4] Report orphaned staging directories found beside a destination in `crates/renvor-cli/src/commands/doctor.rs`, and **do not delete them** without being asked (contract C-5)
 - [ ] T067 [US4] Implement `renvor check` in `crates/renvor-cli/src/commands/check.rs` validating `renvor.toml` without building and without modifying, naming the field and the constraint on failure (FR-019, FR-033)
-- [ ] T068 [US4] Reject unknown keys in `renvor.toml` in `crates/renvor-cli/src/commands/check.rs` — a typo must be a diagnosis, not a silently ignored setting
+- [x] T068 [US4] Reject unknown keys in `renvor.toml` in `crates/renvor-cli/src/commands/check.rs` — a typo must be a diagnosis, not a silently ignored setting
 - [ ] T069 [US4] Implement `renvor dev` in `crates/renvor-cli/src/commands/dev.rs`, surfacing failures rather than restarting silently (FR-034)
 - [ ] T070 [US4] Implement `renvor docker up|down|status|logs` in `crates/renvor-cli/src/commands/docker.rs`, distinguishing **runtime not installed** from **runtime installed but not running** via `details.reason` (FR-035)
 - [ ] T071 [US4] Ensure container commands never hang and never silently skip, in `crates/renvor-cli/src/commands/docker.rs`
