@@ -18,7 +18,8 @@ reconstruct the design from the code.
 > | A failed rename **restored** the deleted directory, ignoring its own error | Nothing is restored, because nothing is removed |
 > | An unreadable destination could fall through to "absent" and generation proceeded | Any error that is not an authoritative `NotFound` **fails closed**, carrying the original OS error |
 > | Refused with `destination_not_empty` | Refused with `destination_exists`, `details.found` naming what was there. `destination_not_empty` is **retired**; `schemaVersion` is now `2` |
-> | Staging that could not be **created** reported `placement_failed` | Reports `staging_failed` |
+> | Staging that could not be **created** reported `placement_failed` | Reports `staging_failed`; and if its cleanup also fails, the error names the **exact remaining path** and both underlying errors |
+> | A path from `--path` reached the terminal with its control bytes intact | Escaped completely — newline and tab included — at each interpolation site |
 >
 > §5, §6, §8, §9, and §11 are rewritten. Sections marked *(unchanged)* were not affected.
 
@@ -128,11 +129,11 @@ them unreliable too.
 | **S6** | Validation completes before **any** filesystem write | `model.rs::resolve` | `Destination::open` reads and opens; it creates nothing. |
 | **S7** | A failure before placement leaves the destination exactly as it was | `Drop` at `place.rs:305` | Runs on every path including panic. |
 | **S8** | Placement is one rename, never a copy | `place.rs:234` | Both sides are the same `Dir`, so it cannot cross a filesystem. |
-| **S9** | Losing a race is a clean failure, never an overwrite | `place.rs:258` | Classified from the **kernel's own `ErrorKind`**. |
+| **S9** | Losing a race is a clean failure, never an overwrite — **with one exception, stated in §6.1** | `place.rs:258` | Classified from the **kernel's own `ErrorKind`**. **The exception**: POSIX `rename(2)` silently replaces an existing *empty* directory, so a race lost to a process that creates an empty directory in the window between STEP 1's check and the rename **is** an overwrite. This invariant is therefore "clean failure in every case the program decides, and one case the system call decides for it". It read as unqualified until 2026-08-18 and contradicted invariant I-17 two sections below it. |
 | **S10** | Staging is never the system temporary directory | `place.rs:66` | It sits beside the destination so the final step can be a rename. |
 | **S11** | **The destination must not exist, in any form** | `paths.rs:304` (RULE 4) and `place.rs:174` (STEP 1) | Added 2026-08-18. Empty directory, non-empty directory, regular file, symbolic link, dangling symbolic link — all refused with `destination_exists`. `symlink_metadata` and **not** `metadata`, so a link is seen rather than followed and a dangling link does not read as absence. |
 | **S12** | **An unverifiable destination fails closed** | `paths.rs:304`, `place.rs:174` | Added 2026-08-18. Only an authoritative `NotFound` proceeds. The previous code asked a second question after the first failed and, when that failed too, fell through to success. The original OS error is carried into the message and `details.error`, not discarded. |
-| **S14** | **No control byte from a path reaches a human stream** | `output::redact::for_terminal`, on both human writes in `Reporter` | Added 2026-08-18 after advisory finding **G/S-1**, reproduced with `od -c`: RULE 1b guards only the component renvor *creates*, so a pre-existing directory higher up the `--path` put raw `ESC` bytes into the success message and two error messages, and the operator was shown a destination that renders rather than reads. Escaped, not stripped — stripping is the same lie told quietly. **Not** applied inside `redact::line`, which is also on the JSON path where `serde_json` already escapes; doing it there would corrupt the contract. `\n` and `\t` are deliberately exempt so cargo's multi-line stderr stays readable, which leaves a stated residual: a newline in a **non-final** component still passes. |
+| **S14** | **No control character from a path reaches a human stream — newline and tab included** | `output::redact::path` at each interpolation, `redact::detail` for detail values, `redact::for_terminal` as a backstop | Added 2026-08-18 after advisory finding **G/S-1**, reproduced with `od -c`: RULE 1b guards only the component renvor *creates*, so a pre-existing directory higher up the `--path` put raw `ESC` bytes into the success message and two error messages. Escaped, not stripped — stripping is the same lie told quietly. Escaping happens to the **path**, not to the assembled line, so the dry run's file list and cargo's embedded stderr stay multi-line while `\n` and `\t` inside a path are escaped. The JSON side keeps the raw bytes deliberately: `serde_json` escapes them and `details.destination` must remain a usable path. `no_production_site_interpolates_a_raw_path_into_a_message` names any site that forgets. |
 | **S13** | **No production path removes the destination** | `place.rs` — asserted by `no_production_path_removes_the_destination` | Added 2026-08-18. The test reads this module's own source and requires that the single removal in it names `&self.name`, this process's own staging directory. A blunt instrument, used knowingly: the code it replaced was written by someone who also believed it was safe. |
 
 ## 4. Traversal and symlinks — read this section carefully
@@ -226,8 +227,11 @@ answering the wrong question.
 
 ### 5.3 What a reviewer should check here
 
-The claim is *"renvor never deletes a path it did not create"*. Three things support it, and the
-third is the one worth attacking:
+The claim is *"renvor never **deliberately** deletes or replaces a path it did not create"*, and the
+qualifier is load-bearing: POSIX `rename(2)` will replace an empty directory another process creates
+in the window described in §6.1, which is the system call's behaviour rather than a decision this
+program makes. Within that limit, three things support the claim, and the third is the one worth
+attacking:
 
 1. `paths.rs` RULE 4 refuses before anything is staged.
 2. `place.rs` STEP 1 refuses again, at the last moment before the rename.
@@ -317,8 +321,15 @@ racy, and that is exactly how `placement_failed` kept leaking through. A loser r
 This half is **unchanged** by the 2026-08-18 ruling and remains correct.
 
 **One more failure path, and it fails closed.** If STEP 1's `symlink_metadata` returns an error that
-is not `NotFound`, `place` reports `placement_failed` rather than proceeding. An unknown filesystem
-state is not absence — the same rule as `paths.rs` RULE 4, applied at the last moment.
+is not `NotFound`, `place` reports **`destination_rejected` with `rule = "destination_unverifiable"`**
+— the same code and the same rule `paths.rs` RULE 4 uses for the same condition — rather than
+proceeding. An unknown filesystem state is not absence.
+
+It is **not** `placement_failed`, and that is deliberate: that code is published as *"the final move
+could not be performed atomically"*, and at STEP 1 no move has been attempted — the rename is two
+steps away. Reporting it there would be the identical category error finding A-R6 was about,
+reintroduced inside the commit that fixed A-R6. `both_fail_closed_arms_report_the_same_code_and_rule`
+fails if it returns.
 
 ## 9. Tests, and what they actually establish
 
@@ -347,7 +358,7 @@ state is not absence — the same rule as `paths.rs` RULE 4, applied at the last
 | `a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_project` | `tests/transaction.rs` | `SIGKILL`; residue is beside, named, and no project exists |
 | `staging_names_are_unique_within_one_process` | `place.rs` | 256 names, all distinct |
 
-**Result at the head of this branch**: all pass — **218 tests** in `renvor-cli`, **563** across the
+**Result at the head of this branch**: all pass — **223 tests** in `renvor-cli`, **568** across the
 workspace — on `ubuntu-latest`, `macos-latest`, and `windows-latest`, on both `1.94.0` and `stable`.
 
 ## 10. What a reviewer should try to break
@@ -370,10 +381,11 @@ Suggested, in descending order of value:
    rule has **no Windows-specific test**.
 6. **Challenge the I-17 trade-off** (§6.1). It is a stated residual risk, not a solved problem, and
    the empty-directory replacement it describes is a real data-loss window on Unix.
-7. **Attack the human output path.** `for_terminal` escapes control characters except `\n` and
-   `\t`. The exemption is deliberate and is a **stated residual** — a newline injected through a
-   non-final `--path` component still reaches the terminal and can forge a log line. If you think
-   that trade is wrong, or you find a control sequence the escaper misses, that is a finding.
+7. **Attack the human output path.** Path-derived values are escaped completely, at each
+   interpolation site; `for_terminal` is only a backstop and still exempts `\n`/`\t` for the
+   assembled line. So the question is whether an untrusted value can reach a human stream by some
+   route that is neither `redact::path` nor `redact::detail` — through a variable the source scan
+   cannot see, or a message built somewhere the scan does not read. That is a finding.
 8. **Challenge the `schemaVersion` decision.** Retiring `destination_not_empty` and adding four codes
    was ruled a breaking change and bumped `1 → 2`. If you think adding codes alone would not have
    required it, the reasoning is in `contracts/json-output.md` *Schema history*.
@@ -393,8 +405,9 @@ approves two files, not the phase.
 >   data-model §5 rule 8 therefore has no named rule;
 > - that `renvor new` **refuses every existing destination** — empty directory, non-empty directory,
 >   regular file, symbolic link, dangling symbolic link — and refuses one whose state cannot be
->   established, and that it therefore **never deletes, renames, `chmod`s, replaces, or restores a
->   path the operator already has**;
+>   established, and that it therefore **never deliberately deletes, renames, `chmod`s, replaces, or
+>   restores a path the operator already has** — subject to the one exception below, which is the
+>   system call's behaviour and not a decision the program makes;
 > - that the time-of-check-to-time-of-use window described in invariant I-17 is **narrowed and not
 >   closed**, and specifically that **POSIX `rename(2)` will silently replace an empty directory
 >   another process creates in the window between the last check and the rename**, which is not

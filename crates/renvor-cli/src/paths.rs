@@ -294,7 +294,7 @@ impl Destination {
                 format!(
                     "the destination's parent directory `{}` does not exist or cannot be opened: \
                      {error}",
-                    parent_input.display()
+                    crate::output::redact::path(&parent_input)
                 ),
             )
             .with("rule", "parent_opens")
@@ -347,7 +347,7 @@ impl Destination {
                         "`{}` already exists (it is a {found}); renvor generates into a path that \
                          does not exist yet, and will not delete, replace, or merge into one you \
                          already have. Choose a different destination, or remove that one yourself",
-                        parent_input.join(&name).display()
+                        crate::output::redact::path(&parent_input.join(&name))
                     ),
                 )
                 .with("rule", "destination_absent")
@@ -368,7 +368,7 @@ impl Destination {
                         "`{}` could not be inspected, so renvor cannot establish that it is \
                          absent: {error}. Generation is refused rather than risking writing over \
                          something that is there",
-                        parent_input.join(&name).display()
+                        crate::output::redact::path(&parent_input.join(&name))
                     ),
                 )
                 .with("rule", "destination_unverifiable")

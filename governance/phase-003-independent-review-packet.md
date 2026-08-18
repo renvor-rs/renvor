@@ -85,7 +85,7 @@ git checkout feat/phase-003-interactive-cli
 cargo xtask verify          # 11 checks: fmt, clippy, tests, rustdoc -D warnings,
                             # cargo-deny, architecture invariants, secret scan,
                             # docs build, link check, working-tree cleanliness
-cargo test --workspace      # 218 tests in renvor-cli, 563 across the workspace
+cargo test --workspace      # 223 tests in renvor-cli, 568 across the workspace
 ```
 
 Nothing requires network access. Nothing requires Docker. The generated projects declare no
@@ -101,9 +101,9 @@ Stated up front so you spend your time on what nobody has found yet.
 | 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | `tasks.md` "Ordering requirements that were missed" |
 | 3 | **Invariant I-17: the TOCTOU window is narrowed, not closed.** Specifically, POSIX `rename(2)` will silently replace an **empty** directory another process creates between the last check and the rename. Stated residual risk; not portably closable. | review pack §6.1 |
 | 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
-| 3c | **The "renvor never deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. | review pack §5.3 |
+| 3c | **The "renvor never *deliberately* deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. The qualifier matters: POSIX `rename(2)` replaces an empty directory created in the TOCTOU window, which is the system call's behaviour, not renvor's. | review pack §5.3, §6.1 |
 | 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | evidence §6.3 |
-| 3e | **Human output escapes control characters; `\n` and `\t` are exempt.** So a newline injected through a **non-final** `--path` component still reaches the terminal. Deliberate — cargo's multi-line stderr must stay readable — and a stated residual. | evidence §6.0.1; review pack S14 |
+| 3e | **Human output escapes path-derived control characters completely**, newline and tab included, at each interpolation site. The `Reporter`-level backstop still exempts `\n`/`\t`, correctly — by then the line is legitimately multi-line. The open question is whether an untrusted value can reach a stream by a route neither escaper covers. | evidence §6.0.1; review pack S14 |
 | 3f | **Windows has had no adversarial review at all.** All seven advisory reviews ran on macOS. CI exercises Windows; no reviewer has attacked it. | evidence §6.0.4 |
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
 | 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | evidence §3.1 |

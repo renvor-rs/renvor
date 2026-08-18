@@ -202,7 +202,7 @@ pub fn run(
             format!(
                 "`{}` has no `compose.yaml`; generate the project with `--container` to get \
                  container development controls",
-                path.display()
+                crate::output::redact::path(path)
             ),
         )
         .with("expected", "compose.yaml")

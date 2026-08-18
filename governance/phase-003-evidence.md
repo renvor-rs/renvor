@@ -351,20 +351,52 @@ reported. All are **NON-INDEPENDENT and ADVISORY** and none discharges §8.
 
 | # | Sev | Finding | Disposition |
 |---|---|---|---|
-| **G/S-1** | Medium | **Control characters and ANSI escapes reach the terminal unescaped in human mode**, via a `--path` component other than the final one. RULE 1b guards only the directory renvor *creates*; a pre-existing directory two levels up is opened by RULE 3 and its raw bytes are interpolated into the success message and two error messages. Reproduced with `od -c` | **FIXED.** `redact::for_terminal` neutralises control characters on the two human write sites in `Reporter`. **Not** inside `redact::line`, which is also on the JSON path where `serde_json` already escapes correctly — doing it there would put a literal `\u{1b}` in a document and escape *its* backslash, corrupting the contract to fix a problem that path does not have. Escaped rather than stripped, because stripping makes the displayed path silently differ from the real one, which is the same lie told quietly. Demonstrated failing: with the two call sites reverted, `no_raw_control_byte_from_a_path_ever_reaches_a_human_stream` fails with *"a raw ESC byte reached a human stream"* |
+| **G/S-1** | Medium | **Control characters and ANSI escapes reach the terminal unescaped in human mode**, via a `--path` component other than the final one. RULE 1b guards only the directory renvor *creates*; a pre-existing directory two levels up is opened by RULE 3 and its raw bytes are interpolated into the success message and two error messages. Reproduced with `od -c` | **FIXED**, in two stages, and the first stage was not enough. **Stage 1** neutralised control characters at the `Reporter`, exempting `\n` and `\t` so cargo's multi-line diagnostics stayed readable — which left a newline in an ancestor directory able to end the line the operator is reading and start one an attacker wrote. **Stage 2**, the one that stands: every path-derived value is escaped **completely**, newline and tab included, at the seventeen points where it is interpolated (`redact::path`), and `details` values likewise on the human side (`redact::detail`). Multi-line output is preserved because it is a *different* value — the message's own text, not the path — so nothing had to be traded. The JSON side deliberately keeps the raw bytes; `serde_json` escapes them, and `details.destination` stays a path a consumer can act on. Demonstrated failing: reverting to the stage-1 escaper fails both `no_raw_control_character_from_a_path_ever_reaches_a_human_stream` (newline case) and `a_control_character_from_a_path_is_shown_escaped_rather_than_removed`. A source scan, `no_production_site_interpolates_a_raw_path_into_a_message`, names any eighteenth site that forgets |
 | **F/R-1** | Medium | `constitution-amendment-3.0.0.md` cited a test named `the_amended_principle_seven_is_satisfied_by_this_phase`. **No such test exists.** The guarantee is real and is provided by `every_governed_choice_of_principle_seven_is_classified`; the citation was written before the test was and never updated | **FIXED.** Citation corrected, with the error recorded in place rather than silently replaced. A reader checking the claim by grepping would have concluded the enforcement was missing. Every identifier-shaped string in `governance/` and `specs/003-interactive-cli/` was then swept against the crate's actual definitions; this was the only test citation that did not resolve |
 
-**Newline and tab are deliberately not escaped**, and that is a stated residual rather than an
-oversight: `generate::verify` embeds cargo's stderr verbatim, so escaping `\n` would turn a compiler
-error into one unreadable line. A newline injected through a *non-final* path component therefore
-still reaches the terminal. In the final component — the one renvor creates — RULE 1b refuses it.
+**Newline and tab ARE escaped in path-derived values**, and the residual the first fix carried is
+gone. The multi-line output that motivated exempting them — the dry run's file list, and cargo's
+stderr embedded by `generate::verify` — is preserved because escaping happens to the *path*, not to
+the assembled message. `Reporter::for_terminal` remains as a backstop over the whole line and keeps
+the `\n`/`\t` exemption, which is correct for its job: by that point the line is legitimately
+multi-line, and a backstop that flattened it would be the thing that ruins ordinary output.
 
-### 6.0.2 Two findings that did NOT need action, and why
+### 6.0.2 Two observations recorded as NOTES, not counted as findings
 
-| Finding | Verdict |
-|---|---|
-| **E/S1** — *"`--path`'s final component bypasses the character-set rule"*, reproduced by that reviewer at an earlier commit with an embedded newline and a trailing dot-space | **STALE for the part that mattered, DELIBERATE for the rest** — and re-tested rather than assumed. `renvor new x --path 'out/inject⏎LINE'` now answers `destination_rejected`, `rule = name_control_character`, and creates nothing: RULE 1b (finding C-S1) had already closed the control-character and trailing-dot-space cases before this review ran. The remaining half — that `weird!@#name` is accepted as a *directory* name while being refused as a *project* name — is **intended**, is documented in RULE 1b's own comment, and has a control test proving `my.project`, `my project`, and `v1.2.3` still work. Refusing them would break ordinary use to prevent nothing |
-| **F/minor** — the new `let _ = parent.remove_dir_all(&name)` cleanup is best-effort; a double failure could still orphan a staging directory | **ACCEPTED, and stated.** Correct. It is a strictly narrower recurrence of the bug it fixes, on a path that requires the cleanup to fail *as well as* the `open_dir` that triggered it. Escalating it means deciding what a program does when it cannot clean up after itself, which is a design question rather than a sweep |
+Both were raised by reviewers and both were worth raising. Neither is counted in the 22, because one
+turned out to describe code that had already changed and the other is an observation about a fix
+rather than a defect in it. Counting them would inflate the total; omitting them would hide them.
+
+**Note 1 — E/S1 was stale, and was re-tested rather than assumed.** Reviewer E reported that
+`--path`'s final component bypasses the character-set rule, reproducing it with an embedded newline
+and a trailing dot-space. Re-run against the current binary:
+
+```text
+$ renvor new x --path 'out/inject⏎LINE' --yes --output json
+  code: destination_rejected     rule: name_control_character     created: nothing
+```
+
+RULE 1b — added for finding C-S1 — had already closed the control-character and trailing-dot-space
+cases before that review ran. The remaining half, that `weird!@#name` is accepted as a *directory*
+name while refused as a *project* name, is **intended**: RULE 1b is deliberately narrower than the
+package-name rule, its own comment says so, and a control test proves `my.project`, `my project`,
+and `v1.2.3` still generate. Refusing them would break ordinary use to prevent nothing.
+
+**Note 2 — F/minor, the best-effort staging cleanup, and it is now addressed.** Reviewer F observed
+that `let _ = parent.remove_dir_all(&name)` discards its own error, so a *double* failure — the
+`open_dir` that triggered the cleanup plus the cleanup itself — would orphan a staging directory
+while the message still read "Nothing was written". They called it non-blocking. It was still a
+false statement about the filesystem, and it is now fixed rather than accepted:
+
+- the two outcomes report differently, and the residue case names the **exact remaining path**
+  along with **both** underlying errors (`details.residue`, `details.openError`,
+  `details.cleanupError`);
+- the message no longer claims nothing was written when a directory may remain;
+- `inject::io_failure` takes a comma-separated list so both failures can be driven at once, and
+  `a_staging_cleanup_failure_reports_both_errors_and_the_exact_remaining_path` asserts the reported
+  path is the directory actually on disk. Its control,
+  `a_staging_open_failure_that_cleans_up_says_nothing_was_written`, asserts the *opposite* message
+  on the single-failure path, so a version that always claimed residue would fail.
 
 ### 6.0.5 Two of this repository's own guards caught the fix for S-1
 
@@ -487,13 +519,24 @@ the fix second.
 | **B-R3** | Low | The redaction "corpus" is two values through one injection point; no dry-run-specific case | **PARTIALLY FIXED.** A successful-run case through both output modes is added (this is what caught A-R4). Broadening to more `SECRET_KEYS` and an explicit dry-run case is not done. |
 | **C-S1** | Low-Med | The **path-derived** directory name reached no character check, so `--path $'…/inject\nLINE'` created a directory with an embedded newline and `…/trailing. ' created one Windows silently renames — while the same strings in the NAME position were correctly refused | **FIXED.** Control characters and a trailing dot or space are refused on the destination's final component, with distinct rules. Deliberately **narrower** than the package-name rule, with a control test proving `my.project`, `my project`, and `v1.2.3` still work. |
 
-**Totals across all seven advisory reviews: 22 findings — 20 FIXED, 1 PARTIALLY FIXED (B-R3),
-1 ACCEPTED and stated (the best-effort staging cleanup), 1 no action, 1 stale-and-re-tested.**
+**Totals across all seven advisory reviews: exactly 22 findings — 20 FIXED, 1 PARTIALLY FIXED,
+1 NO ACTION.**
 
-Broken out: the three pre-ruling reviews produced **20** (0 Critical, 4 High, 7 Medium, 9 Low); the
-four post-ruling reviews produced **2 new** (0 Critical, 0 High, 2 Medium), both fixed, plus one
-finding re-tested and found already closed. Every High was in the first group and every one is
-fixed. **No review at any point produced a Critical finding.**
+| Disposition | Count | Which |
+|---|---|---|
+| **FIXED** | **20** | A-R1 … A-R16 (16), B-R2, C-S1, G/S-1, F/R-1 |
+| **PARTIALLY FIXED** | **1** | B-R3 — the redaction corpus is broadened but still narrow |
+| **NO ACTION** | **1** | B-R1 — a confirmation that an existing control works, not a defect |
+| **Total** | **22** | |
+
+Broken out by review round: the three pre-ruling reviews produced **20** (0 Critical, 4 High, 7
+Medium, 9 Low); the four post-ruling reviews produced **2** (0 Critical, 0 High, 2 Medium), both
+fixed. Every High is in the first group and every one is fixed. **No review at any point produced a
+Critical finding.**
+
+The two observations in §6.0.2 are **notes, not findings**, and are excluded from the 22 on purpose:
+one described code that had already changed, and the other is an observation about a fix rather than
+a defect in it.
 
 Before those rulings the totals were 15 FIXED, 2 PARTIALLY FIXED, 2 ACCEPTED, 1 no action. The
 maintainer took all three carried findings — A-R6, A-R8, A-R9 — and directed fixes; §6.3 records the
@@ -756,7 +799,8 @@ is worth deciding with the trend in view rather than in isolation.
 
 **Phase 003 is not closed, and this is the reason.**
 
-The two reviews recorded in §6 are **NON-INDEPENDENT and ADVISORY**. They were performed by AI agents
+The **seven** reviews recorded in §6 — three before the 2026-08-18 rulings and four after them — are
+all **NON-INDEPENDENT and ADVISORY**. They were performed by AI agents
 in clean context. They are useful — they read code rather than comments and they were told to be
 adversarial — and they are **not** an independent human review. Specifically:
 
@@ -780,10 +824,10 @@ adversarial — and they are **not** an independent human review. Specifically:
 So **two** of the four remain, and both are the same thing: a qualified independent human who is not
 the author, not the maintainer, and not an agent.
 
-**And the gap is wider than it was**, not narrower: §6.0 records that the four advisory reviews
-commissioned against the post-ruling code did not report, so the corrected `paths.rs` and `place.rs`
-have had **no** adversarial reading by anything other than their author. The three advisory reviews
-on record describe the code as it stood before the rulings changed it.
+**The post-ruling code has been read adversarially — by agents, which is not the same thing.** §6.0
+records four advisory reviews against it, and they found two real defects, both now fixed. That
+raises the confidence and does not discharge the requirement: an agent spawned by the same process
+that wrote the code is not independent of it, and none of the seven touched Windows at all.
 
 **No Phase 003 phase-level waiver has been created, and this document does not assume one is
 available.** A self-contained packet for an independent reviewer is prepared and referenced in the
@@ -818,7 +862,7 @@ denominator move while the work was being reviewed against it.
 | 2 | A decision on whether the missed failing-first ordering blocks closure | **RULED** — it does not block closure; T008 and T015–T024 stay permanently MISSED |
 | 3 | The two carried advisory findings, A-R6 and A-R9 (and A-R8, carried as partial) | **RULED and FIXED** — see §6.3. Three new registry codes, `schemaVersion` 2, and the removal branch deleted |
 | 4 | **A qualified independent human requirements review** | **OPEN.** Advisory reviews do not satisfy it |
-| 5 | **A qualified independent human security review**, on `paths.rs` and `place.rs`, against the **final** head | **OPEN.** Advisory reviews do not satisfy it — and for the post-ruling code there are none: see §6.0 |
+| 5 | **A qualified independent human security review**, on `paths.rs` and `place.rs`, against the **final** head | **OPEN.** Advisory reviews do not satisfy it. Four ran against the post-ruling code (§6.0) and found two real defects; **none of the seven examined Windows**, which remains entirely unreviewed by anything but CI |
 
 **No Phase 003 phase-level waiver exists or has been drafted, and this document does not assume one
 is available** (FR-046). Items 4 and 5 are the whole of what remains.

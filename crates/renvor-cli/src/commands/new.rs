@@ -239,7 +239,7 @@ pub fn run(
             "dry run: {} files ({} bytes) would be created in {}\n{}",
             manifest.file_count(),
             manifest.total_bytes(),
-            destination.display_path().display(),
+            crate::output::redact::path(&destination.display_path()),
             manifest
                 .paths()
                 .iter()
@@ -268,7 +268,7 @@ pub fn run(
         "created {} files ({} bytes) in {}\n\nnext: cd {} && cargo run",
         manifest.file_count(),
         manifest.total_bytes(),
-        destination.display_path().display(),
+        crate::output::redact::path(&destination.display_path()),
         destination.name()
     );
     Ok(reporter.finish(

@@ -199,6 +199,14 @@ fn generate_into(base: &Path, inject: Option<&str>) -> (i32, String, String) {
     let environment: Vec<(&str, &str)> = inject
         .map(|step| vec![("RENVOR_FAIL_AT", step)])
         .unwrap_or_default();
+    generate_into_with(base, &environment)
+}
+
+/// The same run, with the environment given explicitly.
+///
+/// Needed because the staging double-failure injects **two** steps at once
+/// (`staging-open,staging-cleanup`), which `generate_into`'s `Option<&str>` cannot express.
+fn generate_into_with(base: &Path, environment: &[(&str, &str)]) -> (i32, String, String) {
     renvor(
         &[
             "new",
@@ -209,7 +217,7 @@ fn generate_into(base: &Path, inject: Option<&str>) -> (i32, String, String) {
             "json",
         ],
         base,
-        &environment,
+        environment,
     )
 }
 
@@ -591,5 +599,104 @@ fn a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_projec
     assert!(
         staging.starts_with(".renvor-staging-") && staging.contains(&child.id().to_string()),
         "residue must be identifiable as renvor's and name the process that left it: {staging}"
+    );
+}
+
+// ── The staging double failure (advisory finding F/minor) ───────────────────────────────────
+
+#[test]
+fn a_staging_open_failure_that_cleans_up_says_nothing_was_written() {
+    // The single failure: `open_dir` fails, the cleanup succeeds. The message may say nothing was
+    // written, because nothing was — and the control for the test below, which asserts the
+    // opposite message on the double failure. Without this pair, a version that always claimed
+    // residue would pass the double-failure test and be wrong on the ordinary one.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let (exit, stdout, _) = generate_into_with(base.path(), &[("RENVOR_FAIL_AT", "staging-open")]);
+
+    assert_eq!(
+        exit, 3,
+        "an unopenable staging directory is a clean refusal"
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    assert_eq!(document["error"]["code"], "staging_failed");
+    assert!(
+        document["error"]["details"]["residue"].is_null(),
+        "no residue may be reported when the cleanup succeeded"
+    );
+    assert!(
+        staging_residue(base.path()).is_empty(),
+        "the cleanup did not actually run"
+    );
+}
+
+#[test]
+fn a_staging_cleanup_failure_reports_both_errors_and_the_exact_remaining_path() {
+    // ── ADVISORY FINDING F/minor, 2026-08-18 ──────────────────────────────────────────
+    //
+    // The first fix for the orphaned-staging leak wrote `let _ = parent.remove_dir_all(&name)` and
+    // kept the message "Nothing was written". The reviewer pointed out that if the condition which
+    // broke `open_dir` also breaks the removal, the directory survives and that message is a false
+    // statement about the filesystem — a narrower recurrence of the bug it was fixing.
+    //
+    // Reaching that state needs TWO failures at once, which no real filesystem will oblige with on
+    // demand, so `inject::io_failure` takes a comma-separated list and this drives both. The
+    // assertions are about what an operator can act on: the residue is really there, the error
+    // NAMES it exactly, both underlying errors are reported, and the message does not claim
+    // nothing was written.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let (exit, stdout, _) = generate_into_with(
+        base.path(),
+        &[("RENVOR_FAIL_AT", "staging-open,staging-cleanup")],
+    );
+
+    assert_eq!(exit, 3);
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    let error = &document["error"];
+    assert_eq!(error["code"], "staging_failed");
+
+    // Both underlying causes, not just the one that happened to be returned.
+    assert!(
+        error["details"]["openError"].is_string(),
+        "the open failure must be reported: {error}"
+    );
+    assert!(
+        error["details"]["cleanupError"].is_string(),
+        "the cleanup failure must be reported too, or the operator cannot tell why residue \
+         remains: {error}"
+    );
+
+    // The message must NOT claim nothing was written.
+    let message = error["message"].as_str().expect("a message");
+    assert!(
+        !message.contains("Nothing was written;"),
+        "the message claims nothing was written while a staging directory remains: {message}"
+    );
+    assert!(
+        message.contains("still there"),
+        "the message must say the directory remains: {message}"
+    );
+
+    // And the EXACT path, matched against what is actually on disk.
+    let residue = staging_residue(base.path());
+    assert_eq!(
+        residue.len(),
+        1,
+        "the double failure must actually leave exactly one staging directory: {residue:?}"
+    );
+    let reported = error["details"]["residue"]
+        .as_str()
+        .expect("the residue path must be reported");
+    assert!(
+        reported.ends_with(&residue[0]),
+        "the reported residue `{reported}` is not the directory actually left, `{}`",
+        residue[0]
+    );
+    // Resolved against `base`, because the reported path is relative to the **operator's** working
+    // directory — which is where they are standing when they read it, and therefore the form they
+    // can paste. The test runs from somewhere else, so it has to rejoin.
+    assert!(
+        base.path().join(reported).is_dir(),
+        "the reported residue path does not resolve to a directory that is really there: \
+         {reported}"
     );
 }

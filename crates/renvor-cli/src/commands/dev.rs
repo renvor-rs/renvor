@@ -26,7 +26,7 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
             Code::ManifestInvalid,
             format!(
                 "`{}` is not a renvor project; there is no `renvor.toml` here",
-                path.display()
+                crate::output::redact::path(path)
             ),
         )
         .with("field", "renvor.toml")

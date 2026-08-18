@@ -162,81 +162,163 @@ fn crate_redaction_marker() -> &'static str {
 
 #[test]
 #[cfg(unix)]
-fn no_raw_control_byte_from_a_path_ever_reaches_a_human_stream() {
-    // ── ADVISORY SECURITY FINDING S-1, 2026-08-18, REPRODUCED AS A TEST ────────────────
+fn no_raw_control_character_from_a_path_ever_reaches_a_human_stream() {
+    // ── ADVISORY SECURITY FINDING G/S-1, 2026-08-18 ───────────────────────────────────
     //
     // `Destination::open` RULE 1b refuses a control character in the directory renvor is about to
     // **create**. It says nothing about the components *above* it — and a directory that already
     // exists two levels up is opened by RULE 3 and its name interpolated into the success message
-    // and into two error messages.
+    // and into the error messages. The reviewer measured raw `ESC` bytes reaching the terminal with
+    // `od -c`.
     //
-    // The reviewer measured it with `od -c` and found the raw `ESC` bytes going straight to the
-    // terminal, which renders the destination in colour instead of showing it. That is the operator
-    // being shown a path that is not the one on disk — the exact thing RULE 1b's own message says
-    // it refuses control characters to prevent.
+    // ── NEWLINE AND TAB ARE COVERED HERE, NOT JUST ESCAPE ─────────────────────────────
     //
-    // Windows-excluded because the fixture needs a directory name containing `ESC`, which is not a
-    // legal filename character there. The neutraliser itself is platform-independent and is unit
-    // tested on every platform in `output::redact::tests`.
-    let base = tempfile::tempdir().expect("a temporary directory");
-    let hostile = base.path().join("\u{1b}[31mRED\u{1b}[0m");
-    std::fs::create_dir(&hostile).expect("the hostile parent is created");
+    // The first fix exempted `\n` and `\t` so that cargo's multi-line diagnostics stayed readable,
+    // and that left a real hole: a newline in an ancestor directory ends the line the operator is
+    // reading and starts one an attacker wrote, which is as good a forgery as any escape sequence.
+    // Path-derived values are now escaped **completely** at the point they are interpolated, and
+    // the multi-line output that motivated the exemption is preserved because it is a different
+    // value — the message's own text, not the path.
+    //
+    // Windows-excluded because the fixture needs directory names containing `ESC`, a newline, and a
+    // tab, none of which is a legal filename character there. The escaper itself is
+    // platform-independent and unit tested on every platform in `output::redact::tests`.
+    const HOSTILE: [(&str, &str); 3] = [
+        ("\u{1b}[31mRED\u{1b}[0m", "an ANSI escape sequence"),
+        ("above\nFORGED-LINE", "a newline"),
+        ("col\tumn", "a tab"),
+    ];
 
-    // ── The success path ──────────────────────────────────────────────────────────────
+    for (index, (component, _description)) in HOSTILE.into_iter().enumerate() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let ancestor = base.path().join(component);
+        std::fs::create_dir(&ancestor).expect("the hostile ancestor is created");
+
+        // ── SUCCESS PATH ──────────────────────────────────────────────────────────────
+        let (exit, stdout, stderr) = renvor(
+            &[
+                "new",
+                "demo",
+                "--path",
+                ancestor.join("demo").to_str().expect("utf-8"),
+                "--yes",
+            ],
+            base.path(),
+        );
+        assert_eq!(
+            exit, 0,
+            "case {index}: the run into a hostile ancestor should still succeed"
+        );
+        assert!(
+            !stdout.chars().any(is_forbidden) && !stderr.chars().any(is_forbidden),
+            "case {index}: a raw control character from the path reached a human stream on the \
+             success path"
+        );
+
+        // ── ERROR PATH: the destination now exists, so the run is refused ──────────────
+        let (exit, stdout, stderr) = renvor(
+            &[
+                "new",
+                "demo",
+                "--path",
+                ancestor.join("demo").to_str().expect("utf-8"),
+                "--yes",
+            ],
+            base.path(),
+        );
+        assert_eq!(exit, 3, "case {index}: the second run must be refused");
+        assert!(
+            !stdout.chars().any(is_forbidden) && !stderr.chars().any(is_forbidden),
+            "case {index}: a raw control character from the path reached a human stream on the \
+             error path"
+        );
+
+        // ── ERROR PATH: a missing parent, which builds its message differently ─────────
+        let (_, stdout, stderr) = renvor(
+            &[
+                "new",
+                "demo",
+                "--path",
+                ancestor
+                    .join("absent")
+                    .join("demo")
+                    .to_str()
+                    .expect("utf-8"),
+                "--yes",
+            ],
+            base.path(),
+        );
+        assert!(
+            !stdout.chars().any(is_forbidden) && !stderr.chars().any(is_forbidden),
+            "case {index}: a raw control character reached a human stream on the missing-parent \
+             path"
+        );
+    }
+}
+
+/// A control character that must never reach a human stream from a path.
+///
+/// `\n` is excluded because renvor's **own** messages end lines with it — the dry run lists files,
+/// and the success message has a blank line before `next:`. What this asserts is that no control
+/// character arrives *from the path*, which the fixtures above make unambiguous: their newline is
+/// inside a directory name, so if it survived it would appear as an extra line break in the middle
+/// of a path. That is caught by the `\n`-escaped form being present, asserted separately below.
+fn is_forbidden(character: char) -> bool {
+    character.is_control() && character != '\n'
+}
+
+#[test]
+#[cfg(unix)]
+fn a_control_character_from_a_path_is_shown_escaped_rather_than_removed() {
+    // The other half of the requirement, and the reason stripping was rejected: an operator who
+    // cannot see the sequence cannot tell the path is not what it looks like. This also covers the
+    // newline case that `is_forbidden` above deliberately cannot — a newline inside a directory
+    // name must appear as the two characters `\n`, not as a line break.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let ancestor = base.path().join("above\nFORGED-LINE");
+    std::fs::create_dir(&ancestor).expect("the hostile ancestor is created");
+
     let (exit, stdout, stderr) = renvor(
         &[
             "new",
             "demo",
             "--path",
-            hostile.join("demo").to_str().expect("utf-8"),
+            ancestor.join("demo").to_str().expect("utf-8"),
             "--yes",
         ],
         base.path(),
     );
-    // Fixed messages throughout this test: `renvor-core`'s `diagnostics` suite refuses an
-    // interpolated rendering in an assertion message inside a credential-handling file, because on
-    // a regression the thing being printed is the leak itself.
-    assert_eq!(
-        exit, 0,
-        "the run into a hostile parent should still succeed"
+    assert_eq!(exit, 0);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("above\\nFORGED-LINE"),
+        "the newline must be SHOWN as an escape, or the operator sees a forged line break"
     );
     assert!(
-        !stdout.contains('\u{1b}') && !stderr.contains('\u{1b}'),
-        "a raw ESC byte reached a human stream on the success path"
+        !combined.contains(
+            "above
+FORGED-LINE"
+        ),
+        "a raw newline from the path survived into human output"
     );
-    assert!(
-        stdout.contains("\\u{1b}[31m") || stderr.contains("\\u{1b}[31m"),
-        "the sequence must be SHOWN rather than stripped, or the operator still cannot tell the \
-         path is not what it looks like"
-    );
+}
 
-    // ── An error path, which builds its message differently ───────────────────────────
-    let (_, _, stderr) = renvor(
+#[test]
+#[cfg(unix)]
+fn json_carries_the_real_bytes_and_is_not_double_escaped() {
+    // `serde_json` already escapes these bytes correctly, so the strict escaper must NOT run on the
+    // machine-readable side. If it did, `details.destination` would carry the literal text
+    // `\u{1b}` — six characters a consumer cannot turn back into a path — instead of the byte.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let ancestor = base.path().join("esc\u{1b}and\ttab");
+    std::fs::create_dir(&ancestor).expect("the hostile ancestor is created");
+
+    let (_, stdout, _) = renvor(
         &[
             "new",
             "demo",
             "--path",
-            hostile.join("absent").join("demo").to_str().expect("utf-8"),
-            "--yes",
-        ],
-        base.path(),
-    );
-    assert!(
-        !stderr.contains('\u{1b}'),
-        "a raw ESC byte reached stderr on the error path"
-    );
-
-    // ── JSON IS NOT DOUBLE-ESCAPED ────────────────────────────────────────────────────
-    //
-    // `serde_json` already escapes these bytes correctly, so the neutraliser must NOT run there.
-    // If it did, the document would carry a literal `\u{1b}` whose backslash serde then escapes
-    // again — corrupting the contract to fix a problem this path does not have.
-    let (_, stdout, _) = renvor(
-        &[
-            "new",
-            "second",
-            "--path",
-            hostile.join("second").to_str().expect("utf-8"),
+            ancestor.join("demo").to_str().expect("utf-8"),
             "--yes",
             "--output",
             "json",
@@ -244,13 +326,23 @@ fn no_raw_control_byte_from_a_path_ever_reaches_a_human_stream() {
         base.path(),
     );
     let document: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("the JSON document still parses");
+        serde_json::from_str(stdout.trim()).expect("the JSON document parses");
     let destination = document["result"]["destination"]
         .as_str()
         .expect("a destination string");
+
     assert!(
-        destination.contains('\u{1b}'),
+        destination.contains('\u{1b}') && destination.contains('\t'),
         "JSON must carry the real bytes, escaped by serde and decoded back by the consumer"
     );
-    assert!(!destination.contains("\\u{1b}"), "JSON was double-escaped");
+    assert!(
+        !destination.contains("\\u{1b}"),
+        "JSON was double-escaped: the consumer would receive literal text, not a usable path"
+    );
+    // POSITIVE CONTROL: the value must be a path that actually resolves, which is the whole point
+    // of keeping it raw.
+    assert!(
+        std::path::Path::new(destination).is_dir(),
+        "the JSON destination does not resolve to the directory that was created"
+    );
 }

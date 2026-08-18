@@ -95,7 +95,7 @@ impl<'a> Staging<'a> {
                     "a staging directory could not be created beside the destination in `{}`: \
                      {error}. Nothing was written; this usually means the destination's parent is \
                      not writable",
-                    destination.display_path().display()
+                    crate::output::redact::path(&destination.display_path())
                 ),
             )
             .with(
@@ -108,25 +108,75 @@ impl<'a> Staging<'a> {
 
         // ── THE DIRECTORY EXISTS NOW, AND `Drop` CANNOT CLEAN IT UP YET ────────────────
         //
-        // `Drop for Staging` is what removes the staging tree on every failure path — but it only
-        // runs once a `Staging` exists, and between the `create_dir` above and the `Ok(Self)` below
-        // there is no `Staging`. So a failing `open_dir` used to return through `?` and leave the
-        // directory it had just created **orphaned in the operator's parent**, with nothing to
-        // remove it and a message that read "Nothing was written", which was then false.
+        // `Drop for Staging` removes the staging tree on every failure path — but it only runs once
+        // a `Staging` exists, and between the `create_dir` above and the `Ok(Self)` below there is
+        // none. So a failing `open_dir` used to return through `?` and leave the directory it had
+        // just created **orphaned in the operator's parent**, with nothing to remove it.
         //
-        // Reachable only through a race or resource exhaustion — opening a directory this process
-        // created a microsecond earlier does not ordinarily fail — and worth closing anyway: the
-        // whole point of the 2026-08-18 ruling is that a refused run leaves the operator's
-        // directory exactly as it found it, and residue is a way of failing that promise.
+        // ── AND THE CLEANUP ITSELF CAN FAIL, WHICH IS THE POINT OF THIS BLOCK ──────────
         //
-        // Found by tracing the error paths of these two files by hand, not by a test.
-        let handle = match parent.open_dir(&name) {
+        // The first version of this fix wrote `let _ = parent.remove_dir_all(&name)` and kept the
+        // message "Nothing was written". An advisory review pointed out the obvious: if the same
+        // condition that broke `open_dir` also breaks the removal, the directory survives and the
+        // message is a **false statement about the filesystem** — the narrower recurrence of the
+        // very bug being fixed.
+        //
+        // So the two outcomes are reported differently, and the residue case names the **exact
+        // path** that is still there, because "something may be left somewhere" is not something an
+        // operator can act on.
+        let opened = match crate::inject::io_failure("staging-open") {
+            Some(injected) => Err(injected),
+            None => parent.open_dir(&name),
+        };
+        let handle = match opened {
             Ok(handle) => handle,
-            Err(error) => {
-                // Best effort, and it can only ever remove OUR OWN just-created directory:
-                // `create_dir` refuses an existing name, so its success proves nothing was there.
-                let _ = parent.remove_dir_all(&name);
-                return Err(failed(error));
+            Err(open_error) => {
+                // The removal can only ever name OUR OWN just-created directory: `create_dir`
+                // refuses an existing name, so its success two lines up proves nothing else had it.
+                let cleanup = match crate::inject::io_failure("staging-cleanup") {
+                    Some(injected) => Err(injected),
+                    None => parent.remove_dir_all(&name),
+                };
+                return Err(match cleanup {
+                    // Created, then unopenable, then successfully removed. "Nothing was written" is
+                    // true here — but `failed`'s wording says "could not be created", which is not,
+                    // so this case gets its own sentence rather than borrowing an inaccurate one.
+                    Ok(()) => CliError::new(
+                        Code::StagingFailed,
+                        format!(
+                            "a staging directory was created beside the destination and could not \
+                             then be opened: {open_error}. It has been removed and nothing was \
+                             written to `{}`",
+                            crate::output::redact::path(&destination.display_path())
+                        ),
+                    )
+                    .with(
+                        "destination",
+                        destination.display_path().display().to_string(),
+                    )
+                    .with("openError", open_error.to_string()),
+                    Err(cleanup_error) => {
+                        let residue = destination.parent_display().join(&name);
+                        CliError::new(
+                            Code::StagingFailed,
+                            format!(
+                                "a staging directory was created beside the destination and then \
+                                 could not be opened: {open_error}. Removing it ALSO failed: \
+                                 {cleanup_error}. **It is still there**, at `{}`, and renvor could \
+                                 not clean it up — remove it by hand. Nothing was written to the \
+                                 destination itself",
+                                crate::output::redact::path(&residue)
+                            ),
+                        )
+                        .with(
+                            "destination",
+                            destination.display_path().display().to_string(),
+                        )
+                        .with("residue", residue.display().to_string())
+                        .with("openError", open_error.to_string())
+                        .with("cleanupError", cleanup_error.to_string())
+                    }
+                });
             }
         };
         Ok(Self {
@@ -232,7 +282,7 @@ impl<'a> Staging<'a> {
                         "`{}` appeared while the project was being generated. Nothing was written \
                          there and the staged tree has been removed; renvor will not delete or \
                          replace a destination you already have",
-                        destination.display_path().display()
+                        crate::output::redact::path(&destination.display_path())
                     ),
                 )
                 .with("rule", "destination_absent")
@@ -254,7 +304,7 @@ impl<'a> Staging<'a> {
                         "`{}` could not be inspected before placement, so renvor cannot establish \
                          that it is absent: {error}. Nothing was written there and the staged tree \
                          has been removed",
-                        destination.display_path().display()
+                        crate::output::redact::path(&destination.display_path())
                     ),
                 )
                 .with("rule", "destination_unverifiable")
@@ -318,7 +368,7 @@ impl<'a> Staging<'a> {
                     format!(
                         "`{}` appeared while the project was being generated — another run reached \
                          it first. Nothing was written there and the staged tree has been removed",
-                        destination.display_path().display()
+                        crate::output::redact::path(&destination.display_path())
                     ),
                 )
                 .with("rule", "destination_absent")
@@ -329,7 +379,7 @@ impl<'a> Staging<'a> {
                     format!(
                         "the generated project could not be moved into place atomically: {error}. \
                          Nothing was written to `{}`",
-                        destination.display_path().display()
+                        crate::output::redact::path(&destination.display_path())
                     ),
                 )
             });

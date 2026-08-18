@@ -36,8 +36,12 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
             .with("constraint", "must exist, be readable, and be under 64 KiB")
     };
 
-    let file = std::fs::File::open(path)
-        .map_err(|error| unreadable(format!("`{}` could not be read: {error}", path.display())))?;
+    let file = std::fs::File::open(path).map_err(|error| {
+        unreadable(format!(
+            "`{}` could not be read: {error}",
+            crate::output::redact::path(path)
+        ))
+    })?;
 
     if let Ok(metadata) = file.metadata()
         && metadata.len() > MAX_MANIFEST_BYTES
@@ -46,7 +50,7 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
             Code::BoundExceeded,
             format!(
                 "`{}` is {} bytes, above the {MAX_MANIFEST_BYTES}-byte limit for a renvor manifest",
-                path.display(),
+                crate::output::redact::path(path),
                 metadata.len()
             ),
         )
@@ -59,14 +63,19 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
     // rather than silently truncated into something that might parse.
     file.take(MAX_MANIFEST_BYTES + 1)
         .read_to_string(&mut text)
-        .map_err(|error| unreadable(format!("`{}` could not be read: {error}", path.display())))?;
+        .map_err(|error| {
+            unreadable(format!(
+                "`{}` could not be read: {error}",
+                crate::output::redact::path(path)
+            ))
+        })?;
 
     if text.len() as u64 > MAX_MANIFEST_BYTES {
         return Err(CliError::new(
             Code::BoundExceeded,
             format!(
                 "`{}` grew past the {MAX_MANIFEST_BYTES}-byte limit while it was being read",
-                path.display()
+                crate::output::redact::path(path)
             ),
         )
         .with("bound", "manifest_bytes")
@@ -143,7 +152,7 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
             Code::ManifestInvalid,
             format!(
                 "`{}` is not a valid renvor manifest: {error}",
-                manifest_path.display()
+                crate::output::redact::path(&manifest_path)
             ),
         )
         .with("field", "renvor.toml")

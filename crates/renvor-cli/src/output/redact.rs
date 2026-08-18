@@ -46,7 +46,19 @@ const SECRET_KEYS: [&str; 8] = [
     "authorization",
 ];
 
-/// Neutralises terminal control sequences in text bound for a **human** stream.
+/// The **backstop**: neutralises terminal control sequences in an assembled human line.
+///
+/// # This is the second line of defence, not the first
+///
+/// Untrusted values are escaped at the point they are interpolated — [`path`] for a path, [`detail`]
+/// for a `details` value — because that is where the program knows which half of a message came
+/// from outside it. This runs afterwards over the whole assembled line and catches anything a site
+/// forgot. `config::flags`'s source scan is what stops a site forgetting in the first place.
+///
+/// It is deliberately **more permissive** than [`path`]: `\n` and `\t` survive, because by this
+/// point the line may legitimately be multi-line — a dry run lists the files it would create, and
+/// `generate::verify` embeds cargo's own diagnostics. Flattening those would make the backstop the
+/// thing that ruins ordinary output, which is how a safety measure gets switched off.
 ///
 /// # The finding this exists for, reproduced before it was fixed
 ///
@@ -90,6 +102,45 @@ const SECRET_KEYS: [&str; 8] = [
 /// injected through a **non-final** path component therefore still reaches the terminal and can
 /// still forge a log line. In the **final** component, which is the one renvor creates, RULE 1b
 /// refuses it outright. The residual is stated rather than designed around.
+#[must_use]
+pub fn path(path: &std::path::Path) -> String {
+    escape_every_control_character(&path.display().to_string())
+}
+
+/// Escapes a `details` value for a **human** stream.
+///
+/// Strict, like [`path`], and for the same reason: a detail value is a path, a rule name, an OS
+/// error, or a flag — never legitimately multi-line. The JSON path does **not** use this; there the
+/// value stays raw and `serde_json` escapes it, which is what keeps `details.destination` the exact
+/// bytes a consumer needs.
+#[must_use]
+pub fn detail(value: &str) -> String {
+    escape_every_control_character(value)
+}
+
+/// Escapes **every** control character, newline and tab included.
+///
+/// Used for values that come from outside the program — a path the operator typed, or a name a
+/// directory on disk happens to have. None of them is ever legitimately multi-line, so there is
+/// nothing to trade away, and a newline is as good a forgery tool as an escape sequence: it ends
+/// the line the operator is reading and starts one the attacker wrote.
+fn escape_every_control_character(input: &str) -> String {
+    if !input.chars().any(char::is_control) {
+        return input.to_owned();
+    }
+    input
+        .chars()
+        .flat_map(|character| {
+            let escaped: Box<dyn Iterator<Item = char>> = if character.is_control() {
+                Box::new(character.escape_debug())
+            } else {
+                Box::new(std::iter::once(character))
+            };
+            escaped
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn for_terminal(input: &str) -> String {
     // Fast path: the overwhelming majority of lines have nothing to escape, and allocating a new
@@ -350,5 +401,84 @@ mod tests {
         // Printing `out` here would print the secret on exactly the failure that matters.
         assert!(out.contains(REDACTED), "the secret was not redacted");
         assert!(!out.contains('\u{1b}'), "the escape sequence survived");
+    }
+
+    #[test]
+    fn no_production_site_interpolates_a_raw_path_into_a_message() {
+        // ── THE GUARD THAT STOPS G/S-1 COMING BACK ────────────────────────────────────
+        //
+        // The fix for G/S-1 was applied at seventeen interpolation sites. A guard that only checked
+        // those seventeen would be a list of the places somebody already thought of; what matters is
+        // the eighteenth, added later by someone who has not read this file.
+        //
+        // So this scans the crate's own production source for `.display()` and requires every use to
+        // be one of two things:
+        //
+        //   - `redact::path(...)`, which escapes it — the message case;
+        //   - `.with(...)` / a JSON value, where the path stays RAW on purpose, because
+        //     `details.destination` must be the bytes a consumer can act on and `serde_json`
+        //     escapes them itself.
+        //
+        // A source scan is a blunt instrument and is used knowingly. It cannot see a path that
+        // reaches a message through a variable, so it is a backstop for the common shape rather
+        // than a proof. `Reporter`'s `for_terminal` is the other backstop, and the end-to-end tests
+        // in `tests/redaction.rs` are what actually establish the property.
+        const SOURCES: [(&str, &str); 8] = [
+            ("paths.rs", include_str!("../paths.rs")),
+            ("generate/place.rs", include_str!("../generate/place.rs")),
+            ("generate/render.rs", include_str!("../generate/render.rs")),
+            ("commands/new.rs", include_str!("../commands/new.rs")),
+            ("commands/check.rs", include_str!("../commands/check.rs")),
+            ("commands/dev.rs", include_str!("../commands/dev.rs")),
+            ("commands/docker.rs", include_str!("../commands/docker.rs")),
+            ("config/model.rs", include_str!("../config/model.rs")),
+        ];
+
+        let mut inspected = 0usize;
+        let mut offending = Vec::new();
+
+        for (name, source) in SOURCES {
+            // Production code only. Everything from `#[cfg(test)]` onward is a test module, where a
+            // raw path in a panic message is fine — nobody is attacking their own fixture.
+            let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+            for (number, text) in production.lines().enumerate() {
+                let code = text.split("//").next().unwrap_or("");
+                // BOTH forms count as an inspected site. Counting only `.display()` would make the
+                // control weaken itself as the fix spread: every site converted to `redact::path`
+                // stops containing `.display()`, so the tally fell as coverage rose. Caught by the
+                // control firing the first time this test ran.
+                let is_site = code.contains(".display()") || code.contains("redact::path(");
+                if !is_site {
+                    continue;
+                }
+                inspected += 1;
+                // Raw is correct in a `details` value or a JSON field: see the note above.
+                if code.contains("redact::path") {
+                    continue;
+                }
+                let raw_is_intended = code.contains(".with(")
+                    || code.contains("\"destination\":")
+                    || code.contains(".to_string()");
+                if raw_is_intended {
+                    continue;
+                }
+                offending.push(format!("{name}:{}: {}", number + 1, text.trim()));
+            }
+        }
+
+        // POSITIVE CONTROL, FIRST. A scan that matched nothing would pass the assertion below while
+        // verifying nothing — the exact defect an advisory review found elsewhere in this phase.
+        assert!(
+            inspected >= 15,
+            "the scan only inspected {inspected} `.display()` sites across {} files, which is far \
+             fewer than this crate has — it is no longer looking at what it claims to",
+            SOURCES.len()
+        );
+        assert!(
+            offending.is_empty(),
+            "a path is interpolated into a message without `redact::path`, which is how a control \
+             character from a directory name reaches the operator's terminal (finding G/S-1). \
+             Offending sites: {offending:#?}"
+        );
     }
 }

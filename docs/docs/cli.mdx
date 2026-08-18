@@ -155,10 +155,17 @@ validate → stage → render → verify → manifest → review → place → r
   project that does not build is a *generation* failure reported as `project_verification_failed`,
   not something you discover later.
 - **Placement is a single rename.** It never falls back to a copy.
-- **The destination must not exist, and `renvor` never deletes one.** An empty directory, a
-  non-empty directory, a file, and a symbolic link are all refused with `destination_exists`, before
-  anything is staged. If renvor cannot even tell what is there, it refuses rather than guessing.
-  Nothing you already have is deleted, renamed, `chmod`-ed, replaced, or restored.
+- **The destination must not exist, and `renvor` never deliberately deletes one.** An empty
+  directory, a non-empty directory, a file, and a symbolic link are all refused with
+  `destination_exists`, before anything is staged. If renvor cannot even tell what is there, it
+  refuses rather than guessing. Nothing you already have is deleted, renamed, `chmod`-ed, replaced,
+  or restored by any decision renvor makes.
+
+  *One exception, and it is the operating system's rather than renvor's.* On Unix, `rename(2)`
+  silently replaces an **empty** directory. If another process creates one at your destination in
+  the moment between renvor's last check and the move, that directory is replaced. There is no
+  portable way to prevent it: the Linux-only call that would is not available elsewhere, and the
+  obvious workaround fails on Windows.
 
   *Changed on 2026-08-18.* Until then an existing **empty** directory was accepted and then
   removed and recreated, so a deliberate `chmod 700` came back as `755` and the inode changed. If

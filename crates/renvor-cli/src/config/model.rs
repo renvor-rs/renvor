@@ -242,9 +242,12 @@ impl ProjectConfiguration {
     }
 
     /// The destination as it will be reported, **for display only**. Not a capability.
+    ///
+    /// Control characters are escaped, because "for display only" is exactly the position in which
+    /// a path the operator typed gets printed to a terminal.
     #[must_use]
     pub fn destination_display(&self) -> String {
-        self.destination.display().to_string()
+        crate::output::redact::path(&self.destination)
     }
 
     /// The local development domain.
@@ -304,9 +307,26 @@ impl ProjectConfiguration {
         let mut parts = vec![
             "renvor new".to_owned(),
             shell_quote(&self.name),
+            // ── ESCAPED, EVEN THOUGH THIS COMMAND IS MEANT TO BE RUNNABLE ──────────────
+            //
+            // `shell_quote` makes the path safe for a *shell*. It does nothing about a terminal:
+            // single quotes do not stop an `ESC` byte inside them from being interpreted when the
+            // line is printed, and this line is printed to the operator's review screen.
+            //
+            // So there is a real trade here and it is taken deliberately. If the destination
+            // contains a control character, the printed command is **no longer runnable verbatim** —
+            // it carries `\u{1b}` as literal text — and the operator has to retype that part. The
+            // alternative is a command that runs and, on the way past, reprograms their terminal.
+            // A command that is visibly wrong beats one that is invisibly wrong.
+            //
+            // This costs nothing in the ordinary case: an escape of a path with no control
+            // characters is the identical string, and `tests/parity.rs` proves it by **executing**
+            // this command and comparing the generated tree byte for byte. RULE 1b already refuses
+            // a control character in the final component, so only an ancestor directory can put one
+            // here at all.
             format!(
                 "--path {}",
-                shell_quote(&self.destination.display().to_string())
+                shell_quote(&crate::output::redact::path(&self.destination))
             ),
             format!(
                 "--target {}",

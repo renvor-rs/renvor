@@ -161,7 +161,14 @@ impl Reporter {
             Format::Human => {
                 self.note(&format!("error: {error}"));
                 for (key, value) in &error.details {
-                    self.note(&format!("  {key}: {value}"));
+                    // ── DETAIL VALUES ARE ESCAPED STRICTLY, AND ONLY HERE ─────────────────
+                    //
+                    // `details.destination` is a path the operator typed and `details.error` is an
+                    // OS message about it — both untrusted, and neither ever legitimately
+                    // multi-line. The JSON path deliberately does **not** do this: there the value
+                    // stays raw and `serde_json` escapes it, which is what keeps
+                    // `details.destination` the exact bytes a consumer needs in order to act on it.
+                    self.note(&format!("  {key}: {}", redact::detail(value)));
                 }
                 error.exit()
             }

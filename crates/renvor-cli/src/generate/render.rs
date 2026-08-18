@@ -369,7 +369,7 @@ impl<'a> Renderer<'a> {
                         Code::RenderFailed,
                         format!(
                             "could not create `{}` in staging: {error}",
-                            parent.display()
+                            crate::output::redact::path(parent)
                         ),
                     )
                     .with("entry", entry.path.to_owned())

@@ -42,3 +42,44 @@ pub fn fail_at(step: &str) -> Result<(), CliError> {
     let _ = step;
     Ok(())
 }
+
+/// An injected `io::Error` for a step that fails at the **filesystem** level rather than at the
+/// contract level.
+///
+/// # Why this is separate from [`fail_at`]
+///
+/// [`fail_at`] returns a [`CliError`], which is the right shape for "this step of contract C-5
+/// failed". `Staging::create`'s double-failure path is not that: it needs `open_dir` to fail the
+/// way the operating system fails it, and then the **cleanup** to fail as well, so that the two
+/// errors can be reported together. Only an `io::Error` can stand in for either.
+///
+/// Reachable steps: `staging-open` and `staging-cleanup`. Both are `cfg(debug_assertions)`, so a
+/// release binary never reads the variable.
+///
+/// # Why this one accepts a COMMA-SEPARATED list and [`fail_at`] does not
+///
+/// The case worth testing is the **double** failure — `open_dir` fails *and* the cleanup that
+/// follows it fails too — because that is the one where a staging directory survives and the
+/// message has to say so. One environment variable holding one step name cannot express it, so
+/// this splits on `,` and matches any element: `RENVOR_FAIL_AT=staging-open,staging-cleanup`.
+///
+/// [`fail_at`] keeps exact-match semantics deliberately. Its own control test asserts that an
+/// unrecognised step is inert, and loosening it to substring or list matching would weaken that.
+#[must_use]
+pub fn io_failure(step: &str) -> Option<std::io::Error> {
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var("RENVOR_FAIL_AT").is_ok_and(|requested| {
+            requested
+                .split(',')
+                .any(|requested| requested.trim() == step)
+        }) {
+            return Some(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("deliberate `{step}` failure injected by RENVOR_FAIL_AT"),
+            ));
+        }
+    }
+    let _ = step;
+    None
+}
