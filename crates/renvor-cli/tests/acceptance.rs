@@ -850,6 +850,61 @@ fn a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_projec
 }
 
 #[test]
+fn doctor_reports_orphaned_staging_and_does_not_remove_it() {
+    // T066, and the other half of the residue story: residue is identifiable, and now something
+    // helps an operator find it.
+    //
+    // **`doctor` must not delete it.** renvor cannot distinguish an abandoned staging directory
+    // from one belonging to a `renvor new` running in another terminal right now — so the remedy
+    // is printed, never executed. A diagnostic that deletes is one nobody can run safely.
+    let base = tempfile::tempdir().expect("tempdir");
+    let orphan = ".renvor-staging-99999-123456789-0";
+    std::fs::create_dir(base.path().join(orphan)).expect("mkdir");
+    std::fs::write(base.path().join(orphan).join("half-rendered"), b"x").expect("write");
+
+    let (code, stdout, _) = renvor(&["doctor", "--output", "json"], base.path(), &[]);
+    assert_eq!(code, 0, "orphaned staging is a report, not a failure");
+
+    let document: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("one JSON document");
+    let reported = document["result"]["orphanedStaging"]
+        .as_array()
+        .expect("orphanedStaging must be an array even when empty");
+    assert_eq!(
+        reported.len(),
+        1,
+        "the orphan was not reported: {reported:?}"
+    );
+    assert_eq!(reported[0], orphan);
+
+    // AND IT IS STILL THERE, with its contents.
+    assert!(
+        base.path().join(orphan).join("half-rendered").exists(),
+        "doctor deleted an orphaned staging directory that might belong to a running command"
+    );
+}
+
+#[test]
+fn doctor_reports_an_empty_list_when_there_is_no_orphaned_staging() {
+    // POSITIVE CONTROL. A `doctor` that reported every directory as an orphan, or that always
+    // reported one, would satisfy the test above.
+    let base = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(base.path().join("an-ordinary-directory")).expect("mkdir");
+
+    let (code, stdout, _) = renvor(&["doctor", "--output", "json"], base.path(), &[]);
+    assert_eq!(code, 0);
+    let document: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("one JSON document");
+    assert_eq!(
+        document["result"]["orphanedStaging"]
+            .as_array()
+            .map(Vec::len),
+        Some(0),
+        "an ordinary directory was reported as renvor's orphan"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

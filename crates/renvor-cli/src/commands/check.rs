@@ -77,7 +77,21 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
 }
 
 /// The `[renvor]` table.
+///
+/// # `deny_unknown_fields`, and the trade it makes
+///
+/// A typo must be a **diagnosis, not a silently ignored setting** (T068). serde's default is to
+/// ignore unknown keys, so `local_domian = "app.test"` would be accepted and the operator would be
+/// left wondering why their setting did nothing — which is the worst kind of failure, because
+/// there is no failure.
+///
+/// **The cost is forward compatibility, and it is real rather than theoretical.** A future renvor
+/// that adds a field writes manifests this version rejects. That is accepted deliberately: a
+/// generated manifest carries `renvor.template_version`, so a phase that adds a field has an
+/// obvious place to signal it, and the alternative — silently ignoring everything unrecognised —
+/// makes every typo permanent and invisible.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct RenvorTable {
     generator_version: String,
     template_version: String,
@@ -85,6 +99,7 @@ struct RenvorTable {
 
 /// The `[project]` table — only the fields `check` validates.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct ProjectTable {
     name: String,
     target: String,
@@ -93,6 +108,7 @@ struct ProjectTable {
 
 /// A generated `renvor.toml`.
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct Manifest {
     renvor: RenvorTable,
     project: ProjectTable,
@@ -222,6 +238,41 @@ local_domain = "commerce.test"
                     .iter()
                     .any(|(k, v)| k == "constraint" && !v.is_empty()),
                 "{field} reported no constraint"
+            );
+        }
+    }
+
+    #[test]
+    fn a_typo_in_a_key_is_a_diagnosis_rather_than_a_silently_ignored_setting() {
+        // T068. serde's default ignores unknown keys, so `local_domian` would be accepted and the
+        // operator would be left wondering why their setting did nothing — a failure with no
+        // failure, which is the hardest kind to debug.
+        let typo = VALID.replace("local_domain", "local_domian");
+        let dir = write(&typo);
+        let error = run(&reporter(), dir.path()).unwrap_err();
+        assert_eq!(error.code, Code::ManifestInvalid);
+        assert!(
+            error.message.contains("local_domian"),
+            "the diagnosis must name the offending key: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn an_extra_unrecognised_key_is_refused_in_every_table() {
+        // Both tables, because `deny_unknown_fields` is per-struct and forgetting one leaves half
+        // the manifest silently permissive.
+        for injected in [
+            ("[renvor]", "[renvor]\nnonsense = 1"),
+            ("[project]", "[project]\nnonsense = 1"),
+        ] {
+            let dir = write(&VALID.replace(injected.0, injected.1));
+            let error = run(&reporter(), dir.path()).unwrap_err();
+            assert_eq!(
+                error.code,
+                Code::ManifestInvalid,
+                "an unknown key in {} was accepted",
+                injected.0
             );
         }
     }

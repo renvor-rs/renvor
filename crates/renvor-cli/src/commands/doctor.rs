@@ -75,6 +75,35 @@ fn probe(tool: &str, required: bool, remedy: &str) -> Probe {
     }
 }
 
+/// Orphaned staging directories found in the current directory.
+///
+/// # Why `doctor` reports these and does not remove them
+///
+/// `Staging`'s `Drop` cleans up on every ordinary failure including a panic, but a `SIGKILL` runs
+/// no destructor — so residue survives, by design, named `.renvor-staging-{pid}-…` and placed
+/// **beside** the destination rather than inside it. `tests/acceptance.rs` proves that.
+///
+/// The half that was missing is that nothing helped an operator find it. This does.
+///
+/// **It does not delete them** (T066, contract C-5). A diagnostic that deletes is a diagnostic
+/// nobody can run safely on a directory they care about — and renvor cannot tell an abandoned
+/// staging directory from one belonging to a `renvor new` running in another terminal **right
+/// now**. The remedy is printed for the operator to run, with the process id visible so they can
+/// check before removing anything.
+fn orphaned_staging() -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(".") else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".renvor-staging-"))
+        .collect();
+    // Sorted so the report is stable between runs and diffable.
+    found.sort();
+    found
+}
+
 /// Runs the command.
 ///
 /// # Errors
@@ -102,7 +131,9 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
         .with("remedy", missing.remedy.clone().unwrap_or_default()));
     }
 
-    let human = probes
+    let orphans = orphaned_staging();
+
+    let mut human = probes
         .iter()
         .map(|probe| match (&probe.version, probe.required) {
             (Some(version), _) => format!("ok       {:<8} {version}", probe.tool),
@@ -112,7 +143,30 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
         .collect::<Vec<_>>()
         .join("\n");
 
-    Ok(reporter.finish("doctor", &human, serde_json::json!({ "probes": probes })))
+    if !orphans.is_empty() {
+        human.push_str(&format!(
+            "\n\n{} orphaned staging {} in this directory, left by a run that was killed:",
+            orphans.len(),
+            if orphans.len() == 1 {
+                "directory"
+            } else {
+                "directories"
+            }
+        ));
+        for orphan in &orphans {
+            human.push_str(&format!("\n  {orphan}"));
+        }
+        human.push_str(
+            "\nrenvor has NOT removed them: one may belong to a `renvor new` running right now. \
+             Check the process id in the name, then remove them yourself.",
+        );
+    }
+
+    Ok(reporter.finish(
+        "doctor",
+        &human,
+        serde_json::json!({ "probes": probes, "orphanedStaging": orphans }),
+    ))
 }
 
 #[cfg(test)]
