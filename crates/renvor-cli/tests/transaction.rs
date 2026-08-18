@@ -270,7 +270,10 @@ fn a_pre_existing_empty_destination_is_refused_before_any_step_can_be_injected()
         );
         let document: serde_json::Value = serde_json::from_str(&stdout)
             .unwrap_or_else(|error| panic!("no JSON document at `{step}`: {error}\n{stdout}"));
-        assert_eq!(document["error"]["code"], "destination_exists", "at `{step}`");
+        assert_eq!(
+            document["error"]["code"], "destination_exists",
+            "at `{step}`"
+        );
         assert!(
             document["error"]["details"]["injected"].is_null(),
             "the run reached the injected step `{step}`, so the refusal is NOT happening before \
