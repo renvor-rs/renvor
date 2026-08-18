@@ -64,7 +64,7 @@ drift apart silently.
 | `unsupported_combination` | 3 | Individually valid choices that conflict |
 | `reserved_for_later_phase` | 3 | A later-phase flag. `details.phase` names it |
 | `invalid_project_name` | 3 | Empty, not a valid package name, or a reserved device name |
-| `destination_exists` | 3 | FR-013. The destination already exists, in **any** form. `details.found` is one of `directory`, `file`, `symlink`, `other`; `details.rule` is `destination_absent` |
+| `destination_exists` | 3 | FR-013. The destination already exists, in **any** form. `details.rule` is always `destination_absent`; `details.found` is one of `directory`, `file`, `symlink`, `other`, or `unknown` — the last only when the destination was lost to a concurrent run and could no longer be classified. Both details are emitted identically whether the refusal came from validation or from the moment before the rename |
 | `destination_rejected` | 3 | Failed a path-boundary rule. `details.rule` names which — including `destination_unverifiable`, when the destination's state could not be established at all |
 | `destination_parent_missing` | 3 | The parent does not exist or does not resolve |
 | `manifest_invalid` | 3 | `renvor.toml` failed validation. `details.field` and `details.constraint` |

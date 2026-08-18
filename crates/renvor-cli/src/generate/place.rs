@@ -194,7 +194,11 @@ impl<'a> Staging<'a> {
         match self.parent.symlink_metadata(target) {
             // The ONLY arm that proceeds.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) => {
+            Ok(metadata) => {
+                // The SAME `details` as `Destination::open`'s refusal, from the shared classifier.
+                // Contract C-2 publishes `rule` and `found` for `destination_exists`, and a code
+                // that carries them at one emit site and not the other makes a consumer's handling
+                // depend on which moment the check happened to fire in.
                 return Err(named(
                     Code::DestinationExists,
                     format!(
@@ -203,7 +207,9 @@ impl<'a> Staging<'a> {
                          replace a destination you already have",
                         destination.display_path().display()
                     ),
-                ));
+                )
+                .with("rule", "destination_absent")
+                .with("found", crate::paths::describe(&metadata)));
             }
             Err(error) => {
                 return Err(named(
@@ -259,6 +265,16 @@ impl<'a> Staging<'a> {
             // FR-012's "left exactly as it was" is now satisfied by never having touched it.
 
             return Err(if lost_the_race {
+                // `found` is BEST EFFORT here and says so by having an `unknown` value. Unlike
+                // STEP 1, this branch has no metadata in hand — the rename failed, and asking the
+                // filesystem again is a fresh observation that the winner may already have changed.
+                // It is a diagnostic detail, not the classification: the decision above comes from
+                // the kernel's own `ErrorKind`, deliberately, and is not revisited here.
+                let found = self
+                    .parent
+                    .symlink_metadata(target)
+                    .as_ref()
+                    .map_or("unknown", crate::paths::describe);
                 named(
                     Code::DestinationExists,
                     format!(
@@ -267,6 +283,8 @@ impl<'a> Staging<'a> {
                         destination.display_path().display()
                     ),
                 )
+                .with("rule", "destination_absent")
+                .with("found", found)
             } else {
                 named(
                     Code::PlacementFailed,
@@ -490,6 +508,46 @@ mod tests {
             "theirs",
             "the operator's file was destroyed"
         );
+    }
+
+    #[test]
+    fn both_emit_sites_of_destination_exists_carry_the_published_details() {
+        // Contract C-2 publishes `details.rule` and `details.found` for `destination_exists`, and
+        // this code is emitted from TWO places at two different moments: `Destination::open`, before
+        // anything is staged, and `Staging::place` STEP 1, immediately before the rename.
+        //
+        // Until 2026-08-18 the second site carried neither, so the shape of a failure depended on
+        // which moment the destination happened to appear in — a difference a consumer cannot
+        // predict and the contract does not mention. Found by re-reading the diff against the
+        // registry table rather than by a test failing.
+        let base = tempfile::tempdir().expect("a temporary directory");
+
+        // Site 1: `Destination::open`.
+        std::fs::create_dir(base.path().join("early")).expect("mkdir");
+        let from_open = Destination::open(&base.path().join("early")).unwrap_err();
+
+        // Site 2: `Staging::place` STEP 1 — the destination appears after validation.
+        let target = destination(base.path(), "late");
+        let staging = Staging::create(&target).expect("creates");
+        std::fs::create_dir(base.path().join("late")).expect("mkdir");
+        let from_place = staging.place(&target).unwrap_err();
+
+        for (site, error) in [("open", &from_open), ("place", &from_place)] {
+            assert_eq!(error.code, Code::DestinationExists, "{site}");
+            let detail = |key: &str| {
+                error
+                    .details
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map(|(_, v)| v.as_str())
+                    .unwrap_or_else(|| {
+                        panic!("`{site}` emitted no `details.{key}`: {:?}", error.details)
+                    })
+            };
+            assert_eq!(detail("rule"), "destination_absent", "{site}");
+            assert_eq!(detail("found"), "directory", "{site}");
+            assert!(!detail("destination").is_empty(), "{site}");
+        }
     }
 
     #[test]

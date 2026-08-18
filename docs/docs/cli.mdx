@@ -122,7 +122,7 @@ has to be known while the command line is still unparseable.
 | `unsupported_combination` | 3 | Individually valid choices that conflict. Both are named. |
 | `reserved_for_later_phase` | 3 | A flag, value, or operation a later phase will support. `details.phase` names it. |
 | `invalid_project_name` | 3 | Empty, not a usable package name, or a reserved device name. |
-| `destination_exists` | 3 | Something is already at the destination. `details.found` is `directory`, `file`, `symlink`, or `other`. |
+| `destination_exists` | 3 | Something is already at the destination. `details.rule` is always `destination_absent`; `details.found` is `directory`, `file`, `symlink`, `other`, or `unknown`. |
 | `destination_rejected` | 3 | The destination failed a path-boundary rule. `details.rule` names which — including `destination_unverifiable`, when renvor could not read the destination's state at all. |
 | `destination_parent_missing` | 3 | The destination's parent does not exist or does not resolve. |
 | `manifest_invalid` | 3 | `renvor.toml` failed validation. The field and the constraint are named. |

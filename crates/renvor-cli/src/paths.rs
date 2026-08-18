@@ -340,15 +340,7 @@ impl Destination {
             // The ONLY arm that proceeds.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Ok(metadata) => {
-                let found = if metadata.is_symlink() {
-                    "symlink"
-                } else if metadata.is_dir() {
-                    "directory"
-                } else if metadata.is_file() {
-                    "file"
-                } else {
-                    "other"
-                };
+                let found = describe(&metadata);
                 return Err(CliError::new(
                     Code::DestinationExists,
                     format!(
@@ -393,6 +385,30 @@ impl Destination {
             parent_display: parent_input,
             name,
         })
+    }
+}
+
+/// Names what is sitting at a destination, in the vocabulary contract C-2 publishes for
+/// `destination_exists`'s `details.found`.
+///
+/// Shared with [`crate::generate::place`] rather than written twice, because the two sites report
+/// the **same** refusal at two different moments — `Destination::open` before anything is staged,
+/// and `Staging::place` immediately before the rename — and a consumer that had to handle two
+/// vocabularies for one code would be handling an accident of where the check ran.
+///
+/// The symlink test comes **first**: a symbolic link to a directory answers `true` to both
+/// `is_symlink` and — through `Metadata`'s own resolution on some platforms — potentially to
+/// `is_dir`. Reporting it as a directory would hide the fact that the entry is a link, which is the
+/// more useful half of the answer.
+pub fn describe(metadata: &cap_std::fs::Metadata) -> &'static str {
+    if metadata.is_symlink() {
+        "symlink"
+    } else if metadata.is_dir() {
+        "directory"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "other"
     }
 }
 
