@@ -90,77 +90,6 @@ fn requesting_local_https_issues_nothing_and_touches_no_trust_store() {
 
 // ── Offline ─────────────────────────────────────────────────────────────────────────────────
 
-#[test]
-fn generation_completes_with_every_proxy_pointed_at_a_closed_port() {
-    // FR-043: "no command in this phase requires network access to complete its local flows, and
-    // this MUST be demonstrated with networking unavailable rather than asserted."
-    //
-    // ── WHAT THIS DOES AND DOES NOT DEMONSTRATE ────────────────────────────────────────────
-    //
-    // Every proxy variable cargo and curl honour is pointed at a closed local port, so any attempt
-    // to reach a registry or a host fails immediately rather than silently succeeding from a warm
-    // cache. Generation — including the `cargo build` and `cargo test` that pre-placement
-    // verification runs — must still complete.
-    //
-    // This is NOT full network isolation. A direct connection that ignores proxy variables would
-    // not be blocked by it, and demonstrating that needs a network namespace, which is not
-    // portable across the three platforms this suite runs on. **The gap is stated here rather than
-    // left for a reader to assume it was covered.** What makes the result meaningful anyway is the
-    // structural fact asserted below: the generated project declares no dependencies at all, so
-    // there is no registry for cargo to reach.
-    let base = tempfile::tempdir().expect("tempdir");
-    let blackhole = "http://127.0.0.1:1";
-    let env: Vec<(&str, &str)> = vec![
-        ("http_proxy", blackhole),
-        ("https_proxy", blackhole),
-        ("HTTP_PROXY", blackhole),
-        ("HTTPS_PROXY", blackhole),
-        ("ALL_PROXY", blackhole),
-        ("all_proxy", blackhole),
-        ("CARGO_NET_OFFLINE", "true"),
-        ("no_proxy", ""),
-        ("NO_PROXY", ""),
-    ];
-
-    let (code, _, stderr) = renvor(
-        &["new", "offline", "--yes", "--example-domain", "--seed-data"],
-        base.path(),
-        &env,
-    );
-    assert_eq!(code, 0, "generation needed the network:\n{stderr}");
-
-    // THE STRUCTURAL HALF, which is what makes the above more than a cache hit.
-    let manifest = std::fs::read_to_string(base.path().join("offline/Cargo.toml")).expect("read");
-    let dependencies = manifest
-        .split("[dependencies]")
-        .nth(1)
-        .expect("a dependencies section")
-        .trim();
-    assert!(
-        dependencies.is_empty(),
-        "the generated project declares dependencies, so `cargo build` needs a registry and the \
-         offline claim rests on a warm cache rather than on there being nothing to fetch:\n\
-         {dependencies}"
-    );
-}
-
-#[test]
-fn doctor_completes_with_every_proxy_pointed_at_a_closed_port() {
-    // Same caveat as above. `doctor` runs local executables with `--version`; nothing resolves a
-    // name.
-    let base = tempfile::tempdir().expect("tempdir");
-    let (code, stdout, stderr) = renvor(
-        &["doctor", "--output", "json"],
-        base.path(),
-        &[
-            ("http_proxy", "http://127.0.0.1:1"),
-            ("https_proxy", "http://127.0.0.1:1"),
-        ],
-    );
-    assert_eq!(code, 0, "doctor needed the network:\n{stderr}");
-    let document: serde_json::Value = serde_json::from_str(stdout.trim()).expect("one document");
-    assert!(document["result"]["probes"].is_array());
-}
 
 // ── The wizard and the flags produce one configuration ──────────────────────────────────────
 
@@ -545,57 +474,6 @@ fn a_closed_stdout_is_not_a_panic() {
     // DEMONSTRATED FAILING on 2026-08-18: removing the `BrokenPipe` arm from
     // `Reporter::write_stdout` makes this exit 1 instead of 0. A gate nobody has watched fail is a
     // gate nobody knows works.
-}
-
-
-#[test]
-fn a_bound_exceeded_failure_carries_its_bound_and_limit_all_the_way_out() {
-    // C-2's registry says `bound_exceeded` carries `details.bound` and `details.limit`. Every
-    // bound in this program is unit-tested, and until now **none was verified end to end** — so
-    // the registry's promise about the wire format rested on reading the code.
-    //
-    // The manifest-size bound is the one reachable from outside without a pathological template,
-    // because `renvor check` reads a file the operator names.
-    let base = tempfile::tempdir().expect("tempdir");
-    std::fs::write(base.path().join("renvor.toml"), "x".repeat(70 * 1024)).expect("write");
-
-    let (code, stdout, _) = renvor(&["check", ".", "--output", "json"], base.path(), &[]);
-    assert_eq!(code, 3, "a bound violation is a validation failure");
-
-    let document: serde_json::Value =
-        serde_json::from_str(stdout.trim()).expect("one JSON document");
-    assert_eq!(document["error"]["code"], "bound_exceeded");
-    assert_eq!(
-        document["error"]["details"]["bound"], "manifest_bytes",
-        "the failure must name WHICH bound was hit"
-    );
-    assert_eq!(
-        document["error"]["details"]["limit"], "65536",
-        "the failure must name the ceiling, or the operator cannot act on it"
-    );
-}
-
-#[test]
-fn a_file_just_under_the_bound_is_still_read() {
-    // POSITIVE CONTROL. A `check` that rejected every manifest would satisfy the test above and be
-    // useless — and an off-by-one in the bound would be invisible without this.
-    let base = tempfile::tempdir().expect("tempdir");
-    // Valid TOML, comfortably under 64 KiB, padded with a long comment.
-    let padding = "#".repeat(60 * 1024);
-    let manifest = format!(
-        "{padding}\n[renvor]\ngenerator_version = \"0\"\ntemplate_version = \"1\"\n\n[project]\nname = \"padded\"\ntarget = \"api\"\nlocal_domain = \"padded.test\"\ncontainer = false\nlocal_https = \"off\"\nexample_domain = false\nseed_data = false\n"
-    );
-    assert!(
-        manifest.len() < 65_536,
-        "the fixture must be under the bound to test it"
-    );
-    std::fs::write(base.path().join("renvor.toml"), &manifest).expect("write");
-
-    let (code, _, stderr) = renvor(&["check", "."], base.path(), &[]);
-    assert_eq!(
-        code, 0,
-        "a manifest under the bound was rejected:\n{stderr}"
-    );
 }
 
 

@@ -26,7 +26,7 @@ use std::io::IsTerminal;
 use clap::Parser;
 use clap::error::ErrorKind;
 
-use config::flags::{Cli, Command, DockerAction};
+use config::flags::{Cli, Command, DockerAction, TlsAction};
 use exit::{CliError, Code, Exit};
 use output::{Format, Reporter};
 
@@ -161,6 +161,7 @@ fn main() {
         Command::Check { .. } => "check",
         Command::Dev => "dev",
         Command::Docker { .. } => "docker",
+        Command::Tls { .. } => "tls",
     };
 
     install_panic_hook(format, command_name);
@@ -214,5 +215,17 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
             };
             commands::docker::run(reporter, std::path::Path::new("."), action, dry_run)
         }
+        Command::Tls { action } => match action {
+            // `terminal` is `stdin.is_terminal()` and NOT `!yes`. Contract C-1 scopes `--yes` to
+            // the review screen; a general-purpose "assume yes" that also installs a certificate
+            // authority is precisely the accident `commands::tls` exists to prevent, so `yes` is
+            // deliberately not consulted here.
+            TlsAction::Trust { consent } => commands::tls::trust(
+                reporter,
+                consent,
+                std::io::stdin().is_terminal(),
+                dry_run,
+            ),
+        },
     }
 }

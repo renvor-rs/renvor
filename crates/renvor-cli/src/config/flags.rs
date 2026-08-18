@@ -85,6 +85,31 @@ pub enum Command {
         #[command(subcommand)]
         action: DockerAction,
     },
+    /// Local TLS trust. Issues no certificate and modifies no trust store in this phase.
+    Tls {
+        /// The action to perform.
+        #[command(subcommand)]
+        action: TlsAction,
+    },
+}
+
+/// `renvor tls <action>`.
+///
+/// One action, deliberately. A `tls status` or `tls untrust` would have to report on, or undo,
+/// something this phase never creates.
+#[derive(Debug, Subcommand)]
+pub enum TlsAction {
+    /// Install a local certificate authority into the system trust store.
+    ///
+    /// Describes exactly what would change, requires explicit consent, and then declines: the
+    /// operation is unavailable until a transport exists (FR-036, FR-037).
+    Trust {
+        /// Consent to modifying this machine's trust store, for a run with no terminal.
+        ///
+        /// **`--yes` does not grant this and is not intended to.**
+        #[arg(long = "i-understand-this-modifies-my-system-trust-store")]
+        consent: bool,
+    },
 }
 
 /// `renvor docker <action>`.

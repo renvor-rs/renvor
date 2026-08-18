@@ -719,6 +719,136 @@ mod tests {
     // Relationships between the bounds, checked at COMPILE time rather than in a test.
     //
     // A test would prove the same thing later and only if it were run; a `const` assertion makes an
+    /// Builds `count` distinct entries, each with `body`, leaking the paths so they are `'static`.
+    ///
+    /// Leaking is acceptable here and nowhere else: these run once, in a test process that exits.
+    fn many(count: usize, body: &'static str) -> Vec<TemplateEntry> {
+        (0..count)
+            .map(|index| TemplateEntry {
+                path: Box::leak(format!("file{index}.txt").into_boxed_str()),
+                body,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn more_output_files_than_the_limit_is_a_bound_not_a_write() {
+        // FR-026's file-count bound, which had no test at all — the constant was declared,
+        // enforced, and never exercised, which is the same state `fuel` would have been in had
+        // nobody noticed it is not a default feature.
+        let entries = many(bounds::MAX_FILES + 1, "x");
+        let renderer = Renderer::new(set(&entries)).expect("builds");
+        let root = staged();
+        let error = renderer.render_into(&root.dir, &ctx()).unwrap_err();
+
+        assert_eq!(error.code, Code::BoundExceeded);
+        assert!(
+            error.details.iter().any(|(key, value)| key == "bound" && value == "output_file_count"),
+            "{:?}",
+            error.details
+        );
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "limit" && value == &bounds::MAX_FILES.to_string()),
+            "the limit must be reported so an operator can see what it was: {:?}",
+            error.details
+        );
+        // NOTHING was written. The count is checked before any file is produced.
+        assert_eq!(root.dir.entries().expect("readable").count(), 0);
+    }
+
+    #[test]
+    fn exactly_the_file_limit_is_still_rendered() {
+        // The boundary control. Without it, an off-by-one that refused at `MAX_FILES` rather than
+        // above it would satisfy the test above and quietly halve the usable budget.
+        let entries = many(bounds::MAX_FILES, "x");
+        let renderer = Renderer::new(set(&entries)).expect("builds");
+        let root = staged();
+        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
+        assert_eq!(root.dir.entries().expect("readable").count(), bounds::MAX_FILES);
+    }
+
+    #[test]
+    fn more_total_output_than_the_limit_is_a_bound_not_a_write() {
+        // The total-bytes bound, distinct from the per-file one: every file here is exactly at the
+        // per-file limit and therefore individually legal, and together they are not. A design
+        // with only a per-file bound passes every per-file test and still lets a template set
+        // write 512 MiB.
+        let body: &'static str = Box::leak("x".repeat(bounds::MAX_FILE_BYTES).into_boxed_str());
+        let count = bounds::MAX_TOTAL_BYTES / bounds::MAX_FILE_BYTES + 1;
+        let renderer = Renderer::new(set(&many(count, body))).expect("builds");
+        let root = staged();
+        let error = renderer.render_into(&root.dir, &ctx()).unwrap_err();
+
+        assert_eq!(error.code, Code::BoundExceeded);
+        assert!(
+            error.details.iter().any(|(key, value)| key == "bound" && value == "total_output_bytes"),
+            "{:?}",
+            error.details
+        );
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "limit" && value == &bounds::MAX_TOTAL_BYTES.to_string()),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn exactly_the_total_output_limit_is_still_rendered() {
+        // The boundary control for the bound above.
+        let body: &'static str = Box::leak("x".repeat(bounds::MAX_FILE_BYTES).into_boxed_str());
+        let count = bounds::MAX_TOTAL_BYTES / bounds::MAX_FILE_BYTES;
+        let renderer = Renderer::new(set(&many(count, body))).expect("builds");
+        let root = staged();
+        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
+    }
+
+    #[test]
+    fn a_file_exactly_at_the_per_file_limit_is_still_written() {
+        // The boundary control for `a_file_above_the_per_file_limit_is_a_bound_not_a_write`, which
+        // existed without one.
+        let body: &'static str = Box::leak("x".repeat(bounds::MAX_FILE_BYTES).into_boxed_str());
+        let renderer =
+            Renderer::new(set(&[TemplateEntry { path: "a.txt", body }])).expect("builds");
+        let root = staged();
+        renderer.render_into(&root.dir, &ctx()).expect("exactly the limit is allowed");
+    }
+
+    #[test]
+    fn the_recursion_bound_has_no_reachable_trigger_and_that_is_the_point() {
+        // RECURSION_DEPTH is declared, set on the environment, and — with this feature set —
+        // **cannot be reached**. Every construct that could recurse is compiled out: MiniJinja's
+        // `multi_template` feature (which provides `{% include %}` and `{% extends %}`) and its
+        // `macros` feature are both off in `Cargo.toml`.
+        //
+        // Measured rather than reasoned: `include` is not merely disallowed at render time, it is
+        // **not a statement the compiled grammar knows**, so an entry using it is refused when the
+        // catalogue loads — which is to say such a template could not exist in a shipped binary at
+        // all. That is a stronger guarantee than a depth counter and it is why the counter has no
+        // over-bound test: there is no over-bound to reach.
+        //
+        // This is a test rather than a comment because the structural claim can rot. Enabling
+        // either feature to solve some future problem makes recursion reachable, and RECURSION_DEPTH
+        // then needs a real over-bound test. This fails at that moment, which is when somebody
+        // should be thinking about it.
+        let error = Renderer::new(set(&[TemplateEntry {
+            path: "a.txt",
+            body: "{% include \"a.txt\" %}",
+        }]))
+        .expect_err("`include` must not be a statement this build understands");
+
+        assert!(
+            error.message.contains("unknown statement include"),
+            "`include` resolved, which means a template feature was enabled and RECURSION_DEPTH \
+             now needs a real over-bound test: {error:?}"
+        );
+    }
+
     // inconsistent set of bounds a build failure. `RECURSION_DEPTH` must stay under MiniJinja's own
     // ceiling of 500, or `set_recursion_limit` silently clamps and the declared bound is fiction.
     const _: () = assert!(bounds::FUEL > 0);

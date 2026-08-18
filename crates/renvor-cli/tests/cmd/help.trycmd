@@ -15,6 +15,7 @@ Commands:
   check   Validate a project without building it
   dev     Run the local development loop
   docker  Container development controls
+  tls     Local TLS trust. Issues no certificate and modifies no trust store in this phase
 
 Options:
       --output <human|json>
