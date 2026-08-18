@@ -95,6 +95,23 @@ sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }  #
 # The project manifest format. Already in the resolved graph via `renvor-config`.
 toml = { version = "1.1.4", default-features = false, features = ["parse", "display", "serde"] }
 
+# Version comparison for `renvor doctor` (FR-032, T065). Already in the resolved graph — cargo's own
+# ecosystem depends on it — so this adds a direct edge rather than a crate.
+#
+# Package-first over a hand-written `split('.')` comparison, which is the classic place an
+# off-by-one lives: `1.94.0` versus `1.100.0` compares wrongly under string ordering, and
+# pre-release suffixes (`1.94.0-nightly`) need rules this crate already implements and tests.
+semver = { version = "1.0.28", default-features = false }
+
+# Bounded waits for the container-runtime probe (FR-035, T071). `std::process` offers no way to
+# wait with a deadline, and `docker info` is the one call in this program that can block forever:
+# a stale socket, or a Docker Desktop still starting, answers neither yes nor no.
+#
+# Package-first over a thread-plus-channel of our own. The obvious hand-rolled version leaks the
+# waiting thread and the child process when it gives up, which turns a hang into a hang plus a
+# zombie. 49.7M downloads a month; already in the resolved graph via the test harness.
+wait-timeout = { version = "0.2.1", default-features = false }
+
 [dev-dependencies]
 # research.md D14 — the command surface is a public contract, so it is tested as expected OUTPUT
 # rather than as assertions buried in Rust. A contract change then appears as a diff in review.

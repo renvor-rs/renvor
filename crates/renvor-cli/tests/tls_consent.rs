@@ -122,14 +122,14 @@ fn the_snapshot_can_detect_a_change() {
     std::fs::create_dir(&anchors).expect("created");
     std::fs::write(anchors.join("existing.crt"), b"original").expect("written");
 
-    let before = fingerprint(&[anchors.clone()]);
+    let before = fingerprint(std::slice::from_ref(&anchors));
     assert!(!before.is_empty(), "the fixture snapshot is empty");
 
     std::fs::write(anchors.join("added.crt"), b"a new authority").expect("written");
-    assert_ne!(before, fingerprint(&[anchors.clone()]), "an added file was not noticed");
+    assert_ne!(before, fingerprint(std::slice::from_ref(&anchors)), "an added file was not noticed");
 
     std::fs::remove_file(anchors.join("added.crt")).expect("removed");
-    assert_eq!(before, fingerprint(&[anchors.clone()]), "removal did not restore the snapshot");
+    assert_eq!(before, fingerprint(std::slice::from_ref(&anchors)), "removal did not restore the snapshot");
 
     std::fs::write(anchors.join("existing.crt"), b"tampered").expect("written");
     assert_ne!(before, fingerprint(&[anchors]), "a modified file was not noticed");

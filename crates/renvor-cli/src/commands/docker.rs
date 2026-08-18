@@ -38,35 +38,92 @@ impl Action {
     }
 }
 
+/// How long any probe of the container runtime may take before it is a failure.
+///
+/// # This is a bound, not a retry
+///
+/// FR-035 asks the command to distinguish *not installed* from *installed but not running*.
+/// There is a third state neither name covers and every operator has met: **installed, running,
+/// and not answering** — a stale socket, or Docker Desktop still starting. `docker info` in that
+/// state returns nothing, ever, and `Command::output()` waits for it, ever.
+///
+/// Twenty seconds is long enough that a busy-but-working daemon answers and short enough that a
+/// person notices the command came back. Exceeding it is reported as a **distinct reason** rather
+/// than retried: a retry would turn one hang into several, and the operator's next step is the same
+/// either way.
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Why the container runtime could not be used.
 ///
 /// A closed set rather than a free string, so `details.reason` is matchable by a consumer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unavailable {
     /// The executable is not on `PATH`, or is not runnable.
-    NotInstalled,
+    Absent,
     /// The executable runs and the daemon does not answer.
-    NotRunning,
+    DaemonStopped,
+    /// The executable runs, the daemon accepts the call, and never replies.
+    DaemonSilent,
 }
 
 impl Unavailable {
     const fn reason(self) -> &'static str {
         match self {
-            Self::NotInstalled => "not_installed",
-            Self::NotRunning => "not_running",
+            Self::Absent => "not_installed",
+            Self::DaemonStopped => "not_running",
+            Self::DaemonSilent => "not_responding",
         }
     }
 
     const fn remedy(self) -> &'static str {
         match self {
-            Self::NotInstalled => {
+            Self::Absent => {
                 "install a container runtime; `renvor docker` is the only \
                                    command that needs one"
             }
-            Self::NotRunning => {
+            Self::DaemonStopped => {
                 "the runtime is installed but its daemon is not answering; start \
                                  it and try again"
             }
+            Self::DaemonSilent => {
+                "the runtime is installed and its daemon accepted the request but did not reply \
+                 within 20 seconds; it may still be starting, or its socket may be stale. renvor \
+                 gave up rather than waiting indefinitely"
+            }
+        }
+    }
+}
+
+/// Runs a probe with a deadline, discarding its output.
+///
+/// Returns `Ok(true)` if it exited successfully, `Ok(false)` if it exited unsuccessfully, and
+/// `Err(())` if it could not be started **or** outlived [`PROBE_TIMEOUT`].
+///
+/// The child is **killed and reaped** on timeout. Leaving it running would mean a `renvor docker`
+/// that gave up still had a `docker info` attached to the terminal, which is a worse outcome than
+/// the hang it was avoiding.
+fn probe(program: &str, arguments: &[&str], timeout: std::time::Duration) -> Result<bool, ()> {
+    use wait_timeout::ChildExt;
+
+    let mut child = std::process::Command::new(program)
+        .args(arguments)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|_| ())?;
+
+    match child.wait_timeout(timeout) {
+        Ok(Some(status)) => Ok(status.success()),
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(())
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(())
         }
     }
 }
@@ -77,18 +134,19 @@ impl Unavailable {
 /// `docker info` requires the daemon. Running both is what makes the distinction real rather than
 /// guessed from an error string.
 fn availability() -> Result<(), Unavailable> {
-    let client = std::process::Command::new("docker")
-        .arg("--version")
-        .output();
-    match client {
-        Ok(output) if output.status.success() => {}
-        _ => return Err(Unavailable::NotInstalled),
+    // The client. Fast, local, and answers even with the daemon down — which is the whole point of
+    // asking it separately. A timeout here means something is very wrong with the executable
+    // itself, so it is reported as "not installed" rather than inventing a fourth state.
+    match probe("docker", &["--version"], PROBE_TIMEOUT) {
+        Ok(true) => {}
+        Ok(false) | Err(()) => return Err(Unavailable::Absent),
     }
 
-    let daemon = std::process::Command::new("docker").arg("info").output();
-    match daemon {
-        Ok(output) if output.status.success() => Ok(()),
-        _ => Err(Unavailable::NotRunning),
+    // The daemon. This is the call that can block forever, and the reason `probe` exists.
+    match probe("docker", &["info"], PROBE_TIMEOUT) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(Unavailable::DaemonStopped),
+        Err(()) => Err(Unavailable::DaemonSilent),
     }
 }
 
@@ -161,7 +219,7 @@ pub fn run(
                 Code::ContainerRuntimeUnavailable,
                 format!("the container runtime could not be run: {error}"),
             )
-            .with("reason", Unavailable::NotInstalled.reason())
+            .with("reason", Unavailable::Absent.reason())
         })?;
 
     if !status.success() {
@@ -222,19 +280,125 @@ mod tests {
         assert_eq!(exit, Exit::Success);
     }
 
+    // ── T071: never hang, never silently skip ───────────────────────────────────────────
+
+    /// A command guaranteed to outlive any short deadline, per platform.
+    fn a_slow_command() -> (&'static str, &'static [&'static str]) {
+        if cfg!(windows) {
+            ("cmd", &["/C", "ping -n 31 127.0.0.1"])
+        } else {
+            ("sleep", &["30"])
+        }
+    }
+
+    /// A command that exits with the given success, per platform.
+    fn a_quick_command(succeeds: bool) -> (&'static str, &'static [&'static str]) {
+        match (cfg!(windows), succeeds) {
+            (true, true) => ("cmd", &["/C", "exit 0"]),
+            (true, false) => ("cmd", &["/C", "exit 1"]),
+            (false, true) => ("true", &[]),
+            (false, false) => ("false", &[]),
+        }
+    }
+
+    #[test]
+    fn a_probe_that_outlives_its_deadline_is_killed_rather_than_waited_for() {
+        // The property T071 asks for, measured. Driven with a command guaranteed to outlive its
+        // deadline, because `docker info` cannot be made to hang on demand — and a test that waited
+        // for a real stuck daemon would be a test that hangs.
+        let (program, arguments) = a_slow_command();
+        let started = std::time::Instant::now();
+        let outcome = probe(program, arguments, std::time::Duration::from_millis(500));
+        let elapsed = started.elapsed();
+
+        assert!(outcome.is_err(), "a command that outlives its deadline must not report success");
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "the probe waited {elapsed:?} for a 500ms deadline, so the bound is not enforced"
+        );
+    }
+
+    #[test]
+    fn a_probe_that_finishes_inside_its_deadline_reports_its_real_status() {
+        // The positive control. Without it, a `probe` that returned `Err` unconditionally — a spawn
+        // that never worked, a deadline of zero — would satisfy the test above completely.
+        let (program, arguments) = a_quick_command(true);
+        assert_eq!(
+            probe(program, arguments, PROBE_TIMEOUT),
+            Ok(true),
+            "a command that succeeds must be reported as succeeding"
+        );
+        let (program, arguments) = a_quick_command(false);
+        assert_eq!(
+            probe(program, arguments, PROBE_TIMEOUT),
+            Ok(false),
+            "a command that fails must be reported as FAILING, not as unreachable — the difference \
+             is `not_running` versus `not_installed`"
+        );
+    }
+
+    #[test]
+    fn a_program_that_cannot_be_started_is_distinguished_from_one_that_hangs() {
+        // Both return `Err(())` from `probe`, and `availability` turns them into different reasons
+        // depending on WHICH probe produced it. This pins the first half.
+        assert_eq!(
+            probe("renvor-definitely-not-a-real-executable", &[], PROBE_TIMEOUT),
+            Err(())
+        );
+    }
+
+    #[test]
+    fn no_action_can_run_forever() {
+        // The other half of "never hang", and it is a property of the ARGUMENTS rather than of a
+        // timeout: `docker compose up` without `--detach` runs until interrupted, and
+        // `docker compose logs --follow` never returns at all. Neither is given a deadline, because
+        // neither is used — so this asserts the shape rather than adding a timeout to work around
+        // it.
+        for action in [Action::Up, Action::Down, Action::Status, Action::Logs] {
+            let arguments = action.arguments();
+            assert!(
+                !arguments.contains(&"--follow") && !arguments.contains(&"-f"),
+                "{action:?} follows its output and would never return: {arguments:?}"
+            );
+            if arguments.contains(&"up") {
+                assert!(
+                    arguments.contains(&"--detach"),
+                    "`up` must detach or it runs until interrupted: {arguments:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_unavailability_reason_carries_a_distinct_remedy() {
+        // "Never silently skip": each way the runtime can be unusable has to produce a different
+        // `details.reason` AND a different instruction. Two reasons sharing one remedy is a
+        // distinction that helps a consumer and not the operator.
+        let all = [Unavailable::Absent, Unavailable::DaemonStopped, Unavailable::DaemonSilent];
+        let reasons: std::collections::BTreeSet<&str> =
+            all.iter().map(|u| u.reason()).collect();
+        assert_eq!(reasons.len(), all.len(), "two states share a reason: {reasons:?}");
+        let remedies: std::collections::BTreeSet<&str> =
+            all.iter().map(|u| u.remedy()).collect();
+        assert_eq!(remedies.len(), all.len(), "two states share a remedy");
+        for unavailable in all {
+            assert!(!unavailable.remedy().is_empty(), "{unavailable:?} has no remedy");
+        }
+    }
+
     #[test]
     fn the_two_unavailability_reasons_are_distinct_and_matchable() {
         // C-2 requires `details.reason` to distinguish them, which only helps if the strings
         // differ and neither is prose.
         assert_ne!(
-            Unavailable::NotInstalled.reason(),
-            Unavailable::NotRunning.reason()
+            Unavailable::Absent.reason(),
+            Unavailable::DaemonStopped.reason()
         );
-        assert_eq!(Unavailable::NotInstalled.reason(), "not_installed");
-        assert_eq!(Unavailable::NotRunning.reason(), "not_running");
+        assert_eq!(Unavailable::Absent.reason(), "not_installed");
+        assert_eq!(Unavailable::DaemonStopped.reason(), "not_running");
         assert_ne!(
-            Unavailable::NotInstalled.remedy(),
-            Unavailable::NotRunning.remedy()
+            Unavailable::Absent.remedy(),
+            Unavailable::DaemonStopped.remedy()
         );
     }
 

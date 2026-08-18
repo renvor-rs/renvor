@@ -845,12 +845,14 @@ dependencies = [
  "portable-pty",
  "renvor-config",
  "renvor-core",
+ "semver",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
  "toml",
  "trycmd",
+ "wait-timeout",
 ]
 
 [[package]]
