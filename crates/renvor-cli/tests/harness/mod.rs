@@ -45,6 +45,8 @@ pub struct Terminal {
     /// Why the reader thread stopped, if it has. Used to make a timeout diagnostic rather than
     /// merely a timeout.
     reader_ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// How many cursor-position reports we have already answered. See [`Terminal::answer_status_reports`].
+    reports_answered: usize,
 }
 
 impl Terminal {
@@ -115,6 +117,7 @@ impl Terminal {
             _slave: pty.slave,
             transcript: String::new(),
             reader_ended,
+            reports_answered: 0,
         }
     }
 
@@ -125,6 +128,7 @@ impl Terminal {
     pub fn expect(&mut self, needle: &str) {
         let deadline = Instant::now() + EXPECT_TIMEOUT;
         loop {
+            self.answer_status_reports();
             if self.visible().contains(needle) {
                 return;
             }
@@ -150,6 +154,39 @@ impl Terminal {
         }
     }
 
+    /// Answers the terminal's cursor-position query (`ESC [ 6 n`).
+    ///
+    /// # Without this, the Windows leg deadlocks, and the reason is worth stating
+    ///
+    /// `crossterm` — which `inquire` renders through — asks the terminal where the cursor is by
+    /// writing a **Device Status Report** and then **blocking until the terminal answers**. A real
+    /// terminal emulator replies `ESC [ <row> ; <col> R`. A test harness that only *reads* the pty
+    /// is not a terminal emulator, so nobody ever answers and the child waits forever.
+    ///
+    /// This was not a guess. The first Windows run reported, from the harness's own diagnosis:
+    /// *child is STILL RUNNING, reader still running, **bytes received: 4***. Four bytes is exactly
+    /// `ESC [ 6 n`. The prompt was never drawn because the program was still waiting to be told
+    /// where it was drawing.
+    ///
+    /// It does not reproduce on Unix, where `crossterm` obtains the position without a round trip.
+    /// That asymmetry is the whole reason the Windows matrix leg is worth running: the harness was
+    /// **incomplete on every platform** and only one platform said so.
+    ///
+    /// The reply is always `1;1`. These tests match on prompt text, never on layout, so a
+    /// truthful cursor position would buy nothing — and tracking one would mean implementing a
+    /// screen model, which is a terminal emulator, which is not what this file should become.
+    fn answer_status_reports(&mut self) {
+        const QUERY: &str = "\u{1b}[6n";
+        let asked = self.transcript.matches(QUERY).count();
+        while self.reports_answered < asked {
+            // Written directly rather than through `send_line`: this is a protocol reply, not
+            // operator input, and it must not carry a carriage return.
+            let _ = write!(self.writer, "\u{1b}[1;1R");
+            let _ = self.writer.flush();
+            self.reports_answered += 1;
+        }
+    }
+
     /// Everything known about why a wait failed.
     ///
     /// A bare "timed out waiting for X" with an empty transcript is the least useful failure a
@@ -172,10 +209,12 @@ impl Terminal {
             Some(reason) => format!("reader STOPPED: {reason}"),
             None => "reader still running".to_owned(),
         };
+        let queries = self.transcript.matches("\u{1b}[6n").count();
         format!(
-            "\n  platform: {}\n  {child}\n  {reader}\n  bytes received: {}\n--- transcript ---\n{}",
+            "\n  platform: {}\n  {child}\n  {reader}\n  bytes received: {}\n  cursor-position queries seen: {queries}, answered: {}\n--- transcript ---\n{}",
             std::env::consts::OS,
             self.transcript.len(),
+            self.reports_answered,
             self.visible()
         )
     }
