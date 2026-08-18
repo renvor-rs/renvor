@@ -1,0 +1,50 @@
+Exit codes are a contract, and these are the ones a script depends on.
+
+An unknown flag is a USAGE error, exit 2.
+
+```
+$ renvor new demo --nonsense
+? 2
+[..]
+
+  tip: to pass '--nonsense' as a value, use '-- --nonsense'
+
+Usage: renvor new <NAME>
+
+For more information, try '--help'.
+
+```
+
+A reserved flag is a VALIDATION error, exit 3 — deliberately not exit 2, because the command is
+well formed and the request is refused.
+
+```
+$ renvor new demo --database postgres --output json
+? 3
+{
+  "schemaVersion": 1,
+  "status": "failure",
+  "command": "new",
+  "error": {
+    "code": "reserved_for_later_phase",
+    "message": "[..]",
+    "details": {
+      "flag": "--database",
+      "phase": "[..]"
+    }
+  }
+}
+
+```
+
+An unsupported `--output` value is exit 3 with `supported` listed, not clap's exit 2.
+
+```
+$ renvor new demo --output yaml
+? 3
+error: `--output yaml` is not supported; use `human` or `json`
+  flag: --output
+  value: yaml
+  supported: human, json
+
+```

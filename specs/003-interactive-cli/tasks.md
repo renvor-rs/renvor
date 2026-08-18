@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**34 of 95 tasks complete. This section states what is built and what is not, because a task list
+**36 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -86,7 +86,9 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
 
 - **T008** — of the nine named test files, `generated.rs`, `acceptance.rs`, and `redaction.rs`
   exist; `transaction.rs`, `hostile.rs`, `parity.rs`, `cli.rs`, `bounds.rs`, `offline.rs`, and
-  `tls_consent.rs` do not — though `capabilities.rs` now covers FR-040 and the structural half of
+  `tls_consent.rs` do not — though `cli.rs` now records the command surface as **byte-exact
+  expected output** under `tests/cmd/`, which is what C-1 asks for and what makes a contract change
+  a reviewable diff rather than an invisible one, and `capabilities.rs` now covers FR-040 and the structural half of
   FR-043 (T023), and was **demonstrated failing** by adding `flate2` before being kept. Their properties are covered by unit tests and by the three files above,
   but the suite is not organised the way this plan says it is.
 - **T015–T024** — the failing-first hostile corpus and parity harness. The properties are asserted;

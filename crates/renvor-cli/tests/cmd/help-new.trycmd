@@ -1,0 +1,59 @@
+`renvor new`'s help. The reserved flags are `hide = true`, so they must NOT appear here — a user
+should not be offered a flag that is guaranteed to fail. They are still accepted and refused with a
+message naming the phase; see `exit-codes.trycmd`.
+
+```
+$ renvor new --help
+Create a project.
+
+Boxed because `NewArgs` is 272 bytes and every other variant is a handful — an unboxed variant would
+make every `Command` value pay for the largest one, including `Doctor`, which carries nothing.
+
+Usage: renvor new [OPTIONS] [NAME]
+
+Arguments:
+  [NAME]
+          Project name. Defaults to the destination's final component
+
+Options:
+      --output <human|json>
+          Result format for stdout
+          
+          [default: human]
+
+      --path <PATH>
+          Where to create the project. Defaults to `./<name>`
+
+      --target <TARGET>
+          What to generate. `api` is the only supported value in this phase
+          
+          [default: api]
+
+      --yes
+          Accept confirmations. Never waives validation
+
+      --dry-run
+          Compute and report without writing anything
+
+      --local-domain <LOCAL_DOMAIN>
+          Local development domain. Defaults to `<name>.test`
+
+      --container
+          Generate container development controls
+
+      --no-color
+          Disable styling. Styling is also off automatically when the stream is not a terminal
+
+      --local-https
+          Record that local HTTPS is wanted. **Issues nothing and modifies no trust store.**
+
+      --example-domain
+          Generate the example domain module
+
+      --seed-data
+          Generate seed data. Requires `--example-domain`
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+```
