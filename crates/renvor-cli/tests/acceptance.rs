@@ -333,6 +333,117 @@ fn the_non_interactive_path_is_reachable_without_a_terminal_and_never_blocks() {
 }
 
 #[test]
+fn defaulted_and_explicitly_supplied_answers_produce_byte_identical_projects() {
+    // SC-003, measured from OUTSIDE the process — as close to "the wizard and the flags agree" as
+    // is reachable without a pseudo-terminal.
+    //
+    // The left-hand run supplies nothing and lets `resolve` derive the name and the local domain.
+    // The right-hand run supplies **exactly what the wizard would offer as its defaults**. If the
+    // two derivations ever diverge — which they did until 2026-08-18, when the rule lived in two
+    // non-equivalent copies — these trees stop matching.
+    //
+    // What this does NOT cover: that a real wizard run produces those answers. That needs a PTY
+    // harness (T042) and is not built.
+    let base = tempfile::tempdir().expect("tempdir");
+    let left = base.path().join("left");
+    let right = base.path().join("right");
+    std::fs::create_dir_all(&left).expect("mkdir");
+    std::fs::create_dir_all(&right).expect("mkdir");
+
+    let (code, _, stderr) = renvor(&["new", "demo", "--yes", "--example-domain"], &left, &[]);
+    assert_eq!(code, 0, "the defaulted run failed:\n{stderr}");
+
+    let (code, _, stderr) = renvor(
+        // `demo.test` is what `derive_local_domain("demo")` returns and what the wizard offers.
+        &[
+            "new",
+            "demo",
+            "--yes",
+            "--example-domain",
+            "--local-domain",
+            "demo.test",
+        ],
+        &right,
+        &[],
+    );
+    assert_eq!(code, 0, "the explicit run failed:\n{stderr}");
+
+    let read = |root: &Path| -> Vec<(String, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut stack = vec![root.join("demo")];
+        while let Some(directory) = stack.pop() {
+            for entry in std::fs::read_dir(&directory).expect("read_dir").flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else {
+                    let relative = path
+                        .strip_prefix(root.join("demo"))
+                        .expect("relative")
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    files.push((relative, std::fs::read(&path).expect("read")));
+                }
+            }
+        }
+        files.sort();
+        files
+    };
+
+    let left_files = read(&left);
+    let right_files = read(&right);
+    assert!(!left_files.is_empty(), "nothing was generated");
+    assert_eq!(
+        left_files.len(),
+        right_files.len(),
+        "the two runs produced different file counts"
+    );
+    for ((left_path, left_bytes), (right_path, right_bytes)) in
+        left_files.iter().zip(right_files.iter())
+    {
+        assert_eq!(
+            left_path, right_path,
+            "the two runs produced different paths"
+        );
+        assert_eq!(
+            left_bytes, right_bytes,
+            "`{left_path}` differs between a defaulted run and an explicitly-answered one, so the \
+             two interfaces do not resolve to the same configuration"
+        );
+    }
+}
+
+#[test]
+fn a_different_answer_really_does_produce_a_different_project() {
+    // POSITIVE CONTROL for the parity test above. If generation ignored `--local-domain`, the
+    // comparison would pass while proving nothing at all.
+    let base = tempfile::tempdir().expect("tempdir");
+    let left = base.path().join("left");
+    let right = base.path().join("right");
+    std::fs::create_dir_all(&left).expect("mkdir");
+    std::fs::create_dir_all(&right).expect("mkdir");
+
+    renvor(&["new", "demo", "--yes"], &left, &[]);
+    renvor(
+        &["new", "demo", "--yes", "--local-domain", "elsewhere.test"],
+        &right,
+        &[],
+    );
+
+    let left_manifest = std::fs::read_to_string(left.join("demo/renvor.toml")).expect("read");
+    let right_manifest = std::fs::read_to_string(right.join("demo/renvor.toml")).expect("read");
+    assert_ne!(
+        left_manifest, right_manifest,
+        "a different answer produced an identical project, so the parity test above compares \
+         nothing"
+    );
+    assert!(
+        right_manifest.contains("elsewhere.test"),
+        "{right_manifest}"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

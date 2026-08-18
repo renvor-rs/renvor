@@ -68,12 +68,8 @@ fn from_inquire(error: InquireError) -> CliError {
 /// there is no terminal.
 pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
     if answers.name.is_none() {
-        let derived = answers
-            .destination
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("app")
-            .to_owned();
+        // THE SHARED derivation, not a copy of it. See `model::derive_project_name`.
+        let derived = super::model::derive_project_name(&answers.destination);
         let name = Text::new("Project name")
             .with_default(&derived)
             .with_help_message("ASCII letters, digits, `-`, and `_`; it becomes a package name")
@@ -83,7 +79,7 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
     }
 
     if answers.local_domain.is_none() {
-        let derived = format!("{}.test", answers.name.as_deref().unwrap_or("app"));
+        let derived = super::model::derive_local_domain(answers.name.as_deref().unwrap_or("app"));
         let domain = Text::new("Local development domain")
             .with_default(&derived)
             .prompt()

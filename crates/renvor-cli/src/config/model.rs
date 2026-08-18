@@ -119,6 +119,36 @@ pub struct Answers {
     pub example_domain: bool,
 }
 
+/// The project name a destination implies, when the operator did not give one.
+///
+/// # Why this is a function and not two copies of a `format!`
+///
+/// SC-003 requires the wizard and the flags to resolve to the **same** configuration. Until
+/// 2026-08-18 this rule existed twice — once in `resolve` and once in `prompts::fill` as the
+/// prompt's default — and the two were **not equivalent**: the wizard read `file_name()` off the
+/// raw requested path with a hard-coded `"app"` fallback, while `resolve` used the *validated*
+/// destination's name. For an ordinary path they agreed. For a path with a trailing separator or a
+/// `.` component they need not have.
+///
+/// A duplicated default is the specific way SC-003 fails: nothing declares the two interfaces
+/// different, they just drift. There is now one copy, and both callers use it.
+#[must_use]
+pub fn derive_project_name(destination: &std::path::Path) -> String {
+    destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("app")
+        .to_owned()
+}
+
+/// The local development domain a project name implies, when the operator did not give one.
+///
+/// Same reasoning as [`derive_project_name`].
+#[must_use]
+pub fn derive_local_domain(name: &str) -> String {
+    format!("{name}.test")
+}
+
 impl ProjectConfiguration {
     /// Validates answers into a configuration and the capability to write it, or refuses.
     ///
@@ -143,7 +173,9 @@ impl ProjectConfiguration {
 
         let name = match answers.name {
             Some(name) => name,
-            None => destination.name().to_owned(),
+            // Derived through the SHARED function, from the validated destination's name — which
+            // is the same string the wizard offers as its default, because the wizard calls this.
+            None => derive_project_name(std::path::Path::new(destination.name())),
         };
         validate_project_name(&name)?;
 
@@ -151,7 +183,7 @@ impl ProjectConfiguration {
 
         let local_domain = match answers.local_domain {
             Some(domain) => domain,
-            None => format!("{name}.test"),
+            None => derive_local_domain(&name),
         };
         validate_local_domain(&local_domain)?;
 

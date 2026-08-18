@@ -27,7 +27,7 @@ a generator with two of the three is not a smaller product but an unsafe one.
 
 ## Implementation status, 2026-08-18
 
-**36 of 95 tasks complete. This section states what is built and what is not, because a task list
+**38 of 95 tasks complete. This section states what is built and what is not, because a task list
 with 27 ticks and no summary invites a reader to assume the rest is cosmetic. It is not.**
 
 ### Built, tested, and green on both toolchains
@@ -46,6 +46,18 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
    path containment is **structural rather than checked**. This removed the ADR-0011 gate entirely
    — T009–T014 are withdrawn, **no waiver was created**, and the reversal rests on measurements
    that falsified revision 1's two stated objections. See D6 for the numbers.
+2a-0. **An SC-003 defect in code written this session, found by asking whether the criterion was
+   actually at risk rather than assuming the type system covered it.** The rule for deriving a
+   default project name and local domain existed in **two independent copies** — one in
+   `ProjectConfiguration::resolve`, one in `prompts::fill` as the prompt default — and they were
+   **not equivalent**: the wizard read `file_name()` off the raw requested path with a hard-coded
+   `"app"` fallback while `resolve` used the *validated* destination's name. For ordinary paths they
+   agreed; for a trailing separator or a `.` component they need not have. **That is precisely how
+   SC-003 fails: nothing declares the interfaces different, they drift.** Each default now has one
+   owner (`derive_project_name`, `derive_local_domain`), and an outside-in test compares a defaulted
+   run against an explicitly-answered one byte for byte, with a control proving a different answer
+   really does produce a different project.
+
 2a-i. **Two defects found by writing the acceptance tests outside-in, both of which every
    existing test had missed.**
 
@@ -97,7 +109,12 @@ all ten checks, clippy clean on Rust 1.94.0 and current stable.
   `prompts::fill` returns the same `Answers` type the flag parser produces and
   `ProjectConfiguration::resolve` is the only constructor, so the two interfaces cannot diverge.
   **Driving a real wizard needs a pseudo-terminal harness, which is not built**, so the
-  byte-identical comparison between an actual prompt run and an actual flag run is not made.
+  byte-identical comparison between an actual prompt run and an actual flag run is not made. What
+  **is** made: both interfaces share one derivation per default (see 2a-0), and
+  `tests/acceptance.rs` compares a defaulted run against an explicitly-answered one byte for byte.
+  Package-first research for the harness is done — `rexpect` 0.7.1 (`MIT OR Apache-2.0`, MSRV 1.85,
+  325k/month) is the candidate, and it is Unix-only, so the test would not run on the Windows
+  matrix. Not adopted; recorded so T042 starts from evidence rather than from scratch.
 - **T053–T060** — the hostile-path suite as a named file.
 - **T061–T075** — dry-run and JSON edge cases beyond those in `tests/generated.rs`.
 - **T076–T095** — `doctor`/`dev`/`docker` hardening, the TLS-consent suite, offline proof, and the
