@@ -83,6 +83,15 @@ impl<'a> Staging<'a> {
         })
     }
 
+    /// The staging directory's name inside the parent.
+    ///
+    /// Needed only by [`crate::generate::verify`], which runs a subprocess and therefore cannot
+    /// use the handle — see that module for why that step steps outside the boundary deliberately.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
     /// The capability every render and manifest operation goes through.
     ///
     /// Returning the `Dir` rather than a path is the whole point: a caller cannot accidentally

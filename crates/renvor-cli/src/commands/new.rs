@@ -6,12 +6,13 @@
 //! 1. VALIDATE   every choice and the destination boundary — nothing has touched the filesystem
 //! 2. STAGE      a directory the process owns, INSIDE the destination's parent
 //! 3. RENDER     bounded template expansion into staging
-//! 4. MANIFEST   walk the staged tree, sorted
-//! 5. PLACE      one rename
-//! 6. REPORT
+//! 4. VERIFY     the generated project's own fmt, build, and tests — still in staging
+//! 5. MANIFEST   walk the staged tree, sorted
+//! 6. PLACE      one rename
+//! 7. REPORT
 //! ```
 //!
-//! Failure anywhere from 1 to 4 removes the staging directory and leaves the destination exactly as
+//! Failure anywhere from 1 to 5 removes the staging directory and leaves the destination exactly as
 //! it was — enforced by `Staging`'s `Drop`, so it holds on paths nobody wrote a cleanup for,
 //! including a panic.
 
@@ -141,7 +142,26 @@ pub fn run(
     }
     renderer.render_into(staging.dir(), &context)?;
 
-    // ── 4. MANIFEST ─────────────────────────────────────────────────────────────────
+    // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
+    //
+    // FR-030. A project that does not build is a generation failure, not a discovery the operator
+    // makes later. Running it here means a failure leaves nothing to clean up.
+    //
+    // **This runs on the dry-run path too**, and that is deliberate rather than an oversight:
+    // `cargo build` writes `Cargo.lock` into the project, so a dry run that skipped verification
+    // would report a manifest one file short of what a real run creates — and SC-006 requires the
+    // two to match exactly. A dry run therefore costs the same couple of seconds, and tells the
+    // truth.
+    if reporter.progress_visible() {
+        reporter.note("verifying the generated project…");
+    }
+    let staging_path = destination.parent_display().join(staging.name());
+    crate::generate::verify::in_staging(&staging_path)?;
+
+    // ── 5. MANIFEST ─────────────────────────────────────────────────────────────────
+    //
+    // Taken AFTER verification, so it describes exactly the tree that will be renamed —
+    // `Cargo.lock` included.
     let manifest = FileManifest::describe(staging.dir())?;
 
     if dry_run {
@@ -174,10 +194,10 @@ pub fn run(
         ));
     }
 
-    // ── 5. PLACE ────────────────────────────────────────────────────────────────────
+    // ── 6. PLACE ────────────────────────────────────────────────────────────────────
     staging.place(&destination)?;
 
-    // ── 6. REPORT ───────────────────────────────────────────────────────────────────
+    // ── 7. REPORT ───────────────────────────────────────────────────────────────────
     let human = format!(
         "created {} files ({} bytes) in {}\n\nnext: cd {} && cargo run",
         manifest.file_count(),

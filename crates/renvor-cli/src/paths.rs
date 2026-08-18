@@ -85,6 +85,13 @@ impl Destination {
         &self.name
     }
 
+    /// The parent directory as the operator named it, **for messages and for process execution
+    /// only**. Not a capability; nothing in this crate opens it.
+    #[must_use]
+    pub fn parent_display(&self) -> &Path {
+        &self.parent_display
+    }
+
     /// The full path, **for messages only**.
     ///
     /// Deliberately not usable as a capability: nothing in this crate opens it. It exists so an

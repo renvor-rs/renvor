@@ -19,3 +19,4 @@
 pub mod manifest;
 pub mod place;
 pub mod render;
+pub mod verify;
