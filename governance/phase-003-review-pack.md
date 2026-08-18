@@ -4,7 +4,7 @@
 **Scope**: exactly two files — the destination boundary and the placement transaction.
 **Why these two**: every other file in the crate can be wrong and produce a bad project. These two
 can be wrong and **write outside the directory the operator named**, or **destroy something that was
-already there**. They are 1,396 lines together — over half of that comments and tests — and they are the ones worth a human's time.
+already there**. They are 1470 lines together — over half of that comments and tests — and they are the ones worth a human's time.
 
 **Read this in one sitting.** It is written to be sufficient on its own; you should not need to
 reconstruct the design from the code.
@@ -42,7 +42,9 @@ git status --porcelain        # must be empty
 ```
 
 If they do not match, this pack describes a different tree than the one in front of you and the
-approval statement in §11 must not be signed.
+approval statement in §11 must not be signed. **Every `file.rs:NNN` reference below was
+verified against this head by script**, and line numbers drift on any edit, so a mismatch here
+makes them unreliable too.
 
 ---
 
@@ -50,8 +52,8 @@ approval statement in §11 must not be signed.
 
 | File | Responsibility | Lines |
 |---|---|---|
-| [`crates/renvor-cli/src/paths.rs`](../crates/renvor-cli/src/paths.rs) | Decide whether a requested destination may be written to **at all**, and produce the capability that authorises it | 744 |
-| [`crates/renvor-cli/src/generate/place.rs`](../crates/renvor-cli/src/generate/place.rs) | Own a staging directory, and move it onto the destination **atomically or not at all** | 652 |
+| [`crates/renvor-cli/src/paths.rs`](../crates/renvor-cli/src/paths.rs) | Decide whether a requested destination may be written to **at all**, and produce the capability that authorises it | 760 |
+| [`crates/renvor-cli/src/generate/place.rs`](../crates/renvor-cli/src/generate/place.rs) | Own a staging directory, and move it onto the destination **atomically or not at all** | 710 |
 
 ## 2. The flow, end to end
 
@@ -60,7 +62,7 @@ approval statement in §11 must not be signed.
         │
         ▼
   ┌───────────────────────── paths.rs ──────────────────────────┐
-  │ validate_project_name(name)                    paths.rs:407 │
+  │ validate_project_name(name)                    paths.rs:423 │
   │   (only when the operator SUPPLIED a name — before any I/O) │
   │     name_not_empty · name_length · single_path_component    │
   │     reserved_device_name · name_character_set               │
@@ -100,12 +102,12 @@ approval statement in §11 must not be signed.
   │   STEP 1  REFUSE an existing destination       place.rs:174 │
   │             symlink_metadata(target), same three arms as    │
   │             RULE 4. ** NOTHING IS REMOVED HERE. **           │
-  │   STEP 2  DROP OUR HANDLE                      place.rs:221 │
-  │   STEP 3  rename, classify from ErrorKind      place.rs:228 │
+  │   STEP 2  DROP OUR HANDLE                      place.rs:227 │
+  │   STEP 3  rename, classify from ErrorKind      place.rs:234 │
   │             on failure: nothing to restore — see STEP 1     │
   └─────────────────────────────────────────────────────────────┘
         │
-        ▼  Drop for Staging  place.rs:287 — removes THE STAGING TREE
+        ▼  Drop for Staging  place.rs:305 — removes THE STAGING TREE
            on every other path, including a panic. It is the only
            removal in the module.
 ```
@@ -117,13 +119,13 @@ approval statement in §11 must not be signed.
 | **S1** | No filesystem operation can reach outside the destination's parent | `cap_std::fs::Dir` | **Structural.** After `Destination::open`, there is no ambient path API in scope. A code path that *forgets* to validate still cannot escape. |
 | **S2** | Exactly one ambient call exists in the whole program | `paths.rs:283` | `Dir::open_ambient_dir` on the parent the operator typed. Everything downstream is `Dir`-relative. |
 | **S3** | No `..` component is accepted anywhere in the requested path | `paths.rs:155` | Lexical, **in addition to** S1. Policy, not containment — see §4. |
-| **S4** | A project name is one path component | `paths.rs:407` | `/`, `\`, and `:` refused as `single_path_component`. |
-| **S5** | Reserved device names are refused **on every platform** | `paths.rs:48`, `:264`, `:407` | 22 names, matched on the **stem**, case-insensitively. A project made on Linux is opened on Windows. |
+| **S4** | A project name is one path component | `paths.rs:423` | `/`, `\`, and `:` refused as `single_path_component`. |
+| **S5** | Reserved device names are refused **on every platform** | `paths.rs:48`, `:264`, `:423` | 22 names, matched on the **stem**, case-insensitively. A project made on Linux is opened on Windows. |
 | **S5b** | The directory name renvor **creates** carries no control character and no trailing dot or space | `paths.rs:216` (RULE 1b) | Added 2026-08-18 after an advisory security review created a directory with an embedded newline via `--path`. Deliberately **narrower** than the package-name rule: `my.project` and `my project` still work, because rejecting those would break ordinary use to prevent nothing. |
 | **S6** | Validation completes before **any** filesystem write | `model.rs::resolve` | `Destination::open` reads and opens; it creates nothing. |
-| **S7** | A failure before placement leaves the destination exactly as it was | `Drop` at `place.rs:287` | Runs on every path including panic. |
-| **S8** | Placement is one rename, never a copy | `place.rs:228` | Both sides are the same `Dir`, so it cannot cross a filesystem. |
-| **S9** | Losing a race is a clean failure, never an overwrite | `place.rs:252` | Classified from the **kernel's own `ErrorKind`**. |
+| **S7** | A failure before placement leaves the destination exactly as it was | `Drop` at `place.rs:305` | Runs on every path including panic. |
+| **S8** | Placement is one rename, never a copy | `place.rs:234` | Both sides are the same `Dir`, so it cannot cross a filesystem. |
+| **S9** | Losing a race is a clean failure, never an overwrite | `place.rs:258` | Classified from the **kernel's own `ErrorKind`**. |
 | **S10** | Staging is never the system temporary directory | `place.rs:66` | It sits beside the destination so the final step can be a rename. |
 | **S11** | **The destination must not exist, in any form** | `paths.rs:304` (RULE 4) and `place.rs:174` (STEP 1) | Added 2026-08-18. Empty directory, non-empty directory, regular file, symbolic link, dangling symbolic link — all refused with `destination_exists`. `symlink_metadata` and **not** `metadata`, so a link is seen rather than followed and a dangling link does not read as absence. |
 | **S12** | **An unverifiable destination fails closed** | `paths.rs:304`, `place.rs:174` | Added 2026-08-18. Only an authoritative `NotFound` proceeds. The previous code asked a second question after the first failed and, when that failed too, fell through to success. The original OS error is carried into the message and `details.error`, not discarded. |
@@ -137,7 +139,7 @@ approval statement in §11 must not be signed.
 absolute paths, and symlinks that leave the tree — *inside the handle*, as a property of the
 library rather than of a check anyone remembered to write.
 
-**RULE 0 (`paths.rs:144`) is policy on top of that.** It refuses `..` **in the path the operator
+**RULE 0 (`paths.rs:155`) is policy on top of that.** It refuses `..` **in the path the operator
 typed**, which the capability would happily honour because the operator names the parent
 themselves. FR-039 and SC-009 require the refusal.
 
@@ -160,7 +162,7 @@ themselves. FR-039 and SC-009 require the refusal.
   dangling one, so the destination would have read as absent while the name was already taken.
 - **By capability**: a symlink *inside* the tree that points out of it is refused by the handle, and
   **no rule of ours checks for it**. `the_handle_refuses_an_escape_that_no_rule_in_this_module_
-  checks_for` (`paths.rs:719`) is the test that proves the capability is doing work the hand-written
+  checks_for` (`paths.rs:728`) is the test that proves the capability is doing work the hand-written
   rules do not.
 
 **Data-model §5 rule 8** — "canonical destination is inside the canonical parent" — therefore has
@@ -231,7 +233,7 @@ third is the one worth attacking:
 
 ## 6. TOCTOU — invariant I-17, stated as a limitation
 
-Documented at [`paths.rs:53`](../crates/renvor-cli/src/paths.rs) and [`place.rs:228`](../crates/renvor-cli/src/generate/place.rs).
+Documented at [`paths.rs:53`](../crates/renvor-cli/src/paths.rs) and [`place.rs:234`](../crates/renvor-cli/src/generate/place.rs).
 
 **The window is narrowed, not closed, and the code does not claim otherwise.**
 
@@ -272,7 +274,7 @@ revision 1 asked for: that version deleted an empty destination *on purpose*.
 
 | Behaviour | Unix | Windows | Handled at |
 |---|---|---|---|
-| Renaming or deleting a directory with an **open handle** | fine | **refused, `os error 32`** | `place.rs:40`, `:221` — the handle is `Option<Dir>` and is dropped before both |
+| Renaming or deleting a directory with an **open handle** | fine | **refused, `os error 32`** | `place.rs:40`, `:227` — the handle is `Option<Dir>` and is dropped before both |
 | Reserved device names (`CON`, `NUL`, `COM1`…) | ordinary names | resolve to **devices** | refused on **both**, `paths.rs:48` |
 | A trailing `.` or space in a directory name | kept verbatim | **silently stripped** | refused on **both**, `paths.rs:216` |
 | `rename` onto an existing **empty** directory | **replaces it silently** | refused (`AlreadyExists`) | the residual in §6.1. The Unix behaviour is the dangerous one |
