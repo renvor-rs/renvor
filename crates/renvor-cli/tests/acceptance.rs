@@ -444,6 +444,42 @@ fn a_different_answer_really_does_produce_a_different_project() {
 }
 
 #[test]
+fn the_global_dry_run_flag_reaches_every_command_that_can_change_anything() {
+    // THE REGRESSION TEST. `--dry-run` is declared global, but only `new` received it, so
+    // `renvor docker up --dry-run` started containers and `renvor dev --dry-run` ran the build.
+    //
+    // Asserted from outside, because the defect was in the **wiring** — every command's own logic
+    // was fine, and `main` simply never passed the flag along. A unit test on the command could
+    // not have caught it.
+    let base = tempfile::tempdir().expect("tempdir");
+    std::fs::write(base.path().join("compose.yaml"), b"services: {}\n").expect("write");
+    std::fs::write(base.path().join("renvor.toml"), b"[renvor]\n").expect("write");
+
+    for command in [&["docker", "up"][..], &["dev"][..]] {
+        let mut args = command.to_vec();
+        args.extend_from_slice(&["--dry-run", "--output", "json"]);
+        let (code, stdout, stderr) = renvor(&args, base.path(), &[]);
+        assert_eq!(code, 0, "{command:?} --dry-run failed:\n{stderr}");
+        let document: serde_json::Value =
+            serde_json::from_str(stdout.trim()).expect("one JSON document");
+        assert_eq!(
+            document["result"]["dryRun"], true,
+            "{command:?} did not report itself as a dry run, so the flag did not reach it"
+        );
+        assert!(
+            document["result"]["wouldRun"].is_array(),
+            "{command:?} did not say what it WOULD have run, which is the whole point"
+        );
+    }
+
+    // And nothing happened.
+    assert!(
+        !base.path().join("target").exists(),
+        "a dry run built something"
+    );
+}
+
+#[test]
 fn an_unsupported_combination_fails_before_anything_is_created() {
     // "unsupported combinations fail before filesystem writes."
     let base = tempfile::tempdir().expect("tempdir");

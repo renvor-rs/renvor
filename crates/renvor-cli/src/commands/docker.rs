@@ -98,7 +98,12 @@ fn availability() -> Result<(), Unavailable> {
 ///
 /// [`Code::ContainerRuntimeUnavailable`] (exit `5`) with `details.reason`, or
 /// [`Code::ManifestInvalid`] when the project has no container controls to drive.
-pub fn run(reporter: &Reporter, path: &std::path::Path, action: Action) -> Result<Exit, CliError> {
+pub fn run(
+    reporter: &Reporter,
+    path: &std::path::Path,
+    action: Action,
+    dry_run: bool,
+) -> Result<Exit, CliError> {
     if !path.join("compose.yaml").is_file() {
         return Err(CliError::new(
             Code::ManifestInvalid,
@@ -110,6 +115,29 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, action: Action) -> Resul
         )
         .with("field", "compose.yaml")
         .with("constraint", "must exist; generate with `--container`"));
+    }
+
+    // `--dry-run` IS GLOBAL, AND THIS COMMAND HAS SIDE EFFECTS.
+    //
+    // Until 2026-08-18 only `new` honoured it, so `renvor docker up --dry-run` started containers.
+    // A global flag that silently does nothing on the commands that can change the world is worse
+    // than no flag: it is a promise a user reasonably relies on.
+    //
+    // Reported BEFORE the runtime is probed, because a dry run must not need a working runtime to
+    // tell you what it would do.
+    if dry_run {
+        return Ok(reporter.finish(
+            "docker",
+            &format!(
+                "dry run: would run `docker {}`",
+                action.arguments().join(" ")
+            ),
+            serde_json::json!({
+                "dryRun": true,
+                "action": action,
+                "wouldRun": action.arguments(),
+            }),
+        ));
     }
 
     if let Err(unavailable) = availability() {
@@ -161,7 +189,13 @@ mod tests {
         // Ordering matters: probing first would report "docker is not running" to somebody whose
         // actual problem is that they generated the project without `--container`.
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = run(&Reporter::new(Format::Human, true), dir.path(), Action::Up).unwrap_err();
+        let error = run(
+            &Reporter::new(Format::Human, true),
+            dir.path(),
+            Action::Up,
+            false,
+        )
+        .unwrap_err();
         assert_eq!(error.code, Code::ManifestInvalid);
         assert!(
             error
@@ -169,6 +203,23 @@ mod tests {
                 .iter()
                 .any(|(k, v)| k == "field" && v == "compose.yaml")
         );
+    }
+
+    #[test]
+    fn a_dry_run_starts_nothing_and_needs_no_runtime() {
+        // The bug this prevents: `renvor docker up --dry-run` used to start containers, because
+        // only `new` received the flag. Asserted against a project that HAS compose controls, so
+        // the run gets past the first guard and would really have reached `docker compose up`.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("compose.yaml"), b"services: {}\n").expect("write");
+        let exit = run(
+            &Reporter::new(Format::Human, true),
+            dir.path(),
+            Action::Up,
+            true,
+        )
+        .expect("a dry run must succeed even with no container runtime");
+        assert_eq!(exit, Exit::Success);
     }
 
     #[test]

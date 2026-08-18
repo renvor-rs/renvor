@@ -86,7 +86,7 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
         }
         Command::Doctor => commands::doctor::run(reporter),
         Command::Check { path } => commands::check::run(reporter, &path),
-        Command::Dev => commands::dev::run(reporter, std::path::Path::new(".")),
+        Command::Dev => commands::dev::run(reporter, std::path::Path::new("."), dry_run),
         Command::Docker { action } => {
             let action = match action {
                 DockerAction::Up => commands::docker::Action::Up,
@@ -94,7 +94,7 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
                 DockerAction::Status => commands::docker::Action::Status,
                 DockerAction::Logs => commands::docker::Action::Logs,
             };
-            commands::docker::run(reporter, std::path::Path::new("."), action)
+            commands::docker::run(reporter, std::path::Path::new("."), action, dry_run)
         }
     }
 }

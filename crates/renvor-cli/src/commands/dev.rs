@@ -19,7 +19,7 @@ use crate::output::Reporter;
 ///
 /// [`Code::ToolMissing`] (exit `5`) if `cargo` cannot be run, or [`Code::ManifestInvalid`] if the
 /// directory is not a renvor project.
-pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
+pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result<Exit, CliError> {
     if !path.join("renvor.toml").is_file() {
         return Err(CliError::new(
             Code::ManifestInvalid,
@@ -30,6 +30,15 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
         )
         .with("field", "renvor.toml")
         .with("constraint", "must exist in the project directory"));
+    }
+
+    // `--dry-run` is global and this command runs a build. See the note in `docker.rs`.
+    if dry_run {
+        return Ok(reporter.finish(
+            "dev",
+            "dry run: would run `cargo test` in the project",
+            serde_json::json!({ "dryRun": true, "wouldRun": ["cargo", "test"] }),
+        ));
     }
 
     reporter.note("running `cargo test` in the project (Phase 003 has no transport to reload)");
@@ -72,9 +81,21 @@ mod tests {
     use crate::output::Format;
 
     #[test]
+    fn a_dry_run_builds_nothing() {
+        // `renvor dev --dry-run` used to run the whole test suite.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("renvor.toml"), b"[renvor]\n").expect("write");
+        run(&Reporter::new(Format::Human, true), dir.path(), true).expect("a dry run succeeds");
+        assert!(
+            !dir.path().join("target").exists(),
+            "a dry run built the project"
+        );
+    }
+
+    #[test]
     fn a_directory_that_is_not_a_renvor_project_is_refused_before_anything_runs() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = run(&Reporter::new(Format::Human, true), dir.path()).unwrap_err();
+        let error = run(&Reporter::new(Format::Human, true), dir.path(), false).unwrap_err();
         assert_eq!(error.code, Code::ManifestInvalid);
         assert!(!dir.path().join("target").exists(), "cargo ran anyway");
     }
