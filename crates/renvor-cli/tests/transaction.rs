@@ -48,22 +48,6 @@ const PROMPTS: [&str; 7] = [
     "Create this project?",
 ];
 
-/// The questions `inquire` actually asked, extracted from a terminal transcript.
-///
-/// `inquire` renders a prompt twice: once asking — `? <question> (<default>)` — and once answered
-/// — `? <question> <answer>`. Only the asking form ends in a closing parenthesis, which is what
-/// separates them here. The trailing `(<default>)` is then stripped, so a change to a *default*
-/// does not read as a change to the *question*.
-fn prompts_asked(transcript: &str) -> Vec<String> {
-    transcript
-        .split(['\r', '\n'])
-        .filter_map(|line| line.strip_prefix("? "))
-        .map(str::trim_end)
-        .filter(|line| line.ends_with(')'))
-        .filter_map(|line| line.rfind(" (").map(|at| line[..at].to_owned()))
-        .collect()
-}
-
 /// Answers prompts `0..stop` with their defaults, then returns the live terminal at prompt `stop`.
 fn drive_to(terminal: &mut Terminal, stop: usize) {
     for prompt in PROMPTS.iter().take(stop) {
@@ -88,16 +72,30 @@ fn staging_residue(directory: &Path) -> Vec<String> {
 #[test]
 fn the_wizard_asks_exactly_these_prompts() {
     // The guard that makes `cancelling_at_each_prompt_…` honest. T015 requires that "adding a
-    // prompt without covering it fails the suite" — this is that failure. A prompt added to
-    // `prompts::fill` and not to `PROMPTS` shows up here as an extra entry, immediately, rather
-    // than as a cancellation test that quietly never runs.
+    // prompt without covering it fails the suite" — this is that failure.
+    //
+    // ── ASSERTED BEHAVIOURALLY, NOT BY PARSING THE TRANSCRIPT ──────────────────────────
+    //
+    // An earlier version extracted the questions by parsing lines out of the transcript and
+    // comparing the list. That worked on Unix and failed on Windows, because **ConPTY mirrors the
+    // screen rather than the bytes written** and merges lines unpredictably — the review screen's
+    // last file-list entry arrived joined to the line after it. Questions also contain `? `
+    // internally ("Generate seed data for it? (y/N)"), so no delimiter reliably bounds them.
+    //
+    // The transcript's *layout* is the terminal emulator's business. What this test actually needs
+    // is two properties, and both are behavioural:
+    //
+    //   1. **Order and presence** — each `expect` below blocks until its own question appears, in
+    //      order, so a renamed, removed, or reordered prompt fails at the prompt that went missing
+    //      and names it.
+    //   2. **Nothing extra** — after answering exactly `PROMPTS.len()` questions the run must reach
+    //      completion. A prompt added to `prompts::fill` and not to `PROMPTS` leaves the process
+    //      waiting for an answer that never comes, so `expect("created")` fails with a diagnosis
+    //      showing the child still running and the unanswered question on screen.
     let root = tempfile::tempdir().expect("a temporary directory");
+    let destination = root.path().join("demo");
     let mut terminal = Terminal::spawn(
-        &[
-            "new",
-            "--path",
-            root.path().join("demo").to_str().expect("utf-8"),
-        ],
+        &["new", "--path", destination.to_str().expect("utf-8")],
         root.path(),
         &[],
     );
@@ -105,13 +103,14 @@ fn the_wizard_asks_exactly_these_prompts() {
         terminal.expect(prompt);
         terminal.enter();
     }
+
+    // Property 2. Nothing else was asked.
+    terminal.expect("created ");
     let exit = terminal.wait();
     assert_eq!(exit, 0, "the census run succeeds\n{}", terminal.visible());
-
-    assert_eq!(
-        prompts_asked(&terminal.visible()),
-        PROMPTS.to_vec(),
-        "the wizard's questions have changed; update PROMPTS and the cancellation coverage with them"
+    assert!(
+        destination.join("renvor.toml").is_file(),
+        "answering every prompt produced a project"
     );
 }
 
