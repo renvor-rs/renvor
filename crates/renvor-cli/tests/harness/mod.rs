@@ -29,15 +29,22 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 /// Generous, because a run that reaches the review screen has already run `cargo build` and
 /// `cargo test` on the generated project. A hang is still a failure rather than a timeout that
 /// gets retried — see the module note in `transaction.rs`.
-const EXPECT_TIMEOUT: Duration = Duration::from_secs(300);
+const EXPECT_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// A live `renvor` process attached to a real terminal.
 pub struct Terminal {
     writer: Box<dyn Write + Send>,
     receiver: mpsc::Receiver<u8>,
     child: Box<dyn portable_pty::Child + Send + Sync>,
+    /// Held open deliberately. On Windows the slave and the master share the `PsuedoCon` behind an
+    /// `Arc`, so dropping the slave does not close it — but the ordering is load-bearing enough on
+    /// both platforms that it is kept rather than relied upon.
+    _slave: Box<dyn portable_pty::SlavePty + Send>,
     /// Everything read so far, with escape sequences intact.
     pub transcript: String,
+    /// Why the reader thread stopped, if it has. Used to make a timeout diagnostic rather than
+    /// merely a timeout.
+    reader_ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Terminal {
@@ -69,33 +76,45 @@ impl Terminal {
             .slave
             .spawn_command(command)
             .expect("renvor starts on the pty");
-        // The slave handle must be dropped or the master never sees EOF when the child exits.
-        drop(pty.slave);
 
         let mut reader = pty.master.try_clone_reader().expect("the pty can be read");
         let writer = pty.master.take_writer().expect("the pty can be written");
         // `portable_pty`'s reader blocks, so it lives on its own thread and feeds a channel. That
         // is what makes `expect` able to time out rather than hang the whole test binary.
         let (sender, receiver) = mpsc::channel();
+        let reader_ended = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let ended = std::sync::Arc::clone(&reader_ended);
         std::thread::spawn(move || {
             let mut buffer = [0_u8; 1024];
-            while let Ok(read) = reader.read(&mut buffer) {
-                if read == 0 {
-                    break;
-                }
-                for byte in &buffer[..read] {
-                    if sender.send(*byte).is_err() {
-                        return;
+            let mut total = 0_usize;
+            let reason = loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break format!("clean end of file after {total} bytes"),
+                    Ok(read) => {
+                        total += read;
+                        for byte in &buffer[..read] {
+                            if sender.send(*byte).is_err() {
+                                return;
+                            }
+                        }
                     }
+                    // A signal arriving mid-read is not the end of the stream. Treating it as one
+                    // turns an unrelated interruption into "the program exited", which is a
+                    // diagnosis that sends somebody to look in the wrong place.
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(error) => break format!("read failed after {total} bytes: {error}"),
                 }
-            }
+            };
+            *ended.lock().expect("the reason mutex is not poisoned") = Some(reason);
         });
 
         Self {
             writer,
             receiver,
             child,
+            _slave: pty.slave,
             transcript: String::new(),
+            reader_ended,
         }
     }
 
@@ -105,13 +124,14 @@ impl Terminal {
     /// arrived is the least useful failure a terminal test can produce.
     pub fn expect(&mut self, needle: &str) {
         let deadline = Instant::now() + EXPECT_TIMEOUT;
-        while !self.visible().contains(needle) {
+        loop {
+            if self.visible().contains(needle) {
+                return;
+            }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(
-                !remaining.is_zero(),
-                "timed out waiting for {needle:?}\n--- transcript ---\n{}",
-                self.visible()
-            );
+            if remaining.is_zero() {
+                panic!("timed out waiting for {needle:?}{}", self.diagnosis());
+            }
             match self
                 .receiver
                 .recv_timeout(remaining.min(Duration::from_millis(250)))
@@ -121,13 +141,43 @@ impl Terminal {
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     assert!(
                         self.visible().contains(needle),
-                        "the program exited before {needle:?} appeared\n--- transcript ---\n{}",
-                        self.visible()
+                        "the program exited before {needle:?} appeared{}",
+                        self.diagnosis()
                     );
                     return;
                 }
             }
         }
+    }
+
+    /// Everything known about why a wait failed.
+    ///
+    /// A bare "timed out waiting for X" with an empty transcript is the least useful failure a
+    /// terminal test can produce, and it is exactly what the first Windows run produced. This adds
+    /// the three facts that separate the plausible causes: whether the child is still running,
+    /// whether the reader thread is still going and why it stopped if not, and how many bytes ever
+    /// arrived.
+    fn diagnosis(&mut self) -> String {
+        let child = match self.child.try_wait() {
+            Ok(Some(status)) => format!("child EXITED with code {}", status.exit_code()),
+            Ok(None) => "child is STILL RUNNING".to_owned(),
+            Err(error) => format!("child status unavailable: {error}"),
+        };
+        let reader = match self
+            .reader_ended
+            .lock()
+            .expect("the reason mutex is not poisoned")
+            .clone()
+        {
+            Some(reason) => format!("reader STOPPED: {reason}"),
+            None => "reader still running".to_owned(),
+        };
+        format!(
+            "\n  platform: {}\n  {child}\n  {reader}\n  bytes received: {}\n--- transcript ---\n{}",
+            std::env::consts::OS,
+            self.transcript.len(),
+            self.visible()
+        )
     }
 
     /// The transcript with ANSI escape sequences removed.
