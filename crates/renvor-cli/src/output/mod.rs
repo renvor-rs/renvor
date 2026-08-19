@@ -15,7 +15,7 @@ pub mod redact;
 
 use std::io::{IsTerminal, Write};
 
-use crate::exit::{CliError, Exit};
+use crate::exit::{CliError, Code, Exit};
 
 /// The `--output` flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -111,6 +111,55 @@ impl Reporter {
         self.stderr_is_terminal && self.format == Format::Human
     }
 
+    /// Where a child process's `stdout` must be sent.
+    ///
+    /// # Why a command may not simply let the child inherit
+    ///
+    /// `dev` and `docker` run another program in the foreground. A child that inherits this
+    /// process's `stdout` writes **straight past** the [`Reporter`], because inheritance is a
+    /// file-descriptor fact and not something this crate mediates.
+    ///
+    /// In [`Format::Human`] that is exactly right: `cargo test`'s progress and `docker compose`'s
+    /// table *are* the output the operator asked for, and buffering them through here would
+    /// destroy their interactivity for no gain.
+    ///
+    /// In [`Format::Json`] it breaks contract C-2. `stdout` carries **exactly one JSON document**,
+    /// and a child that prepends a libtest summary to it produces a stream no parser accepts — on
+    /// the *success* run as much as the failure run, so an operator piping into `jq` can
+    /// distinguish nothing but the exit code. Measured before this existed: `renvor --output json
+    /// dev | python3 -m json.tool` failed on every invocation.
+    ///
+    /// The child's output is **redirected, not discarded**: it moves to `stderr`, which C-1
+    /// already reserves for diagnostics, and which `docker.rs`'s own failure message
+    /// (*"its output is above"*) always assumed it could point at. Discarding it would trade a
+    /// contract violation for an information loss.
+    ///
+    /// # Why a duplicated handle rather than a pipe
+    ///
+    /// A pipe would need a reader thread. `docker logs` streams without bound, so a
+    /// read-after-wait would deadlock the moment the child filled the pipe buffer, and a reader
+    /// thread would add concurrency to a path whose whole job is to be transparent. Duplicating
+    /// the `stderr` handle hands the child the same destination this process writes to, and the
+    /// kernel does the interleaving.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::Internal`] if the `stderr` handle cannot be duplicated. This **fails closed**: it
+    /// does not silently fall back to `inherit()` (which would reintroduce the contract
+    /// violation) or to `null()` (which would silently discard the operator's output).
+    pub fn child_stdout(&self) -> Result<std::process::Stdio, CliError> {
+        match self.format {
+            Format::Human => Ok(std::process::Stdio::inherit()),
+            Format::Json => duplicate_stderr().map_err(|error| {
+                CliError::new(
+                    Code::Internal,
+                    "the child process could not be given a `stderr` to write to",
+                )
+                .with("cause", &error.to_string())
+            }),
+        }
+    }
+
     /// Writes a diagnostic line to `stderr`, redacted.
     pub fn note(&self, message: &str) {
         // `for_terminal` AFTER `line`: redaction first, so a secret is replaced before anything
@@ -203,6 +252,35 @@ impl Reporter {
             }
         }
     }
+}
+
+/// Duplicates this process's `stderr` into something a child process can be handed.
+///
+/// # Why this is written twice
+///
+/// `Stdio` can be built from an owned handle, but the *name* of that handle is
+/// platform-specific: a file descriptor on Unix, a `HANDLE` on Windows. There is no portable
+/// `From<Stderr> for Stdio`. Both arms do the same thing — borrow this process's `stderr`, clone
+/// it into an owned handle, and give the clone away — so the duplication is in the spelling, not
+/// in the behaviour.
+///
+/// The clone is what makes this safe: the child gets its own handle to the same destination, so
+/// the child closing it on exit does not close this process's `stderr`.
+#[cfg(unix)]
+fn duplicate_stderr() -> std::io::Result<std::process::Stdio> {
+    use std::os::fd::AsFd;
+    Ok(std::process::Stdio::from(
+        std::io::stderr().as_fd().try_clone_to_owned()?,
+    ))
+}
+
+/// The Windows spelling of [`duplicate_stderr`].
+#[cfg(windows)]
+fn duplicate_stderr() -> std::io::Result<std::process::Stdio> {
+    use std::os::windows::io::AsHandle;
+    Ok(std::process::Stdio::from(
+        std::io::stderr().as_handle().try_clone_to_owned()?,
+    ))
 }
 
 #[cfg(test)]

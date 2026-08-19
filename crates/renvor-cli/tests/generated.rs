@@ -226,3 +226,48 @@ fn stdout_carries_only_the_result_so_a_pipeline_needs_no_filtering() {
         )
     });
 }
+
+#[test]
+fn json_dev_puts_exactly_one_document_on_stdout_and_the_child_output_on_stderr() {
+    // The sibling of `stdout_carries_only_the_result_so_a_pipeline_needs_no_filtering`, for the
+    // case that test cannot reach. That one passes `--dry-run`, which returns before `cargo` is
+    // ever spawned — so the whole child-process half of C-1's stream discipline was untested, and
+    // `--output json dev` emitted libtest's output ahead of the envelope on every real run.
+    //
+    // `dev` runs the generated project's own `cargo test`, so this is slow by construction. It is
+    // in `generated.rs` rather than `cli.rs` because everything here already pays that cost.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = generate(base.path(), &["--example-domain"]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(["--output", "json", "dev"])
+        .current_dir(&project)
+        .env("CARGO_TARGET_DIR", base.path().join(".target"))
+        .output()
+        .expect("runs");
+
+    assert!(
+        output.status.success(),
+        "dev failed:\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let document: serde_json::Value =
+        serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
+            panic!(
+                "stdout was not exactly one JSON document: {error}\n---\n{}\n---",
+                String::from_utf8_lossy(&output.stdout)
+            )
+        });
+    assert_eq!(document["command"], "dev");
+    assert_eq!(document["status"], "success");
+
+    // The child's output must not be discarded — it is the useful half of `dev`. It moves to
+    // stderr, which C-1 reserves for diagnostics, rather than being thrown away.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("test result: ok"),
+        "`cargo test`'s output must be redirected to stderr, not discarded; stderr was:\n{stderr}"
+    );
+}

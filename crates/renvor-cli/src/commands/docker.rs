@@ -247,6 +247,9 @@ pub fn run(
     let status = std::process::Command::new("docker")
         .args(action.arguments())
         .current_dir(path)
+        // The same stream problem `dev` has, and worse: `docker logs` streams without bound onto
+        // the stream C-2 reserves for exactly one document. See `Reporter::child_stdout`.
+        .stdout(reporter.child_stdout()?)
         .status()
         .map_err(|error| {
             CliError::new(

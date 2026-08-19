@@ -317,3 +317,65 @@ fn the_shape_function_can_tell_two_different_shapes_apart() {
         "a status change must be visible"
     );
 }
+
+/// Whether a working container runtime is present, so the docker stream test can say which of
+/// "passed" and "not exercised" actually happened.
+///
+/// A test that silently no-ops when a dependency is missing reports success for a run that checked
+/// nothing. This returns the answer so the caller can print it.
+fn container_runtime_available() -> bool {
+    std::process::Command::new("docker")
+        .arg("info")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[test]
+fn json_docker_puts_exactly_one_document_on_stdout() {
+    // The gap the shape test at `container_controls_missing` could not reach: that case runs in a
+    // project **without** `compose.yaml`, so it returns before `docker` is ever spawned. Only a
+    // containerised project reaches the child, and only the child can prepend `docker compose`'s
+    // table to the envelope — which it did, on every `--output json docker` invocation.
+    if !container_runtime_available() {
+        eprintln!(
+            "SKIPPED json_docker_puts_exactly_one_document_on_stdout: no container runtime. \
+             This test did NOT run and proves nothing on this machine; the Linux CI job is where \
+             it is required to execute."
+        );
+        return;
+    }
+
+    let base = tempfile::tempdir().expect("tempdir");
+    let generated = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(["new", "boxed", "--yes", "--container"])
+        .current_dir(base.path())
+        .output()
+        .expect("runs");
+    assert!(
+        generated.status.success(),
+        "generation failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let project = base.path().join("boxed");
+    assert!(
+        project.join("compose.yaml").is_file(),
+        "POSITIVE CONTROL: without a compose.yaml this command returns before spawning docker, \
+         and the test below would pass without exercising the child-process path at all"
+    );
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(["--output", "json", "docker", "status"])
+        .current_dir(&project)
+        .output()
+        .expect("runs");
+
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap_or_else(|error| {
+        panic!(
+            "stdout was not exactly one JSON document: {error}\n---\n{}\n---",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    });
+}

@@ -47,6 +47,10 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
     let status = std::process::Command::new("cargo")
         .arg("test")
         .current_dir(path)
+        // `cargo test` inherits this process's `stdout` unless told otherwise, which put libtest's
+        // output ahead of the JSON envelope and made `--output json dev` unparseable on every run,
+        // success included. See `Reporter::child_stdout`.
+        .stdout(reporter.child_stdout()?)
         .status()
         .map_err(|error| {
             CliError::new(
