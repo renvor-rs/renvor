@@ -114,7 +114,7 @@ the D6 decision record** ([`research.md`](research.md)).
 | No traversal component | `../` and its platform variants |
 | No absolute path where relative is expected | absolute-path injection |
 | Final component is a single name | a name containing a separator |
-| Not a platform-reserved device name | `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9` on Windows |
+| Not a platform-reserved device name | `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, and the superscript aliases `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, `LPT³` on Windows — 28 names, the complete set Microsoft documents. The superscript spellings alias the same devices and were absent until 2026-08-19, so `renvor new demo --path COM¹` succeeded and created a directory Windows cannot open |
 | Parent exists and canonicalises | a destination under a path that does not resolve |
 | Destination does not exist **at all** | FR-013 — an empty directory, a non-empty directory, a regular file, and a symbolic link are all refused, and so is an entry whose state cannot be established |
 | Canonical destination is inside the canonical parent | symlink escape |

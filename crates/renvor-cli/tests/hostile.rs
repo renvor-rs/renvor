@@ -39,9 +39,40 @@ use harness::renvor;
 ///
 /// Enumerated rather than described (T051): a class description like "COM followed by a digit"
 /// invites an off-by-one at `COM0` and cannot be diffed in review.
-const RESERVED_DEVICE_NAMES: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+const RESERVED_DEVICE_NAMES: [&str; 28] = [
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    // Microsoft's "Naming Files, Paths, and Namespaces" lists the superscript spellings alongside
+    // the ASCII ones: `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, `LPT³` alias the same devices, so
+    // `echo test > COM\u{B9}` fails on Windows exactly as `> COM1` does. Written as escapes rather
+    // than as literal characters so a reviewer can see which code point each one is, and so they
+    // survive a copy through a terminal or an editor that normalises them.
+    "COM\u{B9}",
+    "COM\u{B2}",
+    "COM\u{B3}",
+    "LPT\u{B9}",
+    "LPT\u{B2}",
+    "LPT\u{B3}",
 ];
 
 /// Runs `renvor new` and returns the parsed failure document, insisting the run failed.
@@ -509,7 +540,10 @@ fn no_raw_control_character_from_argv_ever_reaches_a_human_stream() {
         ),
         (
             "unknown flag carrying OSC window-title and clipboard writes",
-            format!("--b{}]0;PWNED{}{}]52;c;cm93bmVk{}", '\u{1b}', '\u{7}', '\u{1b}', '\u{7}'),
+            format!(
+                "--b{}]0;PWNED{}{}]52;c;cm93bmVk{}",
+                '\u{1b}', '\u{7}', '\u{1b}', '\u{7}'
+            ),
         ),
         (
             "unknown flag carrying an embedded newline that forges a line",
@@ -589,7 +623,10 @@ fn a_non_utf8_argument_is_a_classified_error_and_not_a_panic() {
             .expect("renvor runs");
 
         let code = output.status.code().unwrap_or(-1);
-        assert_ne!(code, 101, "a non-UTF-8 argument still panics (extra: {extra:?})");
+        assert_ne!(
+            code, 101,
+            "a non-UTF-8 argument still panics (extra: {extra:?})"
+        );
         assert!(
             [1, 2, 3].contains(&code),
             "exit code {code} is not in the C-1 taxonomy (extra: {extra:?})"
@@ -685,5 +722,67 @@ fn help_reports_a_failed_write_instead_of_exiting_zero() {
     assert!(
         !output.stderr.is_empty(),
         "the write failure was not reported anywhere"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn an_external_tools_version_output_cannot_forge_a_doctor_row() {
+    // `doctor` interpolates another program's raw `--version` bytes into its report. A newline in
+    // that output ends the row renvor wrote and starts one the *tool* wrote, which renvor then
+    // presents as its own finding — while exiting 0.
+    //
+    // The existing structural guard (`no_production_site_interpolates_a_raw_path_into_a_message`)
+    // cannot catch this: `doctor.rs` is not in its source list and it only scans `.display()`
+    // sites. This asserts the behaviour instead, by comparing against a benign shim so the
+    // difference measured is exactly the injected newline.
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fn report_lines(base: &std::path::Path, version_output: &str) -> usize {
+        let bin = base.join("bin");
+        std::fs::create_dir_all(&bin).expect("shim directory");
+        let shim = bin.join("git");
+        std::fs::write(
+            &shim,
+            format!("#!/bin/sh\nprintf '%s' '{version_output}'\n"),
+        )
+        .expect("write shim");
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755))
+            .expect("make the shim executable");
+
+        let path = format!(
+            "{}:{}",
+            bin.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"))
+            .arg("doctor")
+            .env("PATH", path)
+            .current_dir(base)
+            .output()
+            .expect("renvor runs");
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            text.contains("2.54.0"),
+            "POSITIVE CONTROL: the shim's version never reached the report, so this test would \
+             pass without exercising the interpolation at all:\n{text}"
+        );
+        text.lines().count()
+    }
+
+    let benign = tempfile::tempdir().expect("tempdir");
+    let hostile = tempfile::tempdir().expect("tempdir");
+
+    let expected = report_lines(benign.path(), "git version 2.54.0");
+    let actual = report_lines(
+        hostile.path(),
+        "git version 2.54.0\nok       FORGED   9.9.9",
+    );
+
+    assert_eq!(
+        actual,
+        expected,
+        "an external tool's output added {} line(s) to renvor's own report",
+        actual.saturating_sub(expected)
     );
 }

@@ -45,9 +45,40 @@ use crate::exit::{CliError, Code};
 /// Enumerated rather than described as a class, so a reader can tell whether the list is complete.
 /// Checked on **every** platform: a project generated on Linux may well be checked out on Windows,
 /// and discovering the name is unusable at that point is worse than refusing it here.
-const RESERVED_DEVICE_NAMES: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+const RESERVED_DEVICE_NAMES: [&str; 28] = [
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    // Microsoft's "Naming Files, Paths, and Namespaces" lists the superscript spellings alongside
+    // the ASCII ones: `COM¹`, `COM²`, `COM³`, `LPT¹`, `LPT²`, `LPT³` alias the same devices, so
+    // `echo test > COM\u{B9}` fails on Windows exactly as `> COM1` does. Written as escapes rather
+    // than as literal characters so a reviewer can see which code point each one is, and so they
+    // survive a copy through a terminal or an editor that normalises them.
+    "COM\u{B9}",
+    "COM\u{B2}",
+    "COM\u{B3}",
+    "LPT\u{B9}",
+    "LPT\u{B2}",
+    "LPT\u{B3}",
 ];
 
 /// # Invariant I-17 — time-of-check to time-of-use is **narrowed, not eliminated**
@@ -526,6 +557,38 @@ mod tests {
                 "{name} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn a_reserved_device_name_is_refused_as_a_destination_directory() {
+        // RULE 2 lives in `Destination::open`, and **nothing drove it with a reserved name**.
+        //
+        // That gap hid a real defect for the whole phase. In the NAME position `COM\u{B9}` is
+        // refused by the character-set rule — superscripts are not ASCII alphanumerics — so a
+        // corpus that only calls `validate_project_name` passes whether or not the reserved list
+        // contains it. `renvor new demo --path COM\u{B9}` therefore *succeeded*, creating a
+        // directory Windows cannot open, while every reserved-name test in the suite was green.
+        //
+        // Asserting the RULE and not merely the refusal is what makes this test able to fail: it
+        // is the same lesson `tests/hostile.rs` records in its header about the `..` rule.
+        let base = tempfile::tempdir().expect("tempdir");
+        for name in ["CON", "com1", "LPT9", "COM\u{B9}", "com\u{B2}", "LPT\u{B3}"] {
+            let error = Destination::open(&base.path().join(name))
+                .expect_err("a reserved device name must be refused as a destination");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(key, value)| key == "rule" && value == "reserved_device_name"),
+                "`{name}` was refused for the wrong reason: {:?}",
+                error.details
+            );
+        }
+
+        // POSITIVE CONTROL. Every assertion above is a refusal, and a validator that refused
+        // everything would satisfy all of them.
+        Destination::open(&base.path().join("ordinary"))
+            .expect("an ordinary destination name is still accepted");
     }
 
     #[test]

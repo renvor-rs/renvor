@@ -267,7 +267,17 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
     let mut human = probes
         .iter()
         .map(
-            |probe| match (&probe.version, probe.compatible, probe.required) {
+            // `version` is ANOTHER PROGRAM'S output, so it is escaped at the point it is
+            // interpolated — the same rule `redact::path` follows for a path. A newline in it used
+            // to end renvor's row and begin one the tool had written, which renvor then presented
+            // as its own finding while exiting 0. `redact::for_terminal` cannot catch that: by
+            // design it exempts newline, because by the time it runs the line is legitimately
+            // multi-line.
+            |probe| match (
+                &probe.version.as_deref().map(crate::output::redact::detail),
+                probe.compatible,
+                probe.required,
+            ) {
                 (Some(version), true, _) => format!("ok       {:<8} {version}", probe.tool),
                 (Some(version), false, _) => format!(
                     "TOO OLD  {:<8} {version} — needs {}; {}",
