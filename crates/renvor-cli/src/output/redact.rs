@@ -207,8 +207,17 @@ pub fn line(input: &str) -> String {
         byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')
     }
     /// Characters that end a value.
+    ///
+    /// The backtick is here because renvor frames the offending text in backticks
+    /// (``error: `--output token=abc` is not supported``). Without it the scan ran past the
+    /// closing delimiter and swallowed it, so a redacted message came out with unbalanced framing.
     fn ends_value(byte: u8) -> bool {
-        byte.is_ascii_whitespace() || matches!(byte, b',' | b'}' | b'"' | b'\'')
+        byte.is_ascii_whitespace() || matches!(byte, b',' | b'}' | b'"' | b'\'' | b'`')
+    }
+
+    /// Whether a byte opens (and therefore closes) a quoted value.
+    fn is_quote(byte: &u8) -> bool {
+        matches!(byte, b'"' | b'\'')
     }
 
     let bytes = input.as_bytes();
@@ -247,9 +256,29 @@ pub fn line(input: &str) -> String {
         out.push_str(&input[cursor + 1..value_start]);
         out.push_str(REDACTED);
 
+        // A value that BEGINS with a quote is a quoted value, not an empty one. Falling through to
+        // the terminator scan below would match that opening quote immediately, consume nothing,
+        // and hand the untouched secret to the recursion — which then printed it verbatim, after
+        // the `[redacted]` marker had already been emitted. A line carrying the marker *and* the
+        // secret is worse than an unredacted one: it is what a log scrubber treats as clean.
+        //
+        // `password="hunter2"` is the ordinary shape of a connection string, a shell echo, and a
+        // TOML or JSON fragment, so this was the common case rather than the exotic one.
         let mut value_end = value_start;
-        while value_end < bytes.len() && !ends_value(bytes[value_end]) {
+        if let Some(quote) = bytes.get(value_start).copied().filter(is_quote) {
+            // Past the opening quote, then to the matching close — or to the end of the line if
+            // the quote is never closed, which still leaves no residue.
             value_end += 1;
+            while value_end < bytes.len() && bytes[value_end] != quote {
+                value_end += 1;
+            }
+            if value_end < bytes.len() {
+                value_end += 1;
+            }
+        } else {
+            while value_end < bytes.len() && !ends_value(bytes[value_end]) {
+                value_end += 1;
+            }
         }
 
         // Recurse on the remainder so a line carrying two secrets loses both.
@@ -262,6 +291,50 @@ pub fn line(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quoted_credential_value_leaves_no_residue() {
+        // The marker was emitted while the secret was still on the line. `ends_value` counts a
+        // quote as a terminator, so for a value that *begins* with one the scan consumed nothing,
+        // and the recursion re-printed the untouched secret immediately after `[redacted]`.
+        //
+        // That is worse than no redaction at all: an operator, or a log scrubber grepping for the
+        // marker, reads it as proof the line was cleaned and forwards it with the secret intact.
+        for quoted in [
+            "password=\"hunter2\"",
+            "password='hunter2'",
+            "TOKEN: \"hunter2\"",
+        ] {
+            let redacted = line(quoted);
+            assert!(
+                !redacted.contains("hunter2"),
+                "the secret survived redaction of a quoted value"
+            );
+            assert!(redacted.contains(REDACTED), "the marker is missing");
+        }
+
+        assert_eq!(line("token=\"abc\" and more"), format!("token={REDACTED} and more"));
+        // Unterminated quote: consume to the end rather than leaving a tail behind.
+        assert!(!line("password=\"hunter2").contains("hunter2"));
+
+        // POSITIVE CONTROL. Redaction must still leave an ordinary quoted value alone, or these
+        // assertions would be satisfied by a function that redacted everything.
+        assert_eq!(line("token_bucket_size=\"64\""), "token_bucket_size=\"64\"");
+    }
+
+    #[test]
+    fn redaction_preserves_the_message_delimiters() {
+        // renvor frames the offending text in backticks. A backtick was not a value terminator, so
+        // the scan ran past the closing one and swallowed it, unbalancing the message.
+        let framed = "error: `--output token=abc` is not supported";
+        let redacted = line(framed);
+        assert_eq!(
+            redacted.matches('`').count(),
+            framed.matches('`').count(),
+            "redaction changed the number of framing backticks: {redacted}"
+        );
+        assert!(!redacted.contains("abc"));
+    }
 
     #[test]
     fn a_credential_shaped_pair_is_redacted() {

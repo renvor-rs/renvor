@@ -479,3 +479,211 @@ fn an_ordinary_punctuated_directory_name_is_still_accepted() {
         );
     }
 }
+
+/// The four classes of control character an attacker can put in a *malformed* argument, and the
+/// bytes that prove each reached the terminal unfiltered.
+///
+/// Kept as bytes rather than as an escaped string so the assertion below is about what the
+/// terminal receives, not about how Rust spells it.
+const TERMINAL_CONTROL_BYTES: [(&str, u8); 5] = [
+    ("ESC (CSI, colour and cursor control)", 0x1b),
+    ("BEL (terminates an OSC payload)", 0x07),
+    ("BS (rewrites the line already printed)", 0x08),
+    ("CR (returns to column zero and overwrites)", 0x0d),
+    ("C1 CSI (the 8-bit form of ESC-[)", 0x9b),
+];
+
+#[test]
+fn no_raw_control_character_from_argv_ever_reaches_a_human_stream() {
+    // The sibling of `redaction.rs::no_raw_control_character_from_a_path_ever_reaches_a_human_stream`
+    // for the one path that test structurally cannot reach: a **malformed** invocation, which
+    // returns from clap before any Reporter exists. Every hostile fixture in this suite and in
+    // `redaction.rs` drives a *valid* invocation, so this class had no coverage at all.
+    let base = tempfile::tempdir().expect("tempdir");
+
+    // Four distinct shapes, so a fix that handles only the unknown-flag case is caught.
+    let hostile: [(&str, String); 4] = [
+        (
+            "unknown flag carrying a colour sequence",
+            format!("--{}[31mBOOM{}[0m", '\u{1b}', '\u{1b}'),
+        ),
+        (
+            "unknown flag carrying OSC window-title and clipboard writes",
+            format!("--b{}]0;PWNED{}{}]52;c;cm93bmVk{}", '\u{1b}', '\u{7}', '\u{1b}', '\u{7}'),
+        ),
+        (
+            "unknown flag carrying an embedded newline that forges a line",
+            "--evil\nerror: forged line written by the attacker\nreal".to_owned(),
+        ),
+        (
+            "unknown flag carrying C1 controls and a bidi override",
+            format!("--c{}31mC1{}D{}", '\u{9b}', '\u{d}', '\u{202e}'),
+        ),
+    ];
+
+    for (description, argument) in &hostile {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"))
+            .args([argument.as_str(), "new", "demo"])
+            .current_dir(base.path())
+            .output()
+            .expect("renvor runs");
+
+        for stream_name in ["stdout", "stderr"] {
+            let raw = if stream_name == "stdout" {
+                &output.stdout
+            } else {
+                &output.stderr
+            };
+            for (byte_name, byte) in TERMINAL_CONTROL_BYTES {
+                assert!(
+                    !raw.contains(&byte),
+                    "{description}: a raw {byte_name} byte reached {stream_name}"
+                );
+            }
+            // A newline is legitimate line structure, so it cannot be banned outright. What is
+            // banned is a newline that came from the argument: the forged text that follows it.
+            let text = String::from_utf8_lossy(raw);
+            assert!(
+                !text.contains("\nerror: forged line written by the attacker"),
+                "{description}: the argument forged its own line on {stream_name}"
+            );
+        }
+
+        // POSITIVE CONTROL. Every assertion above is an absence, and a binary that printed nothing
+        // at all would satisfy all of them. The diagnostic must still be there and still be useful.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("error:") && stderr.contains("Usage:"),
+            "{description}: the usage diagnostic was lost, so the assertions above proved nothing"
+        );
+        assert_eq!(output.status.code(), Some(2), "{description}: exit code");
+    }
+}
+
+#[test]
+fn a_non_utf8_argument_is_a_classified_error_and_not_a_panic() {
+    // `std::env::args()` panics on an argument that is not valid Unicode, and the `--output`
+    // pre-scan called it. The result was exit 101 — a code contract C-1 does not define — with
+    // zero bytes on stdout, so a `--output json` consumer got no document at all.
+    let base = tempfile::tempdir().expect("tempdir");
+
+    #[cfg(unix)]
+    let bad: std::ffi::OsString = {
+        use std::os::unix::ffi::OsStringExt as _;
+        std::ffi::OsString::from_vec(b"proj-\xff".to_vec())
+    };
+    #[cfg(windows)]
+    let bad: std::ffi::OsString = {
+        use std::os::windows::ffi::OsStringExt as _;
+        // An unpaired high surrogate: ill-formed UTF-16, the Windows equivalent of a stray 0xFF.
+        std::ffi::OsString::from_wide(&[0x0070, 0x0072, 0x006f, 0x006a, 0xd800])
+    };
+
+    for extra in [vec![], vec!["--output", "json"]] {
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"));
+        command.arg("new").arg(&bad);
+        command.args(&extra);
+        let output = command
+            .current_dir(base.path())
+            .output()
+            .expect("renvor runs");
+
+        let code = output.status.code().unwrap_or(-1);
+        assert_ne!(code, 101, "a non-UTF-8 argument still panics (extra: {extra:?})");
+        assert!(
+            [1, 2, 3].contains(&code),
+            "exit code {code} is not in the C-1 taxonomy (extra: {extra:?})"
+        );
+
+        if !extra.is_empty() {
+            serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap_or_else(|error| {
+                panic!(
+                    "`--output json` produced no parseable document: {error}\n---\n{}\n---",
+                    String::from_utf8_lossy(&output.stdout)
+                )
+            });
+        }
+    }
+}
+
+#[test]
+fn a_hostile_argv0_does_not_reach_the_terminal_raw() {
+    // `argv[0]` is echoed into clap's `Usage:` line, and the binary's name is chosen by whoever
+    // invokes it — a symlink, a copy, or a shell alias. The `--help` arm is the one with no prior
+    // coverage at all: it writes to **stdout** and exits **0**, so nothing in the suite looked at
+    // it. Both arms went through `error.print()`, which filters nothing.
+    let base = tempfile::tempdir().expect("tempdir");
+    let hostile_name = format!("ren{}[31mPWN{}[0mvor", '\u{1b}', '\u{1b}');
+    let planted = base.path().join(&hostile_name);
+    std::fs::copy(env!("CARGO_BIN_EXE_renvor"), &planted).expect("copy the binary");
+
+    for (arguments, stream_name, expected_code) in [
+        (vec!["--bogus", "new", "demo"], "stderr", 2),
+        (vec!["--help"], "stdout", 0),
+    ] {
+        let output = std::process::Command::new(&planted)
+            .args(&arguments)
+            .current_dir(base.path())
+            .output()
+            .expect("the planted binary runs");
+
+        let raw = if stream_name == "stdout" {
+            &output.stdout
+        } else {
+            &output.stderr
+        };
+        assert!(
+            !raw.contains(&0x1b),
+            "a raw ESC byte from argv[0] reached {stream_name} for {arguments:?}"
+        );
+        // POSITIVE CONTROL: the usage text must still be produced, or the absence above is
+        // satisfied by a binary that printed nothing.
+        assert!(
+            String::from_utf8_lossy(raw).contains("Usage:"),
+            "the usage text was lost for {arguments:?}, so the assertion above proved nothing"
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(expected_code),
+            "exit code for {arguments:?}"
+        );
+    }
+}
+
+#[test]
+fn help_reports_a_failed_write_instead_of_exiting_zero() {
+    // `--help` discarded the write `Result` and hardcoded exit 0, so on a full filesystem it wrote
+    // nothing, said nothing, and reported success — which C-1 forbids.
+    //
+    // `/dev/full` accepts `open` and fails every `write` with ENOSPC, which is exactly the shape
+    // being tested. It exists on Linux and not on macOS, so this asserts on the Linux CI job and
+    // says so loudly elsewhere rather than passing silently.
+    if !std::path::Path::new("/dev/full").exists() {
+        eprintln!(
+            "SKIPPED help_reports_a_failed_write_instead_of_exiting_zero: no /dev/full on this \
+             platform. This test did NOT run and proves nothing here; the Linux CI job is where \
+             it is required to execute."
+        );
+        return;
+    }
+
+    let full = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/full")
+        .expect("/dev/full opens");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .arg("--help")
+        .stdout(std::process::Stdio::from(full))
+        .output()
+        .expect("renvor runs");
+
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "a help write that failed still reported success"
+    );
+    assert!(
+        !output.stderr.is_empty(),
+        "the write failure was not reported anywhere"
+    );
+}

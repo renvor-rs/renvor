@@ -346,3 +346,40 @@ fn json_carries_the_real_bytes_and_is_not_double_escaped() {
         "the JSON destination does not resolve to the directory that was created"
     );
 }
+
+#[test]
+fn a_credential_in_a_rejected_argument_is_redacted_in_every_mode() {
+    // `no_output_mode_leaks_a_credential_shaped_value` plants its secret in argv that clap
+    // **accepts**, so it exercises the Reporter and passes. The path it cannot reach is argv clap
+    // **rejects**: that returns from clap before any Reporter exists, and human mode printed the
+    // credential verbatim while JSON mode redacted the identical string. FR-041 says every mode.
+    let base = tempfile::tempdir().expect("tempdir");
+
+    // `echoed` says whether clap puts the *value* into its message. For a `--flag=value` shape it
+    // reports only the flag name, so there is nothing to redact and no marker to look for; for a
+    // bare `key=value` it echoes the whole token. Asserting the marker unconditionally would make
+    // the second case fail for the right reason and the first for the wrong one.
+    for (hostile, echoed) in [("password=hunter2", true), ("--token=hunter2", false)] {
+        for mode in ["human", "json"] {
+            let (_code, stdout, stderr) = renvor(&[hostile, "--output", mode], base.path());
+            let combined = format!("{stdout}{stderr}");
+            assert!(
+                !combined.contains(PLANTED),
+                "the credential survived on the rejected-argument path in {mode} mode"
+            );
+            if echoed {
+                assert!(
+                    combined.contains("[redacted]"),
+                    "nothing was redacted in {mode} mode, so the assertion above proved nothing"
+                );
+            } else {
+                // POSITIVE CONTROL for the non-echoing shape: the run must still have produced a
+                // diagnostic, or "the secret is absent" would be satisfied by empty output.
+                assert!(
+                    combined.contains("error:"),
+                    "no diagnostic at all in {mode} mode, so the assertion above proved nothing"
+                );
+            }
+        }
+    }
+}
