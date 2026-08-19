@@ -11,7 +11,7 @@
 //! check gets reported as a pass.
 //!
 //! The step list and exit codes are fixed by
-//! `specs/001-governance-foundation/contracts/verification-sequence.md`.
+//! `contracts/verification-sequence.md`.
 
 use std::env;
 use std::ffi::OsStr;
@@ -946,12 +946,12 @@ fn workspace_manifests(root: &std::path::Path) -> Option<Vec<(String, String)>> 
 /// T104: the instability-closure sentence is byte-identical in all three normative locations, and
 /// **0** phase numbers appear inside FR-036's normative closure clause.
 fn instability_wording_agrees(root: &std::path::Path) -> bool {
-    let spec = root.join("specs/002-core-kernel/spec.md");
+    let spec = root.join("contracts/api-stability.md");
     let Ok(text) = std::fs::read_to_string(&spec) else {
         step_fail(
             7,
             "architecture invariants",
-            "specs/002-core-kernel/spec.md is unreadable",
+            "contracts/api-stability.md is unreadable",
         );
         return false;
     };
@@ -964,9 +964,9 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
             7,
             "architecture invariants",
             &format!(
-                "the instability-closure sentence appears {occurrences} time(s); SC-022 requires \
-                 {SC022_REQUIRED_OCCURRENCES} byte-identical copies across the clarification \
-                 record, FR-036, and the Dependencies section"
+                "the instability-closure sentence appears {occurrences} time(s) in \
+                 contracts/api-stability.md; SC-022 requires at least \
+                 {SC022_REQUIRED_OCCURRENCES}"
             ),
         );
         return false;
@@ -1016,8 +1016,22 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
 const SC022_SENTENCE: &str =
     "the first real transport adapter has exercised the surface and its feedback has been applied";
 
-/// How many normative locations must carry it: the clarification record, FR-036, and Dependencies.
-const SC022_REQUIRED_OCCURRENCES: usize = 3;
+/// How many copies of the sentence must exist.
+///
+/// # Why this went from 3 to 1 on 2026-08-19, and why that is not a loosened gate
+///
+/// It was **3** because the statement lived in three places inside one phase specification — the
+/// clarification record, FR-036, and the Dependencies section — and the failure this guarded
+/// against was somebody editing one copy and not the others. Counting them was the only way to
+/// detect that drift.
+///
+/// The statement now has **one** authoritative home, `contracts/api-stability.md`, and the phase
+/// specification that held the three copies is no longer part of the public tree. Two copies
+/// cannot disagree when there is one copy, so the drift class is eliminated rather than merely
+/// unchecked. The substantive checks below — that the closure clause names **no phase number**,
+/// and the two positive controls proving the clause was really extracted — are unchanged and still
+/// run.
+const SC022_REQUIRED_OCCURRENCES: usize = 1;
 
 #[cfg(test)]
 mod tests {

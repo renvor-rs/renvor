@@ -24,7 +24,7 @@ changes, and reviewers then trust the stale one.
 | [`SECURITY.md`](SECURITY.md) | Inbound private vulnerability reports about Renvor itself |
 | [`deny.toml`](deny.toml) | The enforced licence and dependency allow-list |
 | [`SUPPORT.md`](SUPPORT.md) | MSRV, supported platforms, and the support window |
-| [`specs/001-governance-foundation/contracts/package-metadata.md`](specs/001-governance-foundation/contracts/package-metadata.md) | Required manifest fields and the rehearsal contract |
+| [`contracts/package-metadata.md`](contracts/package-metadata.md) | Required manifest fields and the rehearsal contract |
 
 ---
 
@@ -116,7 +116,7 @@ Reject the release if the list contains any of:
   covered by `MIT OR Apache-2.0`).
 
 Then confirm, against
-[`contracts/package-metadata.md`](specs/001-governance-foundation/contracts/package-metadata.md):
+[`contracts/package-metadata.md`](contracts/package-metadata.md):
 
 - every required manifest field is present and resolving;
 - `rust-version` matches [`SUPPORT.md`](SUPPORT.md) exactly;

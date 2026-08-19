@@ -16,7 +16,7 @@ publishing is a claim without evidence.
 Every interface this crate exposes — the flag surface, the exit codes, the JSON envelope, and the
 error-code registry — is a **contract** from the first release that ships it. Until then it may
 change. The contracts are in
-[`specs/003-interactive-cli/contracts/`](../../specs/003-interactive-cli/contracts/).
+[`contracts/`](../../contracts/).
 
 ## Commands
 

@@ -1,6 +1,6 @@
 //! Exit codes and the stable error-code registry.
 //!
-//! Both are **public contracts** (`specs/003-interactive-cli/contracts/command-surface.md` and
+//! Both are **public contracts** (`contracts/command-surface.md` and
 //! `json-output.md`). Renaming a code, or reusing one for a different meaning, is a breaking
 //! change.
 
@@ -289,8 +289,7 @@ mod tests {
     /// `include_str!` resolves at compile time, so a moved or deleted contract is a build failure
     /// rather than a skipped test.
     fn published_registry() -> Vec<(String, u8)> {
-        const CONTRACT: &str =
-            include_str!("../../../specs/003-interactive-cli/contracts/json-output.md");
+        const CONTRACT: &str = include_str!("../../../contracts/json-output.md");
 
         // The registry is the table whose header is `| Code | Exit | Meaning |`. Bounded to that
         // one table so the schema-history tables below it, which have different columns, cannot be

@@ -202,7 +202,7 @@ ready, saying so is the expected outcome, not a problem to be managed.
 |---|---|---|
 | 1 | [`phase-003-review-pack.md`](phase-003-review-pack.md) | The two files that can write outside the operator's directory, in depth. **Highest value per minute.** |
 | 2 | [`specs/003-interactive-cli/spec.md`](../specs/003-interactive-cli/spec.md) | 48 functional requirements, 16 success criteria, 6 user stories |
-| 3 | [`specs/003-interactive-cli/contracts/`](../specs/003-interactive-cli/contracts/) | C-1 command surface, C-2 JSON, C-4 templates, C-5 the transaction |
+| 3 | [`contracts/`](../contracts/) | C-1 command surface, C-2 JSON, C-4 templates, C-5 the transaction |
 | 4 | [`specs/003-interactive-cli/data-model.md`](../specs/003-interactive-cli/data-model.md) | Invariants I-1 … I-17 |
 | 5 | [`phase-003-evidence.md`](phase-003-evidence.md) §3 | The requirement-to-evidence map, 64 rows |
 | 6 | `crates/renvor-cli/src/` | 22 files, ~5,700 lines |

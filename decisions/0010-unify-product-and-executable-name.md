@@ -139,7 +139,7 @@ W-002's live scope, read from `governance/waivers.md`:
 
 The question is therefore exactly one thing: **is ADR-0010 a Phase 001 decision record?**
 
-It is, and the Phase 001 contract says so itself. `specs/001-governance-foundation/contracts/public-identity.md`
+It is, and the Phase 001 contract says so itself. `contracts/public-identity.md`
 closes with:
 
 > *"Changing any value after Phase 001 closes requires a **superseding ADR** and an impact
@@ -215,7 +215,7 @@ each one against measured evidence rather than intent.
 publishes `renvor-cli`, a further rename becomes a genuine breaking change for installed
 commands — the cost ADR-0001 anticipated, arriving one phase later against a different name.
 
-**What is locked in:** `specs/001-governance-foundation/contracts/public-identity.md` and
+**What is locked in:** `contracts/public-identity.md` and
 `renvor::EXECUTABLE`, which every phase from 002 onward reads.
 
 **To reverse this**, a superseding ADR must record the new name, an impact analysis, and — if
