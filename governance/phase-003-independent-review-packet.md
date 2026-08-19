@@ -51,11 +51,18 @@ reading them:
   are deliberately left unescaped, which is the opposite of what that function does. A security
   reviewer reading it would be reading a description of the *previous* fix.
 
-### -1.2 The only remaining open blocker
+### -1.2 The only remaining open blocker — WAIVED FOR THE MERGE, STILL OPEN AS A REQUIREMENT
 
 Phase 003 has **one** unmet requirement. Everything else — the engineering, the testing, the
-documentation, the governance, seven advisory reviews, and full CI on three platforms and two
+documentation, the governance, the advisory reviews, and full CI on three platforms and two
 toolchains — is complete and recorded.
+
+**Updated 2026-08-19.** This requirement was **not met and was not withdrawn**. Phase 003 merged
+under waiver **W-008**, which is time-bounded (expires **2027-02-11** or on the availability of a
+qualified reviewer, whichever is first) and scoped to this requirement in this phase alone. The
+rows below stay **OPEN**. A waiver is a recorded decision to proceed with a known gap — it is not a
+finding that the gap closed, and nothing in this packet should be read as saying the review
+happened.
 
 > **BLOCKER — a qualified independent human requirements review and security review, explicitly
 > signed off, with Windows coverage.**
@@ -91,10 +98,19 @@ is silent about Windows does not discharge this blocker.**
 
 ### -1.3 Sign-off log — the review is not complete until this is filled in and committed
 
-**PR #28 is NOT merge-ready and MUST NOT be marked merge-ready until this table is completed in
-this file and committed.** An approval delivered by any other route — a comment, a message, a
-verbal "looks fine" — does not count, because the point of logging it here is that the evidence
-travels with the artefact.
+**This table is still EMPTY. No independent human review of Phase 003 has occurred.**
+
+**Status changed 2026-08-19.** Phase 003 merged under waiver **W-008**
+(`governance/waivers.md`), which waives *this requirement and nothing else* for *this phase and no
+other*. The blocker below is therefore **transferred, not discharged**. Filling in this table is
+still the only thing that closes it, and the waiver's removal plan says so.
+
+An approval delivered by any other route — a comment, a message, a verbal "looks fine" — does not
+count, because the point of logging it here is that the evidence travels with the artefact.
+
+**Do not enter the maintainer in this table.** Ahmed Anbar authored Phase 003 and therefore fails
+§0's criteria 1 and 2 by definition. His decision is recorded in §-1.4, which is a *different*
+thing and is labelled as one.
 
 | Field | Requirements review | Security review |
 |---|---|---|
@@ -117,6 +133,35 @@ work is not ready is the expected outcome of a real review, not a problem to be 
 this document overstates what was done, that is itself a finding, and §7 tells you how to report it.
 
 ---
+
+### -1.4 Maintainer acceptance — recorded, and explicitly NOT independent review
+
+This section exists so the decision to close Phase 003 is on the record with its true name. It is
+**not** a substitute for §-1.3 and must never be cited as one.
+
+| Field | Value |
+|---|---|
+| Decision | **Accept Phase 003 closure under waiver W-008** |
+| Decided by | **Ahmed Anbar**, project author and maintainer |
+| Date | 2026-08-19 |
+| Role relative to the work | **Author of every line of Phase 003 and of the evidence describing it** |
+| Independent under §0? | **No.** Fails criterion 1 (not a person other than the author) and criterion 2 (not the author). Criterion 4 — able to reject without the author's consent — is meaningless when the two are the same person |
+| What was reviewed | The consolidated technical findings: the five-area adversarial defect audit and its 14 confirmed and fixed findings, the CI platform matrix, and the evidence pack |
+| Supporting evidence relied on | Automated and maintainer review, both **non-independent** |
+| What this decision is | A human maintainer decision to accept a known, recorded risk |
+| What this decision is **not** | Independent review; peer review; a second person's approval; a finding that the independent-review requirement was satisfied |
+
+**Recorded in substance, as required:**
+
+> Ahmed Anbar, as project maintainer, reviewed the consolidated technical findings and accepts
+> Phase 003 closure under the explicitly scoped waiver. The independent-review requirement was
+> **not satisfied**. Automated and maintainer reviews are supporting evidence, **not** independent
+> review.
+
+**On the automated reviews.** Phase 003 used automated, agent-assisted review extensively, and that
+is recorded rather than hidden. It does not move the needle on independence: §0 requires a
+**person**, and an automated reviewer is not one. Its value was finding defects — 14 confirmed,
+8 refuted with stated grounds — not conferring approval.
 
 ## 0. What counts as independent, and what does not
 

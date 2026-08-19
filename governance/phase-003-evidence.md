@@ -457,6 +457,62 @@ Carried forward into §8 as work for the independent human, not left implicit:
   RTL overrides, zero-width characters, homoglyphs.
 - Reviewer F did not run `cargo test` at all; its cross-checks were manual reading.
 
+### 6.0.6 The 2026-08-19 five-area adversarial defect audit (22 claims, 14 confirmed, 8 refuted)
+
+A further non-independent, automated audit was run on 2026-08-19 against head `04abb07`, in five
+areas chosen because each had a **structural** reason to be under-tested rather than a suspicion
+attached to it. Every reported finding was then re-run by a **separate** reviewer instructed to
+**refute** it, defaulting to "refuted" on uncertainty.
+
+**Labelled NON-INDEPENDENT and ADVISORY, like every other review in this phase.** It is automated;
+an automated reviewer is not a person and cannot satisfy §0 of the review packet.
+
+**Result: 22 claims examined — 14 confirmed and fixed, 8 refuted with recorded grounds.**
+
+| ID | Severity | File | Defect | Disposition |
+|---|---|---|---|---|
+| E-1 | **HIGH** | `commands/dev.rs` | `cargo test` inherited `stdout`, so `--output json dev` emitted libtest output ahead of the envelope — stdout unparseable on **every** run, success included | **FIXED** — `6ea2806` |
+| E-2 | **HIGH** | `commands/docker.rs` | Same for `docker compose`; `docker logs` streams without bound onto the one-document stream | **FIXED** — `6ea2806` |
+| E-3 | **HIGH** | `output/redact.rs` | A value beginning with a quote consumed nothing, so `[redacted]` was emitted **with the secret still on the line** | **FIXED** — `8305888` |
+| A-1 | MEDIUM | `main.rs` | clap parse errors printed attacker-controlled ESC / OSC-52 / C1 / bidi bytes raw to the terminal | **FIXED** — `8305888` |
+| A-2, B-1 | MEDIUM | `main.rs` | A non-UTF-8 argument **panicked** in the `--output` pre-scan, before the panic hook: exit 101, zero JSON documents | **FIXED** — `8305888` |
+| A-3 | MEDIUM | `main.rs` | A credential in a *rejected* argument printed verbatim in human mode while JSON redacted it | **FIXED** — `8305888` |
+| C/A-1, D-3 | MEDIUM | `generate/place.rs` | `Drop` discarded the cleanup `Result` while three messages asserted *"the staged tree has been removed"* — a claim built **before** any removal was attempted | **FIXED** — `33b4ebf` |
+| A-4 | LOW | `main.rs` | `argv[0]` echoed unsanitised into clap's `Usage:` line, including on the exit-0 `--help` **stdout** path | **FIXED** — `8305888` |
+| A-7 | LOW | `output/redact.rs` | Redaction swallowed the closing backtick of renvor's own message framing | **FIXED** — `8305888` |
+| D-1 | LOW | `paths.rs` | The six superscript device aliases (`COM¹`…`LPT³`) were missing, so `renvor new demo --path COM¹` **succeeded** and created a directory Windows cannot open | **FIXED** — `8dedbb2` |
+| E-4 | LOW | `commands/doctor.rs` | Another program's raw `--version` bytes were interpolated, so a newline forged a whole report row | **FIXED** — `8dedbb2` |
+| E-7 | LOW | `main.rs` | `--help` discarded the write `Result` and hardcoded exit 0 | **FIXED** — `8305888` |
+
+**No Critical finding was reported. No High finding is unresolved. Nothing was waived silently** —
+every one of the fourteen is fixed, and W-008 waives none of them.
+
+**Eight claims were refuted and are recorded rather than quietly dropped**, because a review whose
+rejected findings vanish cannot be audited: `A-5`, `A-6` (clap's own argument handling, misdescribed
+evidence), `C/A-2`, `C/A-3` (triggered only by external sabotage of renvor's own directory; the
+scoped message wording is the one the transaction tests pin), `D-2`, `D-4` (measured against an
+invented expectation; RULE 1b's scope is documented and control-tested), `E-5`, `E-6` (measured
+against an invented contract — `E-6`'s "defect" is byte-for-byte present in the committed trycmd
+snapshots as the **agreed** contract).
+
+**Two of this phase's own new tests initially passed for the wrong reason**, and both were caught by
+mutation-testing every guard — removing the fix, observing the failure, restoring the fix:
+
+1. The superscript reserved-name test passed against a mutation that removed the fix entirely,
+   because `COM¹` is refused in the NAME position by the *character-set* rule. The real gap was
+   `Destination::open`, which **no test in the suite had ever driven with a reserved name**. This is
+   the same failure mode `tests/hostile.rs` records in its own header about the `..` rule: a refusal
+   without its reason is a refusal you cannot trust.
+2. The credential test's positive control asserted a `[redacted]` marker for an argument shape where
+   clap never echoes the value, so it would have failed for a reason unrelated to redaction.
+
+**Two of this repository's own guards fired against these fixes and were obeyed, not loosened:**
+`generate::place::no_production_path_removes_the_destination` (removal count 2 → 3, raised with the
+third justified in place) and `renvor-core`'s `diagnostics` gate, which rejected four assertion
+messages for interpolating a value inside a credential-handling file. The diagnostics gate was
+satisfied by renaming to identifiers **already on its allowlist** — the allowlist was not widened,
+because widening it to fit a message is what the gate exists to prevent.
+
 ### 6.1 Standing label
 
 **All three reviews below are NON-INDEPENDENT and ADVISORY.** They predate the 2026-08-18 rulings
@@ -867,7 +923,7 @@ denominator move while the work was being reviewed against it.
 **No Phase 003 phase-level waiver exists or has been drafted, and this document does not assume one
 is available** (FR-046). Items 4 and 5 are the whole of what remains.
 
-### 8.1 The review is COMMISSIONED as of 2026-08-19
+### 8.1 The review was COMMISSIONED on 2026-08-19 — and was never delivered
 
 [`phase-003-independent-review-packet.md`](phase-003-independent-review-packet.md) is issued for
 review rather than prepared for it. Its §-1 hard-binds the exact head, names the two superseded
@@ -878,6 +934,44 @@ carries a **sign-off log** that must be filled in and committed before the phase
 advisory reviews ran on macOS, and §-1.2 enumerates the five Windows behaviours this phase depends
 on that no human has examined. A review silent about Windows does not discharge the blocker.
 
-**PR #28 is not merge-ready and is not marked as such.** It is open, unmerged, with zero approvals.
-
 **None of the four is engineering work the author can complete.** All four are decisions.
+
+### 8.2 The review did NOT occur. Phase 003 closed under waiver W-008 (2026-08-19)
+
+**No independent human requirements review and no independent human security review of Phase 003
+has taken place.** The sign-off log in the packet's §-1.3 is **empty**, and this section must not be
+read as reporting otherwise.
+
+What happened instead is recorded plainly:
+
+| Item | State |
+|---|---|
+| Maintainer acceptance | **COMPLETE.** Ahmed Anbar, author and maintainer — see packet §-1.4 |
+| Automated / advisory review | **COMPLETE, and NON-INDEPENDENT.** An automated reviewer is not a person and cannot satisfy §0 |
+| Independent human requirements review | **NOT PERFORMED** |
+| Independent human security review | **NOT PERFORMED** |
+| Windows CI | **COMPLETE — as automated platform evidence, not human Windows review.** Five specific Windows behaviours remain unexamined by any person (packet §-1.2) |
+| **W-008** | **ACTIVE**, narrowly scoped: this requirement, this phase, expiring **2027-02-11** or on reviewer availability, whichever is first |
+| **RO-001** reviewer-recruitment obligation | **OPEN**, first review date **2026-11-19**. Recorded as *not yet progress* |
+
+**The maintainer's decision, in substance:**
+
+> Ahmed Anbar, as project maintainer, reviewed the consolidated technical findings and accepts
+> Phase 003 closure under the explicitly scoped waiver. The independent-review requirement was
+> **not satisfied**. Automated and maintainer reviews are supporting evidence, **not** independent
+> review.
+
+**The trend guard tripped.** W-003 (Phase 001), W-005 (Phase 002), and W-008 (Phase 003) waive the
+same rule for the same reason in three consecutive phases, which `governance/waivers.md` makes a
+**release blocker** absent dated recruitment progress. It blocks publication, tagging, releasing,
+and deployment — none of which Phase 003 performs. It does not block merging, because merging
+publishes nothing. RO-001 is the dated obligation the guard requires, and it carries a failure
+condition: if nothing is recorded by 2026-11-19, every open waiver in this category is treated as
+expired.
+
+**The gap is carried forward, not closed.** Items 4 and 5 of §8 remain **OPEN**. The removal plan in
+W-008 is the only thing that closes them: a qualified independent reviewer reviews Phase 003 in
+full, against the exact merged content, **including Windows**, and signs the packet's §-1.3.
+
+**This waiver is for Phase 003 only.** It confers nothing on Phase 004. If Phase 004 reaches an
+independent-review gate, that gate is reached fresh.

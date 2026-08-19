@@ -143,7 +143,7 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Six** waivers are currently active, all traceable to the same single-maintainer gap. Each
+**Seven** waivers are currently active, all traceable to the same single-maintainer gap. Each
 covers one rule, at one level, in one phase — and none is extended to another by
 reinterpretation:
 
@@ -155,6 +155,7 @@ reinterpretation:
 | **W-004** | no independent reviewer for **ADR-0007** | decision record | Phase 002 | **2027-02-16** |
 | **W-005** | no independent requirements-and-security review | phase level | Phase 002 | **2027-02-16** |
 | **W-006** | no independent reviewer for **ADR-0009** | decision record | Phase 002 | **2027-02-11** |
+| **W-008** | no independent requirements-and-security review | phase level | Phase 003 | **2027-02-11** |
 
 Each expires on the date shown **or** immediately when a qualified second person becomes
 available — whichever comes first. Full text, compensating controls, and scope limits are in
@@ -167,6 +168,25 @@ ledger rather than hidden by extending W-004 or W-005, and the underlying proble
 times across two phases. W-006 also expires **2027-02-11** rather than a later date, because the
 ledger's ratchet rule requires a new waiver for this same gap to inherit the earliest open
 expiry rather than restart the clock.
+
+**W-008 closes Phase 003 and trips the ledger's trend guard.** Phase 001, Phase 002, and Phase 003
+have now waived the *same* phase-level rule for the *same* reason — three consecutive phases, which
+the ledger makes a **release blocker** unless a dated, tracked reviewer-recruitment obligation shows
+visible progress. That obligation now exists as **RO-001**, owned by Ahmed Anbar, first review date
+**2026-11-19**, and it is recorded as *not yet progress*. The blocker is on **release** — publishing
+a crate, cutting a tag, deploying — and not on merging, because merging publishes nothing.
+
+**There is no W-007, and its absence is deliberate.** A maintainer ruling forbade creating it, and
+that ruling is part of the rationale for constitution amendment 3.0.0; reusing the number would
+falsify the amendment. The identifier is retired. See
+[`governance/waivers.md`](governance/waivers.md).
+
+**Ahmed Anbar's acceptance of Phase 003 is a human maintainer decision, and it is not independent
+review.** No independent human requirements-and-security review of Phase 003 has occurred. Every
+review performed inside Phase 003 — including automated and agent-assisted review — is advisory and
+non-independent, and an automated reviewer is not a person and so cannot be independent under any
+reading of the criteria. Windows coverage came from CI, which is automated platform evidence rather
+than human review.
 
 ### Decision-record review under W-006
 
