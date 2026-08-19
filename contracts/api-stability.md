@@ -1,3 +1,9 @@
+---
+description: "Contract C-S1 — when the public surface stops being unstable"
+version: "1.0.0"
+status: "normative — this version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable"
+---
+
 # Contract C-S1 — public API stability
 
 **Status**: normative · **Applies to**: the `renvor` facade crate and the kernel surface it re-exports

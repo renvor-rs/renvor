@@ -67,8 +67,21 @@ directory Windows cannot open.
 
 ## Carried forward
 
-- **No independent human review of Phase 003 has occurred** (W-008). Windows is the widest gap:
-  five specific Windows behaviours have been exercised by CI but examined by no person.
+- **No independent human review of Phase 003 has occurred** (W-008). Windows is the widest gap, and
+  it is **wider than "unreviewed by a person"**. An earlier draft of this summary said the five
+  Windows behaviours in the packet's §-1.2 "have been exercised by CI"; that was **false**, and the
+  packet it summarises says so directly. What is true:
+
+  | Windows behaviour | Actually established by |
+  |---|---|
+  | The test suite passes on `windows-latest`, both toolchains | **Measured.** CI runs the tests the author wrote |
+  | `MoveFileEx` rename semantics being sufficient for C-5 | **Not established.** Reasoned from documentation |
+  | Reserved names, drive-relative paths, trailing dot/space stripping | **Reasoned from Windows behaviour that was never observed on Windows** — the packet's own words |
+  | Junction / reparse-point classification by `describe` | **Reasoned, not measured** — the function's own doc comment says so |
+  | Control-character escaping against a Windows console host | **Open question.** Not measured |
+
+  CI cannot notice a test nobody wrote. Green Windows CI establishes that the written tests pass —
+  it does not establish that these five behaviours are correct.
 - **The waiver trend guard is tripped.** W-003, W-005 and W-008 waive the same rule for the same
   reason in three consecutive phases, which is a **release blocker** — on publishing, tagging, and
   deploying, not on merging — absent dated recruitment progress. **RO-001** is that obligation, with

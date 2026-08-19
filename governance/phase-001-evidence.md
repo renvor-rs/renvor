@@ -29,8 +29,12 @@ the waiver ledger.
 
 ## Decision records
 
-**Seven accepted**: ADR-0001 through ADR-0006, plus **ADR-0010** (accepted 2026-08-17 under W-002),
-which **supersedes ADR-0001**. Each was reviewed as a **non-independent self-review** under W-002.
+**Seven records: six `accepted`, one `superseded`.** ADR-0002 through ADR-0006 and **ADR-0010**
+(accepted 2026-08-17 under W-002) are accepted; **ADR-0001 is `superseded`** by ADR-0010 and does
+**not** currently govern. Each was reviewed as a **non-independent self-review** under W-002.
+
+Stated by state rather than as a total, because a reader scoping current decision authority must
+not treat the superseded record as live — `GOVERNANCE.md` is authoritative on this split.
 
 ## Verification
 
