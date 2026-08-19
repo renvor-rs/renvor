@@ -652,7 +652,22 @@ fn a_hostile_argv0_does_not_reach_the_terminal_raw() {
     let base = tempfile::tempdir().expect("tempdir");
     let hostile_name = format!("ren{}[31mPWN{}[0mvor", '\u{1b}', '\u{1b}');
     let planted = base.path().join(&hostile_name);
-    std::fs::copy(env!("CARGO_BIN_EXE_renvor"), &planted).expect("copy the binary");
+    match std::fs::copy(env!("CARGO_BIN_EXE_renvor"), &planted) {
+        Ok(_) => {}
+        // Windows refuses to CREATE this name at all (`ERROR_INVALID_NAME`, os error 123): a
+        // control character is not a legal filename character there. So the vector genuinely does
+        // not exist on Windows, and this is asserted rather than skipped — the reason a test does
+        // not apply is worth pinning, because "we could not set it up" and "it cannot happen" are
+        // very different statements and only one of them stays true if the platform changes.
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidFilename => {
+            assert!(
+                cfg!(windows),
+                "a control character was refused in a filename on a platform that should allow it"
+            );
+            return;
+        }
+        Err(error) => panic!("the binary could not be copied: {error:?}"),
+    }
 
     for (arguments, stream_name, expected_code) in [
         (vec!["--bogus", "new", "demo"], "stderr", 2),
