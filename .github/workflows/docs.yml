@@ -37,6 +37,21 @@ jobs:
         with:
           tool: lychee
 
+      # Runs BEFORE the site build, because it is the cheapest check here and a broken
+      # cross-reference should not wait behind an `npm ci`.
+      #
+      # This validates tracked Markdown against the GIT INDEX rather than the filesystem.
+      # `git rm --cached` untracks a file but leaves it on disk, so a filesystem check is
+      # structurally blind to references into untracked material — it once reported "0 broken"
+      # while eight links were broken. `lychee` below checks the BUILT SITE's links; this
+      # checks the repository's own documents, which lychee never sees.
+      #
+      # The script fails closed: it runs a positive and a negative control on every
+      # invocation and exits non-zero if either misbehaves, because a scan that cannot
+      # discriminate proves nothing about the tree it scanned.
+      - name: Documentation cross-reference check
+        run: python3 scripts/check-doc-references.py
+
       # `npm ci`, never `npm install`: the committed lockfile is the input, and a
       # resolution that differs from it is a failure rather than a convenience.
       - name: Build documentation site

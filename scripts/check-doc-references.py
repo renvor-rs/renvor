@@ -22,6 +22,7 @@ Both a positive and a negative control run on every invocation. If either misbeh
 fails, because a scan that cannot discriminate proves nothing about the tree it scanned.
 """
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -46,16 +47,23 @@ def markdown_corpus(tracked):
 
 
 def scan_text(path, text, tracked):
-    """Return (broken_links, unresolved_refs) for one document's text."""
+    """Return (broken_links, unresolved_refs) for one document's text.
+
+    Paths are resolved with `posixpath`, never `os.path`. `git ls-files` always reports
+    forward-slash paths on every platform, but `os.path.normpath` produces backslashes on
+    Windows — so an `os.path` join would make every membership test fail there and report a
+    healthy repository as entirely broken. Markdown link targets are forward-slash by
+    definition, so POSIX semantics are the correct ones on both sides of the comparison.
+    """
     broken, unresolved = [], []
-    base = os.path.dirname(path)
+    base = posixpath.dirname(path)
     for number, line in enumerate(text.split('\n'), 1):
         for match in LINK.finditer(line):
             target = match.group(1)
             if target.startswith(('http://', 'https://', 'mailto:')):
                 continue
-            resolved = os.path.normpath(
-                os.path.join('' if target.startswith('/') else base, target.lstrip('/')))
+            resolved = posixpath.normpath(
+                posixpath.join('' if target.startswith('/') else base, target.lstrip('/')))
             if resolved not in tracked and not os.path.isdir(resolved):
                 broken.append((number, target))
         # A path-like reference is resolved only when it sits inside a commit-pinned URL.
@@ -97,6 +105,13 @@ def controls(tracked):
         failures.append(f'positive control: valid links flagged as broken: {b}')
     if u:
         failures.append(f'positive control: pinned/external refs flagged as unresolved: {u}')
+
+    # CONTROL: resolved paths must be POSIX-form on every platform, because that is the form
+    # `git ls-files` reports. A backslash here means the membership test below is comparing
+    # against a shape the index never contains, which fails a healthy repository on Windows.
+    probe = posixpath.normpath(posixpath.join('governance', '../contracts/api-stability.md'))
+    if '\\' in probe or probe != 'contracts/api-stability.md':
+        failures.append(f'separator control: path resolution is not POSIX-form (got {probe!r})')
 
     return failures
 
