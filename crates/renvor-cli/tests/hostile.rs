@@ -659,11 +659,10 @@ fn a_hostile_argv0_does_not_reach_the_terminal_raw() {
         // not exist on Windows, and this is asserted rather than skipped — the reason a test does
         // not apply is worth pinning, because "we could not set it up" and "it cannot happen" are
         // very different statements and only one of them stays true if the platform changes.
-        Err(error) if error.kind() == std::io::ErrorKind::InvalidFilename => {
-            assert!(
-                cfg!(windows),
-                "a control character was refused in a filename on a platform that should allow it"
-            );
+        // The `cfg!` is in the GUARD, not in an assertion: on any other platform this arm does not
+        // match and the run falls through to the panic below, which is the assertion — a control
+        // character refused in a filename off Windows is a real finding, not a skip.
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidFilename && cfg!(windows) => {
             return;
         }
         Err(error) => panic!("the binary could not be copied: {error:?}"),
