@@ -28,7 +28,11 @@ import sys
 
 LINK = re.compile(r'\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)')
 PATHREF = re.compile(r'(?<![\w/.-])specs/[0-9]{3}-[a-z0-9-]+(?:/[A-Za-z0-9._-]+)*')
-PINNED = re.compile(r'https://github\.com/[^)\s]+/blob/[0-9a-f]{40}/')
+# Anchored to the END of the text preceding a match: a path is resolved only when it directly
+# follows `.../blob/<sha>/`. Searching the whole prefix instead would exempt every later
+# reference on a line that happens to contain one pinned URL — a false negative in a checker
+# whose entire purpose is to miss nothing. Found by an automated review; see the control below.
+PINNED_BEFORE = re.compile(r'https://github\.com/[^)\s]+/blob/[0-9a-f]{40}/$')
 
 
 def tracked_files():
@@ -56,8 +60,7 @@ def scan_text(path, text, tracked):
                 broken.append((number, target))
         # A path-like reference is resolved only when it sits inside a commit-pinned URL.
         for match in PATHREF.finditer(line):
-            prefix = line[:match.start()]
-            if PINNED.search(prefix):
+            if PINNED_BEFORE.search(line[:match.start()]):
                 continue
             unresolved.append((number, match.group(0)))
     return broken, unresolved
@@ -74,6 +77,16 @@ def controls(tracked):
         failures.append(f'negative control: expected 1 broken link, detected {len(b)}')
     if len(u) != 1:
         failures.append(f'negative control: expected 1 unresolved path ref, detected {len(u)}')
+
+    # NEGATIVE CONTROL 2 — the mixed line. A pinned reference earlier on the same line must NOT
+    # exempt an unpinned one after it. This exact false negative shipped once.
+    sha = '0123456789abcdef0123456789abcdef01234567'
+    mixed = (f'See [s](https://github.com/renvor-rs/renvor/blob/{sha}/specs/001-governance-foundation/spec.md) '
+             'and `specs/002-core-kernel/research.md` locally.\n')
+    _, u = scan_text('CONTROL.md', mixed, tracked)
+    if len(u) != 1:
+        failures.append(
+            f'negative control (mixed pinned/unpinned line): expected 1 unresolved ref, detected {len(u)}')
 
     # POSITIVE CONTROL: valid content must NOT be flagged.
     pinned = ('https://github.com/renvor-rs/renvor/blob/'
