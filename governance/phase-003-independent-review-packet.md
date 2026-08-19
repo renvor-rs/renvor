@@ -20,10 +20,10 @@ the thing you are here to decide.
 |---|---|
 | **Repository** | `renvor-rs/renvor` |
 | **Branch** | `feat/phase-003-interactive-cli` |
-| **Content head** | `5c33976e6712a9172678272c8de21643afbdb54b` |
-| **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file and `phase-003-review-pack.md`, and nothing else |
-| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28) — **open, unmerged, 0 approvals**. Its description names the exact tip SHA |
-| **Superseded — do NOT review** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e` and `323bef34c69c75e2989baf926303ec0ff3bc9347` |
+| **Content head** | `f2aa0d95bfac95585974885d249bad3ab27a321b` |
+| **Branch tip** | one commit later — the commit that wrote this table. It touches **only** this file, and nothing else |
+| **Pull request** | [#28](https://github.com/renvor-rs/renvor/pull/28) — **0 independent approvals**. Its description names the exact tip SHA |
+| **Superseded — do NOT review** | `08d3f8997ed6c85ab544bc93dff3c8eb07a00a2e`, `323bef34c69c75e2989baf926303ec0ff3bc9347`, and `04abb07b41a287c54bc45335f09cdd2ca27d2ba5` |
 
 **Verify before reading anything else.** A review of the wrong commit is worse than no review,
 because it produces a sign-off that looks valid:
@@ -32,7 +32,7 @@ because it produces a sign-off that looks valid:
 git fetch origin feat/phase-003-interactive-cli
 git checkout feat/phase-003-interactive-cli
 git rev-parse HEAD                                  # the tip
-git diff 5c33976e6712a9172678272c8de21643afbdb54b..HEAD --stat                  # MUST list exactly two governance files
+git diff f2aa0d95bfac95585974885d249bad3ab27a321b..HEAD --stat        # MUST list exactly ONE file: this one
 git status --porcelain                              # MUST be empty
 ```
 
@@ -50,6 +50,10 @@ reading them:
 - `323bef3` carries a **false doc comment** on `redact.rs`'s `path()` — it claims newline and tab
   are deliberately left unescaped, which is the opposite of what that function does. A security
   reviewer reading it would be reading a description of the *previous* fix.
+- `04abb07` predates the 2026-08-19 defect audit and carries **all fourteen** of the defects it
+  confirmed — including three HIGH ones: `--output json dev` and `--output json docker` emit
+  unparseable stdout on every run, and a quoted credential is printed **alongside** its
+  `[redacted]` marker. See evidence §6.0.6. Reviewing it would mean reviewing known-broken code.
 
 ### -1.2 The only remaining open blocker — WAIVED FOR THE MERGE, STILL OPEN AS A REQUIREMENT
 
