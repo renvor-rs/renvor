@@ -39,6 +39,9 @@ pub struct Staging<'a> {
     /// `drop` — both consume or end the value.
     handle: Option<Dir>,
     placed: bool,
+    /// Set once a failure path has already run the cleanup explicitly, so `drop` does not run it a
+    /// second time and fail for a reason nobody wants reported.
+    discarded: bool,
 }
 
 impl std::fmt::Debug for Staging<'_> {
@@ -184,6 +187,7 @@ impl<'a> Staging<'a> {
             name,
             handle: Some(handle),
             placed: false,
+            discarded: false,
         })
     }
 
@@ -229,6 +233,52 @@ impl<'a> Staging<'a> {
     /// concurrency case, converted into a clean failure rather than an overwrite — or
     /// [`Code::PlacementFailed`] for anything else. **The destination is unchanged either way.**
     pub fn place(mut self, destination: &Destination) -> Result<(), CliError> {
+        match self.place_steps(destination) {
+            Ok(()) => Ok(()),
+            // EVERY failure inside `place_steps` comes back through here, so the cleanup runs
+            // once, explicitly, and the message states what actually happened to the staged tree.
+            //
+            // It used to be left to `Drop`, which cannot work: `Drop` runs *after* the error has
+            // been built and cannot return anything, so three of these messages asserted "and the
+            // staged tree has been removed" before any removal had been attempted. Whenever the
+            // removal then failed — the ordinary Windows case, where a scanner or an open Explorer
+            // window holds a handle renvor does not own — renvor reported a removal that had not
+            // happened, and named no residue for `doctor` to find.
+            Err(error) => Err(self.report_cleanup(error, destination)),
+        }
+    }
+
+    /// Removes the staged tree and folds the outcome into the failure being reported.
+    ///
+    /// Sets `discarded` so `Drop` does not attempt a second removal, which would fail for a reason
+    /// nobody wants to read (the path is already gone).
+    fn report_cleanup(&mut self, mut error: CliError, destination: &Destination) -> CliError {
+        drop(self.handle.take());
+        let outcome = match crate::inject::io_failure("staging-drop-cleanup") {
+            Some(injected) => Err(injected),
+            None => self.parent.remove_dir_all(&self.name),
+        };
+        self.discarded = true;
+
+        match outcome {
+            Ok(()) => {
+                error.message.push_str(" The staged tree has been removed.");
+                error
+            }
+            Err(cleanup) => {
+                let residue = destination.parent_display().join(&self.name);
+                error.message.push_str(&format!(
+                    " The staged tree could NOT be removed and is still at `{}`: {cleanup}",
+                    crate::output::redact::path(&residue)
+                ));
+                error
+                    .with("residue", residue.display().to_string())
+                    .with("cleanupError", cleanup.to_string())
+            }
+        }
+    }
+
+    fn place_steps(&mut self, destination: &Destination) -> Result<(), CliError> {
         let target = destination.name();
         let named = |code, detail: String| {
             CliError::new(code, detail).with(
@@ -280,7 +330,7 @@ impl<'a> Staging<'a> {
                     Code::DestinationExists,
                     format!(
                         "`{}` appeared while the project was being generated. Nothing was written \
-                         there and the staged tree has been removed; renvor will not delete or \
+                         there; renvor will not delete or \
                          replace a destination you already have",
                         crate::output::redact::path(&destination.display_path())
                     ),
@@ -302,8 +352,7 @@ impl<'a> Staging<'a> {
                     Code::DestinationRejected,
                     format!(
                         "`{}` could not be inspected before placement, so renvor cannot establish \
-                         that it is absent: {error}. Nothing was written there and the staged tree \
-                         has been removed",
+                         that it is absent: {error}. Nothing was written there",
                         crate::output::redact::path(&destination.display_path())
                     ),
                 )
@@ -367,7 +416,7 @@ impl<'a> Staging<'a> {
                     Code::DestinationExists,
                     format!(
                         "`{}` appeared while the project was being generated — another run reached \
-                         it first. Nothing was written there and the staged tree has been removed",
+                         it first. Nothing was written there",
                         crate::output::redact::path(&destination.display_path())
                     ),
                 )
@@ -402,8 +451,33 @@ impl Drop for Staging<'_> {
         // platform — the kind of difference that shows up as a mysterious CI failure rather than
         // as a bug report.
         drop(self.handle.take());
-        if !self.placed {
-            let _ = self.parent.remove_dir_all(&self.name);
+        if !self.placed && !self.discarded {
+            // `staging-drop-cleanup` makes the removal fail without touching the filesystem, which
+            // is the only way a test can reach this arm: `staging-cleanup` injects into
+            // `Staging::create` and never gets here.
+            let outcome = match crate::inject::io_failure("staging-drop-cleanup") {
+                Some(injected) => Err(injected),
+                None => self.parent.remove_dir_all(&self.name),
+            };
+            // `Drop` cannot return, so it cannot put this in the error the caller is building —
+            // which is exactly why `place` does its own cleanup through `report_cleanup` instead of
+            // relying on this. What is left here are the failures that happen *before* placement
+            // (rendering, verification, manifest writing), and for those this is the only place the
+            // residue can be mentioned at all.
+            //
+            // Silence was the previous behaviour and is the one thing that must not happen: a
+            // staged tree survives, nothing says so, and the operator finds a `.renvor-staging-*`
+            // directory later with no idea what left it. `stderr` is the diagnostic stream in both
+            // output modes, so writing here cannot disturb the single JSON document on `stdout`.
+            if let Err(cleanup) = outcome {
+                use std::io::Write as _;
+                let residue = std::path::Path::new(&self.name);
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "warning: the staged tree could not be removed and is still at `{}`: {cleanup}",
+                    crate::output::redact::path(residue)
+                );
+            }
         }
     }
 }
@@ -714,20 +788,24 @@ mod tests {
         // while verifying nothing — which is precisely the defect an advisory review found in a
         // different test this same phase.
         //
-        // TWO removals are expected, and both remove **this process's own staging directory**:
+        // THREE removals are expected, and every one removes **this process's own staging
+        // directory** — named by `self.name`, which `create_dir` refused to reuse:
         //
-        //   1. `Drop`, the cleanup on every failure path once a `Staging` exists;
+        //   1. `Drop`, the cleanup for failures that happen before placement is attempted;
         //   2. `Staging::create`'s `open_dir` failure arm, which is the window BEFORE a `Staging`
-        //      exists and therefore before `Drop` can run.
+        //      exists and therefore before `Drop` can run;
+        //   3. `report_cleanup`, which every failure inside `place_steps` routes through so the
+        //      message can state what actually happened instead of asserting a removal that had
+        //      not been attempted.
         //
-        // The second one was added on 2026-08-18 and **this test caught it**, failing with
-        // *"expected exactly one removal … and found 2"*. That is the test doing its job: a new
-        // removal in this module has to be looked at and justified rather than merged quietly. The
-        // count is raised deliberately, with the justification above, and not loosened into
-        // "however many there are".
+        // The second was added on 2026-08-18 and the third on 2026-08-19, and **this test caught
+        // both**, failing with *"the number of removals in this module changed"*. That is the test
+        // doing its job: a new removal here has to be looked at and justified rather than merged
+        // quietly. The count is raised deliberately, with the justification above, and not
+        // loosened into "however many there are".
         assert_eq!(
             offending.len(),
-            2,
+            3,
             "the number of removals in this module changed. Every one must be this process's own \
              staging directory, and a new one needs a reason written down here: {offending:?}"
         );

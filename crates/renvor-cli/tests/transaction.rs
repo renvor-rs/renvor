@@ -700,3 +700,60 @@ fn a_staging_cleanup_failure_reports_both_errors_and_the_exact_remaining_path() 
          {reported}"
     );
 }
+
+#[test]
+fn a_failed_drop_cleanup_is_reported_and_never_claimed_as_a_removal() {
+    // `Drop for Staging` discarded the removal `Result`, and every failure path that reaches it had
+    // already built a message asserting *"the staged tree has been removed"* — a claim made before
+    // the removal was attempted, and therefore false whenever it fails.
+    //
+    // On Windows this is the ordinary case, not the exotic one: an antivirus scanner, the search
+    // indexer, or an open Explorer window holds a handle renvor does not own, and the removal fails
+    // with `os error 32`. `dropping_without_placing_removes_the_staged_tree` covers only success.
+    let base = tempfile::tempdir().expect("tempdir");
+    let destination = base.path().join("demo");
+
+    // A destination that appears mid-run is the failure this message belongs to.
+    let (code, stdout, _stderr) =
+        generate_into_with(base.path(), &[("RENVOR_FAIL_AT", "place,staging-drop-cleanup")]);
+
+    let document: serde_json::Value = serde_json::from_slice(stdout.as_bytes())
+        .unwrap_or_else(|error| panic!("stdout was not one JSON document: {error}\n{stdout}"));
+    assert_eq!(code, 1, "an injected internal failure exits 1");
+
+    let message = document["error"]["message"]
+        .as_str()
+        .expect("the failure carries a message");
+    assert!(
+        !message.contains("staged tree has been removed"),
+        "the message claims a removal that failed:\n{message}"
+    );
+
+    let residue = document["error"]["details"]["residue"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the surviving staged tree is not named:\n{document:#}"));
+    // The child ran with `base` as its working directory, so the path it reports is relative to
+    // that, not to the test process. Resolving it here is what makes the assertion about renvor's
+    // report rather than about the harness.
+    assert!(
+        base.path().join(residue).exists(),
+        "the named residue path does not exist, so the report is wrong in the other direction"
+    );
+    assert!(
+        document["error"]["details"]["cleanupError"].is_string(),
+        "the cleanup failure is not reported as structured detail:\n{document:#}"
+    );
+
+    // POSITIVE CONTROL: without the injection the same scenario must clean up silently and leave
+    // nothing behind, or the assertions above would be satisfied by a permanently broken cleanup.
+    let clean_base = tempfile::tempdir().expect("tempdir");
+    let (clean_code, clean_stdout, _) =
+        generate_into_with(clean_base.path(), &[("RENVOR_FAIL_AT", "place")]);
+    assert_eq!(clean_code, 1, "the control must still fail for the same reason");
+    let clean: serde_json::Value = serde_json::from_slice(clean_stdout.as_bytes()).expect("json");
+    assert!(
+        clean["error"]["details"]["residue"].is_null(),
+        "a successful cleanup must report no residue:\n{clean:#}"
+    );
+    let _ = destination;
+}

@@ -31,7 +31,9 @@ use crate::exit::{CliError, Code};
 pub fn fail_at(step: &str) -> Result<(), CliError> {
     #[cfg(debug_assertions)]
     {
-        if std::env::var("RENVOR_FAIL_AT").is_ok_and(|requested| requested == step) {
+        if std::env::var("RENVOR_FAIL_AT").is_ok_and(|requested| {
+            requested.split(',').any(|requested| requested.trim() == step)
+        }) {
             return Err(CliError::new(
                 Code::Internal,
                 format!("deliberate failure injected at `{step}` by RENVOR_FAIL_AT"),
@@ -63,8 +65,10 @@ pub fn fail_at(step: &str) -> Result<(), CliError> {
 /// message has to say so. One environment variable holding one step name cannot express it, so
 /// this splits on `,` and matches any element: `RENVOR_FAIL_AT=staging-open,staging-cleanup`.
 ///
-/// [`fail_at`] keeps exact-match semantics deliberately. Its own control test asserts that an
-/// unrecognised step is inert, and loosening it to substring or list matching would weaken that.
+/// [`fail_at`] now splits the same way, for the same reason: reaching `Drop`'s cleanup failure
+/// requires a `place` failure **and** a cleanup failure in one run. This is list matching, not
+/// substring matching — an unrecognised step is still inert, because every element is compared
+/// whole — so the control test that asserts inertness still means what it did.
 #[must_use]
 pub fn io_failure(step: &str) -> Option<std::io::Error> {
     #[cfg(debug_assertions)]
