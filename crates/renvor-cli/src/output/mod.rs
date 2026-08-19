@@ -155,7 +155,7 @@ impl Reporter {
                     Code::Internal,
                     "the child process could not be given a `stderr` to write to",
                 )
-                .with("cause", &error.to_string())
+                .with("cause", error.to_string())
             }),
         }
     }

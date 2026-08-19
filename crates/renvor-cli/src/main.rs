@@ -233,7 +233,7 @@ fn main() {
             if let Err(failure) = write_rendering(&safe_clap_rendering(&error), true) {
                 let reporter = Reporter::new(Format::Human, false);
                 let error = CliError::new(Code::Internal, "the help text could not be written")
-                    .with("cause", &failure.to_string());
+                    .with("cause", failure.to_string());
                 std::process::exit(reporter.fail("renvor", &error).code());
             }
             std::process::exit(Exit::Success.code());

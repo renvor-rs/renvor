@@ -714,8 +714,10 @@ fn a_failed_drop_cleanup_is_reported_and_never_claimed_as_a_removal() {
     let destination = base.path().join("demo");
 
     // A destination that appears mid-run is the failure this message belongs to.
-    let (code, stdout, _stderr) =
-        generate_into_with(base.path(), &[("RENVOR_FAIL_AT", "place,staging-drop-cleanup")]);
+    let (code, stdout, _stderr) = generate_into_with(
+        base.path(),
+        &[("RENVOR_FAIL_AT", "place,staging-drop-cleanup")],
+    );
 
     let document: serde_json::Value = serde_json::from_slice(stdout.as_bytes())
         .unwrap_or_else(|error| panic!("stdout was not one JSON document: {error}\n{stdout}"));
@@ -749,7 +751,10 @@ fn a_failed_drop_cleanup_is_reported_and_never_claimed_as_a_removal() {
     let clean_base = tempfile::tempdir().expect("tempdir");
     let (clean_code, clean_stdout, _) =
         generate_into_with(clean_base.path(), &[("RENVOR_FAIL_AT", "place")]);
-    assert_eq!(clean_code, 1, "the control must still fail for the same reason");
+    assert_eq!(
+        clean_code, 1,
+        "the control must still fail for the same reason"
+    );
     let clean: serde_json::Value = serde_json::from_slice(clean_stdout.as_bytes()).expect("json");
     assert!(
         clean["error"]["details"]["residue"].is_null(),

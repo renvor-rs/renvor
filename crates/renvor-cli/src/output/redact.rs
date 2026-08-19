@@ -313,7 +313,10 @@ mod tests {
             assert!(redacted.contains(REDACTED), "the marker is missing");
         }
 
-        assert_eq!(line("token=\"abc\" and more"), format!("token={REDACTED} and more"));
+        assert_eq!(
+            line("token=\"abc\" and more"),
+            format!("token={REDACTED} and more")
+        );
         // Unterminated quote: consume to the end rather than leaving a tail behind.
         assert!(!line("password=\"hunter2").contains("hunter2"));
 
@@ -331,7 +334,7 @@ mod tests {
         assert_eq!(
             redacted.matches('`').count(),
             framed.matches('`').count(),
-            "redaction changed the number of framing backticks: {redacted}"
+            "redaction changed the number of framing backticks"
         );
         assert!(!redacted.contains("abc"));
     }

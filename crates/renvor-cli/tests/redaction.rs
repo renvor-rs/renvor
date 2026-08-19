@@ -359,25 +359,33 @@ fn a_credential_in_a_rejected_argument_is_redacted_in_every_mode() {
     // reports only the flag name, so there is nothing to redact and no marker to look for; for a
     // bare `key=value` it echoes the whole token. Asserting the marker unconditionally would make
     // the second case fail for the right reason and the first for the wrong one.
-    for (hostile, echoed) in [("password=hunter2", true), ("--token=hunter2", false)] {
-        for mode in ["human", "json"] {
+    // Indexed rather than named: `crates/renvor-core/tests/diagnostics.rs` forbids interpolating a
+    // rendering into an assertion message in a credential-handling file, because on a redaction
+    // regression that message is where the credential lands. `index` and `position` identify
+    // which arm failed without printing anything derived from the output. Both names come from
+    // that gate's own allowlist; widening the allowlist to fit a message would defeat it.
+    for (index, (hostile, echoed)) in [("password=hunter2", true), ("--token=hunter2", false)]
+        .into_iter()
+        .enumerate()
+    {
+        for (position, mode) in ["human", "json"].into_iter().enumerate() {
             let (_code, stdout, stderr) = renvor(&[hostile, "--output", mode], base.path());
             let combined = format!("{stdout}{stderr}");
             assert!(
                 !combined.contains(PLANTED),
-                "the credential survived on the rejected-argument path in {mode} mode"
+                "the credential survived on the rejected-argument path (index {index}, position {position})"
             );
             if echoed {
                 assert!(
                     combined.contains("[redacted]"),
-                    "nothing was redacted in {mode} mode, so the assertion above proved nothing"
+                    "nothing was redacted (index {index}, position {position}), so the assertion above proved nothing"
                 );
             } else {
                 // POSITIVE CONTROL for the non-echoing shape: the run must still have produced a
                 // diagnostic, or "the secret is absent" would be satisfied by empty output.
                 assert!(
                     combined.contains("error:"),
-                    "no diagnostic at all in {mode} mode, so the assertion above proved nothing"
+                    "no diagnostic at all (index {index}, position {position}), so the assertion above proved nothing"
                 );
             }
         }

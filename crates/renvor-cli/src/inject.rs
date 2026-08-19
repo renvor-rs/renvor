@@ -32,7 +32,9 @@ pub fn fail_at(step: &str) -> Result<(), CliError> {
     #[cfg(debug_assertions)]
     {
         if std::env::var("RENVOR_FAIL_AT").is_ok_and(|requested| {
-            requested.split(',').any(|requested| requested.trim() == step)
+            requested
+                .split(',')
+                .any(|requested| requested.trim() == step)
         }) {
             return Err(CliError::new(
                 Code::Internal,
