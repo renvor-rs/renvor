@@ -44,6 +44,24 @@ authority.
 
 That is preserved here because it is the useful lesson, not because it is flattering.
 
+## Evidence index (PLAN.md §6.2)
+
+`PLAN.md` §6.2 requires every completed phase to link eight classes of evidence. Each row below
+points at a **current public source** wherever one exists; a commit-pinned link is used only where
+no current public equivalent does. **A class with nothing to show says so** rather than being
+omitted — an absent row would read as an oversight instead of a fact.
+
+| # | Evidence class | Where it is |
+|---|---|---|
+| 1 | Accepted ADRs | [`decisions/`](../decisions/) — **ADR-0007** (custom kernel primitives), **ADR-0008** (publishable crate set), **ADR-0009** (vendored `image-size` replacement) |
+| 2 | Package versions and licence review | [`governance/phase-002-dependency-inventory.md`](phase-002-dependency-inventory.md) — every dependency with version, licence, maintenance status, MSRV compatibility, and advisories, resolved against the committed [`Cargo.lock`](../Cargo.lock) |
+| 3 | Verification commands and platforms | [`contracts/verification-sequence.md`](../contracts/verification-sequence.md); [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) |
+| 4 | Compatibility rows exercised | [`contracts/support-policy.md`](../contracts/support-policy.md) — the pinned MSRV **and** current stable, both required to pass |
+| 5 | Security checklist evidence | [`.github/workflows/security.yml`](../.github/workflows/security.yml) (advisories, licences, bans, sources), CodeQL and dependency review in [`ci.yml`](../.github/workflows/ci.yml), and [`governance/dependency-advisory-policy.md`](dependency-advisory-policy.md). Secret redaction is contract-tested — [`contracts/configuration-contract.md`](../contracts/configuration-contract.md) and [`contracts/error-taxonomy.md`](../contracts/error-taxonomy.md) |
+| 6 | Generated-project smoke tests | **None.** This phase ships a library kernel and no generator. The first generated-project smoke tests arrive in Phase 003 |
+| 7 | Documentation and migration notes | The five Phase 002 contracts in [`contracts/`](../contracts/) — configuration, error taxonomy, lifecycle, observability, provider graph — plus the API reference on the documentation site |
+| 8 | Known limitations, with owner and target | [`governance/waivers.md`](waivers.md) — **W-004, W-005, W-006**, owner Ahmed Anbar. The kernel surface is **explicitly unstable**: [`contracts/api-stability.md`](../contracts/api-stability.md) states the two conditions that close the window |
+
 ## Carried forward
 
 - **No independent human requirements-and-security review of Phase 002 has occurred** (W-005).

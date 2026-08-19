@@ -56,7 +56,7 @@ normative — two independent implementations counting by them **MUST** arrive a
 > The correction is to the **definition**, not to the budget: the allowances (2048 / 16384 /
 > 18432) and the observed values (2048 / 8192 / 10240) are unchanged, and the implementation now
 > reproduces them exactly. Evidence: `crates/renvor-core/tests/resolver_proof.rs`;
-> `specs/002-core-kernel/research.md` §D8.
+> [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D8.
 
 Two consequences follow, and both are intended:
 

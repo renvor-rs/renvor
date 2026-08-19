@@ -1,6 +1,12 @@
+---
+description: "Contract — supported toolchains, platforms, MSRV floor, and change rules"
+version: "1.0.0"
+status: "normative — a public promise and a release contract under principle V; no release has occurred. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract: Support and Version Policy
 
-**Feature**: `specs/001-governance-foundation` | **Satisfies**: FR-017 – FR-021 | **Set by**: ADR-0003
+**Feature**: Phase 001 — governance foundation | **Satisfies**: FR-017 – FR-021 | **Set by**: ADR-0003
 
 This is a public promise. Under constitution principle V it is a release contract, and under principle X no value here may be claimed without a passing verification run behind it.
 

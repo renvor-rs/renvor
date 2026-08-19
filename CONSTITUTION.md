@@ -10,6 +10,15 @@
 
   AMENDMENT HISTORY
 
+  2026-08-19 — 3.0.0 to 3.0.1 (PATCH). Authority: maintainer decision of 2026-08-19.
+    Proposal, impact analysis, and migration plan: governance/constitution-amendment-3.0.1.md.
+    Change: Development and Phase Workflow clause 1 drops the name of a third-party planning
+      tool from a normative rule. "one Spec Kit feature directory represents one active phase"
+      becomes "one feature directory represents one active phase". The MUST, its subject, and
+      the one-active-phase constraint are unchanged; only the vendor name is removed. No
+      behaviour, evidence, waiver, contract, or phase status changes. Prompted by an automated
+      review that found the wording had been changed without an amendment.
+
   2026-08-18 — 2.0.0 to 3.0.0 (MAJOR). Authority: maintainer ruling of 2026-08-18, item 3.
     Proposal, impact analysis, and migration plan: governance/constitution-amendment-3.0.0.md.
     Change: principle VII's wizard-scope sentence is redefined for staged delivery. The rule
@@ -226,4 +235,4 @@ Constitution versions follow semantic versioning:
 
 Every phase review and release review MUST include a constitution check. Exceptions are allowed only through a time-bounded written waiver naming the violated rule, reason, compensating controls, owner, expiry, and removal plan. Security release blockers cannot be waived for a public release.
 
-**Version:** 3.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-18
+**Version:** 3.0.1 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-19

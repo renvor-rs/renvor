@@ -1,3 +1,9 @@
+---
+description: "Contract C-4 — template delivery, rendering bounds, and containment"
+version: "1.0.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-4 — Templates
 
 **Status**: defined before implementation. Governs FR-024 to FR-028 and FR-040.

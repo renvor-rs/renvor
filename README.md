@@ -52,7 +52,7 @@ Everything below is one link from here.
 
 | Document | What it covers |
 |---|---|
-| [**CONSTITUTION.md**](CONSTITUTION.md) | **Supreme authority — version 3.0.0, ratified 2026-08-11, last amended 2026-08-18.** The principles every other document answers to |
+| [**CONSTITUTION.md**](CONSTITUTION.md) | **Supreme authority — version 3.0.1, ratified 2026-08-11, last amended 2026-08-19.** The principles every other document answers to |
 | [GOVERNANCE.md](GOVERNANCE.md) | Who decides what, decision records, the reviewer definition, waivers, and how to amend |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, the one verification command, and the dependency policy |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |

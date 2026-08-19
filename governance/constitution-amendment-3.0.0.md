@@ -173,7 +173,7 @@ Nothing in Phase 003's threat model, path boundary, redaction, or trust-store co
 |---|---|
 | `CONSTITUTION.md` | Principle VII amended; version, date, and amendment history updated |
 | Local specification-tooling working copy | Synchronised and byte-verified against the canonical text |
-| `specs/003-interactive-cli/spec.md` | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
+| [`spec.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
 | `governance/phase-003-evidence.md` | §2 rewritten: the referral becomes a recorded ruling with an outcome |
 | `docs/docs/governance.mdx` | Constitution version reference updated where present |
 

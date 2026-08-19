@@ -54,6 +54,24 @@ available token lacked `read:packages` and anonymous GHCR returns HTTP 403 witho
 *absent* from *private*. The no-image statement therefore rests on the absence of any publishing
 workflow or run, **not** on a registry listing.
 
+## Evidence index (PLAN.md §6.2)
+
+`PLAN.md` §6.2 requires every completed phase to link eight classes of evidence. Each row below
+points at a **current public source** wherever one exists; a commit-pinned link is used only where
+no current public equivalent does. **A class with nothing to show says so** rather than being
+omitted — an absent row would read as an oversight instead of a fact.
+
+| # | Evidence class | Where it is |
+|---|---|---|
+| 1 | Accepted ADRs | [`decisions/`](../decisions/) — ADR-0002 … ADR-0006 and ADR-0010 `accepted`; **ADR-0001 `superseded`** by ADR-0010 |
+| 2 | Package versions and licence review | **No runtime dependency was introduced by this phase**; it ships no runtime code. The licence and advisory gates that would review one are [`deny.toml`](../deny.toml) and [`governance/dependency-advisory-policy.md`](dependency-advisory-policy.md), both active from this phase onward, over the committed [`Cargo.lock`](../Cargo.lock) |
+| 3 | Verification commands and platforms | [`contracts/verification-sequence.md`](../contracts/verification-sequence.md) — the ordered sequence `cargo xtask verify` runs; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the platforms it runs on |
+| 4 | Compatibility rows exercised | [`contracts/support-policy.md`](../contracts/support-policy.md) — MSRV floor and tested toolchains. This phase's declared row is **Linux on the pinned MSRV and current stable**; macOS and Windows entered in a later phase |
+| 5 | Security checklist evidence | [`.github/workflows/security.yml`](../.github/workflows/security.yml), [`deny.toml`](../deny.toml), [`.gitleaks.toml`](../.gitleaks.toml), and [`SECURITY.md`](../SECURITY.md). Checklist verdicts: [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) — 79/79 |
+| 6 | Generated-project smoke tests | **None, and none were possible.** No generator existed until Phase 003; the first generated-project smoke tests are `crates/renvor-cli/tests/generated.rs`, added there |
+| 7 | Documentation and migration notes | [`README.md`](../README.md), [`GOVERNANCE.md`](../GOVERNANCE.md), [`RELEASING.md`](../RELEASING.md), [`SUPPORT.md`](../SUPPORT.md), and the documentation site under `docs/` |
+| 8 | Known limitations, with owner and target | [`governance/waivers.md`](waivers.md) — **W-001, W-002, W-003**, owner Ahmed Anbar, expiry 2027-02-11. Plus the four transferred deployment gates T102, T108, T109, T111, listed above with their destinations |
+
 ## Carried forward
 
 - **No independent human requirements-and-security review of Phase 001 has occurred** (W-003).

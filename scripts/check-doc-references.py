@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Validate every reference in tracked Markdown against the GIT INDEX, not the filesystem.
+
+Why the index and not `os.path.exists`
+--------------------------------------
+`git rm --cached` untracks a file but leaves it on disk. A validator that asks the filesystem
+therefore reports a reference to an untracked file as fine, and is structurally incapable of
+finding exactly the class of breakage that untracking creates. That is not hypothetical: an
+earlier version of this check reported "0 broken" while eight links were broken, including four
+in the independent-review packet that a reviewer is meant to open first.
+
+Two failure classes
+-------------------
+1. BROKEN LINK           - a Markdown link whose relative target is not in the index.
+2. UNRESOLVED PATH REF   - a `specs/...`-shaped path in prose, a code span, or a table cell,
+                           pointing at material that is no longer tracked and is not pinned to
+                           an immutable commit.
+
+Controls
+--------
+Both a positive and a negative control run on every invocation. If either misbehaves the script
+fails, because a scan that cannot discriminate proves nothing about the tree it scanned.
+"""
+import os
+import re
+import subprocess
+import sys
+
+LINK = re.compile(r'\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)')
+PATHREF = re.compile(r'(?<![\w/.-])specs/[0-9]{3}-[a-z0-9-]+(?:/[A-Za-z0-9._-]+)*')
+PINNED = re.compile(r'https://github\.com/[^)\s]+/blob/[0-9a-f]{40}/')
+
+
+def tracked_files():
+    out = subprocess.run(['git', 'ls-files'], capture_output=True, text=True, check=True).stdout
+    return set(out.split())
+
+
+def markdown_corpus(tracked):
+    return sorted(f for f in tracked
+                  if f.endswith(('.md', '.mdx')) and not f.startswith('docs/'))
+
+
+def scan_text(path, text, tracked):
+    """Return (broken_links, unresolved_refs) for one document's text."""
+    broken, unresolved = [], []
+    base = os.path.dirname(path)
+    for number, line in enumerate(text.split('\n'), 1):
+        for match in LINK.finditer(line):
+            target = match.group(1)
+            if target.startswith(('http://', 'https://', 'mailto:')):
+                continue
+            resolved = os.path.normpath(
+                os.path.join('' if target.startswith('/') else base, target.lstrip('/')))
+            if resolved not in tracked and not os.path.isdir(resolved):
+                broken.append((number, target))
+        # A path-like reference is resolved only when it sits inside a commit-pinned URL.
+        for match in PATHREF.finditer(line):
+            prefix = line[:match.start()]
+            if PINNED.search(prefix):
+                continue
+            unresolved.append((number, match.group(0)))
+    return broken, unresolved
+
+
+def controls(tracked):
+    """Prove the scan discriminates before trusting anything it says about the tree."""
+    failures = []
+
+    # NEGATIVE CONTROL: planted breakage must be detected.
+    bad = "[x](./definitely-not-a-tracked-file.md)\nSee `specs/001-governance-foundation/spec.md`.\n"
+    b, u = scan_text('CONTROL.md', bad, tracked)
+    if len(b) != 1:
+        failures.append(f'negative control: expected 1 broken link, detected {len(b)}')
+    if len(u) != 1:
+        failures.append(f'negative control: expected 1 unresolved path ref, detected {len(u)}')
+
+    # POSITIVE CONTROL: valid content must NOT be flagged.
+    pinned = ('https://github.com/renvor-rs/renvor/blob/'
+              '0123456789abcdef0123456789abcdef01234567/specs/001-governance-foundation/spec.md')
+    good = f'[README](README.md) and [pinned]({pinned}) and [ext](https://example.com/specs/002-x/y.md)\n'
+    b, u = scan_text('CONTROL.md', good, tracked)
+    if b:
+        failures.append(f'positive control: valid links flagged as broken: {b}')
+    if u:
+        failures.append(f'positive control: pinned/external refs flagged as unresolved: {u}')
+
+    return failures
+
+
+def main():
+    tracked = tracked_files()
+    corpus = markdown_corpus(tracked)
+
+    control_failures = controls(tracked)
+    if control_failures:
+        print('CONTROLS FAILED — this scan cannot be trusted:')
+        for failure in control_failures:
+            print(f'  {failure}')
+        return 2
+    print('controls: negative detects planted breakage, positive passes valid content — OK')
+
+    broken_total = unresolved_total = 0
+    for path in corpus:
+        with open(path, encoding='utf-8', errors='replace') as handle:
+            broken, unresolved = scan_text(path, handle.read(), tracked)
+        for number, target in broken:
+            print(f'BROKEN LINK        {path}:{number} -> {target}')
+        for number, ref in unresolved:
+            print(f'UNRESOLVED PATH    {path}:{number} -> {ref}')
+        broken_total += len(broken)
+        unresolved_total += len(unresolved)
+
+    print(f'\ndocuments scanned:      {len(corpus)}')
+    print(f'broken links:           {broken_total}')
+    print(f'unresolved path refs:   {unresolved_total}')
+    return 1 if (broken_total or unresolved_total) else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

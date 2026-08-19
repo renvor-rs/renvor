@@ -262,8 +262,8 @@ review, and neither may be described as one.
 
 ### Attempt 1 — RECORDED AS NOT PERFORMED
 
-Two agents were dispatched on 2026-08-16 with distinct written checklists, one architecture and
-one security. **Both went idle without returning findings and without returning a "no findings"
+Two automated review passes were run on 2026-08-16 with distinct written checklists, one
+architecture and one security. **Both went idle without returning findings and without returning a "no findings"
 statement.** Under W-004 compensating control 2 that is recorded as **not performed**, never as
 passed.
 

@@ -65,6 +65,24 @@ mutation testing — one because a reserved name was being refused by a differen
 under test, hiding a real defect in which `renvor new demo --path COM¹` succeeded and created a
 directory Windows cannot open.
 
+## Evidence index (PLAN.md §6.2)
+
+`PLAN.md` §6.2 requires every completed phase to link eight classes of evidence. Each row below
+points at a **current public source** wherever one exists; a commit-pinned link is used only where
+no current public equivalent does. **A class with nothing to show says so** rather than being
+omitted — an absent row would read as an oversight instead of a fact.
+
+| # | Evidence class | Where it is |
+|---|---|---|
+| 1 | Accepted ADRs | **None accepted in this phase**, and that is the record: a Phase 003 decision record was drafted and **withdrawn** rather than accepted, because no live waiver covered it and creating one was refused. What this phase changed instead is constitutional — [`governance/constitution-amendment-3.0.0.md`](constitution-amendment-3.0.0.md) |
+| 2 | Package versions and licence review | [`governance/phase-003-dependency-inventory.md`](phase-003-dependency-inventory.md) — version, licence, maintenance, MSRV, advisories per dependency, against the committed [`Cargo.lock`](../Cargo.lock) |
+| 3 | Verification commands and platforms | [`contracts/verification-sequence.md`](../contracts/verification-sequence.md); [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) runs the platform matrix |
+| 4 | Compatibility rows exercised | **Linux, macOS, and Windows × pinned MSRV and current stable — six rows, all required to pass.** Declared in [`contracts/support-policy.md`](../contracts/support-policy.md); the matrix itself is in [`ci.yml`](../.github/workflows/ci.yml) |
+| 5 | Security checklist evidence | [`.github/workflows/security.yml`](../.github/workflows/security.yml), CodeQL, dependency review, secret scanning. Behaviour-level: the redaction and hostile-input suites `crates/renvor-cli/tests/redaction.rs` and `tests/hostile.rs`, and the destination-safety rules in [`contracts/generation-transaction.md`](../contracts/generation-transaction.md) |
+| 6 | Generated-project smoke tests | **`crates/renvor-cli/tests/generated.rs`** — every generated variant is formatted, compiled, tested, and started, in an isolated target directory. This is the first phase where this class exists |
+| 7 | Documentation and migration notes | `docs/docs/cli.mdx` on the documentation site, and the five CLI contracts C-1 … C-5 in [`contracts/`](../contracts/). Migration: the JSON envelope's `schemaVersion` moved 1 → 2, with the reasoning in [`contracts/json-output.md`](../contracts/json-output.md) §Schema history |
+| 8 | Known limitations, with owner and target | [`governance/waivers.md`](waivers.md) — **W-008**, owner Ahmed Anbar, expiry **2027-02-11**, plus **RO-001** with a first review date of **2026-11-19**. The Windows evidence table above states precisely which behaviours are measured and which are only reasoned |
+
 ## Carried forward
 
 - **No independent human review of Phase 003 has occurred** (W-008). Windows is the widest gap, and

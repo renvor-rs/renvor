@@ -1,3 +1,9 @@
+---
+description: "Contract C-5 — the generation transaction and its destination-safety guarantees"
+version: "1.0.0"
+status: "normative — the safety core of the generator. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-5 — The generation transaction
 
 **Status**: defined before implementation. **This is the safety core of Phase 003.**

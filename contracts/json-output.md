@@ -1,3 +1,9 @@
+---
+description: "Contract C-2 — machine-readable output envelope and error-code registry"
+version: "1.0.0"
+status: "normative — the wire payload carries its own `schemaVersion`, currently 2, which is independent of this document version. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-2 — Machine-readable output
 
 **Status**: defined before implementation. **A compatibility contract** (FR-022, FR-023).

@@ -4,7 +4,7 @@ How decisions get made in Renvor, who makes them, and how this document changes.
 
 ## Supreme authority
 
-The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.0, ratified 2026-08-11,
+The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.1, ratified 2026-08-11,
 last amended 2026-08-18** — is the highest authority in this project. Where this document
 and the constitution conflict, the constitution wins, and the conflict is a defect in
 this document.
@@ -21,6 +21,7 @@ section. It is not amended by practice, precedent, or convenience.
 
 | Version | Date | Change | Record |
 |---|---|---|---|
+| **3.0.1** | 2026-08-19 | Development and Phase Workflow clause 1 drops a third-party tool name from a normative rule. PATCH — wording only; the one-active-phase MUST is unchanged. **No waiver created** | [`governance/constitution-amendment-3.0.1.md`](governance/constitution-amendment-3.0.1.md) |
 | **3.0.0** | 2026-08-18 | Principle VII's wizard-scope sentence redefined for staged delivery. MAJOR. **No waiver created** | [`governance/constitution-amendment-3.0.0.md`](governance/constitution-amendment-3.0.0.md) |
 | 2.0.0 | 2026-08-17 | Principles VII and XIII name `renvor` rather than `renover`. MAJOR | [`decisions/0010-unify-product-and-executable-name.md`](decisions/0010-unify-product-and-executable-name.md) |
 | 1.0.0 | 2026-08-11 | Ratified | — |
@@ -92,7 +93,7 @@ requires. While W-002 is active:
 The four compensating controls that must all be met before acceptance:
 
 1. A written alternatives-and-consequences review completed against the ADR template.
-2. Verification against `specs/001-governance-foundation/checklists/governance.md`.
+2. Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md).
 3. All required CI and security checks passing.
 4. A dated review record stored with the ADR.
 
@@ -183,7 +184,7 @@ falsify the amendment. The identifier is retired. See
 
 **Ahmed Anbar's acceptance of Phase 003 is a human maintainer decision, and it is not independent
 review.** No independent human requirements-and-security review of Phase 003 has occurred. Every
-review performed inside Phase 003 — including automated and agent-assisted review — is advisory and
+review performed inside Phase 003 — including every automated non-person review — is advisory and
 non-independent, and an automated reviewer is not a person and so cannot be independent under any
 reading of the criteria. Windows coverage came from CI, which is automated platform evidence rather
 than human review.
@@ -228,7 +229,7 @@ and is not something W-001 waives — W-001 covers the *approving review* requir
 
 | Document | Covers |
 |---|---|
-| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v3.0.0, ratified 2026-08-11, last amended 2026-08-18 |
+| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v3.0.1, ratified 2026-08-11, last amended 2026-08-19 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, verification, dependency policy, licensing of contributions |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting and response commitments |

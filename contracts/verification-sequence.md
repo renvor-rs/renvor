@@ -1,6 +1,12 @@
+---
+description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
+version: "1.0.0"
+status: "normative — enforced executably by `xtask`. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract: Verification Sequence
 
-**Feature**: `specs/001-governance-foundation` | **Satisfies**: FR-018, FR-019, FR-022, FR-023, FR-024, FR-025, FR-037, FR-055
+**Feature**: Phase 001 — governance foundation | **Satisfies**: FR-018, FR-019, FR-022, FR-023, FR-024, FR-025, FR-037, FR-055
 
 One command, one behaviour, locally and in automation:
 

@@ -167,7 +167,7 @@ Re-reviewed 2026-08-12 after T104 closed the gap that previously blocked control
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives with rejection reasons; accepted costs stated, including that the current MSRV rests on an anticipated rather than measured requirement |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 final re-review: **79 of 79 passed**. CHK050, which previously blocked this record, is resolved by T104 and verified present in every authoritative location. CHK048 is resolved by T103 and never concerned this record's scope |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-12** — T086 final re-review: **79 of 79 passed**. CHK050, which previously blocked this record, is resolved by T104 and verified present in every authoritative location. CHK048 is resolved by T103 and never concerned this record's scope |
 | 3 | All required CI and security checks passing | ✅ **Met** — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` all passing on `renvor-rs/renvor`, including on the pull request carrying this change |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 

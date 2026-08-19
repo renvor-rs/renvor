@@ -162,7 +162,7 @@ This section exists so the decision to close Phase 003 is on the record with its
 > **not satisfied**. Automated and maintainer reviews are supporting evidence, **not** independent
 > review.
 
-**On the automated reviews.** Phase 003 used automated, agent-assisted review extensively, and that
+**On the automated reviews.** Phase 003 used automated non-person review extensively, and that
 is recorded rather than hidden. It does not move the needle on independence: §0 requires a
 **person**, and an automated reviewer is not one. Its value was finding defects — 14 confirmed,
 8 refuted with stated grounds — not conferring approval.
@@ -175,9 +175,9 @@ offered as if it did:
 
 | Not independent | Why |
 |---|---|
-| The advisory AI reviews in [`phase-003-evidence.md`](phase-003-evidence.md) §6 | Spawned by, prompted by, and reporting to the same process that wrote the code. Labelled NON-INDEPENDENT and ADVISORY throughout. |
+| The automated advisory reviews in [`phase-003-evidence.md`](phase-003-evidence.md) §6 | Spawned by, prompted by, and reporting to the same process that wrote the code. Labelled NON-INDEPENDENT and ADVISORY throughout. |
 | The maintainer's own review | Single-maintainer repository. This is the standing condition the six existing waivers all describe. |
-| Claude, or any agent | Same as the first row. |
+| Any automated reviewer, of any kind | Same as the first row. **Not a person**, so it cannot satisfy criterion 1 regardless of how capable it is. |
 | CI | CI runs the tests the author wrote. It cannot notice a test that was never written. |
 
 **No Phase 003 phase-level waiver exists and none has been drafted.** If you conclude the work is not
@@ -198,11 +198,21 @@ ready, saying so is the expected outcome, not a problem to be managed.
 
 ## 2. Where to start
 
-**Several rows below are permalinks, not repository paths.** The specifications, task ledgers, and
-the review pack are working artifacts and are no longer tracked in the public tree; they remain
-permanently readable at the Phase 003 merge commit `01327b1`, which is immutable. A link to a commit
-stays reachable forever, which a relative path to an untracked file does not — the first version of
-this cleanup left four such paths dangling, and an automated review caught it.
+**Several rows below are commit-pinned links, not repository paths.** The specifications, task
+ledgers, and the review pack are working artifacts and are no longer tracked in the current public
+tree. They remain in the public Git history at the Phase 003 merge commit `01327b1`, and a
+commit-pinned link resolves to the exact bytes that were there — a commit's content is immutable,
+so the link cannot silently come to mean something else.
+
+**What is and is not guaranteed.** These links are expected to resolve **for the lifetime of the
+project, while the public Git history and its hosting remain available**. That is the real
+guarantee and it is the one made here. It is *not* a claim of permanence: this project does not
+control GitHub, and no promise about a third party's hosting would be ours to make. Anyone who
+needs an independent copy should clone the repository, which carries the full history.
+
+A commit-pinned link is still strictly better than the relative path it replaces, which resolves to
+nothing at all in the current tree — the first version of this cleanup left four such paths
+dangling in this very table, and an automated review found them.
 
 | Order | Read | Why |
 |---|---|---|
