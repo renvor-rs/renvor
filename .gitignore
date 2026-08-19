@@ -53,6 +53,24 @@ secrets/
 .venv/
 __pycache__/
 
+# --- Local agent and development-tool configuration ---
+# Restored to the TRACKED ignore file on 2026-08-19, after two independent automated review
+# passes flagged its removal.
+#
+# These were moved to `.git/info/exclude` on the reasoning that local-only material does not
+# belong in a rule imposed on everyone who clones. That reasoning does not survive contact with
+# two facts: this repository is **public**, and `.git/info/exclude` is **per-clone**. A second
+# clone — another machine, another contributor, CI — inherits none of it, and a single broad
+# `git add .` there publishes local tool state irreversibly. A published secret is not
+# retractable, and this file is the only protection that travels with the repository.
+#
+# `.git/info/exclude` keeps them too. This is belt and braces, deliberately.
+.claude/
+.claude-flow/
+.playwright-mcp/
+.remember/
+.specify/
+
 # --- Separately managed brand package, separate asset licensing (T009) ---
 Branding/
 
