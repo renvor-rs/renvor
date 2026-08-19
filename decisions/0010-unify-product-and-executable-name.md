@@ -232,8 +232,8 @@ Required by `contracts/public-identity.md` for any change to a frozen identity v
 | **Generated projects** | `.renvor/` and `RENVOR_` are unchanged — both were already derived from the product name, not the executable | No change |
 | **Templates** | None exist. Phase 003 creates them | Not applicable |
 | **Documentation** | `README.md`, `crates/renvor/README.md`, `docs/docs/intro.mdx`, `docs/docs/api-reference.mdx`, `docs/src/pages/index.js`, `SECURITY.md` carry active command text | Migrated in this change |
-| **Program plan** | `PLAN.md` carries the executable name, the full command surface for Phases 003/025/028, and the Phase 003 `/speckit-specify` prompts | Migrated in this change |
-| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to **2.0.0** in this change. `CONSTITUTION.md` is the **only tracked copy** — `.specify/memory/constitution.md` exists for the specification tooling but `.specify/` is gitignored, so it is a local working copy and not a repository mirror. Both were changed together and the amendment record lives in the tracked file |
+| **Program plan** | `PLAN.md` carries the executable name, the full command surface for Phases 003/025/028, and the Phase 003 specification prompts | Migrated in this change |
+| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to **2.0.0** in this change. `CONSTITUTION.md` is the **only tracked copy** — a working copy exists for the specification tooling but is untracked, so it is a local working copy and not a repository mirror. Both were changed together and the amendment record lives in the tracked file |
 | **Published links** | None. No crate, release, tag, or deployed site references either spelling | No external reference exists |
 | **External references** | None known. The name has never been published or announced | No action |
 | **Security** | None. The change is a string; it grants no capability, alters no trust boundary, and touches no dependency | No impact |

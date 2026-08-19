@@ -6,7 +6,7 @@ status: "unstable — the surface it describes is explicitly unstable under FR-0
 
 # Contract: Observability, Health, and Readiness
 
-**Feature**: [../spec.md](../spec.md) | **Satisfies**: FR-026…FR-029, FR-043; SC-008, SC-018, SC-019
+**Feature**: the phase specification *(internal record)* | **Satisfies**: FR-026…FR-029, FR-043; SC-008, SC-018, SC-019
 **Status**: contract for an **explicitly unstable** surface (FR-036).
 
 ## C-O1 — One span per lifecycle phase

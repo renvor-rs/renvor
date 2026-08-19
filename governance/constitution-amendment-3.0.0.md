@@ -172,7 +172,7 @@ Nothing in Phase 003's threat model, path boundary, redaction, or trust-store co
 | Document | Change |
 |---|---|
 | `CONSTITUTION.md` | Principle VII amended; version, date, and amendment history updated |
-| `.specify/memory/constitution.md` | Local tooling working copy synchronised and byte-verified against the canonical text |
+| Local specification-tooling working copy | Synchronised and byte-verified against the canonical text |
 | `specs/003-interactive-cli/spec.md` | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
 | `governance/phase-003-evidence.md` | §2 rewritten: the referral becomes a recorded ruling with an outcome |
 | `docs/docs/governance.mdx` | Constitution version reference updated where present |
@@ -196,7 +196,7 @@ consequence of this amendment. The migration is documentary and forward-looking.
 **Immediately, in this PR:**
 
 1. `CONSTITUTION.md` amended, version `3.0.0`, date `2026-08-18`, amendment history entry added.
-2. `.specify/memory/constitution.md` synchronised and verified identical from the `# Renvor
+2. The local specification-tooling working copy synchronised and verified identical from the `# Renvor
    Constitution` heading onward.
 3. Every tracked document citing constitution v2.0.0 or quoting the old sentence updated.
 4. A test added — `crates/renvor-cli/src/config/flags.rs`,

@@ -53,13 +53,6 @@ secrets/
 .venv/
 __pycache__/
 
-# --- Local agent and development-tool configuration (T009: excluded from the public repository) ---
-.claude/
-.claude-flow/
-.playwright-mcp/
-.remember/
-.specify/
-
 # --- Separately managed brand package, separate asset licensing (T009) ---
 Branding/
 

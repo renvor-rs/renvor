@@ -6,7 +6,7 @@ status: "unstable — the surface it describes is explicitly unstable under FR-0
 
 # Contract: Error Taxonomy
 
-**Feature**: [../spec.md](../spec.md) | **Satisfies**: FR-019…FR-022, FR-037; SC-004, SC-005, SC-007, SC-016
+**Feature**: the phase specification *(internal record)* | **Satisfies**: FR-019…FR-022, FR-037; SC-004, SC-005, SC-007, SC-016
 **Status**: contract for an **explicitly unstable** surface (FR-036).
 
 > **Why this exists before adapters do.** An error taxonomy retrofitted after HTTP, GraphQL, and

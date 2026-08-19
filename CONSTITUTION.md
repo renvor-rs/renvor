@@ -3,10 +3,10 @@
   This file is the discoverable copy referenced by all public documentation (spec FR-012).
   Amendments follow the process in the Governance section below.
 
-  This file is the ONLY copy of the constitution tracked in this repository. A working copy
-  also exists at `.specify/memory/constitution.md` for the specification tooling; `.specify/`
-  is gitignored, so that copy is local-only and is NOT the canonical mirror. Keep the two
-  identical from the `# Renvor Constitution` heading onward; this file wins on any difference.
+  This file is the ONLY copy of the constitution tracked in this repository. A local working
+  copy also exists for the specification tooling; it is untracked, local-only, and is NOT the
+  canonical mirror. Keep the two identical from the `# Renvor Constitution` heading onward;
+  this file wins on any difference.
 
   AMENDMENT HISTORY
 
@@ -195,7 +195,7 @@ The separately published `renvor-rbac` crate is the first official reference pac
 
 ## Development and Phase Workflow
 
-1. Work MUST follow the numbered phases in `/PLAN.md`; one Spec Kit feature directory represents one active phase.
+1. Work MUST follow the numbered phases in `/PLAN.md`; one feature directory represents one active phase.
 2. The phase specification MUST state user outcomes, exclusions, security properties, and measurable acceptance criteria before implementation planning.
 3. Research MUST verify package APIs, maintenance, versions, licenses, MSRV, and standards against primary sources.
 4. Consequential decisions MUST be captured as proposed ADRs and reviewed before being treated as accepted.

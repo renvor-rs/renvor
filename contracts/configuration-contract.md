@@ -6,7 +6,7 @@ status: "unstable — the surface it describes is explicitly unstable under FR-0
 
 # Contract: Configuration
 
-**Feature**: [../spec.md](../spec.md) | **Satisfies**: FR-015…FR-018, FR-038, FR-044; SC-003, SC-007, SC-020
+**Feature**: the phase specification *(internal record)* | **Satisfies**: FR-015…FR-018, FR-038, FR-044; SC-003, SC-007, SC-020
 **Status**: contract for an **explicitly unstable** surface (FR-036). *Revision 2 — proof gate expanded to 8 obligations.*
 
 ## C-C1 — Exactly three source kinds
@@ -93,7 +93,7 @@ the candidate crate is adopted or the recorded fallback triggers.
 `serde` + `toml`** owning decode-per-source, ordered layering, attribution, and structural-conflict
 detection. That adapter is **custom infrastructure under FR-035** and **MUST NOT merge** before
 **ADR-0007** is reviewed and accepted through the governance gate — which neither W-002 nor W-003
-supplies. See [../research.md](../research.md) D6 and D11.
+supplies. See the phase research record *(internal record)* D6 and D11.
 
 > Obligations **4 and 6 carry known negative primary-source evidence** for the candidate crate.
 > Obligation 6 is recoverable if Renvor reads and decodes the environment itself; obligation 4 is
@@ -110,7 +110,7 @@ satisfiable on paper and are not.
 |---|---|
 | Who decides an obligation is met? | the test outcome, not a reviewer's judgement |
 | What is recorded? | the obligation number, the test name, pass or fail, and — on failure — the observed behaviour |
-| Where is it recorded? | [../research.md](../research.md) §D6, per obligation |
+| Where is it recorded? | the phase research record *(internal record)* §D6, per obligation |
 | Who records it? | the task that runs the gate (T020) |
 | What does a partial result mean? | **failure** — the gate is all-eight-or-fallback, with no partial adoption |
 

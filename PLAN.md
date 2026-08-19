@@ -3,8 +3,7 @@
 **Status:** Program execution authority<br>
 **Plan version:** 1.1.0<br>
 **Date:** 2026-08-11<br>
-**Owner:** Ahmed Anbar<br>
-**Planning system:** GitHub Spec Kit
+**Owner:** Ahmed Anbar
 
 ## 1. Authority and purpose
 
@@ -86,35 +85,35 @@ An ADR must record the executable-name decision and the alternatives it rejects.
 
 GraphQL must impose zero direct dependency or compile-time cost on REST-only applications. Full-stack templates and Tauri must impose zero dependency or build-tool cost on API-only applications.
 
-## 6. Spec Kit execution model
+## 6. Phase execution model
 
-Each numbered phase maps to exactly one feature directory:
+Each numbered phase produces one set of working artifacts — specification, plan, research record,
+data model where the phase changes persisted data, quickstart, task ledger, and requirements-quality
+checklists.
 
-```text
-specs/NNN-short-name/
-├── spec.md
-├── plan.md
-├── research.md
-├── data-model.md          # when the phase changes persisted data
-├── contracts/             # public schemas, examples, or protocols
-├── quickstart.md
-├── tasks.md
-└── checklists/
-```
+**Those working artifacts are internal.** They are authoring material: they churn, they contain
+superseded intermediate states, and their value is to the person doing the work rather than to
+someone reading the result. They are retained in the project's private records and are not part of
+this repository.
 
-Only the active phase is expanded. Later phases remain roadmap contracts in this file until their dependencies are complete.
+**What the phase produces for everyone else is public**: the code, its tests, the durable behaviour
+contracts in [`contracts/`](contracts/), the accepted decision records in [`decisions/`](decisions/),
+and a concise evidence summary in [`governance/`](governance/).
+
+Only the active phase is expanded. Later phases remain roadmap entries in this file until their
+dependencies are complete.
 
 ### 6.1 Required workflow for every phase
 
-1. Run `/speckit-specify` from the phase goal, user stories, exclusions, and acceptance criteria in this document.
-2. Run `/speckit-clarify` until no material product or architecture ambiguity remains.
-3. Run `/speckit-plan`; research every external package and standard before selecting it.
+1. **Specify** from the phase goal, user stories, exclusions, and acceptance criteria in this document.
+2. **Clarify** until no material product or architecture ambiguity remains.
+3. **Plan**, researching every external package and standard before selecting it.
 4. Record consequential choices as ADRs. A proposed ADR is not accepted until reviewed.
-5. Run `/speckit-checklist` for requirements quality, security, compatibility, documentation, and release concerns.
-6. Run `/speckit-tasks` with small, dependency-ordered tasks and explicit test work.
-7. Run `/speckit-analyze` and resolve inconsistencies among the constitution, specification, plan, and tasks. Review generated contracts separately against the specification and plan.
-8. Run `/speckit-implement` in testable slices. Keep the workspace buildable after every slice.
-9. Run `/speckit-converge` before phase approval to reconcile implementation, documentation, examples, and acceptance evidence.
+5. **Checklist** the requirements for quality, security, compatibility, documentation, and release concerns. A checklist evaluates the quality and completeness of the *requirements*, not the implementation.
+6. **Break the work into tasks** — small, dependency-ordered, with explicit test work.
+7. **Analyze** and resolve inconsistencies among the constitution, specification, plan, and tasks. Review contracts separately against the specification and plan.
+8. **Implement** in testable slices. Keep the workspace buildable after every slice.
+9. **Converge** before phase approval, reconciling implementation, documentation, examples, and acceptance evidence.
 10. Obtain an independent requirements and security review. A phase with unresolved release blockers remains open.
 
 ### 6.2 Phase completion record
@@ -997,407 +996,6 @@ Every phase below inherits all common gates in Sections 16–19.
 
 **Acceptance:** core and package release lifecycles remain independently versioned; crates.io bootstrap and trusted-publishing paths are rehearsed; catalog compromise does not bypass registry verification; vulnerable-version advisories and remediation work; clean existing projects can install, update, inspect, and remove the RBAC reference package; no critical/high finding remains open.
 
-### 20.1 Copy/paste Spec Kit commands
-
-Use these commands from the repository root after the preceding phase is complete. Paste **one command at a time** and wait for it to finish before pasting the next. Each `/speckit-specify` command pins the intended directory so sequential numbering cannot drift.
-
-The installed command names use hyphens. Each block follows the required order: specify, clarify, plan, checklist, tasks, analyze, implement, and converge. The constitution is already ratified; run `/speckit-constitution` only when a separately approved amendment is required. A checklist evaluates the quality and completeness of requirements, not the implementation. Run another checklist command for a distinct high-risk focus when needed. If converge appends work to `tasks.md`, run the implementation command again and repeat convergence until it reports no remaining work. Do not open the next phase until the current phase passes its acceptance gates and maintainer review.
-
-#### Phase 001 — Governance, names, toolchain, and repository security
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/001-governance-foundation" Specify Phase 001 from PLAN.md as one independently verifiable feature. Establish the trustworthy Renvor project foundation. Verify public names on GitHub and crates.io, ratify governance, create the Rust 2024 resolver-3 workspace, define the MSRV and license policies, secure repository defaults, choose the documentation platform, and create the CI and release skeleton. Exclude runtime framework features. Success requires every Phase 001 acceptance criterion in PLAN.md.
-/speckit-clarify Resolve public namespace ownership, license choice, initial MSRV policy, supported operating systems, release ownership, documentation platform, branch protection, crates.io bootstrap ownership, and which repository security features are mandatory before coding.
-/speckit-plan Research current primary sources and package versions, then design the workspace, ADR set, secure ignore rules, least-privilege workflows, dependency and license policy, security documents, and a non-publishing package dry run. Treat unconfirmed names as blockers.
-/speckit-checklist Create a formal reviewer checklist for governance completeness, naming evidence, licensing, MSRV, repository security, supply-chain controls, documentation ownership, release bootstrap, and measurable Phase 001 acceptance criteria.
-/speckit-tasks Generate dependency-ordered Phase 001 tasks: confirm names and ownership first; decide ADRs; create the workspace and policies; configure CI/security gates; write governance and release documents; finish with clean-checkout and package-dry-run evidence.
-/speckit-analyze Analyze Phase 001 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 001 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 001 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 002 — Core kernel, errors, configuration, and lifecycle
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/002-core-kernel" Specify Phase 002 from PLAN.md as one independently verifiable feature. Build Renvor's transport-independent kernel with typed state, application builder, provider registry, layered typed configuration, redacted errors, health/readiness, tracing bootstrap, cancellation, and the deterministic Load-Validate-Register-Boot-Ready-Drain-Stop lifecycle. Prove reverse rollback and bounded shutdown. Exclude HTTP and persistence adapters.
-/speckit-clarify Resolve provider dependency ordering, duplicate state behavior, configuration source precedence, secret redaction, startup rollback guarantees, readiness semantics, drain deadlines, forced-stop reporting, and the boundary between core and adapters.
-/speckit-plan Design inward dependencies and public traits, evaluate maintained configuration/error/observability packages, model lifecycle and rollback state transitions, define cancellation and deadlines, and plan unit, integration, failure-injection, and documentation evidence.
-/speckit-checklist Create a formal requirements checklist for lifecycle determinism, configuration failure behavior, typed state, redaction, rollback, readiness, bounded drain, observability, explicit APIs, and transport independence.
-/speckit-tasks Generate tasks in kernel-first order: contracts and state model; configuration and errors; provider graph; startup and rollback; readiness and drain; observability; harnesses, examples, failure tests, and public documentation.
-/speckit-analyze Analyze Phase 002 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 002 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 002 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 003 — Interactive CLI, templates, and local runtime
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/003-interactive-cli" Specify Phase 003 from PLAN.md as one independently verifiable feature. Create the renvor executable and transactional project generator. Implement renvor new with interactive questions and equivalent flags, validated renvor.toml, dry-run and JSON output, template versioning, doctor/check/dev commands, API-only skeleton, container controls, and explicit clean local HTTPS. Cancellation or failure must leave no partial project.
-/speckit-clarify Resolve every wizard question and default, exit codes, JSON schemas, destination collision policy, atomic-write behavior across operating systems, template trust, offline behavior, local domain and TLS ownership, container command scope, and exposed presets by release.
-/speckit-plan Evaluate clap, inquire, indicatif, and MiniJinja against the verified snapshot; design one validated configuration model for prompts and flags, deterministic embedded templates, staging and rollback, command contracts, local HTTPS trust boundaries, and generated-project tests.
-/speckit-checklist Create a formal requirements checklist for prompt/flag parity, unsupported combinations, cancellation, dry-run accuracy, destination safety, secret handling, deterministic output, local TLS consent, container failures, help text, and machine-readable results.
-/speckit-tasks Generate tasks from CLI contracts through validated configuration, prompts/flags, renderer and rollback, manifest/versioning, commands, local runtime, fixtures, cross-platform tests, generated-project verification, and documentation.
-/speckit-analyze Analyze Phase 003 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 003 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 003 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 004 — REST routing and HTTP runtime
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/004-rest-runtime" Specify Phase 004 from PLAN.md as one independently verifiable feature. Implement the Axum and Tower REST adapter with route groups, extractors, application-state bridging, middleware ordering, request IDs, safe host and proxy handling, CORS, body and concurrency limits, timeouts, cancellation, graceful drain, and route inspection. Keep application and domain crates free of HTTP types.
-/speckit-clarify Resolve middleware order, trusted proxy configuration, host validation, request identity propagation, cancellation ownership, default limits and timeouts, CORS defaults, rejection mapping, graceful drain behavior, and route naming/introspection.
-/speckit-plan Research the current Axum/Tower APIs and security guidance, design transport-to-application boundaries and middleware layers, define request context and cancellation, and plan real-router, malicious-header, timeout, drain, and feature-isolation tests.
-/speckit-checklist Create a formal requirements checklist for routing, middleware order, proxy/host trust, CORS, limits, timeouts, cancellation, safe rejections, drain, observability, route inspection, and transport independence.
-/speckit-tasks Generate tasks for HTTP contracts, router/state bridge, middleware layers, security controls, cancellation and drain, inspection command, real-router and abuse tests, examples, and documentation.
-/speckit-analyze Analyze Phase 004 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 004 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 004 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 005 — Validation, Problem Details, and OpenAPI
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/005-validation-openapi" Specify Phase 005 from PLAN.md as one independently verifiable feature. Add reusable validation, RFC 9457 Problem Details with stable Renvor codes, OpenAPI 3.2.0 generated from runtime route/schema contracts, schema examples, cursor pagination and filter contracts, and API compatibility checks. Block completion if selected tooling cannot correctly emit and validate the promised OpenAPI version.
-/speckit-clarify Resolve the error-code lifecycle, Problem Details extensions, field-error shape, validation location, OpenAPI tool choice, OpenAPI 3.2 compatibility evidence, schema overrides, pagination cursor rules, compatibility policy, and production redaction.
-/speckit-plan Spike candidate OpenAPI/schema packages against Axum and OpenAPI 3.2, select one public model, design shared runtime/documentation contracts, define validation and error mapping, and plan document validation, snapshots, compatibility, redaction, and adversarial tests.
-/speckit-checklist Create a formal requirements checklist for validation completeness, RFC 9457 conformance, stable codes, safe details, OpenAPI version truthfulness, route/schema parity, pagination bounds, compatibility classification, and measurable acceptance evidence.
-/speckit-tasks Generate tasks for the package spike and ADR, validation contracts, Problem Details registry, OpenAPI generation, pagination/filter schemas, validators and compatibility gates, real-router tests, examples, and documentation.
-/speckit-analyze Analyze Phase 005 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 005 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 005 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 006 — Persistence foundation and direct SQLx
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/006-sqlx-persistence" Specify Phase 006 from PLAN.md as one independently verifiable feature. Create persistence ports, explicit repository and unit-of-work contracts, transaction handling, bounded pools, readiness, ordered checksummed migrations, seeds and fixtures, and direct SQLx templates for PostgreSQL and MySQL. Both databases must pass the same contracts without loading the unselected driver.
-/speckit-clarify Resolve repository granularity, transaction ownership and nesting, migration source and locking, production migration policy, PostgreSQL/MySQL type differences, pagination ordering, pool defaults, cancellation, test database lifecycle, and SQL escape hatches.
-/speckit-plan Research SQLx 0.9 and supported database releases; design ports and explicit transactions, feature-isolated drivers, migrations and checksums, error normalization, seed/fixture APIs, and real PostgreSQL/MySQL contract, rollback, cancellation, and generation tests.
-/speckit-checklist Create a formal requirements checklist for both direct SQLx database rows, explicit transactions, parameter binding, pool bounds, migrations, rollback declarations, readiness, driver isolation, error safety, real-database evidence, and documentation.
-/speckit-tasks Generate tasks for persistence contracts, SQLx feature graph, PostgreSQL adapter, MySQL adapter, migrations, pools/readiness, errors, seeds/fixtures, shared contract suites, generated templates, and guides.
-/speckit-analyze Analyze Phase 006 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 006 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 006 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 007 — SeaORM parity
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/007-seaorm-parity" Specify Phase 007 from PLAN.md as one independently verifiable feature. Add the SeaORM programming model for PostgreSQL and MySQL behind Renvor persistence contracts, including transactions, entities, repositories, migrations, generators, and documented database-specific escape hatches. Match the application behavior of direct SQLx while accurately documenting SeaORM's SQLx foundation.
-/speckit-clarify Resolve which APIs belong to the SeaORM model, entity and repository generation boundaries, migration ownership, transaction mapping, escape-hatch rules, feature isolation, error parity, and what behavioral parity with direct SQLx means.
-/speckit-plan Research SeaORM 2 and its SQLx compatibility, design the adapter and generator without leaking direct-SQLx APIs, map transactions and migrations, and plan shared application contracts plus PostgreSQL/MySQL generated-project tests.
-/speckit-checklist Create a formal requirements checklist for SeaORM idioms, both databases, behavioral parity, transaction and migration correctness, transitive dependency accuracy, escape hatches, API isolation, generator determinism, and evidence.
-/speckit-tasks Generate tasks for the SeaORM adapter contracts, features, entities/repositories, transaction and migration integration, generator, both database rows, shared parity tests, examples, and documentation.
-/speckit-analyze Analyze Phase 007 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 007 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 007 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 008 — Four-row database hardening
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/008-database-hardening" Specify Phase 008 from PLAN.md as one independently verifiable feature. Harden SQLx/PostgreSQL, SQLx/MySQL, SeaORM/PostgreSQL, and SeaORM/MySQL as first-class REST 1.0 rows. Define portable data and migration semantics, concurrency and idempotency behavior, normalized errors, backup/restore guidance, upgrade fixtures, and fail-fast diagnostics without hidden secondary databases.
-/speckit-clarify Resolve exact supported database versions, type and timestamp semantics, identifier rules, JSON and upsert differences, isolation levels, migration portability limits, concurrency expectations, backup/restore scope, and which differences are public.
-/speckit-plan Build the four-row matrix and shared domain example, document semantic decisions, design portability and upgrade fixtures, and plan concurrency, idempotency, startup diagnostic, capability-isolation, and real-version testing.
-/speckit-checklist Create a formal requirements checklist for all four rows, deliberate semantic differences, migration safety, concurrency, idempotency, backup guidance, upgrades, diagnostics, no hidden database dependency, and release evidence.
-/speckit-tasks Generate tasks for the support matrix, semantic ADRs, shared example, portability helpers, concurrency/idempotency suites, error normalization, upgrade fixtures, diagnostics, scheduled matrix, and documentation.
-/speckit-analyze Analyze Phase 008 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 008 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 008 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 009 — Authentication, sessions, tokens, and policies
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/009-auth-policies" Specify Phase 009 from PLAN.md as one independently verifiable feature. Implement the backend auth starter: users, credentials, opaque secure sessions by default, optional API tokens, registration, login/logout, current user, email verification, password reset, session revocation, Argon2id, CSRF defenses, policies, abuse controls, audit events, and migrations for all four persistence rows.
-/speckit-clarify Resolve auth modes and defaults, user identity fields, session storage and expiry, cookie attributes, CSRF strategy, API token format and rotation, password limits and blocklist, mail failure behavior, enumeration resistance, policy semantics, audit retention, and recovery paths.
-/speckit-plan Threat-model every auth flow; research maintained session, password, token, and mail packages; design application services and deny-by-default policies, four-row storage, rotation/revocation, rate limits, safe errors, and adversarial integration tests using current NIST and OWASP guidance.
-/speckit-checklist Create a formal security requirements checklist for each auth flow, password handling, cookies, CSRF, tokens, reset/verification, enumeration, throttling, revocation, policy placement, redaction, all four persistence rows, and recovery.
-/speckit-tasks Generate security-first tasks for the threat model and contracts, user/session schema, password service, session and optional token modes, verification/reset, CSRF and abuse controls, policies/audit, four-row tests, OpenAPI, generators, and hardening docs.
-/speckit-analyze Analyze Phase 009 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 009 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 009 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 010 — Cache, jobs, mail, storage, and observability capabilities
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/010-capabilities-observability" Specify Phase 010 from PLAN.md as one independently verifiable feature. Create narrow optional ports and maintained adapters for cache, durable jobs, mail, object/file storage, and observability. Define explicit storage selection, retries, idempotency, backoff, health, structured logs, traces, metrics, redaction, and local test substitutes. No MySQL app may acquire PostgreSQL implicitly.
-/speckit-clarify Resolve which adapters are in initial scope, durable job storage across database choices, capability-required versus optional startup, retry/idempotency ownership, backpressure, local substitute limits, trace propagation, metric names, health semantics, and redaction rules.
-/speckit-plan Research maintained packages and licenses for each capability, design isolated feature graphs and provider lifecycle integration, choose explicit durable stores without hidden dependencies, and plan failure, retry, backpressure, telemetry, redaction, and disabled-feature tests.
-/speckit-checklist Create a formal requirements checklist for capability boundaries, adapter selection, startup failures, durability, retries, idempotency, no hidden database, feature isolation, observability semantics, redaction, local substitutes, and operational docs.
-/speckit-tasks Generate tasks by capability after shared ports: package ADRs, provider lifecycle, adapters, configuration, retries and bounds, telemetry/redaction, test substitutes, disabled builds, failure tests, examples, and documentation.
-/speckit-analyze Analyze Phase 010 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 010 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 010 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 011 — Generators, backend auth starter, and testing kit
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/011-generators-testing" Specify Phase 011 from PLAN.md as one independently verifiable feature. Create readable deterministic resource, migration, and auth generators; fixtures/factories; authenticated API starter; test application harness; snapshot stability and template version metadata. Every backend ORM/database row must generate, compile, migrate, seed, start, authenticate, authorize, and test without overwriting user changes.
-/speckit-clarify Resolve generator command grammar, resource options, safe rerun behavior, collision and merge rules, template versioning, user ownership boundaries, fixture/factory APIs, snapshot policy, auth starter defaults, upgrade metadata, and generated-project matrix scope.
-/speckit-plan Design declarative templates and conflict detection on the Phase 003 renderer, map generated artifacts across four backend rows, define the test harness and fixtures, and plan deterministic reruns, failure rollback, matrix builds, auth E2E, snapshots, and docs.
-/speckit-checklist Create a formal requirements checklist for generator readability, determinism, safe conflicts, no overwrite, four-row completeness, auth starter behavior, test harness, fixtures, template metadata, snapshot changes, and generated-project evidence.
-/speckit-tasks Generate tasks for generator contracts, resource/migration/auth templates, collision engine, fixtures/factories, test harness, authenticated starter, four-row generation matrix, rerun/failure tests, examples, and documentation.
-/speckit-analyze Analyze Phase 011 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 011 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 011 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 012 — REST documentation and production examples
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/012-rest-documentation" Specify Phase 012 from PLAN.md as one independently verifiable feature. Deliver the versioned searchable REST 1.0 documentation system, API-only quickstart, authenticated production-shaped example, complete CLI/API/persistence/auth/capability/configuration/testing/deployment guidance, crate references, upgrades, security hardening, and tested examples with visible limitations.
-/speckit-clarify Resolve documentation platform and hosting, versioning and search, example domains, supported deployment targets, snippet execution, API reference integration, ownership and update policy, localization scope, analytics/privacy, and how limitations and measurements are presented.
-/speckit-plan Implement the accepted documentation ADR, design information architecture and versioning, connect generated OpenAPI and crate docs, create clean-environment example tests and link/snippet checks, and plan deployment, security, upgrade, and support content.
-/speckit-checklist Create a formal content requirements checklist for every Section 18 topic, audience journeys, search/versioning, tested commands, example reproducibility, security guidance, limitations, evidence-linked claims, ownership, and broken-link prevention.
-/speckit-tasks Generate tasks for documentation infrastructure, navigation/versioning/search, each required guide, API/CLI/crate references, two tested examples, snippet/link validation, deployment/hardening content, accessibility, and release publication.
-/speckit-analyze Analyze Phase 012 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 012 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 012 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 013 — REST 1.0 stabilization and crates.io release
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/013-rest-1-release" Specify Phase 013 from PLAN.md as one independently verifiable feature. Stabilize and release REST 1.0. Produce release candidates, exhaustive compatibility and security reports, performance baselines, semver/API audit, ordered crates.io packages, signed GitHub release, SBOM, provenance, checksums, release notes, migration/support policies, and clean public-registry verification.
-/speckit-clarify Resolve release candidate count, freeze criteria, support window, crate publication order and ownership, first-release bootstrap, signing identities, benchmark thresholds, vulnerability policy, rollback/yank authority, documentation URLs, and go/no-go approval.
-/speckit-plan Design a reproducible release pipeline with clean-checkout package inspection and dry runs, manual first crate bootstrap followed by trusted publishing, semver and MSRV gates, exhaustive matrix, security review, artifact signing/attestation, registry verification, and rehearsed recovery.
-/speckit-checklist Create a formal release-readiness requirements checklist for freeze criteria, compatibility, security, performance evidence, semver, package metadata/order, crates.io bootstrap and trusted publishing, signed artifacts, SBOM/provenance, docs, support, and rollback.
-/speckit-tasks Generate release tasks in strict gate order: freeze and audit; exhaustive tests; security and performance evidence; package dry runs; first-publication approvals; publish dependency order; verify registry/docs; sign release; rehearse yank/rollback; publish support policy.
-/speckit-analyze Analyze Phase 013 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 013 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback. Stop before any publish, tag, signature, release, push, or external mutation and request explicit maintainer approval for that release gate.
-/speckit-converge Converge Phase 013 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 014 — GraphQL foundation
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/014-graphql-foundation" Specify Phase 014 from PLAN.md as one independently verifiable feature. Create the optional GraphQL adapter and crate with schema and context integration, shared application operation bridging, safe errors, authentication, feature isolation, deterministic schema output, and initial documentation. REST-only builds must contain no GraphQL dependency.
-/speckit-clarify Resolve GraphQL package choice, schema code-first versus schema artifacts, context contents, error mapping, authentication, feature boundaries, naming/nullability/version rules, introspection defaults, schema generation, and how transport parity is measured.
-/speckit-plan Research current GraphQL packages and licenses, design a strictly optional crate and context-to-application bridge, define safe errors and auth, schema determinism and compatibility, and plan REST-only dependency checks plus equivalent-operation integration tests.
-/speckit-checklist Create a formal requirements checklist for package selection, optional isolation, application-service reuse, authentication, safe errors, schema determinism, nullability and naming rules, REST parity, docs, and feature-graph evidence.
-/speckit-tasks Generate tasks for the package ADR, optional crate/features, schema/context bridge, operation mapping, auth/errors, deterministic schema, REST-only isolation tests, equivalent-operation tests, example, and documentation.
-/speckit-analyze Analyze Phase 014 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 014 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 014 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 015 — GraphQL queries, batching, and pagination
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/015-graphql-queries" Specify Phase 015 from PLAN.md as one independently verifiable feature. Implement GraphQL query mapping, cursor connections, selection-aware bounds, batching and data loaders, query authorization, and observability across all four persistence rows. Prevent N+1 behavior and cross-user or cross-tenant cache leakage while aligning pagination with REST.
-/speckit-clarify Resolve connection/cursor semantics, batching scope and cache keys, authorization timing, selection/depth limits, database query budgets, nullability, ordering, error behavior, observability, and what constitutes acceptable N+1 evidence.
-/speckit-plan Design shared application query mappings and request-scoped loaders, align cursors with REST, establish bounds and telemetry, and plan query-count, cache-isolation, authorization, pagination, four-row, and load tests.
-/speckit-checklist Create a formal requirements checklist for query mapping, pagination parity, batching scope, N+1 prevention, user/tenant isolation, authorization, bounds, nullability, observability, all four rows, and measurable query-count evidence.
-/speckit-tasks Generate tasks for query/connection contracts, cursor mapping, loaders and cache keys, authorization, bounds, telemetry, four-row adapters, query-count and isolation tests, examples, and documentation.
-/speckit-analyze Analyze Phase 015 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 015 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 015 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 016 — GraphQL mutations and operation security
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/016-graphql-mutations-security" Specify Phase 016 from PLAN.md as one independently verifiable feature. Implement mutation mapping with validation, deny-by-default policy parity, explicit transactions and idempotency, plus depth, complexity, alias, batch, timeout, and result-size controls, persisted-operation policy, introspection configuration, and abuse defenses.
-/speckit-clarify Resolve mutation input/error shapes, transaction and idempotency boundaries, authorization order, complexity calculation and default limits, alias/batch handling, persisted operations, introspection by environment, timeout/cancellation, and audit requirements.
-/speckit-plan Map mutations to the same application commands as REST, design pre-execution operation analysis and bounded execution, define persisted/introspection policies, and plan equivalence, bypass, rollback, idempotency, abuse, and four-row tests.
-/speckit-checklist Create a formal security requirements checklist for mutation parity, validation, authorization, transactions, idempotency, complexity/depth/alias/batch bounds, persisted operations, introspection, cancellation, safe errors, audits, and abuse cases.
-/speckit-tasks Generate tasks for mutation contracts/mapping, validation and policies, transaction/idempotency integration, operation analyzer, persisted/introspection controls, telemetry/audits, bypass and rollback tests, examples, and docs.
-/speckit-analyze Analyze Phase 016 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 016 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 016 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 017 — GraphQL subscriptions, tooling, and documentation
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/017-graphql-subscriptions" Specify Phase 017 from PLAN.md as one independently verifiable feature. Add GraphQL subscriptions with authenticated connection lifecycle, revocation, bounded backpressure, connection and message limits, graceful drain, safe disconnection, schema diff tooling, GraphQL CLI commands, and complete versioned guides and examples.
-/speckit-clarify Resolve transport protocol, connection authentication and refresh, authorization per event, revocation propagation, queue and message bounds, slow consumer policy, reconnect/resume, shutdown deadlines, horizontal delivery assumptions, and schema tooling behavior.
-/speckit-plan Research maintained subscription transport support, design connection/session lifecycle and bounded delivery, integrate drain and observability, define schema diff and CLI contracts, and plan revocation, slow-consumer, reconnect, limit, and shutdown tests.
-/speckit-checklist Create a formal requirements checklist for protocol, connection auth, event authorization, revocation, backpressure, limits, reconnect, drain, errors, observability, schema tooling, CLI, examples, and operational documentation.
-/speckit-tasks Generate tasks for protocol and lifecycle contracts, auth/revocation, delivery queues and bounds, drain, telemetry, schema diff and CLI commands, adversarial/slow-consumer tests, examples, and documentation.
-/speckit-analyze Analyze Phase 017 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 017 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 017 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 018 — GraphQL 2.0 stabilization and release
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/018-graphql-2-release" Specify Phase 018 from PLAN.md as one independently verifiable feature. Stabilize and release optional GraphQL 2.0 with transport-parity, security, performance and schema-compatibility evidence, exhaustive matrix verification, REST-only isolation, published optional crates, signed release, migration guidance, and declared support policy.
-/speckit-clarify Resolve schema freeze and compatibility thresholds, support window, release candidate criteria, performance budgets, operation-security defaults, package publication order, migration scope, rollback/yank authority, and final parity evidence.
-/speckit-plan Design the v2 release gate around exhaustive GraphQL and REST-only matrices, schema diff, security and performance reviews, public package dry runs, trusted publishing, signed artifacts, registry/docs verification, and recovery rehearsal.
-/speckit-checklist Create a formal release-readiness requirements checklist for schema stability, transport parity, feature isolation, security limits, performance, subscriptions, matrix coverage, package publishing, signed evidence, docs, migration, support, and rollback.
-/speckit-tasks Generate release tasks for freeze, compatibility and parity audits, exhaustive matrix, security/performance evidence, package dry runs and publication, signed release artifacts, registry/docs verification, migration notes, support policy, and recovery rehearsal.
-/speckit-analyze Analyze Phase 018 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 018 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback. Stop before any publish, tag, signature, release, push, or external mutation and request explicit maintainer approval for that release gate.
-/speckit-converge Converge Phase 018 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 019 — Full-stack architecture and shared contracts
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/019-fullstack-architecture" Specify Phase 019 from PLAN.md as one independently verifiable feature. Define product 3.0 full-stack architecture: current-framework compatibility research, exact frontend/render/target/styling matrix, generated client contract format, browser and desktop auth protocols, CORS/CSRF topology, monorepo layout, development orchestration, dependency policy, and precise errors for unsupported combinations.
-/speckit-clarify Resolve contract source and regeneration, browser server versus static auth, cross-origin topology, frontend workspace layout, render modes, Node and Rust toolchains, client error model, version negotiation, development proxy, styling matrix, and secret boundaries.
-/speckit-plan Research current Next.js, Yew, Dioxus, Leptos, Tailwind, Sass, Tauri, and client-generation packages; write ADRs for matrix and auth topologies; design checked-in reproducible contracts, orchestration, isolation, and contract-drift/security tests.
-/speckit-checklist Create a formal architecture requirements checklist for exact matrix, contract ownership, auth and CSRF/CORS topology, secrets, render modes, styling choices, toolchains, orchestration, unsupported errors, version compatibility, and drift detection.
-/speckit-tasks Generate tasks for ecosystem research, matrix and topology ADRs, shared contract format/generator, client error/auth model, monorepo and orchestration design, compatibility validator, secret/drift tests, fixtures, and documentation.
-/speckit-analyze Analyze Phase 019 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 019 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 019 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 020 — Next.js styling presets
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/020-nextjs-presets" Specify Phase 020 from PLAN.md as one independently verifiable feature. Create the Next.js App Router strict-TypeScript preset with selectable CSS Modules, SCSS Modules, or Tailwind CSS; shared semantic tokens; typed Renvor client; server and static modes; complete auth UI; protected navigation; accessibility, themes, browser E2E, and Tauri-compatible static export.
-/speckit-clarify Resolve Next.js server/static feature matrix, selected styling file conventions, token/theme architecture, auth protocol per mode, route protection, form and error behavior, image/font handling, static export limits, bundle secrets, accessibility targets, and Node/package manager policy.
-/speckit-plan Research current Next.js and all three styling integrations, design shared components and generated variants without unused dependencies, implement typed contracts and auth, define Tauri static constraints, and plan per-style build, accessibility, theme, auth E2E, and bundle-inspection tests.
-/speckit-checklist Create a formal requirements checklist for App Router, strict TypeScript, CSS/SCSS/Tailwind parity, tokens/themes, auth screens, server authorization, static export, Tauri restrictions, accessibility, errors/loading, dependency isolation, and secret-free bundles.
-/speckit-tasks Generate tasks for the base Next.js preset, typed client/auth, semantic tokens, CSS profile, SCSS profile, Tailwind profile, server/static modes, Tauri export, per-profile tests, accessibility/theme/auth E2E, docs, and examples.
-/speckit-analyze Analyze Phase 020 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 020 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 020 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 021 — Yew preset
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/021-yew-preset" Specify Phase 021 from PLAN.md as one independently verifiable feature. Create the Yew client-rendered web preset with typed Renvor client, routing/state/error conventions, complete auth UI, selectable CSS, SCSS, or Tailwind CSS, semantic tokens and themes, static assets, approved Tauri profile, accessibility, browser auth E2E, tests, and documentation.
-/speckit-clarify Resolve Yew and Trunk versions, router/state packages, asset pipeline for each styling option, Tailwind source scanning of Rust, auth/cookie topology, error/loading/offline behavior, theme persistence, Tauri asset output, accessibility, and dependency isolation.
-/speckit-plan Research current Yew/Trunk and styling integrations, design framework-native components and typed client/auth, isolate selected styling assets and dependencies, define Tauri output, and plan every styling row's build, accessibility, theme, auth E2E, and bundle-secret tests.
-/speckit-checklist Create a formal requirements checklist for Yew architecture, routing/state/errors, CSS/SCSS/Tailwind parity, auth flows, themes, accessibility, static and Tauri output, dependency isolation, server authorization, secret boundaries, tests, and docs.
-/speckit-tasks Generate tasks for the Yew base, routing/state/client, auth flows, shared tokens, CSS/SCSS/Tailwind profiles, static/Tauri builds, per-profile accessibility/theme/auth tests, bundle inspection, examples, and docs.
-/speckit-analyze Analyze Phase 021 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 021 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 021 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 022 — Dioxus preset
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/022-dioxus-preset" Specify Phase 022 from PLAN.md as one independently verifiable feature. Create the Dioxus web preset with typed Renvor client, routing/state/error conventions, complete auth UI, selectable CSS, SCSS, or Tailwind CSS, themes, Tauri web-target profile, tests, and documentation. Do not imply support for the separate native Dioxus desktop shell.
-/speckit-clarify Resolve Dioxus web/static target and CLI versions, router/state packages, styling asset pipelines, Tailwind Rust source discovery, auth topology, error/loading/offline behavior, Tauri integration, native-desktop exclusion wording, accessibility, and dependency isolation.
-/speckit-plan Research current Dioxus web tooling and styling integrations, design web-only components and auth client, isolate styling choices, define the Tauri web build without Dioxus desktop, and plan per-style build, accessibility, theme, auth E2E, target, and secret tests.
-/speckit-checklist Create a formal requirements checklist for Dioxus web scope, native-desktop exclusion, routing/state/errors, CSS/SCSS/Tailwind parity, auth, accessibility, themes, Tauri target, dependency isolation, secrets, tests, and docs.
-/speckit-tasks Generate tasks for the Dioxus web base, client/routing/state, auth flows, tokens, CSS/SCSS/Tailwind profiles, Tauri web target, per-profile accessibility/theme/auth tests, exclusion checks, examples, and docs.
-/speckit-analyze Analyze Phase 022 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 022 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 022 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 023 — Leptos preset
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/023-leptos-preset" Specify Phase 023 from PLAN.md as one independently verifiable feature. Create the Leptos preset with a client-rendered baseline, typed client, complete auth UI, selectable CSS, SCSS, or Tailwind CSS, themes and accessibility, approved SSR/hydration only after request-isolation tests, Tauri client profile, per-style browser auth E2E, and documentation.
-/speckit-clarify Resolve Leptos and build-tool versions, CSR versus SSR/hydration matrix, per-request state ownership, styling pipelines, Tailwind Rust source discovery, auth topology per render mode, routing/errors, Tauri static constraints, accessibility, and server/client dependency isolation.
-/speckit-plan Research current Leptos CSR/SSR tooling and styling integrations, design the client baseline and optional isolated server mode, implement typed auth and selected styling, define Tauri assets, and plan per-style plus cross-request isolation, auth, accessibility, theme, and secret tests.
-/speckit-checklist Create a formal requirements checklist for CSR baseline, SSR/hydration gates, request isolation, CSS/SCSS/Tailwind parity, auth, themes, accessibility, Tauri, server/client dependency separation, secret boundaries, tests, and docs.
-/speckit-tasks Generate tasks for the Leptos base, client/routing/auth, tokens and three styling profiles, CSR build, optional SSR isolation spike, Tauri profile, per-profile accessibility/theme/auth tests, cross-request tests, examples, and docs.
-/speckit-analyze Analyze Phase 023 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 023 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 023 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 024 — Tauri 2 desktop platform
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/024-tauri-platform" Specify Phase 024 from PLAN.md as one independently verifiable feature. Create the Tauri 2 shell generator with remote-backend default, least-privilege per-window capabilities, validated IPC, OS-backed credential storage, deep links, strict CSP/navigation, selected static frontend assets, native signing/notarization, mandatory signed updater, recovery UX, and platform security/lifecycle tests.
-/speckit-clarify Resolve whether the Tauri release must support all four frontend presets or an explicitly approved subset, supported operating systems and package formats, backend URL and auth protocol, keyring failure behavior, window/capability model, plugins and scopes, deep-link ownership, CSP per frontend, updater endpoints/keys/rollback, signing custody, offline behavior, and data removal.
-/speckit-plan Research current Tauri 2 and audited keyring/updater packages; threat-model IPC, navigation, credentials, deep links, builds and updates; design capabilities and frontend profiles; and plan native install/login/update/tamper/recovery tests on protected runners.
-/speckit-checklist Create a formal security requirements checklist for remote topology, capabilities, commands, keyring, deep links, CSP/navigation, plugins, assets, signing/notarization, updater keys and downgrade protection, offline/recovery, platform coverage, and secrets.
-/speckit-tasks Generate security-first tasks for threat model and ADRs, shell generator, capabilities/IPC, credential bridge, deep links/CSP, frontend profiles, signing/notarization, updater/recovery, native platform tests, hardening docs, and examples.
-/speckit-analyze Analyze Phase 024 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 024 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 024 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 025 — Unified full-stack generator and matrix hardening
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/025-fullstack-generator" Specify Phase 025 from PLAN.md as one independently verifiable feature. Complete the v3 renvor new wizard and flags for backend, frontend, styling, render mode and Tauri; generate unified workspaces, version manifests, contract regeneration and recoverable upgrades; and prove every advertised frontend/styling row plus a risk-based pairwise database/ORM/auth/target matrix.
-/speckit-clarify Resolve final wizard order and defaults, version manifest and compatibility rules, contract regeneration ownership, workspace orchestration, upgrade conflict/recovery, exhaustive versus pairwise coverage, high-risk dedicated rows, frontend package manager behavior, and unsupported-combination messages.
-/speckit-plan Design the final validated configuration and template composition, upgrade/recovery model, matrix-covering strategy, contract/version checks and orchestration, then plan dry-run equivalence, every frontend/style auth E2E, pairwise backend/target coverage, and secret/dependency isolation tests.
-/speckit-checklist Create a formal requirements checklist for prompt/flag parity, every frontend/style row, pairwise matrix justification, high-risk rows, version/contracts, upgrades and recovery, dry-run accuracy, dependency isolation, auth parity, unsupported errors, docs, and evidence.
-/speckit-tasks Generate tasks for final configuration schema, composed templates, manifests/contracts, orchestration, upgrades/rollback, compatibility errors, all frontend/style tests, pairwise matrix, high-risk E2E, dry-run snapshots, docs, and examples.
-/speckit-analyze Analyze Phase 025 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 025 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 025 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 026 — Full-stack and desktop 3.0 stabilization and release
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/026-fullstack-3-release" Specify Phase 026 from PLAN.md as one independently verifiable feature. Stabilize and release product 3.0 with browser and desktop security review, accessibility report, exact compatibility/support table, exhaustive frontend/style and platform gates, public crates/templates, signed desktop examples, documentation, SBOM, provenance, migration notes, and rehearsed rollback.
-/speckit-clarify Resolve freeze criteria, supported browser/OS versions, accessibility conformance target, template and crate publication order, example artifact scope, signing ownership, support windows, compatibility promises, release candidate count, rollback triggers, and go/no-go authority.
-/speckit-plan Design the v3 release pipeline around every frontend/style gate, pairwise backend/target matrix, native platform smoke tests, security/accessibility review, public package/template dry runs, signed artifacts, provenance, registry/docs verification, and rollback rehearsal.
-/speckit-checklist Create a formal release-readiness requirements checklist for matrix evidence, browser/desktop security, accessibility, signing/updater, compatibility/support, public packages/templates, docs, SBOM/provenance, migration, limitations, registry verification, and rollback.
-/speckit-tasks Generate release tasks for freeze, exhaustive/pairwise matrices, platform smoke, security/accessibility closure, package/template dry runs and publication, signed artifacts and provenance, public verification, migration/support docs, and rollback rehearsal.
-/speckit-analyze Analyze Phase 026 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 026 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback. Stop before any publish, tag, signature, release, push, or external mutation and request explicit maintainer approval for that release gate.
-/speckit-converge Converge Phase 026 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 027 — Package SDK and extension contracts
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/027-package-sdk" Specify Phase 027 from PLAN.md as one independently verifiable feature. Create the post-3.0 package SDK and declarative metadata for separately developed crates.io packages: public provider, route, schema, policy, migration, generator, frontend and Tauri extension contracts; compatibility resolver; package lock; repository template; author test kit; threat model; and documentation standard.
-/speckit-clarify Resolve Cargo metadata versus renvor-package.toml, package identifier/version rules, public extension stability, embedded asset format, supported operations, frontend dependency declarations, Tauri permission approval, compatibility resolution, lock semantics, package repository ownership, and catalog boundary.
-/speckit-plan Research Cargo package metadata and registry integrity; design bounded declarative manifests with no shell hooks, public extension contracts, compatibility solver and lock, separate-repository template, asset inspection, author harness, and local-registry fixtures covering each extension type.
-/speckit-checklist Create a formal requirements checklist for separate crates, crates.io artifacts, metadata completeness, bounded parsing, no arbitrary scripts, extension stability, compatibility/MSRV, assets, permissions, locks, repository ownership, author tests, security, and docs.
-/speckit-tasks Generate tasks for metadata/compatibility ADRs, manifest parser/schema, public extension traits, lock model, separate package template, asset packaging, author test kit, local registry fixtures, threat tests, documentation, and sample package.
-/speckit-analyze Analyze Phase 027 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 027 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 027 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 028 — Existing-project package lifecycle
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/028-package-lifecycle" Specify Phase 028 from PLAN.md as one independently verifiable feature. Implement renvor add, remove, update, package new, validate, pack, publish, inspect, list and doctor for separately published crates.io packages. Provide registry verification, dry-run/JSON contracts, transactional source changes, conflict detection, package locks, migration/deployment plans, rollback, non-destructive removal, and publication guidance.
-/speckit-clarify Resolve package coordinates and version syntax, crates.io resolution and offline cache, trust/provenance evidence, confirmation and JSON contracts, conflict handling, reversible patch model, dirty project policy, migration execution boundary, data retention, frontend manifests, publication bootstrap, and exit codes.
-/speckit-plan Design metadata-only resolution before code execution, registry and compatibility verification, transactional edits that preserve staged/user work, package lock updates, validation/build tests, migration/deployment reporting, removal/update recovery, and crates.io bootstrap then trusted publishing.
-/speckit-checklist Create a formal requirements checklist for every package command, existing-project detection, crates.io verification, dry-run/JSON parity, no scripts, conflicts, rollback, dirty work, locks, migrations, data preservation, frontend/Tauri changes, publishing, errors, and evidence.
-/speckit-tasks Generate tasks for command contracts and resolver, inspect/validate/pack, transactional add, update, remove/data retention, locks, frontend/Tauri changes, migration plans, publish/bootstrap workflow, fixture registry, failure/recovery tests, docs, and examples.
-/speckit-analyze Analyze Phase 028 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 028 only by following tasks.md in dependency order. Keep the workspace buildable, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback.
-/speckit-converge Converge Phase 028 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 029 — Separate renvor-rbac package
-
-Run this block from the independent `renvor-rbac` repository after initializing Spec Kit there and making the Renvor constitution and Phase 029 contract available as read-only upstream documents. Do not run its implementation command from the core framework repository.
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/029-rbac-package" Specify Phase 029 from PLAN.md as one independently verifiable feature. Develop renvor-rbac in its own repository and publish it independently to crates.io. Provide roles, permissions, assignments, typed identifiers, application policy adapter, optional tenant/team scope, cache consistency, four persistence rows, migrations, management commands, optional secured REST/GraphQL surfaces, all frontend/style admin companions, audits, import/export, and safe removal.
-/speckit-clarify Resolve role and permission identifiers, wildcard and deny precedence, subject model, tenant/team scoping, cache invalidation consistency, administrative permissions, direct grants, migration ownership, API exposure, import conflicts, audit retention, frontend scope, package compatibility, and data-preserving uninstall.
-/speckit-plan Threat-model privilege escalation and tenant leakage; design the independent crate/repository and extension usage; define four-row schemas and contracts, policy/cache semantics, secured management surfaces and frontend companions; and plan adversarial auth, install/update/remove, provenance and publication tests.
-/speckit-checklist Create a formal security requirements checklist for separate publication, RBAC semantics, deny defaults, wildcards, tenant isolation, cache invalidation, administrative APIs, four persistence rows, commands/import, audits, frontend authorization, install/update/remove, provenance, and docs.
-/speckit-tasks Generate tasks in the separate package repository for metadata/contracts, schemas and four adapters, policy/cache logic, commands and import/export, optional REST/GraphQL, frontend/style companions, adversarial and E2E tests, docs, SBOM/provenance, crates.io release, and existing-project installation.
-/speckit-analyze Analyze Phase 029 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 029 only inside the independent renvor-rbac repository by following tasks.md in dependency order. Keep that repository buildable, run required tests and documentation checks after each slice, preserve unrelated work, never edit the core framework repository from this phase, and stop on unresolved blockers without silent fallback. Stop before crates.io publication, tags, releases, pushes, or other external mutations and request explicit maintainer approval.
-/speckit-converge Converge Phase 029 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-#### Phase 030 — Package ecosystem 4.0 stabilization
-
-Run this block in the core framework repository as release coordination. Complete repository-local release specifications in `renvor-rbac` and every other participating package first, then link their immutable validation evidence. This phase must not use one active feature pointer to edit multiple repositories.
-
-```text
-/speckit-specify SPECIFY_FEATURE_DIRECTORY="specs/030-package-4-release" Specify Phase 030 from PLAN.md as one independently verifiable feature. Stabilize and release the package ecosystem 4.0 with independently versioned core and package lifecycles, compatibility/support policy, signed catalog contract, trust labels, package author guide, versioned SDK, publication and incident procedures, security review, and proven install/update/inspect/remove of renvor-rbac from clean existing projects.
-/speckit-clarify Resolve SDK stability and support window, catalog hosting/signing and outage behavior, official/verified/community criteria, compatibility policy, package incident and advisory authority, removal from discovery, crates.io immutability, release ownership, RBAC version pairing, rollback, and go/no-go gates.
-/speckit-plan Design the v4 release and catalog trust model so registry verification remains authoritative; define independent version/support rules, trusted publication and incident workflows, SDK compatibility tests, compromised-catalog behavior, RBAC lifecycle E2E, public docs, signed evidence, and recovery rehearsal.
-/speckit-checklist Create a formal release-readiness requirements checklist for independent versions, SDK stability, catalog integrity and labels, registry verification, package incidents, compatibility, author docs, RBAC install/update/remove, crates.io publishing, security review, SBOM/provenance, support, and rollback.
-/speckit-tasks Generate release tasks for SDK/compatibility freeze, catalog and trust policy, package author docs, security/incident exercises, core and RBAC lifecycle E2E, crates.io publication rehearsal, signed catalog/release evidence, public verification, support policy, and rollback.
-/speckit-analyze Analyze Phase 030 artifacts against PLAN.md, the constitution, specification, plan, and tasks. Report contradictions, missing requirements, uncovered acceptance criteria, security gaps, unjustified complexity, and dependency-order errors before implementation.
-/speckit-implement Implement Phase 030 coordination work only by following tasks.md in dependency order. Keep the core workspace buildable, consume linked package evidence without editing other repositories, run required tests and documentation checks after each slice, preserve unrelated work, and stop on unresolved blockers without silent fallback. Stop before any catalog change, publish, tag, signature, release, push, or external mutation and request explicit maintainer approval for that release gate.
-/speckit-converge Converge Phase 030 against its specification, plan, tasks, constitution, and PLAN.md acceptance criteria. Append every remaining gap as a concrete task and report whether another implementation pass is required.
-```
-
-
 ## 21. Architecture decision backlog
 
 Phase specifications must create ADRs for decisions at the point they become actionable. Initial backlog:
@@ -1470,16 +1068,6 @@ A phase is done only when every feature in it is done, acceptance evidence is li
 
 Begin with Phase 001 only:
 
-```text
-1. Ratify the constitution.
-2. Create specs/001-governance-foundation/ with /speckit-specify.
-3. Verify names on GitHub and crates.io before reserving public contracts.
-4. Clarify license, MSRV policy, support platforms, and release ownership.
-5. Research and pin the initial package/toolchain set.
-6. Accept foundational ADRs.
-7. Create the secure workspace and repository gates.
-8. Validate Phase 001 evidence before opening Phase 002.
-```
 
 Do not pre-generate specifications or tasks for all 30 phases. The roadmap remains stable while each phase is specified against current ecosystem evidence.
 
