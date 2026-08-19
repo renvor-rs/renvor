@@ -1,0 +1,41 @@
+The top-level help. **Every line below is contract**, byte for byte — no wildcards, so any change
+to the surface shows up as a diff a reviewer has to agree to.
+
+```
+$ renvor --help
+Create and run Renvor projects.
+
+Exit codes: 0 success, 1 internal defect, 2 usage, 3 validation, 4 cancelled, 5 environment.
+
+Usage: renvor[EXE] [OPTIONS] <COMMAND>
+
+Commands:
+  new     Create a project, from prompts or from flags
+  doctor  Report environment readiness
+  check   Validate a project without building it
+  dev     Run the local development loop
+  docker  Container development controls
+  tls     Local TLS trust. Issues no certificate and modifies no trust store in this phase
+
+Options:
+      --output <human|json>
+          Result format for stdout
+          
+          [default: human]
+
+      --yes
+          Accept confirmations. Never waives validation
+
+      --dry-run
+          Compute and report without writing anything
+
+      --no-color
+          Disable styling. Styling is also off automatically when the stream is not a terminal
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+```

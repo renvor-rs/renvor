@@ -1,0 +1,91 @@
+Exit codes are a contract, and these are the ones a script depends on.
+
+An unknown flag is a USAGE error, exit 2.
+
+```
+$ renvor new demo --nonsense
+? 2
+[..]
+
+  tip: to pass '--nonsense' as a value, use '-- --nonsense'
+
+Usage: renvor[EXE] new <NAME>
+
+For more information, try '--help'.
+
+```
+
+A reserved flag is a VALIDATION error, exit 3 — deliberately not exit 2, because the command is
+well formed and the request is refused.
+
+```
+$ renvor new demo --database postgres --output json
+? 3
+{
+  "schemaVersion": 2,
+  "status": "failure",
+  "command": "new",
+  "error": {
+    "code": "reserved_for_later_phase",
+    "message": "[..]",
+    "details": {
+      "flag": "--database",
+      "phase": "[..]"
+    }
+  }
+}
+
+```
+
+An unsupported `--output` value is exit 3 with `supported` listed, not clap's exit 2.
+
+```
+$ renvor new demo --output yaml
+? 3
+error: `--output yaml` is not supported; use `human` or `json`
+  flag: --output
+  value: yaml
+  supported: human, json
+
+```
+
+A trust-store modification with no terminal and no consent flag is a usage error (exit 2), and it
+names the flag rather than only saying consent is required. The description of what would change is
+printed to `stderr` **before** the refusal, on every path — including this one, where nobody was
+asked anything.
+
+```
+$ renvor tls trust
+? 2
+`renvor tls trust` would, if it were available:
+  1. generate a local certificate authority and store its PRIVATE KEY under renvor's configuration directory
+  2. install that authority's certificate into [..]
+  3. issue a leaf certificate for the project's local development domain, signed by it
+
+  Consequence: any certificate that authority signs would be trusted by every program on this machine that uses the system trust store, until it is removed by hand.
+
+error: this would modify your system trust store and there is no terminal to ask on. Pass `--i-understand-this-modifies-my-system-trust-store` to consent explicitly. `--yes` does not grant this consent and is not intended to. Nothing was changed
+  required: --i-understand-this-modifies-my-system-trust-store
+  trustStoreModifications: 0
+
+```
+
+Consent granted is exit 3, not 0. FR-036 makes the gated operation unavailable rather than merely
+gated, so a run that succeeded here would record a certificate that does not exist.
+
+```
+$ renvor tls trust --i-understand-this-modifies-my-system-trust-store
+? 3
+`renvor tls trust` would, if it were available:
+  1. generate a local certificate authority and store its PRIVATE KEY under renvor's configuration directory
+  2. install that authority's certificate into [..]
+  3. issue a leaf certificate for the project's local development domain, signed by it
+
+  Consequence: any certificate that authority signs would be trusted by every program on this machine that uses the system trust store, until it is removed by hand.
+
+error: consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no transport yet, so a certificate issued now would protect nothing. Nothing was changed. This becomes available in Phase 004 (the first real transport)
+  flag: tls trust
+  phase: Phase 004 (the first real transport)
+  trustStoreModifications: 0
+
+```

@@ -36,6 +36,22 @@ exclude = [
   # publication. Phase 001 deliberately publishes nothing (FR-049).
   # REMOVE WHEN: `renvor` is first published to crates.io.
   '^https://docs\.rs/renvor',
+
+  # ---------------------------------------------------------------------------
+  # EX-004 — the "Edit this page" link for a page that is not on `main` yet
+  # ---------------------------------------------------------------------------
+  # Docusaurus generates an edit link from `editUrl`, which points at
+  # `tree/main/docs/`. `cli.mdx` is added by the Phase 003 branch and therefore does
+  # not exist on `main` until that branch merges, so the link 404s **on the branch
+  # and only on the branch**. It is correct in the artifact being reviewed and
+  # correct after merge; it is unresolvable in between, by construction, for every
+  # branch that adds a documentation page.
+  #
+  # Scoped to this ONE file rather than to the edit-link prefix, deliberately. A
+  # pattern like `tree/main/docs/` would also stop catching a page that was renamed
+  # or deleted, which is a real breakage this check exists to find.
+  # REMOVE WHEN: PR #28 merges, at which point `docs/docs/cli.mdx` exists on `main`.
+  '^https://github\.com/renvor-rs/renvor/tree/main/docs/docs/cli\.mdx$',
 ]
 
 # ---------------------------------------------------------------------------

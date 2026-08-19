@@ -486,12 +486,75 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !instability_wording_agrees(root) {
         return false;
     }
+    if !the_executable_is_named_renvor(root) {
+        return false;
+    }
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, facade isolation, lean compile, publishable dependencies, and instability \
-         wording all hold, each with a control",
+        "crate DAG, facade isolation, lean compile, publishable dependencies, instability \
+         wording, and the executable name all hold, each with a control",
     );
+    true
+}
+
+/// FR-001 and ADR-0010: the installed executable is named exactly `renvor`.
+///
+/// # Why this is a build gate rather than a convention
+///
+/// The executable name is the string a user types and a shell resolves. ADR-0010 makes it a
+/// **compatibility promise**, and the package is called `renvor-cli` — so the default Cargo
+/// behaviour, which names the binary after the package, produces the wrong answer. One deleted
+/// `[[bin]]` block breaks every installed user's muscle memory and every script, silently, with a
+/// green build.
+///
+/// # This is the SECOND mechanism, and the first one fires before it
+///
+/// `crates/renvor-cli/tests/generated.rs` uses `env!("CARGO_BIN_EXE_renvor")`, which fails to
+/// compile if the executable is not named `renvor`. Measured 2026-08-18: renaming the binary to
+/// `renvorx` fails **step 4 (tests)**, so step 7 is never reached.
+///
+/// So this check has **not** been demonstrated firing in isolation, and that is recorded rather
+/// than implied. It is kept because the two mechanisms fail for different reasons — one on a
+/// compile-time macro, one on the manifest text — and a future change that drops the integration
+/// test would otherwise remove the only guard without anything noticing.
+fn the_executable_is_named_renvor(root: &std::path::Path) -> bool {
+    let manifest = root.join("crates/renvor-cli/Cargo.toml");
+    let Ok(text) = std::fs::read_to_string(&manifest) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            &format!("{} could not be read", manifest.display()),
+        );
+        return false;
+    };
+
+    // THE CLAIM.
+    if !text.contains("[[bin]]") || !text.contains("name = \"renvor\"") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "crates/renvor-cli/Cargo.toml does not declare `[[bin]] name = \"renvor\"`. Without \
+             it Cargo names the executable after the package, `renvor-cli`, which breaks the \
+             compatibility promise in ADR-0010 and FR-001",
+        );
+        return false;
+    }
+
+    // THE CONTROL. The check above passes for the wrong reason if `name = "renvor"` matches the
+    // `[package]` name instead of the `[[bin]]` one — so assert the two are DIFFERENT strings and
+    // that the package is the one that is not `renvor`. A check that cannot fail is not a check.
+    if !text.contains("name = \"renvor-cli\"") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "crates/renvor-cli/Cargo.toml no longer declares package `renvor-cli`, so the \
+             executable-name check may be matching the package name rather than the `[[bin]]` \
+             name and is no longer proving anything",
+        );
+        return false;
+    }
+
     true
 }
 

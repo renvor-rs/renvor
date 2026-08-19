@@ -1,0 +1,23 @@
+//! The example domain module for {{ name }}.
+
+/// One item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    /// Its name.
+    pub name: String,
+}
+
+/// Every item this build knows about.
+#[must_use]
+pub fn all() -> Vec<Item> {
+{% if seed_data %}    crate::seed::items()
+{% else %}    Vec::new()
+{% endif %}}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn all_items_are_listable() {
+        let _ = super::all();
+    }
+}
