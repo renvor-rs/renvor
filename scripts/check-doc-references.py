@@ -44,9 +44,23 @@ import sys
 
 LINK = re.compile(r'\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)')
 
-# A `specs/...` path in any position. The lookbehind stops it matching inside a longer path or
-# inside a URL, which class 3 handles separately and more strictly.
-PATHREF = re.compile(r'(?<![\w/.-])specs/[0-9]{3}-[a-z0-9-]+(?:/[A-Za-z0-9._-]+)*')
+# A `specs/...` path in any position, INCLUDING one written `../specs/...`, `./specs/...`, or
+# `/specs/...`.
+#
+# The lookbehind used to forbid a preceding `/`, `.`, or `-`, which silently exempted all three
+# relative forms — so a Rust doc comment or a manifest citing `../specs/002-.../research.md`
+# produced no finding at all, in a step whose contract promises to reject `specs/`-shaped paths
+# anywhere in tracked text. It now excludes only word characters and `-`, so `myspecs/002-x` is
+# still not a match while a slash-prefixed one is. (Both examples are described rather than
+# written out: this file is inside its own scan corpus, and spelling one would make the checker
+# report itself — which teaches a future reader to add an exclusion, and an excluded file is one
+# the checker no longer guards.)
+#
+# URL interiors are excluded by span below rather than by lookbehind, because a same-repository
+# URL needs the stricter class-3 treatment and an external one needs none.
+PATHREF = re.compile(r'(?<![\w-])specs/[0-9]{3}-[a-z0-9-]+(?:/[A-Za-z0-9._-]+)*')
+
+URL_SPAN = re.compile(r'https?://\S+')
 
 # Any github.com blob URL. The revision is captured loosely on purpose: a branch name or a short
 # SHA must be MATCHED and then REJECTED, not skipped by a regex that only accepts good input.
@@ -81,14 +95,21 @@ def tracked_files():
     return set(out.split())
 
 
+# The CANONICAL upstream identity, not whatever `origin` happens to be.
+#
+# Deriving this from `origin` was wrong: a contributor working from a fork has `origin` pointing
+# at their fork, so every archival citation targeting `renvor-rs/renvor` would be classified as
+# "another repository" and skipped — and the controls would still pass, because they were built
+# from the same fork slug. Local verification would then check strictly less than base CI, which
+# is the divergence `contracts/verification-sequence.md` exists to prevent.
+#
+# This tree's citations name this repository. The constant says so.
+CANONICAL_SLUG = 'renvor-rs/renvor'
+
+
 def repository_slug():
-    """`owner/repo` for this clone's origin, so only SAME-repository URLs are path-checked."""
-    code, out = git('remote', 'get-url', 'origin')
-    if code != 0:
-        return None
-    url = out.strip()
-    match = re.search(r'github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?$', url)
-    return f'{match.group(1)}/{match.group(2)}' if match else None
+    """The repository whose `blob/` URLs this checker is responsible for resolving."""
+    return CANONICAL_SLUG
 
 
 class ObjectCache:
@@ -151,7 +172,13 @@ def scan_text(path, text, tracked, slug, cache, check_links=True):
                     continue
                 resolved = posixpath.normpath(
                     posixpath.join('' if target.startswith('/') else base, target.lstrip('/')))
-                if resolved not in tracked and not os.path.isdir(resolved):
+                # A directory target is valid only if the INDEX has something under it.
+                # `os.path.isdir` used to answer this, which is the one filesystem question this
+                # file's own docstring forbids: a link to `.claude/` — present in the developer's
+                # checkout, tracked nowhere — passed locally and broke in a clean CI clone.
+                directory = f'{resolved}/'
+                tracked_dir = any(entry.startswith(directory) for entry in tracked)
+                if resolved not in tracked and not tracked_dir:
                     broken.append((number, target))
 
         # Class 3 — same-repository blob URLs must be pinned, and must resolve.
@@ -187,8 +214,13 @@ def scan_text(path, text, tracked, slug, cache, check_links=True):
                                 'path does not exist at that commit'))
 
         # Class 2 — a path reference is resolved only inside a commit-pinned URL.
+        url_spans = [(m.start(), m.end()) for m in URL_SPAN.finditer(line)]
         for match in PATHREF.finditer(line):
             if PINNED_BEFORE.search(line[:match.start()]):
+                continue
+            # Inside any other URL: an external host's path is not ours to resolve, and a
+            # same-repository URL was already judged by class 3 above.
+            if any(start <= match.start() < end for start, end in url_spans):
                 continue
             unresolved.append((number, match.group(0)))
 
@@ -249,6 +281,16 @@ def controls(tracked, slug, cache):
     check('negative: /specs/... inside a same-repository URL, badly pinned',
           f'[s]({base}/main/{s2})\n', 0, 0, 1)
 
+    # Relative-prefixed archived paths. All three forms were silently exempt until 2026-08-20.
+    for form in (f'../{s2}', f'./{s2}', f'/{s2}'):
+        check(f'negative: archived path written as {form.split(chr(47))[0]}/...',
+              f'//! see {form} here\n', 0, 1, 0)
+
+    # A Markdown link to a directory that exists in the developer's checkout but is tracked
+    # nowhere. `os.path.isdir` accepted this; the index does not.
+    check('negative: link to an untracked directory present only locally',
+          '[x](.claude/)\n', 1, 0, 0)
+
     # ── POSITIVE CONTROLS — valid content must NOT be flagged ────────────────────────────
     check('positive: tracked relative link',
           '[readme](README.md)\n', 0, 0, 0)
@@ -261,6 +303,11 @@ def controls(tracked, slug, cache):
     # freeze a published policy at an old commit forever.
     check('positive: mutable branch URL to a TRACKED path (a live document)',
           f'[c]({base}/main/CONSTITUTION.md)\n', 0, 0, 0)
+
+    # A tracked directory target is valid — nothing is tracked AT `contracts`, but entries exist
+    # beneath it, which is what makes the link resolve.
+    check('positive: link to a directory the index has entries under',
+          '[c](contracts/)\n', 0, 0, 0)
 
     check('positive: external host is not our path to resolve',
           f'[ext](https://example.com/{s2})\n', 0, 0, 0)
@@ -291,7 +338,7 @@ def main():
         for failure in control_failures:
             print(f'  {failure}')
         return 2
-    print(f'controls: 7 negative, 5 positive, 1 invariant — all discriminate correctly '
+    print(f'controls: 11 negative, 6 positive, 1 invariant — all discriminate correctly '
           f'(repository {slug})')
 
     links = set(link_corpus(tracked))
