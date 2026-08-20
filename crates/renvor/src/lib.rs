@@ -45,8 +45,12 @@
 //!
 //! **This surface is explicitly unstable** (FR-036). Breaking changes are permitted without a
 //! compatibility procedure and no semantic-versioning promise applies while that window is open.
-//! It closes when the conditions in the specification's API-instability end gate are met, which
-//! cannot happen before Phase 004 has exercised the kernel through a real transport.
+//! The two event-gated closure conditions are defined solely by the public API stability
+//! contract, [`contracts/api-stability.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/api-stability.md).
+//! No phase number forms part of either condition.
+//!
+//! *(Roadmap, not part of the condition: the current roadmap places the first real transport
+//! adapter after the interactive CLI, so the window is expected to stay open for now.)*
 //!
 //! ## The command is `renvor`
 //!
