@@ -406,10 +406,16 @@ fn python_program() -> &'static str {
             // "a step ran and failed" — when the truth was exit code 2, "a required toolchain is
             // missing; no steps ran". The published exit taxonomy would have been wrong about
             // what happened, which is worse than either failure on its own.
+            //
+            // **3.7, not 3.0.** `scripts/check-doc-references.py` calls `subprocess.run` with
+            // `capture_output` and `text`, both added in 3.7. A 3.5 or 3.6 interpreter satisfies
+            // a major-version check and then crashes the step — reproducing the same wrong exit
+            // code the major-version check was added to prevent. The probe asks for the version
+            // the script actually needs.
             let is_python_three = Command::new(candidate)
                 .args([
                     "-c",
-                    "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)",
+                    "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)",
                 ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -434,7 +440,7 @@ fn present(tool: &Tool) -> bool {
         return Command::new(python_program())
             .args([
                 "-c",
-                "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)",
+                "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)",
             ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1182,6 +1188,58 @@ mod tests {
             super::TOTAL_STEPS,
             "the contract publishes {steps} steps but TOTAL_STEPS is {}. One of them was changed \
              without the other; they are the same promise stated twice.",
+            super::TOTAL_STEPS
+        );
+    }
+
+    /// The published documentation site lists the same number of steps.
+    ///
+    /// The site's page duplicates the step table, and it has been left behind **three times**:
+    /// the constitution version, the amendment count, and the step list were each corrected in
+    /// `.md` sources while `docs/docs/*.mdx` kept the old values, because the sweeps that found
+    /// them globbed `*.md`. A reader following the published site was told the command runs ten
+    /// steps while it ran twelve.
+    ///
+    /// Checking it here is the only thing that has actually stopped that recurring.
+    #[test]
+    fn the_documentation_site_lists_the_same_step_count() {
+        const PAGE: &str = include_str!("../../docs/docs/verification.mdx");
+
+        let mut numbers: Vec<usize> = Vec::new();
+        for line in PAGE.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix('|') else {
+                continue;
+            };
+            let Some((first, _)) = rest.split_once('|') else {
+                continue;
+            };
+            if let Ok(number) = first.trim().parse::<usize>() {
+                numbers.push(number);
+            }
+        }
+
+        // POSITIVE CONTROL: a parse that matched nothing would pass every assertion below.
+        assert!(
+            numbers.len() >= super::TOTAL_STEPS,
+            "the site parse found only {} numbered rows; it is not reading the step table",
+            numbers.len()
+        );
+
+        let mut steps = 0usize;
+        for (index, number) in numbers.iter().enumerate() {
+            if *number == index + 1 {
+                steps = *number;
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(
+            steps,
+            super::TOTAL_STEPS,
+            "docs/docs/verification.mdx publishes {steps} steps but the command runs {}. The \
+             site is what a contributor reads before running anything.",
             super::TOTAL_STEPS
         );
     }
