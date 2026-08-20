@@ -106,7 +106,30 @@ does not require independent review of the amendment itself.
 
 ## 6. Verification
 
-- Every tracked file citing a constitution version states **3.0.1 / 2026-08-19**, checked by scan.
-- No tracked file still cites `3.0.0` as the *current* version; the 3.0.0 amendment record and the
+**This section previously made a claim that was false when written.** It asserted that every
+tracked file citing a constitution version stated 3.0.1 / 2026-08-19, "checked by scan". The scan
+behind that claim globbed `*.md` only. It therefore never read `docs/docs/governance.mdx`, which
+still said **3.0.0**, still said the constitution had been amended **twice, both MAJOR**, and still
+carried the old date. `GOVERNANCE.md` was also half-updated: the version was corrected on one line
+while the amendment date on the next line was left at 2026-08-18, making that file internally
+contradictory — worse than untouched.
+
+The error is recorded rather than quietly overwritten, because a governance record that certifies a
+scan which never ran is the specific failure this project's evidence rules exist to prevent, and it
+was found by an automated review rather than by the scan that claimed to cover it.
+
+**Corrected, and true as of 2026-08-19:**
+
+- The scan covers **both `.md` and `.mdx`** tracked sources — 64 documents.
+- Every citation of the **current** constitution authority reads **3.0.1 / 2026-08-19**:
+  `CONSTITUTION.md` (footer), `GOVERNANCE.md` (header ×2, document index), `README.md`
+  (document index), and `docs/docs/governance.mdx` (prose and amendment count).
+- The scan carries a **planted negative control**: a stale `3.0.0 / 2026-08-18` citation is
+  injected in both a `.md` and an `.mdx` fixture, and all four stale values must be detected
+  before any statement about the real tree is trusted. Result: 4 of 4 detected, 0 stale
+  citations in the tree.
+- `docs/docs/governance.mdx` now states **three** amendments with their correct classifications —
+  2.0.0 and 3.0.0 MAJOR, 3.0.1 PATCH — rather than "twice, both MAJOR".
+- No tracked file cites `3.0.0` as the *current* version. The 3.0.0 amendment record and the
   history entry retain it as **historical**, which is correct and must not be rewritten.
 - `cargo xtask verify` passes on both required toolchains.

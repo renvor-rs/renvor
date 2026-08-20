@@ -5,7 +5,7 @@ How decisions get made in Renvor, who makes them, and how this document changes.
 ## Supreme authority
 
 The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.1, ratified 2026-08-11,
-last amended 2026-08-18** — is the highest authority in this project. Where this document
+last amended 2026-08-19** — is the highest authority in this project. Where this document
 and the constitution conflict, the constitution wins, and the conflict is a defect in
 this document.
 
