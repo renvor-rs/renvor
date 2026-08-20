@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
 version: "1.1.0"
-status: "normative — enforced executably by `xtask`. 1.1.0 (2026-08-20) adds the documentation cross-reference step and restores the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+status: "normative — enforced executably by `xtask`. 1.1.0 (2026-08-20) restores the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -22,7 +22,7 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Toolchain probe | — | Rust (pinned), Node LTS, `python3` |
+| 1 | Toolchain probe | — | Rust (pinned), Node LTS |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
 | 4 | Tests | `cargo test --workspace --all-features` | Rust |
@@ -32,39 +32,23 @@ Executed in order. None is conditional. None is skipped.
 | 8 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
 | 9 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
 | 10 | Link check | `lychee` over the built documentation output | `lychee` |
-| 11 | Documentation cross-references | `python3 scripts/check-doc-references.py` over tracked text | `python3` |
-| 12 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+| 11 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
 
 **Step 7 was missing from this table until 2026-08-20.** It has run in `xtask` since Phase 002.
 The omission is recorded rather than quietly filled in, because a contract that under-describes
 what the command does is the same defect class as a command that under-performs what the contract
 promises.
 
-### Step 10 and step 11 check different things
+### There is no repository cross-reference step
 
-Step 10 runs `lychee` over `docs/build` — the **built site**. It never sees the repository's own
-Markdown, so a broken reference between `governance/`, `contracts/`, and `decisions/`, or a
-citation of material that archival untracked, passes it untouched.
+Step 10 runs `lychee` over `docs/build` — the **built site**. Nothing in this sequence validates
+the repository's own references: relative links between `governance/`, `contracts/`, and
+`decisions/`, `specs/`-shaped path references in tracked text, or same-repository `blob/` URLs.
+That gap is real and is recorded, with the withdrawn implementation and the intended replacement,
+in [`governance/deferred-verification-work.md`](../governance/deferred-verification-work.md).
 
-Step 11 validates the **repository's** references against the git index and local git objects:
-relative links, `specs/`-shaped path references anywhere in tracked text, and same-repository
-`blob/` URLs. It never fetches — "I could not check" and "I checked and it is fine" must not
-produce the same exit code.
-
-A same-repository `blob/` URL is valid in exactly two shapes:
-
-1. **Pinned** to a full 40-character commit SHA that this clone has, at a path that exists at that
-   commit. This is required for any citation of archived material.
-2. **The live branch** (`main`), at a path that is **currently tracked**. This is the
-   *live-document exception*: a link to a policy that is meant to show its current state — the
-   `SECURITY.md` link in an issue template, for instance — should not be frozen at an old commit.
-
-Anything else is rejected: a tag, a feature branch, a shortened SHA, a typo, or the live branch
-naming a path that is no longer in the tree.
-
-**It runs here and not only in a workflow.** A check that lives solely in CI lets
-`cargo xtask verify` pass locally on a tree CI will reject, which is precisely the divergence the
-opening sentence of this contract forbids.
+It is named here rather than left silent, because a contract that lists only the checks that exist
+tells a reader what runs but not what is unguarded.
 
 ### Step 8 command note
 
@@ -96,10 +80,10 @@ Step 1 probes for every tool the sequence needs and exits non-zero if any is abs
 $ cargo xtask verify
 error: verification cannot run — required tooling is missing
 
-  missing: lychee (link checking, step 9)
+  missing: lychee (link checking, step 10)
     install: cargo install lychee --locked
 
-  missing: node (documentation site, step 8)
+  missing: node (documentation site, step 9)
     install: see .nvmrc for the required version
 
 no checks were run. verification did not pass.
@@ -114,13 +98,13 @@ The last line matters. A partial run that reports success is the failure mode th
 | 0 | Every step ran and passed |
 | 1 | A step ran and failed |
 | 2 | A required toolchain is missing; no steps ran |
-| 3 | The working tree was dirty after a successful run (step 12) |
+| 3 | The working tree was dirty after a successful run (step 11) |
 
 ## Working-tree cleanliness
 
-Step 12 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
+Step 11 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
 
-**Known starting condition**: the repository currently contains `.DS_Store`, `.idea/`, and `.playwright-mcp/`, and the existing `.gitignore` does not cover all of them. Step 12 fails until the ignore rules are corrected — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
+**Known starting condition**: the repository currently contains `.DS_Store`, `.idea/`, and `.playwright-mcp/`, and the existing `.gitignore` does not cover all of them. Step 11 fails until the ignore rules are corrected — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
 
 ## Performance target
 

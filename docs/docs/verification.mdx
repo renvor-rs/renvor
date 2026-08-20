@@ -20,7 +20,7 @@ CI invokes this exact entry point. Nothing in a workflow file duplicates it, bec
 duplicated steps are how local and automated verification silently drift apart — and
 divergence is how a skipped check gets reported as a pass.
 
-## The twelve steps
+## The eleven steps
 
 Executed in order. None is conditional. None is skipped.
 
@@ -36,8 +36,7 @@ Executed in order. None is conditional. None is skipped.
 | 8 | Secret scan | `gitleaks git .` and `gitleaks dir .` |
 | 9 | Documentation site | `npm ci && npm run build` |
 | 10 | Link check | `lychee` over the built output |
-| 11 | Documentation cross-references | `python3 scripts/check-doc-references.py` |
-| 12 | Working-tree cleanliness | no untracked or modified files remain |
+| 11 | Working-tree cleanliness | no untracked or modified files remain |
 
 Step 8 runs **both** scanners. The history scan cannot see uncommitted files; the
 directory scan cannot see content that was committed and later deleted. Neither

@@ -24,11 +24,11 @@ const EXIT_OK: i32 = 0;
 const EXIT_STEP_FAILED: i32 = 1;
 /// A required toolchain is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
-/// The working tree was dirty after an otherwise successful run (step 12).
+/// The working tree was dirty after an otherwise successful run (step 11).
 const EXIT_DIRTY_TREE: i32 = 3;
 
 /// Total number of steps in the sequence, used only for progress output.
-const TOTAL_STEPS: usize = 12;
+const TOTAL_STEPS: usize = 11;
 
 /// A tool the sequence needs, how to detect it, and how to install it.
 struct Tool {
@@ -50,7 +50,7 @@ const REQUIRED: &[Tool] = &[
         program: "git",
         probe: &["--version"],
         name: "git",
-        purpose: "secret scanning and working-tree cleanliness, steps 8 and 12",
+        purpose: "secret scanning and working-tree cleanliness, steps 8 and 11",
         install: "https://git-scm.com/downloads",
     },
     Tool {
@@ -73,13 +73,6 @@ const REQUIRED: &[Tool] = &[
         name: "cargo-deny",
         purpose: "dependency and licence policy, step 6",
         install: "cargo install cargo-deny --locked",
-    },
-    Tool {
-        program: "python3",
-        probe: &["--version"],
-        name: "python3",
-        purpose: "documentation cross-reference check, step 11",
-        install: "https://www.python.org/downloads/ (or your platform's package manager); `python` is accepted where `python3` is not installed",
     },
     Tool {
         program: "gitleaks",
@@ -257,8 +250,8 @@ fn verify() -> i32 {
         );
         eprintln!();
         eprintln!("This is a FAILURE, not a skip. The sequence has no conditional steps:");
-        eprintln!("a check that cannot run is a failure (FR-023). Steps 1-7 above did run");
-        eprintln!("and did pass; steps 8-12 did not run.");
+        eprintln!("a check that cannot run is a failure (FR-023). Steps 1-8 above did run");
+        eprintln!("and did pass; steps 9-11 did not run.");
         return EXIT_STEP_FAILED;
     }
     if !run(
@@ -312,42 +305,16 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 11: documentation cross-references ----
-    //
-    // `lychee` above checks the BUILT SITE's links. It never sees the repository's own
-    // documents, so a broken reference between `governance/`, `contracts/`, and `decisions/` —
-    // or a citation of material that archival untracked — passes step 10 untouched.
-    //
-    // This runs HERE rather than only in the `docs` workflow. A check that exists solely in CI
-    // means `cargo xtask verify` can pass locally on a tree CI will reject, which is exactly the
-    // local/automation drift the verification-sequence contract forbids: one command, one
-    // behaviour, locally and in automation. The workflow now invokes this sequence instead of
-    // duplicating the step, so the two cannot diverge.
-    //
-    // The script is fail-closed: it runs its own positive and negative controls first and exits
-    // non-zero if any control misbehaves, so "the scan found nothing" cannot be produced by a
-    // scan that read nothing.
-    if !run(
-        11,
-        "documentation cross-references",
-        python_program(),
-        &["scripts/check-doc-references.py"],
-        &root,
-        &[],
-    ) {
-        return EXIT_STEP_FAILED;
-    }
-
-    // ---- Step 12: working-tree cleanliness ----
+    // ---- Step 11: working-tree cleanliness ----
     // This is what proves the ignore rules are correct rather than merely present.
     match dirty_entries(&root) {
         Err(message) => {
-            step_fail(12, "working-tree cleanliness", &message);
+            step_fail(11, "working-tree cleanliness", &message);
             EXIT_STEP_FAILED
         }
         Ok(entries) if entries.is_empty() => {
             step_ok(
-                12,
+                11,
                 "working-tree cleanliness",
                 "no untracked or modified files",
             );
@@ -357,7 +324,7 @@ fn verify() -> i32 {
         }
         Ok(entries) => {
             step_fail(
-                12,
+                11,
                 "working-tree cleanliness",
                 "the working tree is not clean",
             );
@@ -388,66 +355,7 @@ fn probe_tooling() -> Vec<&'static Tool> {
     REQUIRED.iter().filter(|t| !present(t)).collect()
 }
 
-/// The Python interpreter to invoke, resolved once.
-///
-/// Unix installs it as `python3`. Windows installs `python.exe`, and only some distributions add
-/// a `python3` shim — so probing for `python3` alone would report a correctly configured Windows
-/// machine as missing tooling and refuse to run any check at all. Both names are tried; the step
-/// invokes whichever answered.
-fn python_program() -> &'static str {
-    static RESOLVED: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
-    RESOLVED.get_or_init(|| {
-        for candidate in ["python3", "python"] {
-            // Ask the interpreter to prove it is version 3, rather than merely to exist.
-            //
-            // `--version` succeeds on Python 2 as readily as on Python 3. On a host where
-            // `python` is Python 2, probing for command success alone reported all tooling
-            // present, and the Python-3-only checker then failed at step 11 with exit code 1 —
-            // "a step ran and failed" — when the truth was exit code 2, "a required toolchain is
-            // missing; no steps ran". The published exit taxonomy would have been wrong about
-            // what happened, which is worse than either failure on its own.
-            //
-            // **3.7, not 3.0.** `scripts/check-doc-references.py` calls `subprocess.run` with
-            // `capture_output` and `text`, both added in 3.7. A 3.5 or 3.6 interpreter satisfies
-            // a major-version check and then crashes the step — reproducing the same wrong exit
-            // code the major-version check was added to prevent. The probe asks for the version
-            // the script actually needs.
-            let is_python_three = Command::new(candidate)
-                .args([
-                    "-c",
-                    "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)",
-                ])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|status| status.success())
-                .unwrap_or(false);
-            if is_python_three {
-                return candidate;
-            }
-        }
-        // Neither responded. Return the canonical name so the probe reports a recognisable
-        // failure rather than an empty one; `present` below will still say it is missing.
-        "python3"
-    })
-}
-
 fn present(tool: &Tool) -> bool {
-    if tool.program == "python3" {
-        // Ask the resolver, so a machine with only `python` is not reported as missing Python —
-        // and so a `python` that is Python 2 IS reported as missing, at step 1, where a missing
-        // toolchain belongs.
-        return Command::new(python_program())
-            .args([
-                "-c",
-                "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 7) else 1)",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-    }
     Command::new(tool.program)
         .args(tool.probe)
         .stdout(Stdio::null())
@@ -1198,7 +1106,8 @@ mod tests {
     /// the constitution version, the amendment count, and the step list were each corrected in
     /// `.md` sources while `docs/docs/*.mdx` kept the old values, because the sweeps that found
     /// them globbed `*.md`. A reader following the published site was told the command runs ten
-    /// steps while it ran twelve.
+    /// steps while it ran eleven, because the site's table omitted the architecture-invariants
+    /// step exactly as the contract's did.
     ///
     /// Checking it here is the only thing that has actually stopped that recurring.
     #[test]

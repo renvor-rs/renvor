@@ -37,15 +37,6 @@ jobs:
         with:
           tool: lychee
 
-      # The documentation cross-reference check is NOT duplicated here.
-      #
-      # It ran as a workflow-only step until 2026-08-20, which meant `cargo xtask verify` could
-      # pass locally on a tree this job would reject — the exact local/automation divergence
-      # `contracts/verification-sequence.md` opens by forbidding. It is now step 11 of that
-      # sequence, and the `verify` jobs in `ci.yml` invoke the sequence, so CI exercises the
-      # xtask-owned gate rather than a copy of it that can drift.
-
-
       # `npm ci`, never `npm install`: the committed lockfile is the input, and a
       # resolution that differs from it is a failure rather than a convenience.
       - name: Build documentation site

@@ -50,11 +50,6 @@ see it, the output names every missing tool and how to install it.
 | gitleaks | `brew install gitleaks` (or see the gitleaks project) |
 | lychee | `cargo install lychee --locked` |
 | node, npm | see `.nvmrc` |
-| Python 3 | usually already present; otherwise https://www.python.org/downloads/ or your platform's package manager |
-
-Python runs step 11, the documentation cross-reference check. Either `python3` or `python` is
-accepted — Windows installs the latter and only sometimes provides a `python3` shim, and probing
-for one name alone would refuse to run any check at all on a correctly configured machine.
 
 The toolchain itself is pinned by `rust-toolchain.toml`; rustup will fetch it for you.
 
