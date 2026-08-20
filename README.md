@@ -70,9 +70,11 @@ One command, identical locally and in CI:
 cargo xtask verify
 ```
 
-Ten ordered steps: toolchain probe, formatting, lint, tests, API documentation, dependency
-and licence policy, secret scanning, documentation build, link checking, and working-tree
-cleanliness.
+The ordered steps are defined by [`contracts/verification-sequence.md`](contracts/verification-sequence.md),
+which is the normative list — this page does not keep a second copy of the numbering. The
+categories it covers: toolchain probe, formatting, lint, tests, API documentation, dependency
+and licence policy, architecture invariants, secret scanning, documentation build, link
+checking, and working-tree cleanliness.
 
 **A check that cannot run is a failure, never a skip.** If required tooling is missing the
 command exits `2`, names every missing tool with its install command, and prints
