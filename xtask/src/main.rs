@@ -78,28 +78,28 @@ const REQUIRED: &[Tool] = &[
         program: "gitleaks",
         probe: &["version"],
         name: "gitleaks",
-        purpose: "secret scan, step 7",
+        purpose: "secret scan, step 8",
         install: "brew install gitleaks   (or see github.com/gitleaks/gitleaks)",
     },
     Tool {
         program: "node",
         probe: &["--version"],
         name: "node",
-        purpose: "documentation site, step 8",
+        purpose: "documentation site, step 9",
         install: "see .nvmrc for the required version",
     },
     Tool {
         program: "npm",
         probe: &["--version"],
         name: "npm",
-        purpose: "documentation site, step 8",
+        purpose: "documentation site, step 9",
         install: "ships with node — see .nvmrc",
     },
     Tool {
         program: "lychee",
         probe: &["--version"],
         name: "lychee",
-        purpose: "link checking, step 9",
+        purpose: "link checking, step 10",
         install: "cargo install lychee --locked",
     },
 ];
@@ -1151,6 +1151,79 @@ mod tests {
              site is what a contributor reads before running anything.",
             super::TOTAL_STEPS
         );
+    }
+
+    /// Every required tool names the step that actually consumes it.
+    ///
+    /// `report_missing` prints `Tool::purpose` verbatim, so these strings are **observable
+    /// output**, and `contracts/verification-sequence.md` publishes an example of that output.
+    /// They drifted: after the architecture-invariants step was restored to the published table,
+    /// `gitleaks` still said step 7, `node` and `npm` said 8, and `lychee` said 9 — one behind
+    /// the sequence the command actually runs.
+    ///
+    /// The step-count tests did not catch it and could not: they compare a **count**, and the
+    /// count was right the whole time. A defect in which value sits next to which name is only
+    /// visible to a test that asserts the values. This one does, exactly, per tool.
+    #[test]
+    fn every_required_tool_names_the_step_that_consumes_it() {
+        // The right-hand side is the executable sequence, read off the `run`/`step_ok` call
+        // sites in `verify` — not copied from the table it is meant to check.
+        const EXPECTED: &[(&str, &str)] = &[
+            (
+                "git",
+                "secret scanning and working-tree cleanliness, steps 8 and 11",
+            ),
+            ("rustfmt", "formatting, step 2"),
+            ("clippy", "lint, step 3"),
+            ("cargo-deny", "dependency and licence policy, step 6"),
+            ("gitleaks", "secret scan, step 8"),
+            ("node", "documentation site, step 9"),
+            ("npm", "documentation site, step 9"),
+            ("lychee", "link checking, step 10"),
+        ];
+
+        // POSITIVE CONTROL: the expectation table must cover the real table exactly. Without
+        // this, adding a tool with a wrong purpose would pass by never being looked at, and
+        // deleting a tool would pass by leaving an expectation nothing compares against.
+        assert_eq!(
+            EXPECTED.len(),
+            super::REQUIRED.len(),
+            "REQUIRED has {} tools but this test expects {}. A tool was added or removed \
+             without updating the expected purpose beside it.",
+            super::REQUIRED.len(),
+            EXPECTED.len()
+        );
+
+        for (name, expected_purpose) in EXPECTED {
+            let tool = super::REQUIRED
+                .iter()
+                .find(|t| t.name == *name)
+                .unwrap_or_else(|| panic!("REQUIRED has no tool named `{name}`"));
+            assert_eq!(
+                tool.purpose, *expected_purpose,
+                "`{name}` tells the user its purpose is {:?}, but it is consumed by {:?}. \
+                 This string is printed verbatim by `report_missing`, so it is a published \
+                 contract, not a comment.",
+                tool.purpose, expected_purpose
+            );
+        }
+
+        // No purpose may name a step the sequence does not have. This catches the direction the
+        // table above cannot: an expectation and an implementation that are wrong together.
+        for tool in super::REQUIRED {
+            for token in tool.purpose.split(|c: char| !c.is_ascii_digit()) {
+                if token.is_empty() {
+                    continue;
+                }
+                let step: usize = token.parse().expect("digits parse");
+                assert!(
+                    (1..=super::TOTAL_STEPS).contains(&step),
+                    "`{}` names step {step}, outside the 1..={} sequence",
+                    tool.name,
+                    super::TOTAL_STEPS
+                );
+            }
+        }
     }
 
     /// A publishable manifest with the `{ path, version }` form the rule permits.
