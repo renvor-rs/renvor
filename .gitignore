@@ -54,8 +54,9 @@ secrets/
 __pycache__/
 
 # --- Local agent and development-tool configuration ---
-# Restored to the TRACKED ignore file on 2026-08-19, after two independent automated review
-# passes flagged its removal.
+# Restored to the TRACKED ignore file on 2026-08-19, after two internal advisory review
+# passes flagged its removal. Those passes were automated, and automated review is not
+# independent review.
 #
 # These were moved to `.git/info/exclude` on the reasoning that local-only material does not
 # belong in a rule imposed on everyone who clones. That reasoning does not survive contact with
