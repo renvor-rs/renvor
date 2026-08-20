@@ -48,15 +48,25 @@ citation of material that archival untracked, passes it untouched.
 
 Step 11 validates the **repository's** references against the git index and local git objects:
 relative links, `specs/`-shaped path references anywhere in tracked text, and same-repository
-`blob/` URLs, which must be pinned to a full commit SHA that this clone actually has, at a path
-that actually exists there. It never fetches — "I could not check" and "I checked and it is fine"
-must not produce the same exit code.
+`blob/` URLs. It never fetches — "I could not check" and "I checked and it is fine" must not
+produce the same exit code.
+
+A same-repository `blob/` URL is valid in exactly two shapes:
+
+1. **Pinned** to a full 40-character commit SHA that this clone has, at a path that exists at that
+   commit. This is required for any citation of archived material.
+2. **The live branch** (`main`), at a path that is **currently tracked**. This is the
+   *live-document exception*: a link to a policy that is meant to show its current state — the
+   `SECURITY.md` link in an issue template, for instance — should not be frozen at an old commit.
+
+Anything else is rejected: a tag, a feature branch, a shortened SHA, a typo, or the live branch
+naming a path that is no longer in the tree.
 
 **It runs here and not only in a workflow.** A check that lives solely in CI lets
 `cargo xtask verify` pass locally on a tree CI will reject, which is precisely the divergence the
 opening sentence of this contract forbids.
 
-### Step 7 command note
+### Step 8 command note
 
 `gitleaks detect` **was removed in Gitleaks 8.x**. Version 8.30.1 exposes only `git`,
 `dir`, and `stdin`. The earlier wording here named a command that no longer exists.
@@ -108,9 +118,9 @@ The last line matters. A partial run that reports success is the failure mode th
 
 ## Working-tree cleanliness
 
-Step 10 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
+Step 12 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
 
-**Known starting condition**: the repository currently contains `.DS_Store`, `.idea/`, and `.playwright-mcp/`, and the existing `.gitignore` does not cover all of them. Step 10 fails until the ignore rules are corrected — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
+**Known starting condition**: the repository currently contains `.DS_Store`, `.idea/`, and `.playwright-mcp/`, and the existing `.gitignore` does not cover all of them. Step 12 fails until the ignore rules are corrected — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
 
 ## Performance target
 
