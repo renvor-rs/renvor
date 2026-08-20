@@ -398,14 +398,25 @@ fn python_program() -> &'static str {
     static RESOLVED: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
     RESOLVED.get_or_init(|| {
         for candidate in ["python3", "python"] {
-            let responded = Command::new(candidate)
-                .arg("--version")
+            // Ask the interpreter to prove it is version 3, rather than merely to exist.
+            //
+            // `--version` succeeds on Python 2 as readily as on Python 3. On a host where
+            // `python` is Python 2, probing for command success alone reported all tooling
+            // present, and the Python-3-only checker then failed at step 11 with exit code 1 —
+            // "a step ran and failed" — when the truth was exit code 2, "a required toolchain is
+            // missing; no steps ran". The published exit taxonomy would have been wrong about
+            // what happened, which is worse than either failure on its own.
+            let is_python_three = Command::new(candidate)
+                .args([
+                    "-c",
+                    "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)",
+                ])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
                 .map(|status| status.success())
                 .unwrap_or(false);
-            if responded {
+            if is_python_three {
                 return candidate;
             }
         }
@@ -417,9 +428,14 @@ fn python_program() -> &'static str {
 
 fn present(tool: &Tool) -> bool {
     if tool.program == "python3" {
-        // Ask the resolver, so a machine with only `python` is not reported as missing Python.
+        // Ask the resolver, so a machine with only `python` is not reported as missing Python —
+        // and so a `python` that is Python 2 IS reported as missing, at step 1, where a missing
+        // toolchain belongs.
         return Command::new(python_program())
-            .arg("--version")
+            .args([
+                "-c",
+                "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
