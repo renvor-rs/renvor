@@ -72,7 +72,8 @@ impl Reporter {
     /// terminal.
     ///
     /// `std::io::IsTerminal` is in the standard library, so no `atty` or `is-terminal` dependency
-    /// is taken for this — verified by compiling and running rather than assumed (research D12).
+    /// is taken for this — verified by compiling and running rather than assumed
+    /// ([Phase 003 research §D12](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md)).
     #[must_use]
     pub fn new(format: Format, no_color: bool) -> Self {
         let stderr_is_terminal = std::io::stderr().is_terminal();

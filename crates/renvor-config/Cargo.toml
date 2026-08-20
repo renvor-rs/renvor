@@ -6,7 +6,10 @@
 # `default-features = false` — resolves none of them. That claim is asserted at T101/T102 with a
 # positive control, because an isolation claim nobody tested is an isolation hope.
 #
-# `publish = true`: see the note in crates/renvor-core/Cargo.toml and research D13.
+# `publish = true`: see the note in crates/renvor-core/Cargo.toml and Phase 002 research §D13.
+# The Phase 002 research record is no longer tracked; it remains in public Git history at:
+# https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md
+# Every "Phase 002 research §Dn" below is a section of that document.
 # `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
 
 [package]
@@ -37,7 +40,7 @@ include = [
 [dependencies]
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 
-# Typed decoding (research D7). `derive` is required for the schema declarations FR-015 implies.
+# Typed decoding (Phase 002 research §D7). `derive` is required for the schema declarations FR-015 implies.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
 # The ONLY document format this phase accepts. FR-015 permits exactly three source kinds, and
@@ -46,7 +49,7 @@ toml = { version = "1.1.4", default-features = false, features = ["parse", "serd
 
 # Access control and zeroization only. Renvor owns the OUTPUT contract — `Display`, error
 # messages, error context, tracing fields, and serialization — because this crate supplies none
-# of them and implements no `Display` at all (research D2, contract C-C9).
+# of them and implements no `Display` at all (Phase 002 research §D2, contract C-C9).
 #
 # Its ONLY optional feature is `serde`, and it is deliberately NOT enabled: contract C-C9 requires
 # serialization of a secret to be refused, so opting into the crate's serialization support would

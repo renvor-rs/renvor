@@ -121,7 +121,7 @@ finds the destination occupied and reports `destination_exists`.
 
 ## The race this narrows and does not eliminate
 
-*(Revised 2026-08-18 with research.md D6 revision 2.)*
+*(Revised 2026-08-18 with [Phase 003 research §D6](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md) revision 2.)*
 
 `cap-std` is adopted, so the parent directory is opened **once** and every subsequent operation —
 the staging create, every render write, the existence re-check, and the rename — goes through that

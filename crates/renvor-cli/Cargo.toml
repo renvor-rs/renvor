@@ -38,17 +38,22 @@ path = "src/main.rs"
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-config = { path = "../renvor-config", version = "0.0.0" }
 
-# research.md D1 — argument parsing. `derive` because the flag surface IS the contract and one
+# The Phase 003 research record is a working artifact and is no longer tracked. It remains in
+# public Git history at:
+# https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md
+# Every "Phase 003 research §Dn" below is a section of that document.
+#
+# Phase 003 research §D1 — argument parsing. `derive` because the flag surface IS the contract and one
 # declaration keeps help, validation, and completions from drifting apart. `wrap_help` so `--help`
 # is readable at a narrow width, which the spec's edge cases require.
 clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "wrap_help"] }
 
-# research.md D2 — prompts. Selected over `dialoguer` because `InquireError` distinguishes
+# Phase 003 research §D2 — prompts. Selected over `dialoguer` because `InquireError` distinguishes
 # `OperationCanceled`, `OperationInterrupted`, and `NotTTY` as separate typed outcomes, which is
 # what lets cancellation exit 4 without inferring intent from an I/O error kind.
 inquire = { version = "0.9.4", default-features = false, features = ["crossterm", "one-liners"] }
 
-# research.md D4 — templating. Selected for three properties this phase requires as CONFIGURATION
+# Phase 003 research §D4 — templating. Selected for three properties this phase requires as CONFIGURATION
 # rather than convention: bounded expansion, an allow-listed function set, and strict undefined.
 #
 # `fuel` IS THE BOUNDED-EXPANSION FEATURE, AND IT IS NOT ON BY DEFAULT. It is absent from
@@ -62,12 +67,12 @@ inquire = { version = "0.9.4", default-features = false, features = ["crossterm"
 # has no use for, and constitution VI wants deny-by-default.
 minijinja = { version = "2.24.0", default-features = false, features = ["builtins", "fuel", "serde"] }
 
-# research.md D5 — the staging directory. The transaction itself is composed here from `tempfile`
+# Phase 003 research §D5 — the staging directory. The transaction itself is composed here from `tempfile`
 # and `std::fs::rename`, because no maintained crate provides DIRECTORY-level transactional
 # placement; the two that sound like it are file-level. That finding is recorded, not glossed.
 tempfile = { version = "3.27.0", default-features = false }
 
-# research.md D6 (revision 2) — THE DESTINATION BOUNDARY, AND IT IS STRUCTURAL RATHER THAN CHECKED.
+# Phase 003 research §D6 (revision 2) — THE DESTINATION BOUNDARY, AND IT IS STRUCTURAL RATHER THAN CHECKED.
 #
 # Every filesystem operation the generator performs goes through a `cap_std::fs::Dir` handle opened
 # once on the destination's parent. Inside a handle, traversal, absolute-path injection, and
@@ -77,17 +82,17 @@ tempfile = { version = "3.27.0", default-features = false }
 #
 # The first revision of D6 rejected this crate and required an ADR to justify hand-composed
 # containment instead. That rejection was reversed on measured evidence rather than on preference;
-# the measurements are in research.md D6.
+# the measurements are in Phase 003 research §D6.
 #
 # It also replaces `walkdir` for the manifest walk: a `Dir`-relative recursive read_dir gives
 # deterministic traversal AND containment, where walkdir gave only the first.
 cap-std = { version = "4.0.2", default-features = false }
 
-# research.md D10 — the machine-readable output contract.
+# Phase 003 research §D10 — the machine-readable output contract.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 
-# research.md D11 — content identity in the manifest. SHA-256 because it is what the rest of this
+# Phase 003 research §D11 — content identity in the manifest. SHA-256 because it is what the rest of this
 # project already uses for artifact identity; a second algorithm would mean two vocabularies for
 # one idea. `blake3` was rejected for declaring no MSRV.
 sha2 = { version = "0.11.0", default-features = false, features = ["alloc"] }  # `oid` deliberately off: ASN.1 identifiers are not needed here
@@ -113,7 +118,7 @@ semver = { version = "1.0.28", default-features = false }
 wait-timeout = { version = "0.2.1", default-features = false }
 
 [dev-dependencies]
-# research.md D14 — the command surface is a public contract, so it is tested as expected OUTPUT
+# Phase 003 research §D14 — the command surface is a public contract, so it is tested as expected OUTPUT
 # rather than as assertions buried in Rust. A contract change then appears as a diff in review.
 trycmd = { version = "1.2.1", default-features = false, features = ["color-auto", "diff", "filesystem", "examples"] }
 
@@ -125,7 +130,7 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 tempfile = { version = "3.27.0", default-features = false }
 portable-pty = { version = "0.9.0", default-features = false }
 
-# research.md D14 — structured snapshots. `trycmd` records the command surface as byte-exact
+# Phase 003 research §D14 — structured snapshots. `trycmd` records the command surface as byte-exact
 # expected output; this records the SHAPE of every JSON document, which is a different contract.
 # A value changing is not a schema change, and a test that cannot tell the two apart either breaks
 # on every unrelated edit or notices neither.

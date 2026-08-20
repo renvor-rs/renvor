@@ -5,7 +5,8 @@
 //! It does not install anything. `ApplicationBuilder::build` installs nothing, `boot` installs
 //! nothing, and no constructor in this crate touches the process-global subscriber.
 //!
-//! Contract C-O7 and research D4 both say why: the global subscriber is a **process-wide, once-per-
+//! Contract C-O7 and [Phase 002 research §D4](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md)
+//! both say why: the global subscriber is a **process-wide, once-per-
 //! process** decision. A library that takes it takes it away from every consumer that depends on
 //! that library — including consumers who never asked for tracing, and consumers who already
 //! installed their own. Worse, it takes it *silently*, at whatever moment the library happens to

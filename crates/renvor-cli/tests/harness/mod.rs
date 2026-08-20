@@ -13,7 +13,7 @@
 //! this phase found were caught by the platform matrix, so coverage that silently vanishes on
 //! Windows is coverage that would have missed half of them. `portable-pty` wraps ConPTY on Windows
 //! and `openpty` elsewhere behind one interface, so these tests run on every matrix leg.
-//! See `research.md` D15.
+//! See [Phase 003 research §D15](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md).
 
 #![allow(dead_code)] // Each integration test binary uses a different subset of this module.
 

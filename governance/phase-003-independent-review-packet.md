@@ -246,7 +246,7 @@ Stated up front so you spend your time on what nobody has found yet.
 | # | Issue | Where |
 |---|---|---|
 | 1 | **Constitution principle VII said the wizard MUST ask eleven things; it asks three.** **RESOLVED 2026-08-18** — the principle was amended, 2.0.0 → 3.0.0 MAJOR, rather than waived. Whether the amendment is legitimate is a fair thing for you to challenge. | [evidence §2][ev-2], [§7.7][ev-7.7]; `constitution-amendment-3.0.0.md` |
-| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | `tasks.md` "Ordering requirements that were missed" |
+| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md), "Ordering requirements that were missed" |
 | 3 | **Invariant I-17: the TOCTOU window is narrowed, not closed.** Specifically, POSIX `rename(2)` will silently replace an **empty** directory another process creates between the last check and the rename. Stated residual risk; not portably closable. | review pack §6.1 |
 | 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
 | 3c | **The "renvor never *deliberately* deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. The qualifier matters: POSIX `rename(2)` replaces an empty directory created in the TOCTOU window, which is the system call's behaviour, not renvor's. | review pack §5.3, §6.1 |
@@ -256,7 +256,7 @@ Stated up front so you spend your time on what nobody has found yet.
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
 | 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | [evidence §3.1][ev-3.1] |
 | 6 | **Data-model §5 rule 8 has no `details.rule`** — containment is structural. | review pack §4 |
-| 7 | **Three template bounds were enforced and untested until 2026-08-18.** Now tested with boundary cases. | `tasks.md` register |
+| 7 | **Three template bounds were enforced and untested until 2026-08-18.** Now tested with boundary cases. | [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md) register |
 
 ## 5. Eleven defects were found and fixed during this phase. Every one lived in a **seam**
 

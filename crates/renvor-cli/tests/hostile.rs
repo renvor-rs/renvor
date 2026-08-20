@@ -20,14 +20,15 @@
 //! **That ordering did not happen**; this file was written afterwards and no rerun can undo that.
 //! What it carries instead is a positive control (T021) and per-rule attribution, so a corpus that
 //! refused everything — or refused everything for one lazy reason — cannot pass. See the
-//! "Ordering requirements that were missed" section of `tasks.md`.
+//! "Ordering requirements that were missed" section of [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md).
 //!
 //! # T023 is not in this file, and that is a stated deviation
 //!
 //! T023 asks for the no-archive-capability assertion here. It lives in `tests/capabilities.rs`
 //! instead, beside the FR-043 no-network-client assertion it shares a lockfile-closure walk and a
 //! negative control with. Splitting them would put one claim in two files or duplicate the walk.
-//! Recorded as a deviation in `tasks.md` rather than resolved by copying code.
+//! Recorded as a deviation in [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+//! rather than resolved by copying code.
 
 mod harness;
 
@@ -245,7 +246,8 @@ fn every_reserved_device_name_is_refused_on_every_platform() {
 #[cfg(unix)]
 fn a_destination_that_is_a_symlink_to_another_directory_is_refused() {
     // The escape a purely lexical check cannot see, and the reason `path-clean` was rejected in
-    // research D6: the path contains no `..` and is not absolute, and it still leaves the tree.
+    // Phase 003 research §D6 (pinned in the module header): the path contains no `..` and is
+    // not absolute, and it still leaves the tree.
     let base = tempfile::tempdir().expect("a temporary directory");
     let outside = base.path().join("outside");
     std::fs::create_dir_all(&outside).expect("the outside directory is created");

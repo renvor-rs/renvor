@@ -87,7 +87,8 @@ fn closure(root: &str) -> BTreeSet<String> {
 /// Crates that read or write an archive or a compressed stream.
 ///
 /// Enumerated rather than pattern-matched, so a reader can judge whether the list is complete.
-/// Every one of these was checked and found acceptable on licence grounds in `research.md` D7 —
+/// Every one of these was checked and found acceptable on licence grounds in
+/// [Phase 003 research §D7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md) —
 /// they are excluded on **capability** grounds, not on quality.
 const ARCHIVE_CRATES: [&str; 11] = [
     "tar",
