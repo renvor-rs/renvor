@@ -97,7 +97,7 @@ collision in those spaces remains possible.
 
 ## Residual risks carried forward
 
-These belong in `governance/phase-001-evidence.md` §6 with owners (T083).
+These belong in [`phase-001-evidence.md` §6 Known limitations](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L4045) with owners (T083).
 
 | ID | Risk | Owner | Closes in |
 |---|---|---|---|

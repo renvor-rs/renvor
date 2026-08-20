@@ -1134,7 +1134,7 @@ Four repositories, all public on GitHub, all canonical there:
 **GitHub is the source, review, and CI surface for all four repositories** — actual for three of
 them, future for `renvor-docs`. *("future" added 2026-08-15 — `renvor-docs` and `renvor-infra` had
 zero workflows and zero runs, so GitHub was not yet a CI surface for them. This matched ADR-0006
-D13 and `governance/phase-001-evidence.md` §3av. **Narrowed 2026-08-17**: `renvor-infra` now has
+D13 and [`phase-001-evidence.md` §3av](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3465). **Narrowed 2026-08-17**: `renvor-infra` now has
 the `infra-ci` workflow with a required `validate` check, so "future" applies to `renvor-docs`
 alone, which is still commit-empty.)* **No
 Renvor process reads from, writes to, or depends on a GitLab instance** for source control,

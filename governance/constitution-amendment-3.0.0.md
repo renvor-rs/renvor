@@ -174,7 +174,7 @@ Nothing in Phase 003's threat model, path boundary, redaction, or trust-store co
 | `CONSTITUTION.md` | Principle VII amended; version, date, and amendment history updated |
 | Local specification-tooling working copy | Synchronised and byte-verified against the canonical text |
 | [`spec.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
-| `governance/phase-003-evidence.md` | §2 rewritten: the referral becomes a recorded ruling with an outcome |
+| `governance/phase-003-evidence.md` | [§2](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L36) rewritten: the referral becomes a recorded ruling with an outcome |
 | `docs/docs/governance.mdx` | Constitution version reference updated where present |
 
 ### 2.6 Active phases
@@ -261,4 +261,4 @@ Stated as a verdict per clause, against the shipped implementation rather than a
 | Once a capability ships, its choice becomes mandatory in both the wizard and non-interactive interface | **NOT YET APPLICABLE** | No capability from the governed set ships in Phase 003 beyond `target`, which is single-valued and therefore covered by clause 2. This clause binds Phase 004 onward and is recorded as a phase-entry obligation in §3 step 5 |
 
 **Verdict: Phase 003 complies with Principle VII as amended.** The T093a referral in
-`governance/phase-003-evidence.md` §7 is closed by this amendment rather than by a waiver.
+[`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) is closed by this amendment rather than by a waiver.

@@ -18,7 +18,7 @@
 //! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
 //! option would be a question with one answer. An advisory review caught the overstatement by
 //! comparing this comment with `fill` below. It matters because the number in this comment is the
-//! one the principle VII referral in `governance/phase-003-evidence.md` §7 has to be counted
+//! one the principle VII referral in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) has to be counted
 //! against, and overstating compliance by one category in a comment is how it ends up overstated
 //! in the referral.
 //!
