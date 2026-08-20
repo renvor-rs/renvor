@@ -15,17 +15,31 @@ Three failure classes
 2. UNRESOLVED PATH REF  - a `specs/...`-shaped path in prose, a code span, a comment, a manifest,
                           or a workflow, pointing at material no longer tracked and not pinned to
                           an immutable commit.
-3. INVALID PINNED URL   - a same-repository `blob/` URL that is not pinned to a full commit SHA,
-                          or that is pinned to a commit or a path this repository does not have.
+3. INVALID PINNED URL   - a same-repository `blob/` URL that names neither a full commit SHA nor
+                          the live branch, or that is pinned to a commit or a path this
+                          repository does not have, or that names the live branch with a path
+                          that is not tracked.
 
 Why class 3 exists
 ------------------
 Archiving working material and replacing the references with commit links is only safe if those
-links actually resolve. A `blob/main/...` URL is mutable and will rot the moment `main` moves; a
-`blob/<sha>/...` URL to a path that never existed at that commit is already dead. Both used to
-pass this checker silently, because HTTPS targets were skipped wholesale — which made the
-"fail-closed" claim in this docstring untrue for precisely the references the archival work
-created. Reported by an automated review.
+links actually resolve. A `blob/<sha>/...` URL to a path that never existed at that commit is
+already dead; a `blob/<branch>/...` URL to material that is not in the tree resolves today only by
+accident. Both used to pass this checker silently, because HTTPS targets were skipped wholesale —
+which made the "fail-closed" claim in this docstring untrue for precisely the references the
+archival work created. Reported by an automated review.
+
+The live-document exception, stated rather than implied
+-------------------------------------------------------
+A URL naming the **live branch** is accepted when its path is **currently tracked**. This is
+deliberate and is not a relaxation: a link to a living document — `blob/main/SECURITY.md` in an
+issue template — should show the policy as it stands, and pinning it to a commit would freeze a
+published policy at an old revision forever. Seven such links exist and all are correct.
+
+Every other mutable revision is rejected, including a tag, a feature branch, and a typo such as
+`mian`, because those resolve to nothing or stop resolving without warning. The exception is
+recorded in `contracts/verification-sequence.md` too; an implementation that is more permissive
+than its contract is a defect even when the implementation is the more useful of the two.
 
 Commit objects are read locally with `git cat-file`. This never fetches: a reference to a commit
 this clone does not have is reported as a failure rather than assumed good, because "I could not
@@ -95,10 +109,17 @@ def git(*args):
 
 
 def tracked_files():
-    code, out = git('ls-files')
+    """Every tracked path, split on NUL.
+
+    `out.split()` split on whitespace, so a legal Git pathname containing a space — `docs/design
+    notes.md` — became two bogus entries. The corpus would then try to open a root-level file that
+    does not exist, or report a valid link to that file as broken. `-z` is the only spelling that
+    survives every pathname Git permits.
+    """
+    code, out = git('ls-files', '-z')
     if code != 0:
         raise SystemExit('git ls-files failed; not a repository?')
-    return set(out.split())
+    return {entry for entry in out.split('\0') if entry}
 
 
 # The CANONICAL upstream identity, not whatever `origin` happens to be.
