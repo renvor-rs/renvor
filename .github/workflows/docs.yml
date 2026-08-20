@@ -37,20 +37,14 @@ jobs:
         with:
           tool: lychee
 
-      # Runs BEFORE the site build, because it is the cheapest check here and a broken
-      # cross-reference should not wait behind an `npm ci`.
+      # The documentation cross-reference check is NOT duplicated here.
       #
-      # This validates tracked Markdown against the GIT INDEX rather than the filesystem.
-      # `git rm --cached` untracks a file but leaves it on disk, so a filesystem check is
-      # structurally blind to references into untracked material — it once reported "0 broken"
-      # while eight links were broken. `lychee` below checks the BUILT SITE's links; this
-      # checks the repository's own documents, which lychee never sees.
-      #
-      # The script fails closed: it runs a positive and a negative control on every
-      # invocation and exits non-zero if either misbehaves, because a scan that cannot
-      # discriminate proves nothing about the tree it scanned.
-      - name: Documentation cross-reference check
-        run: python3 scripts/check-doc-references.py
+      # It ran as a workflow-only step until 2026-08-20, which meant `cargo xtask verify` could
+      # pass locally on a tree this job would reject — the exact local/automation divergence
+      # `contracts/verification-sequence.md` opens by forbidding. It is now step 11 of that
+      # sequence, and the `verify` jobs in `ci.yml` invoke the sequence, so CI exercises the
+      # xtask-owned gate rather than a copy of it that can drift.
+
 
       # `npm ci`, never `npm install`: the committed lockfile is the input, and a
       # resolution that differs from it is a failure rather than a convenience.

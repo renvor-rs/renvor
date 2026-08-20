@@ -1,25 +1,40 @@
 #!/usr/bin/env python3
-"""Validate every reference in tracked Markdown against the GIT INDEX, not the filesystem.
+"""Validate documentation references against the GIT INDEX and local GIT OBJECTS.
 
-Why the index and not `os.path.exists`
---------------------------------------
+Never against the filesystem
+----------------------------
 `git rm --cached` untracks a file but leaves it on disk. A validator that asks the filesystem
 therefore reports a reference to an untracked file as fine, and is structurally incapable of
 finding exactly the class of breakage that untracking creates. That is not hypothetical: an
 earlier version of this check reported "0 broken" while eight links were broken, including four
 in the independent-review packet that a reviewer is meant to open first.
 
-Two failure classes
--------------------
-1. BROKEN LINK           - a Markdown link whose relative target is not in the index.
-2. UNRESOLVED PATH REF   - a `specs/...`-shaped path in prose, a code span, or a table cell,
-                           pointing at material that is no longer tracked and is not pinned to
-                           an immutable commit.
+Three failure classes
+---------------------
+1. BROKEN LINK          - a Markdown link whose relative target is not in the index.
+2. UNRESOLVED PATH REF  - a `specs/...`-shaped path in prose, a code span, a comment, a manifest,
+                          or a workflow, pointing at material no longer tracked and not pinned to
+                          an immutable commit.
+3. INVALID PINNED URL   - a same-repository `blob/` URL that is not pinned to a full commit SHA,
+                          or that is pinned to a commit or a path this repository does not have.
+
+Why class 3 exists
+------------------
+Archiving working material and replacing the references with commit links is only safe if those
+links actually resolve. A `blob/main/...` URL is mutable and will rot the moment `main` moves; a
+`blob/<sha>/...` URL to a path that never existed at that commit is already dead. Both used to
+pass this checker silently, because HTTPS targets were skipped wholesale — which made the
+"fail-closed" claim in this docstring untrue for precisely the references the archival work
+created. Reported by an automated review.
+
+Commit objects are read locally with `git cat-file`. This never fetches: a reference to a commit
+this clone does not have is reported as a failure rather than assumed good, because "I could not
+check" and "I checked and it is fine" must not produce the same exit code.
 
 Controls
 --------
-Both a positive and a negative control run on every invocation. If either misbehaves the script
-fails, because a scan that cannot discriminate proves nothing about the tree it scanned.
+A full positive/negative control suite runs on every invocation and the script exits non-zero if
+any control misbehaves. A scan that cannot discriminate proves nothing about the tree it scanned.
 """
 import os
 import posixpath
@@ -28,87 +43,236 @@ import subprocess
 import sys
 
 LINK = re.compile(r'\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)')
+
+# A `specs/...` path in any position. The lookbehind stops it matching inside a longer path or
+# inside a URL, which class 3 handles separately and more strictly.
 PATHREF = re.compile(r'(?<![\w/.-])specs/[0-9]{3}-[a-z0-9-]+(?:/[A-Za-z0-9._-]+)*')
-# Anchored to the END of the text preceding a match: a path is resolved only when it directly
-# follows `.../blob/<sha>/`. Searching the whole prefix instead would exempt every later
-# reference on a line that happens to contain one pinned URL — a false negative in a checker
-# whose entire purpose is to miss nothing. Found by an automated review; see the control below.
+
+# Any github.com blob URL. The revision is captured loosely on purpose: a branch name or a short
+# SHA must be MATCHED and then REJECTED, not skipped by a regex that only accepts good input.
+BLOB = re.compile(
+    r'https://github\.com/(?P<owner>[A-Za-z0-9._-]+)/(?P<repo>[A-Za-z0-9._-]+)'
+    r'/blob/(?P<rev>[^/\s)]+)/(?P<path>[^)\s]+)')
+
+FULL_SHA = re.compile(r'^[0-9a-f]{40}$')
+
+# Anchored to the END of the preceding text: a path reference is exempt only when it directly
+# follows `.../blob/<sha>/`. Searching the whole prefix instead would exempt every later reference
+# on a line that happens to contain one pinned URL.
 PINNED_BEFORE = re.compile(r'https://github\.com/[^)\s]+/blob/[0-9a-f]{40}/$')
+
+# Files whose contents are generated, vendored, or binary; scanning them says nothing about
+# authored references.
+SKIP_PREFIXES = ('docs/build/', 'docs/node_modules/', 'docs/vendor/', 'docs/static/')
+TEXT_SUFFIXES = ('.md', '.mdx', '.rs', '.toml', '.yml', '.yaml', '.json', '.js', '.mjs',
+                 '.cjs', '.ts', '.sh', '.py', '.txt', '.lock')
+
+
+def git(*args):
+    """Run a git command, returning (exit_code, stdout)."""
+    done = subprocess.run(['git', *args], capture_output=True, text=True)
+    return done.returncode, done.stdout
 
 
 def tracked_files():
-    out = subprocess.run(['git', 'ls-files'], capture_output=True, text=True, check=True).stdout
+    code, out = git('ls-files')
+    if code != 0:
+        raise SystemExit('git ls-files failed; not a repository?')
     return set(out.split())
 
 
-def markdown_corpus(tracked):
+def repository_slug():
+    """`owner/repo` for this clone's origin, so only SAME-repository URLs are path-checked."""
+    code, out = git('remote', 'get-url', 'origin')
+    if code != 0:
+        return None
+    url = out.strip()
+    match = re.search(r'github\.com[:/]([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+?)(?:\.git)?$', url)
+    return f'{match.group(1)}/{match.group(2)}' if match else None
+
+
+class ObjectCache:
+    """Memoised local-object existence checks. Never fetches."""
+
+    def __init__(self):
+        self._commits = {}
+        self._paths = {}
+
+    def commit_exists(self, sha):
+        if sha not in self._commits:
+            self._commits[sha] = git('cat-file', '-e', f'{sha}^{{commit}}')[0] == 0
+        return self._commits[sha]
+
+    def path_exists_at(self, sha, path):
+        key = (sha, path)
+        if key not in self._paths:
+            self._paths[key] = git('cat-file', '-e', f'{sha}:{path}')[0] == 0
+        return self._paths[key]
+
+
+def link_corpus(tracked):
+    """Documents whose RELATIVE links are checked.
+
+    The Docusaurus site under `docs/` is excluded: its links are route-relative, not
+    file-relative, and `lychee` already checks them against the BUILT site. Its pinned URLs and
+    path references are still checked below — only relative-link resolution is skipped.
+    """
     return sorted(f for f in tracked
                   if f.endswith(('.md', '.mdx')) and not f.startswith('docs/'))
 
 
-def scan_text(path, text, tracked):
-    """Return (broken_links, unresolved_refs) for one document's text.
+def text_corpus(tracked):
+    """Every tracked text file.
+
+    Path references and pinned URLs live in Rust doc comments, Cargo manifests, and CI workflows
+    as readily as in Markdown. Restricting this scan to Markdown is what allowed four live
+    citations of a deleted research document to survive in `.rs`, `.toml`, and `.yml` files.
+    """
+    return sorted(f for f in tracked
+                  if f.endswith(TEXT_SUFFIXES) and not f.startswith(SKIP_PREFIXES))
+
+
+def scan_text(path, text, tracked, slug, cache, check_links=True):
+    """Return (broken_links, unresolved_refs, invalid_pins) for one file's text.
 
     Paths are resolved with `posixpath`, never `os.path`. `git ls-files` always reports
     forward-slash paths on every platform, but `os.path.normpath` produces backslashes on
-    Windows — so an `os.path` join would make every membership test fail there and report a
-    healthy repository as entirely broken. Markdown link targets are forward-slash by
-    definition, so POSIX semantics are the correct ones on both sides of the comparison.
+    Windows, so an `os.path` join would fail every membership test there and report a healthy
+    repository as entirely broken.
     """
-    broken, unresolved = [], []
+    broken, unresolved, invalid = [], [], []
     base = posixpath.dirname(path)
+
     for number, line in enumerate(text.split('\n'), 1):
-        for match in LINK.finditer(line):
-            target = match.group(1)
-            if target.startswith(('http://', 'https://', 'mailto:')):
+        if check_links:
+            for match in LINK.finditer(line):
+                target = match.group(1)
+                if target.startswith(('http://', 'https://', 'mailto:')):
+                    continue
+                resolved = posixpath.normpath(
+                    posixpath.join('' if target.startswith('/') else base, target.lstrip('/')))
+                if resolved not in tracked and not os.path.isdir(resolved):
+                    broken.append((number, target))
+
+        # Class 3 — same-repository blob URLs must be pinned, and must resolve.
+        for match in BLOB.finditer(line):
+            if slug is None or f'{match.group("owner")}/{match.group("repo")}' != slug:
+                continue  # another repository's URL is not ours to resolve
+            revision = match.group('rev')
+            # Strip delimiters the surrounding syntax owns, not the URL: markdown `)`,
+            # sentence punctuation, and the JS/YAML string quote a config file closes with.
+            target = match.group('path').rstrip('.,;:)>\'"`')
+            if not FULL_SHA.match(revision):
+                # A mutable revision (`main`, a branch, a tag, a shortened SHA) is rejected ONLY
+                # when the target is not currently tracked.
+                #
+                # A blanket rejection was specified and is wrong: `blob/main/SECURITY.md` in an
+                # issue template is a link to a LIVING document, and pinning it to a commit would
+                # make it show a stale policy forever. Seven such links exist and all are correct.
+                #
+                # The defect this class exists to catch is the archival one — a mutable link to
+                # material that is no longer in the tree, which resolves today only by accident
+                # and rots the moment the branch moves. `blob/main/specs/...` is exactly that, and
+                # it is still caught, because the path is not tracked.
+                if target not in tracked:
+                    invalid.append((number, f'{revision}/{target}',
+                                    'mutable revision AND the path is not currently tracked'))
                 continue
-            resolved = posixpath.normpath(
-                posixpath.join('' if target.startswith('/') else base, target.lstrip('/')))
-            if resolved not in tracked and not os.path.isdir(resolved):
-                broken.append((number, target))
-        # A path-like reference is resolved only when it sits inside a commit-pinned URL.
+            if not cache.commit_exists(revision):
+                invalid.append((number, f'{revision}/{target}',
+                                'commit object is not present in this clone'))
+                continue
+            if not cache.path_exists_at(revision, target):
+                invalid.append((number, f'{revision}/{target}',
+                                'path does not exist at that commit'))
+
+        # Class 2 — a path reference is resolved only inside a commit-pinned URL.
         for match in PATHREF.finditer(line):
             if PINNED_BEFORE.search(line[:match.start()]):
                 continue
             unresolved.append((number, match.group(0)))
-    return broken, unresolved
+
+    return broken, unresolved, invalid
 
 
-def controls(tracked):
+def controls(tracked, slug, cache):
     """Prove the scan discriminates before trusting anything it says about the tree."""
     failures = []
 
-    # NEGATIVE CONTROL: planted breakage must be detected.
-    bad = "[x](./definitely-not-a-tracked-file.md)\nSee `specs/001-governance-foundation/spec.md`.\n"
-    b, u = scan_text('CONTROL.md', bad, tracked)
-    if len(b) != 1:
-        failures.append(f'negative control: expected 1 broken link, detected {len(b)}')
-    if len(u) != 1:
-        failures.append(f'negative control: expected 1 unresolved path ref, detected {len(u)}')
+    def check(label, text, want_broken, want_unresolved, want_invalid):
+        b, u, i = scan_text('CONTROL.md', text, tracked, slug, cache)
+        if (len(b), len(u), len(i)) != (want_broken, want_unresolved, want_invalid):
+            failures.append(
+                f'{label}: expected (broken={want_broken}, unresolved={want_unresolved}, '
+                f'invalid={want_invalid}) but detected (broken={len(b)}, unresolved={len(u)}, '
+                f'invalid={len(i)})')
 
-    # NEGATIVE CONTROL 2 — the mixed line. A pinned reference earlier on the same line must NOT
-    # exempt an unpinned one after it. This exact false negative shipped once.
-    sha = '0123456789abcdef0123456789abcdef01234567'
-    mixed = (f'See [s](https://github.com/renvor-rs/renvor/blob/{sha}/specs/001-governance-foundation/spec.md) '
-             'and `specs/002-core-kernel/research.md` locally.\n')
-    _, u = scan_text('CONTROL.md', mixed, tracked)
-    if len(u) != 1:
-        failures.append(
-            f'negative control (mixed pinned/unpinned line): expected 1 unresolved ref, detected {len(u)}')
+    # A real commit and a path that really exists at it, for the positive cases below.
+    code, real_sha = git('rev-parse', 'HEAD')
+    real_sha = real_sha.strip()
+    if code != 0 or not FULL_SHA.match(real_sha):
+        failures.append('control setup: could not resolve HEAD to a full SHA')
+        return failures
+    base = f'https://github.com/{slug}/blob' if slug else 'https://github.com/x/y/blob'
+    # Assembled from parts so THIS FILE's own source does not contain a literal `specs/NNN-...`
+    # for the scan to find. Spelling it out made the checker report itself, which teaches a future
+    # reader to add an exclusion — and an excluded file is one the checker no longer guards.
+    s1 = 'specs/' + '001-governance-foundation/spec.md'
+    s2 = 'specs/' + '002-core-kernel/research.md'
 
-    # POSITIVE CONTROL: valid content must NOT be flagged.
-    pinned = ('https://github.com/renvor-rs/renvor/blob/'
-              '0123456789abcdef0123456789abcdef01234567/specs/001-governance-foundation/spec.md')
-    good = f'[README](README.md) and [pinned]({pinned}) and [ext](https://example.com/specs/002-x/y.md)\n'
-    b, u = scan_text('CONTROL.md', good, tracked)
-    if b:
-        failures.append(f'positive control: valid links flagged as broken: {b}')
-    if u:
-        failures.append(f'positive control: pinned/external refs flagged as unresolved: {u}')
+    # ── NEGATIVE CONTROLS — planted breakage MUST be detected ────────────────────────────
+    check('negative: broken relative link + bare path ref',
+          f'[x](./definitely-not-a-tracked-file.md)\nSee `{s1}`.\n',
+          1, 1, 0)
 
-    # CONTROL: resolved paths must be POSIX-form on every platform, because that is the form
-    # `git ls-files` reports. A backslash here means the membership test below is comparing
-    # against a shape the index never contains, which fails a healthy repository on Windows.
+    check('negative: mixed pinned and unpinned on ONE line',
+          f'See [s]({base}/{real_sha}/README.md) and `{s2}` here.\n',
+          0, 1, 0)
+
+    # A mutable revision is a defect only when it points at material that is NOT in the tree.
+    # `absent` is a path this repository does not track, which is the archival case.
+    absent = 'no-such-archived-document-xyzzy.md'
+    check('negative: mutable branch URL to an UNTRACKED path',
+          f'[c]({base}/main/{absent})\n', 0, 0, 1)
+
+    check('negative: shortened SHA to an UNTRACKED path',
+          f'[c]({base}/{real_sha[:12]}/{absent})\n', 0, 0, 1)
+
+    check('negative: nonexistent path at a real commit',
+          f'[c]({base}/{real_sha}/no/such/file-xyzzy.md)\n', 0, 0, 1)
+
+    check('negative: nonexistent commit',
+          f'[c]({base}/{"0" * 40}/README.md)\n', 0, 0, 1)
+
+    # `/specs/...` inside a same-repository URL: the PATHREF lookbehind cannot see it, so only the
+    # blob check can. Pinned to a bad commit, it must be caught as an invalid pin.
+    check('negative: /specs/... inside a same-repository URL, badly pinned',
+          f'[s]({base}/main/{s2})\n', 0, 0, 1)
+
+    # ── POSITIVE CONTROLS — valid content must NOT be flagged ────────────────────────────
+    check('positive: tracked relative link',
+          '[readme](README.md)\n', 0, 0, 0)
+
+    check('positive: correctly pinned same-repository file',
+          f'[c]({base}/{real_sha}/CONSTITUTION.md)\n', 0, 0, 0)
+
+    # A mutable link to a LIVING document is correct and must not be flagged. Seven such links
+    # exist in issue templates, the crate README, and the Docusaurus config; pinning them would
+    # freeze a published policy at an old commit forever.
+    check('positive: mutable branch URL to a TRACKED path (a live document)',
+          f'[c]({base}/main/CONSTITUTION.md)\n', 0, 0, 0)
+
+    check('positive: external host is not our path to resolve',
+          f'[ext](https://example.com/{s2})\n', 0, 0, 0)
+
+    check('positive: another repository\'s blob URL is not ours to resolve',
+          f'[o](https://github.com/other-org/other-repo/blob/main/{s2})\n',
+          0, 0, 0)
+
+    # ── INVARIANT CONTROL ────────────────────────────────────────────────────────────────
+    # Resolved paths must be POSIX-form on every platform, because that is the form
+    # `git ls-files` reports. A backslash means the membership test is comparing against a shape
+    # the index never contains, which fails a healthy repository on Windows.
     probe = posixpath.normpath(posixpath.join('governance', '../contracts/api-stability.md'))
     if '\\' in probe or probe != 'contracts/api-stability.md':
         failures.append(f'separator control: path resolution is not POSIX-form (got {probe!r})')
@@ -118,31 +282,42 @@ def controls(tracked):
 
 def main():
     tracked = tracked_files()
-    corpus = markdown_corpus(tracked)
+    slug = repository_slug()
+    cache = ObjectCache()
 
-    control_failures = controls(tracked)
+    control_failures = controls(tracked, slug, cache)
     if control_failures:
         print('CONTROLS FAILED — this scan cannot be trusted:')
         for failure in control_failures:
             print(f'  {failure}')
         return 2
-    print('controls: negative detects planted breakage, positive passes valid content — OK')
+    print(f'controls: 7 negative, 5 positive, 1 invariant — all discriminate correctly '
+          f'(repository {slug})')
 
-    broken_total = unresolved_total = 0
+    links = set(link_corpus(tracked))
+    corpus = text_corpus(tracked)
+    broken_total = unresolved_total = invalid_total = 0
+
     for path in corpus:
         with open(path, encoding='utf-8', errors='replace') as handle:
-            broken, unresolved = scan_text(path, handle.read(), tracked)
+            text = handle.read()
+        broken, unresolved, invalid = scan_text(
+            path, text, tracked, slug, cache, check_links=path in links)
         for number, target in broken:
             print(f'BROKEN LINK        {path}:{number} -> {target}')
         for number, ref in unresolved:
             print(f'UNRESOLVED PATH    {path}:{number} -> {ref}')
+        for number, ref, why in invalid:
+            print(f'INVALID PINNED URL {path}:{number} -> {ref}  ({why})')
         broken_total += len(broken)
         unresolved_total += len(unresolved)
+        invalid_total += len(invalid)
 
-    print(f'\ndocuments scanned:      {len(corpus)}')
+    print(f'\nfiles scanned:          {len(corpus)}  ({len(links)} with relative-link checking)')
     print(f'broken links:           {broken_total}')
     print(f'unresolved path refs:   {unresolved_total}')
-    return 1 if (broken_total or unresolved_total) else 0
+    print(f'invalid pinned URLs:    {invalid_total}')
+    return 1 if (broken_total or unresolved_total or invalid_total) else 0
 
 
 if __name__ == '__main__':

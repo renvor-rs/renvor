@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.0.0"
-status: "normative — enforced executably by `xtask`. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "normative — enforced executably by `xtask`. 1.1.0 (2026-08-20) adds the documentation cross-reference step and restores the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -22,16 +22,39 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Toolchain probe | — | Rust (pinned), and Node LTS when step 7 is in scope |
+| 1 | Toolchain probe | — | Rust (pinned), Node LTS, `python3` |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
 | 4 | Tests | `cargo test --workspace --all-features` | Rust |
 | 5 | API documentation | `cargo doc --workspace --no-deps` with warnings denied | Rust |
 | 6 | Dependency and licence policy | `cargo deny check` | `cargo-deny` |
-| 7 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
-| 8 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
-| 9 | Link check | `lychee` over the built documentation output | `lychee` |
-| 10 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+| 7 | Architecture invariants | crate DAG, facade isolation, lean compile, publishable dependencies, instability wording, executable name — each with a control | Rust |
+| 8 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
+| 9 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
+| 10 | Link check | `lychee` over the built documentation output | `lychee` |
+| 11 | Documentation cross-references | `python3 scripts/check-doc-references.py` over tracked text | `python3` |
+| 12 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+
+**Step 7 was missing from this table until 2026-08-20.** It has run in `xtask` since Phase 002.
+The omission is recorded rather than quietly filled in, because a contract that under-describes
+what the command does is the same defect class as a command that under-performs what the contract
+promises.
+
+### Step 10 and step 11 check different things
+
+Step 10 runs `lychee` over `docs/build` — the **built site**. It never sees the repository's own
+Markdown, so a broken reference between `governance/`, `contracts/`, and `decisions/`, or a
+citation of material that archival untracked, passes it untouched.
+
+Step 11 validates the **repository's** references against the git index and local git objects:
+relative links, `specs/`-shaped path references anywhere in tracked text, and same-repository
+`blob/` URLs, which must be pinned to a full commit SHA that this clone actually has, at a path
+that actually exists there. It never fetches — "I could not check" and "I checked and it is fine"
+must not produce the same exit code.
+
+**It runs here and not only in a workflow.** A check that lives solely in CI lets
+`cargo xtask verify` pass locally on a tree CI will reject, which is precisely the divergence the
+opening sentence of this contract forbids.
 
 ### Step 7 command note
 
@@ -81,7 +104,7 @@ The last line matters. A partial run that reports success is the failure mode th
 | 0 | Every step ran and passed |
 | 1 | A step ran and failed |
 | 2 | A required toolchain is missing; no steps ran |
-| 3 | The working tree was dirty after a successful run (step 10) |
+| 3 | The working tree was dirty after a successful run (step 12) |
 
 ## Working-tree cleanliness
 

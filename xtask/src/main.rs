@@ -24,11 +24,11 @@ const EXIT_OK: i32 = 0;
 const EXIT_STEP_FAILED: i32 = 1;
 /// A required toolchain is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
-/// The working tree was dirty after an otherwise successful run (step 11).
+/// The working tree was dirty after an otherwise successful run (step 12).
 const EXIT_DIRTY_TREE: i32 = 3;
 
 /// Total number of steps in the sequence, used only for progress output.
-const TOTAL_STEPS: usize = 11;
+const TOTAL_STEPS: usize = 12;
 
 /// A tool the sequence needs, how to detect it, and how to install it.
 struct Tool {
@@ -50,7 +50,7 @@ const REQUIRED: &[Tool] = &[
         program: "git",
         probe: &["--version"],
         name: "git",
-        purpose: "secret scanning and working-tree cleanliness, steps 8 and 11",
+        purpose: "secret scanning and working-tree cleanliness, steps 8 and 12",
         install: "https://git-scm.com/downloads",
     },
     Tool {
@@ -73,6 +73,13 @@ const REQUIRED: &[Tool] = &[
         name: "cargo-deny",
         purpose: "dependency and licence policy, step 6",
         install: "cargo install cargo-deny --locked",
+    },
+    Tool {
+        program: "python3",
+        probe: &["--version"],
+        name: "python3",
+        purpose: "documentation cross-reference check, step 11",
+        install: "https://www.python.org/downloads/ (or your platform's package manager); `python` is accepted where `python3` is not installed",
     },
     Tool {
         program: "gitleaks",
@@ -251,7 +258,7 @@ fn verify() -> i32 {
         eprintln!();
         eprintln!("This is a FAILURE, not a skip. The sequence has no conditional steps:");
         eprintln!("a check that cannot run is a failure (FR-023). Steps 1-7 above did run");
-        eprintln!("and did pass; steps 8-10 did not run.");
+        eprintln!("and did pass; steps 8-12 did not run.");
         return EXIT_STEP_FAILED;
     }
     if !run(
@@ -305,16 +312,42 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 11: working-tree cleanliness ----
+    // ---- Step 11: documentation cross-references ----
+    //
+    // `lychee` above checks the BUILT SITE's links. It never sees the repository's own
+    // documents, so a broken reference between `governance/`, `contracts/`, and `decisions/` —
+    // or a citation of material that archival untracked — passes step 10 untouched.
+    //
+    // This runs HERE rather than only in the `docs` workflow. A check that exists solely in CI
+    // means `cargo xtask verify` can pass locally on a tree CI will reject, which is exactly the
+    // local/automation drift the verification-sequence contract forbids: one command, one
+    // behaviour, locally and in automation. The workflow now invokes this sequence instead of
+    // duplicating the step, so the two cannot diverge.
+    //
+    // The script is fail-closed: it runs its own positive and negative controls first and exits
+    // non-zero if any control misbehaves, so "the scan found nothing" cannot be produced by a
+    // scan that read nothing.
+    if !run(
+        11,
+        "documentation cross-references",
+        python_program(),
+        &["scripts/check-doc-references.py"],
+        &root,
+        &[],
+    ) {
+        return EXIT_STEP_FAILED;
+    }
+
+    // ---- Step 12: working-tree cleanliness ----
     // This is what proves the ignore rules are correct rather than merely present.
     match dirty_entries(&root) {
         Err(message) => {
-            step_fail(11, "working-tree cleanliness", &message);
+            step_fail(12, "working-tree cleanliness", &message);
             EXIT_STEP_FAILED
         }
         Ok(entries) if entries.is_empty() => {
             step_ok(
-                11,
+                12,
                 "working-tree cleanliness",
                 "no untracked or modified files",
             );
@@ -324,7 +357,7 @@ fn verify() -> i32 {
         }
         Ok(entries) => {
             step_fail(
-                11,
+                12,
                 "working-tree cleanliness",
                 "the working tree is not clean",
             );
@@ -355,7 +388,44 @@ fn probe_tooling() -> Vec<&'static Tool> {
     REQUIRED.iter().filter(|t| !present(t)).collect()
 }
 
+/// The Python interpreter to invoke, resolved once.
+///
+/// Unix installs it as `python3`. Windows installs `python.exe`, and only some distributions add
+/// a `python3` shim — so probing for `python3` alone would report a correctly configured Windows
+/// machine as missing tooling and refuse to run any check at all. Both names are tried; the step
+/// invokes whichever answered.
+fn python_program() -> &'static str {
+    static RESOLVED: std::sync::OnceLock<&'static str> = std::sync::OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        for candidate in ["python3", "python"] {
+            let responded = Command::new(candidate)
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false);
+            if responded {
+                return candidate;
+            }
+        }
+        // Neither responded. Return the canonical name so the probe reports a recognisable
+        // failure rather than an empty one; `present` below will still say it is missing.
+        "python3"
+    })
+}
+
 fn present(tool: &Tool) -> bool {
+    if tool.program == "python3" {
+        // Ask the resolver, so a machine with only `python` is not reported as missing Python.
+        return Command::new(python_program())
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+    }
     Command::new(tool.program)
         .args(tool.probe)
         .stdout(Stdio::null())
@@ -1036,6 +1106,61 @@ const SC022_REQUIRED_OCCURRENCES: usize = 1;
 #[cfg(test)]
 mod tests {
     use super::scan_manifests;
+
+    /// `TOTAL_STEPS` equals the number of steps the published contract lists.
+    ///
+    /// The contract table drifted from the implementation once already: it listed ten steps while
+    /// `xtask` ran eleven, having never mentioned the architecture-invariants step at all. Nothing
+    /// detected that, because nothing compared the two. This does.
+    ///
+    /// The contract is read with `include_str!`, so it resolves at COMPILE time — a moved or
+    /// deleted contract is a build failure rather than a silently skipped test.
+    #[test]
+    fn the_step_count_matches_the_published_contract() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+
+        // Rows of the step table look like `| 7 | Architecture invariants | ... |`.
+        let mut numbers: Vec<usize> = Vec::new();
+        for line in CONTRACT.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix('|') else {
+                continue;
+            };
+            let Some((first, _)) = rest.split_once('|') else {
+                continue;
+            };
+            if let Ok(number) = first.trim().parse::<usize>() {
+                numbers.push(number);
+            }
+        }
+
+        // POSITIVE CONTROL FIRST. A parse that matched nothing would make every assertion below
+        // vacuously true, which is the failure mode this whole file is written against.
+        assert!(
+            numbers.len() >= super::TOTAL_STEPS,
+            "the contract parse found only {} numbered rows; it is not reading the step table",
+            numbers.len()
+        );
+
+        // The step table is the leading run 1, 2, 3, ... — the exit-code table that follows also
+        // has numbered rows, and it legitimately starts again at 0.
+        let mut steps = 0usize;
+        for (index, number) in numbers.iter().enumerate() {
+            if *number == index + 1 {
+                steps = *number;
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(
+            steps,
+            super::TOTAL_STEPS,
+            "the contract publishes {steps} steps but TOTAL_STEPS is {}. One of them was changed \
+             without the other; they are the same promise stated twice.",
+            super::TOTAL_STEPS
+        );
+    }
 
     /// A publishable manifest with the `{ path, version }` form the rule permits.
     fn compliant() -> (String, String) {
