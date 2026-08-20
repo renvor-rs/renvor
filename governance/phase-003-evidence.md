@@ -4,7 +4,14 @@
 
 This is the **public summary**. The full evidence ledger and the review pack are internal working
 records and are **retained in the project's private records rather than in this repository**. Git
-history is unchanged: earlier commits and pull requests still contain them.
+history is unchanged: earlier commits and pull requests still contain them, and the ledger remains
+readable at merge commit `01327b1`: [`phase-003-evidence.md` as of 01327b1](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md).
+
+**A reviewer following `phase-003-independent-review-packet.md` needs this.** The packet sends you
+to numbered sections — `§3` (the 64-row requirement map), `§6` (the advisory reviews and their
+disposition), `§7` (the T093a ruling) — and those sections exist in the ledger, not in this
+summary. Every such citation in the packet is a link pinned to `01327b1` and lands on the section
+itself.
 
 ## What the phase delivered
 

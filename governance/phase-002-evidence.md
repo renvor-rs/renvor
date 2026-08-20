@@ -4,7 +4,10 @@
 
 This is the **public summary**. The full working ledger is an internal working record and is
 **retained in the project's private records rather than in this repository**. Git history is
-unchanged: earlier commits and pull requests still contain it.
+unchanged: earlier commits and pull requests still contain it, and it remains readable at merge
+commit `01327b1`: [`phase-002-evidence.md` as of 01327b1](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-002-evidence.md). Citations that name a
+numbered section — `§W-006` and the rest — link there directly, because those sections exist in
+the ledger and not in this summary.
 
 ## What the phase delivered
 

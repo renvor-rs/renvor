@@ -8,6 +8,11 @@ working record and is **retained in the project's private records rather than in
 Everything below is the durable conclusion; nothing that a reader needs in order to understand,
 build, verify, or audit the shipped result has been left out.
 
+**The full ledger is still readable.** Git history was not rewritten, so it remains at merge commit
+`01327b1`: [`phase-001-evidence.md` as of 01327b1](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md). Citations elsewhere in this
+repository that name a numbered section — `§3u`, `§3av`, `§6`, and the rest — link there directly,
+because those sections exist in the ledger and not in this summary.
+
 **Git history is unchanged.** Earlier commits and the pull requests that carried them still contain
 the full ledger, and this summary does not remove it from the public history.
 
