@@ -331,7 +331,7 @@ looking.
 Every figure above is read from a **committed** `Cargo.lock`, which is what FR-040 requires. ADR-0003
 records that *reusable library crates* do not commit a lockfile. Both hold, because the two
 statements govern **different objects** — the full reconciliation is in
-[[`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md)](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D12, and the short form
+[`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D12, and the short form
 is:
 
 - the *version-requirement* half of ADR-0003's row is a property of **each crate's manifest**, and

@@ -48,7 +48,8 @@
 //! provider examination. Counting it as both would double-count the same act of traversal and
 //! would put provider examinations at `providers + edges`, which exceeds the `2 × providers`
 //! allowance at any interesting graph — a budget the design could never meet. See
-//! `specs/002-core-kernel/research.md` §D8.
+//! the Phase 002 research record §D8, retained in public Git history rather than the current
+//! tree: <https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md>
 //!
 //! Building the adjacency list and rendering a cycle diagnostic are outside the budget. The budget
 //! measures *resolution*; folding construction into it would make the number depend on how the

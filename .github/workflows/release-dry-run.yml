@@ -58,7 +58,8 @@ env:
   # `xtask` declares `publish = false` and is excluded automatically by the workspace commands —
   # verified: the dry run uploads 4 crates, not 5.
   #
-  # See specs/002-core-kernel/research.md D13 for the four-case experiment, and proposed ADR-0008.
+  # See the Phase 002 research record §D13 for the four-case experiment, and proposed ADR-0008:
+  # https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md
   CRATES: "renvor-core renvor-config renvor-testkit renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
