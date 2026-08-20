@@ -44,6 +44,12 @@ import sys
 
 LINK = re.compile(r'\[[^\]]*\]\(([^)#\s]+)(?:#[^)]*)?\)')
 
+# Reference-style links: `[guide][g]` elsewhere, with `[g]: some/path.md` defining the target.
+# Only the DEFINITION carries a path, so validating definitions covers the whole form — including
+# the collapsed `[g][]` and shortcut `[g]` spellings, which share it. Inline syntax alone left
+# this entire class unchecked: a definition pointing at a deleted file produced no finding.
+REF_DEF = re.compile(r'^\s{0,3}\[([^\]^]+)\]:\s*<?([^>\s]+)>?')
+
 # A `specs/...` path in any position, INCLUDING one written `../specs/...`, `./specs/...`, or
 # `/specs/...`.
 #
@@ -105,6 +111,11 @@ def tracked_files():
 #
 # This tree's citations name this repository. The constant says so.
 CANONICAL_SLUG = 'renvor-rs/renvor'
+
+# The only mutable revision a same-repository URL may name. A link to a living document should
+# track the live branch; a link to anything else mutable is a tag that moves, a branch that gets
+# deleted, or a typo — all of which resolve to nothing.
+LIVE_BRANCH = 'main'
 
 
 def repository_slug():
@@ -181,6 +192,18 @@ def scan_text(path, text, tracked, slug, cache, check_links=True):
                 if resolved not in tracked and not tracked_dir:
                     broken.append((number, target))
 
+            definition = REF_DEF.match(line)
+            if definition:
+                target = definition.group(2)
+                if not target.startswith(('http://', 'https://', 'mailto:', '#')):
+                    resolved = posixpath.normpath(
+                        posixpath.join('' if target.startswith('/') else base,
+                                       target.split('#')[0].split('?')[0].lstrip('/')))
+                    directory = f'{resolved}/'
+                    tracked_dir = any(entry.startswith(directory) for entry in tracked)
+                    if resolved not in tracked and not tracked_dir:
+                        broken.append((number, target))
+
         # Class 3 — same-repository blob URLs must be pinned, and must resolve.
         for match in BLOB.finditer(line):
             if slug is None or f'{match.group("owner")}/{match.group("repo")}' != slug:
@@ -189,6 +212,12 @@ def scan_text(path, text, tracked, slug, cache, check_links=True):
             # Strip delimiters the surrounding syntax owns, not the URL: markdown `)`,
             # sentence punctuation, and the JS/YAML string quote a config file closes with.
             target = match.group('path').rstrip('.,;:)>\'"`')
+            # A fragment or query belongs to the URL, not to the path. Leaving `#reporting` or
+            # `#L20` attached made every anchored citation look like a missing file and rejected
+            # valid links — a false positive in a gate that blocks merges.
+            target = target.split('#', 1)[0].split('?', 1)[0]
+            if not target:
+                continue  # a bare fragment link into the same page has no path to resolve
             if not FULL_SHA.match(revision):
                 # A mutable revision (`main`, a branch, a tag, a shortened SHA) is rejected ONLY
                 # when the target is not currently tracked.
@@ -201,7 +230,13 @@ def scan_text(path, text, tracked, slug, cache, check_links=True):
                 # material that is no longer in the tree, which resolves today only by accident
                 # and rots the moment the branch moves. `blob/main/specs/...` is exactly that, and
                 # it is still caught, because the path is not tracked.
-                if target not in tracked:
+                if revision != LIVE_BRANCH:
+                    # Not a SHA and not the live branch: a tag, a feature branch, or a typo like
+                    # `mian`. Such a URL is dead or will become dead, and checking only the path
+                    # let it pass because the path happened to be tracked.
+                    invalid.append((number, f'{revision}/{target}',
+                                    f'revision is neither a full commit SHA nor `{LIVE_BRANCH}`'))
+                elif target not in tracked:
                     invalid.append((number, f'{revision}/{target}',
                                     'mutable revision AND the path is not currently tracked'))
                 continue
@@ -291,6 +326,12 @@ def controls(tracked, slug, cache):
     check('negative: link to an untracked directory present only locally',
           '[x](.claude/)\n', 1, 0, 0)
 
+    check('negative: reference-style definition pointing at a missing file',
+          '[guide][g]\n\n[g]: no-such-file-xyzzy.md\n', 1, 0, 0)
+
+    check('negative: mutable revision that is neither a SHA nor the live branch',
+          f'[s]({base}/mian/SECURITY.md)\n', 0, 0, 1)
+
     # ── POSITIVE CONTROLS — valid content must NOT be flagged ────────────────────────────
     check('positive: tracked relative link',
           '[readme](README.md)\n', 0, 0, 0)
@@ -308,6 +349,16 @@ def controls(tracked, slug, cache):
     # beneath it, which is what makes the link resolve.
     check('positive: link to a directory the index has entries under',
           '[c](contracts/)\n', 0, 0, 0)
+
+    # Anchors and queries belong to the URL, not the path. Rejecting these was a false positive.
+    check('positive: live-branch URL carrying a fragment',
+          f'[x]({base}/main/SECURITY.md#reporting)\n', 0, 0, 0)
+
+    check('positive: pinned URL carrying a line anchor',
+          f'[x]({base}/{real_sha}/CONSTITUTION.md#L20)\n', 0, 0, 0)
+
+    check('positive: reference-style definition pointing at a tracked file',
+          '[readme][r]\n\n[r]: README.md\n', 0, 0, 0)
 
     check('positive: external host is not our path to resolve',
           f'[ext](https://example.com/{s2})\n', 0, 0, 0)
@@ -338,7 +389,7 @@ def main():
         for failure in control_failures:
             print(f'  {failure}')
         return 2
-    print(f'controls: 11 negative, 6 positive, 1 invariant — all discriminate correctly '
+    print(f'controls: 13 negative, 9 positive, 1 invariant — all discriminate correctly '
           f'(repository {slug})')
 
     links = set(link_corpus(tracked))
