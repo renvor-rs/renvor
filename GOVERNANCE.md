@@ -184,9 +184,10 @@ falsify the amendment. The identifier is retired. See
 
 **Ahmed Anbar's acceptance of Phase 003 is a human maintainer decision, and it is not independent
 review.** No independent human requirements-and-security review of Phase 003 has occurred. Every
-review performed inside Phase 003 — including every automated non-person review — is advisory and
-non-independent, and an automated reviewer is not a person and so cannot be independent under any
-reading of the criteria. Windows coverage came from CI, which is automated platform evidence rather
+review performed inside Phase 003 was **internal advisory review** — advisory and
+**non-independent**. Some of it was performed by automated tooling rather than by a person, and
+no reviewer of any kind was independent of the author. **The independent human review
+requirement was not satisfied.** Windows coverage came from CI, which is automated platform evidence rather
 than human review.
 
 ### Decision-record review under W-006

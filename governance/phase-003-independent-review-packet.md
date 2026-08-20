@@ -162,10 +162,12 @@ This section exists so the decision to close Phase 003 is on the record with its
 > **not satisfied**. Automated and maintainer reviews are supporting evidence, **not** independent
 > review.
 
-**On the automated reviews.** Phase 003 used automated non-person review extensively, and that
-is recorded rather than hidden. It does not move the needle on independence: §0 requires a
-**person**, and an automated reviewer is not one. Its value was finding defects — 14 confirmed,
-8 refuted with stated grounds — not conferring approval.
+**On the internal advisory reviews.** Phase 003 used internal advisory review extensively, much
+of it performed by automated tooling rather than by a person. That is recorded rather than
+hidden, and it does not move the needle on independence: §0 requires **a person who is not the
+author**, and none of this review was that. **The independent human review requirement was not
+satisfied.** Its value was finding defects — 14 confirmed, 8 refuted with stated grounds — not
+conferring approval.
 
 ## 0. What counts as independent, and what does not
 
