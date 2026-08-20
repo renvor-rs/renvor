@@ -1029,13 +1029,13 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
     // Located by its own text rather than by line number, so editing the document around it does
     // not silently disable this check.
     let occurrences = text.matches(SC022_SENTENCE).count();
-    if occurrences < SC022_REQUIRED_OCCURRENCES {
+    if occurrences != SC022_REQUIRED_OCCURRENCES {
         step_fail(
             7,
             "architecture invariants",
             &format!(
                 "the instability-closure sentence appears {occurrences} time(s) in \
-                 contracts/api-stability.md; SC-022 requires at least \
+                 contracts/api-stability.md; SC-022 requires exactly \
                  {SC022_REQUIRED_OCCURRENCES}"
             ),
         );
@@ -1086,7 +1086,7 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
 const SC022_SENTENCE: &str =
     "the first real transport adapter has exercised the surface and its feedback has been applied";
 
-/// How many copies of the sentence must exist.
+/// How many copies of the sentence must exist. **Exactly** this many, not at least.
 ///
 /// # Why this went from 3 to 1 on 2026-08-19, and why that is not a loosened gate
 ///
@@ -1101,6 +1101,14 @@ const SC022_SENTENCE: &str =
 /// unchecked. The substantive checks below — that the closure clause names **no phase number**,
 /// and the two positive controls proving the clause was really extracted — are unchanged and still
 /// run.
+///
+/// # Why the comparison is `!=` and not `<`
+///
+/// A lower bound would accept a second copy appearing later. That is exactly the drift the single
+/// authoritative home was adopted to eliminate: with two copies, one can be edited and the other
+/// left, and a `>=` check passes throughout. `contracts/api-stability.md` states it is the single
+/// authoritative copy, so the check enforces precisely that rather than a weaker property the
+/// contract does not claim.
 const SC022_REQUIRED_OCCURRENCES: usize = 1;
 
 #[cfg(test)]
