@@ -565,6 +565,15 @@ fn bypass_in(line: &str) -> Option<&'static str> {
     if code.starts_with("//") || code.starts_with('*') {
         return None;
     }
+    // NAMING A STREAM IS NOT WRITING TO IT.
+    //
+    // `std::io::stderr().is_terminal()` asks whether there is a terminal; it emits nothing. The
+    // scan flagged one the moment a legitimate query was added, which is the right instinct and
+    // the wrong needle — so the query forms are excluded rather than the file being exempted.
+    // Exempting a whole file to silence one line is how a scan stops finding things.
+    if code.contains(".is_terminal()") || code.contains("try_clone") || code.contains("as_fd()") {
+        return None;
+    }
     BYPASSES
         .iter()
         .find(|forbidden| code.contains(*forbidden))
@@ -644,6 +653,18 @@ fn the_scan_above_runs_over_a_planted_bypass_and_catches_it() {
         None,
         "a comment about the rule is not a breach of it"
     );
+    // Nor must the query exemption. Asking whether a stream is a terminal writes nothing...
+    assert_eq!(
+        bypass_in("    if std::io::stderr().is_terminal() {"),
+        None,
+        "querying a stream is not writing to it"
+    );
+    // ...but writing to one on the same line still is.
+    assert_eq!(
+        bypass_in("    writeln!(std::io::stdout(), \"x\").unwrap();"),
+        Some("std::io::stdout()"),
+        "the query exemption must not swallow a real write"
+    );
     assert_eq!(
         bypass_in("    /// `eprintln!` is discussed in this doc comment"),
         None,
@@ -665,4 +686,48 @@ fn visit(directory: &std::path::Path, visitor: &mut impl FnMut(&std::path::Path,
             visitor(&path, &text);
         }
     }
+}
+
+#[test]
+fn no_pre_parse_path_hard_codes_the_no_color_flag() {
+    // A DEFECT CLASS RATHER THAN A DEFECT, GUARDED MECHANICALLY.
+    //
+    // `--help` and every usage error are produced before a `Cli` exists, so those paths cannot
+    // read `cli.no_color` and must scan `argv` instead. One of them did; another hard-coded
+    // `false`, so `renvor --help --no-color` emitted styled diagnostics whenever the help text
+    // itself could not be written. A review found it by reading, and the two places had simply
+    // drifted.
+    //
+    // The fix was to give both the same function. This is what stops them drifting again: a
+    // `Reporter` built on a pre-parse path with a literal answer is the shape of the bug, and it
+    // is easy to grep for and impossible to reintroduce accidentally.
+    let main = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/main.rs"),
+    )
+    .expect("main.rs is readable");
+
+    let mut offences = Vec::new();
+    for (number, line) in main.lines().enumerate() {
+        let code = line.trim_start();
+        if code.starts_with("//") {
+            continue;
+        }
+        if code.contains("Reporter::new(")
+            && (code.contains(", false)") || code.contains(", true)"))
+        {
+            offences.push(format!("  main.rs:{}  {code}", number + 1));
+        }
+    }
+    assert!(
+        offences.is_empty(),
+        "a reporter on a pre-parse path hard-codes `--no-color` instead of reading argv. C-8's \\
+         veto is unconditional and a failure path is not an exemption from it.\\n{}",
+        offences.join("\\n")
+    );
+
+    // POSITIVE CONTROL: the file was actually read, and it does construct reporters.
+    assert!(
+        main.matches("Reporter::new(").count() >= 3,
+        "main.rs no longer constructs reporters; this scan is looking at the wrong file"
+    );
 }

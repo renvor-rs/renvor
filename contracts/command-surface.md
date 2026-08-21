@@ -75,6 +75,14 @@ silently ignored, because that would let a Phase 003 command line quietly change
 ## Interaction and terminals
 
 - The wizard is entered **only** when `stdin` is a terminal.
+- It additionally needs somewhere to **draw**: prompts are written to `stderr`, so if `stdin` is a
+  terminal and `stderr` is not, the command exits `2` naming the flags to use instead. It refuses
+  **before drawing anything**, so a redirected `stderr` receives the diagnostic and nothing else.
+
+  `stdin` still decides *eligibility* and `stderr` only decides *drawability*, and the two are
+  deliberately not merged: treating a redirected `stderr` as "no wizard" would make
+  `renvor new --path ./x 2>log` generate a project from defaults nobody was asked for, which
+  FR-010 forbids.
 - When `stdin` is not a terminal and a required answer was not supplied by a flag, the command exits
   non-zero naming the missing flags. It MUST NOT block, and MUST NOT substitute a default (FR-010).
 - Cancellation at any prompt exits `4`, and the destination is untouched.

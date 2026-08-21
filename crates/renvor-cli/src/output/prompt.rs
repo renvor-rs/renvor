@@ -26,7 +26,7 @@
 //! for every case in [`classify`], on Rust 1.94.0. `tests/prompt_contract.rs` now asserts the same
 //! table against the shipped binary, so the measurement is a gate rather than a memory.
 
-use std::io::ErrorKind;
+use std::io::{ErrorKind, IsTerminal as _};
 
 use cliclack::{Confirm, Input};
 
@@ -154,6 +154,38 @@ pub fn install(stderr: Permission) {
     cliclack::set_theme(RenvorTheme);
 }
 
+/// Refuses, before anything is drawn, if there is no terminal to draw a prompt on.
+///
+/// # Why this is a separate check and not just the first prompt failing
+///
+/// It already failed — `interact()` builds a `Term::stderr()` and returns `NotConnected` — so the
+/// exit code was right. What was wrong was the **order**: [`intro`] succeeds first, so
+/// `renvor new 2>log` wrote the sequence's opening chrome into the operator's log file and *then*
+/// refused. Chrome in a log is exactly what this module exists to prevent.
+///
+/// # And why the gate is not simply widened to "stdin and stderr"
+///
+/// That was the obvious fix and it is a worse one. `Interaction::prompt` false means the wizard
+/// does not run — and `renvor new --path ./x` with no wizard **succeeds**, generating a project
+/// from defaults. So widening the gate would turn `renvor new --path ./x 2>/dev/null` from a
+/// refusal that writes nothing into a silent generation the operator never answered for, which is
+/// precisely what FR-010 forbids and what `commands::new::Interaction` warns about at length.
+/// Measured before choosing: that command exits 0 and creates six files today.
+///
+/// So the rule is: **prompting needs `stdin` to decide and `stderr` to draw on.** `stdin` alone
+/// keeps deciding whether the wizard is eligible; this says the drawing surface is missing, in the
+/// same words and with the same exit code as any other missing terminal.
+///
+/// # Errors
+///
+/// [`Code::Usage`], naming the flags to use instead.
+pub fn require_drawable() -> Result<(), CliError> {
+    if std::io::stderr().is_terminal() {
+        return Ok(());
+    }
+    Err(classify(&std::io::Error::from(ErrorKind::NotConnected)))
+}
+
 /// Opens the grouped prompt sequence with a title.
 ///
 /// # `&'static str`, and that is the security boundary
@@ -224,7 +256,18 @@ pub fn text(
     let default = redact::detail(&redact::line(default));
     let mut prompt = Input::new(question).default_input(&default);
     if let Some(hint) = hint {
-        prompt = prompt.placeholder(hint);
+        // ── THE HINT MUST NOT REPLACE THE VALUE ENTER ACCEPTS ───────────────────────
+        //
+        // `placeholder` overrides what `default_input` would have drawn. Passing the hint alone
+        // therefore showed the *guidance* and hid the *value* — so "Project name" displayed
+        // "ASCII letters, digits, `-`, and `_`…" while Enter silently returned `demo`. The
+        // operator committed to a value that was never on screen at the moment they decided,
+        // which is the opposite of the rule the escaping above is justified by: **what the reader
+        // sees is what they get.**
+        //
+        // Found by a review reading the library rather than the diff. Both are shown now, value
+        // first, because the value is the thing being accepted and the guidance is about it.
+        prompt = prompt.placeholder(&format!("{default} — {hint}"));
     }
     prompt.interact().map_err(|error| classify(&error))
 }
@@ -259,6 +302,44 @@ mod tests {
             mapped.message.contains("nothing was written"),
             "a cancellation must say the destination is untouched: {}",
             mapped.message
+        );
+    }
+
+    #[test]
+    fn a_prompt_refuses_when_there_is_nowhere_to_draw_it() {
+        // FOUND BY THE CODEX REVIEW. `stdin` decides the wizard is eligible; `stderr` is where it
+        // gets drawn, and with `stderr` redirected the library cannot draw. The exit code was
+        // already right — what was wrong was the ORDER, because `intro` succeeded first and put
+        // the sequence's opening chrome into the operator's log before the refusal.
+        //
+        // # Why this is asserted here and not end to end
+        //
+        // Reaching it needs `stdin` to be a terminal and `stderr` not to be, simultaneously — and
+        // the pty harness attaches both streams to the same pty, so it cannot construct that
+        // combination. A plain subprocess cannot either: a non-terminal `stdin` means the wizard
+        // never starts, and the command takes the documented non-interactive path instead. That
+        // was measured, not assumed — the first version of this test asserted exit 2 and got
+        // exit 0 with a generated project.
+        //
+        // So the reachable half is asserted here, and the end-to-end behaviour was measured by
+        // hand through a pty with only `stderr` redirected: exit 2, 78 bytes on the log, zero
+        // box-drawing characters, nothing created. That measurement is recorded in the pull
+        // request rather than claimed here.
+        //
+        // Under `cargo test` `stderr` is captured and is not a terminal, which is exactly the
+        // condition under test.
+        if std::io::stderr().is_terminal() {
+            // Running with `--nocapture` on a real terminal. The condition does not hold, so
+            // there is nothing to assert; saying so beats asserting something vacuous.
+            return;
+        }
+        let refused = require_drawable().expect_err("a captured stderr is not a terminal");
+        assert_eq!(refused.code, Code::Usage);
+        assert_eq!(refused.exit(), Exit::Usage);
+        assert!(
+            refused.message.contains("flags"),
+            "the refusal must name what to supply instead: {}",
+            refused.message
         );
     }
 

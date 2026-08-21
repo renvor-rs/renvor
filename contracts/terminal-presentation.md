@@ -234,6 +234,14 @@ question and accepts its default.
 
 - A prompt is **never** shown when `stdin` is not a terminal; the command exits naming the flags
   that would have supplied the answer. This is the case every automated consumer is in.
+- A prompt is **never** shown when `stderr` is not a terminal either, because that is where it
+  would be drawn. Same exit code, same message, and — this is the part worth stating — the refusal
+  happens **before any chrome is written**, so a redirected `stderr` gets the diagnostic and
+  nothing else.
+
+  `stdin` decides eligibility; `stderr` decides drawability. They are checked separately on
+  purpose: see [`command-surface.md`](command-surface.md) for why merging them would silently
+  generate a project from defaults.
 - A prompt **never touches `stdout`**, so it cannot appear inside a JSON document.
 
   This clause is written the way it is because the obvious stronger version — *"a prompt is never
@@ -261,6 +269,13 @@ question and accepts its default.
   Escaping changes what pressing Enter returns — the escaped form rather than the raw one — and
   that is the intended consequence rather than a side effect: **what the reader sees is what they
   get.** A value that needed escaping would not have survived validation anyway.
+
+- **The suggested default is always visible at the moment of the decision**, alongside any
+  guidance rather than replaced by it. This is the same rule stated from the other side, and it
+  was broken: the drawing library's placeholder overrides the default it would otherwise render,
+  so the project-name question showed only *"ASCII letters, digits…"* while Enter silently
+  returned `demo`. The operator committed to a value that was never on screen. Found by review;
+  both are now shown, value first.
 
 ## Progress
 

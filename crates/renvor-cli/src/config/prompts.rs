@@ -94,6 +94,10 @@ const TITLE: &str = "Create a Renvor application";
 /// [`crate::exit::Code::Cancelled`] (exit `4`) if the operator cancels at any prompt, or
 /// [`crate::exit::Code::Usage`] if there is no terminal.
 pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
+    // BEFORE `intro`, because `intro` draws. `stdin` decided the wizard is eligible; this checks
+    // there is somewhere to draw it. Without the check the opening chrome landed in a redirected
+    // `stderr` and the refusal came afterwards.
+    prompt::require_drawable()?;
     prompt::intro(TITLE)?;
 
     if answers.name.is_none() {

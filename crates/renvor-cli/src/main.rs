@@ -298,6 +298,16 @@ fn write_rendering(text: &str, to_stdout: bool) -> std::io::Result<()> {
     }
 }
 
+/// Whether `--no-color` is present in `argv`, read before clap has parsed anything.
+///
+/// The same chicken-and-egg problem [`requested_format_from_argv`] solves: `--help` and every
+/// usage error are produced before a `Cli` exists, and a usage error exists precisely because the
+/// command line could not be parsed. Deliberately narrow — one exact spelling, the only one clap
+/// accepts for a long flag with no value.
+fn no_color_from_argv() -> bool {
+    std::env::args_os().any(|argument| argument == "--no-color")
+}
+
 /// The styling policy for clap's own rendering, resolved before clap has parsed anything.
 ///
 /// # Why the flag is read from `argv` rather than from the parsed `Cli`
@@ -308,7 +318,7 @@ fn write_rendering(text: &str, to_stdout: bool) -> std::io::Result<()> {
 /// the honest answer, and it is deliberately narrow — it recognises one exact spelling, the only
 /// one clap accepts for a long flag with no value, and decides nothing else.
 fn help_permission(to_stdout: bool) -> output::style::Permission {
-    let opt_out = std::env::args_os().any(|argument| argument == "--no-color");
+    let opt_out = no_color_from_argv();
     let is_terminal = if to_stdout {
         std::io::stdout().is_terminal()
     } else {
@@ -343,7 +353,12 @@ fn main() {
             // which no test covered. It also discarded the write `Result`: on a full filesystem
             // `--help` produced no output, no diagnostic, and reported success.
             if let Err(failure) = write_rendering(&safe_clap_rendering(&error, true), true) {
-                let reporter = Reporter::new(Format::Human, false);
+                // `no_color_from_argv()`, NOT `false`. This path runs before a `Cli` exists, so
+                // the flag has to come from the raw arguments — and hard-coding `false` meant
+                // `renvor --help --no-color` emitted styled diagnostics on `stderr` whenever the
+                // help text itself could not be written (a closed pipe, a full filesystem). C-8's
+                // veto is unconditional; a failure path is not an exemption from it.
+                let reporter = Reporter::new(Format::Human, no_color_from_argv());
                 let error = CliError::new(Code::Internal, "the help text could not be written")
                     .with("cause", failure.to_string());
                 std::process::exit(reporter.fail("renvor", &error).code());
@@ -362,7 +377,12 @@ fn main() {
                     let _ = write_rendering(&safe_clap_rendering(&error, true), false);
                 }
                 Format::Json => {
-                    let reporter = Reporter::new(format, false);
+                    // `no_color_from_argv()` here too, though this arm is JSON and the colour
+                    // policy already refuses on the format alone. Harmless today; the point is
+                    // that no construction on a pre-parse path hard-codes the flag, because that
+                    // is the drift that produced the defect one arm above — one place read the
+                    // flag, the other assumed it.
+                    let reporter = Reporter::new(format, no_color_from_argv());
                     let usage = CliError::new(
                         Code::Usage,
                         // clap's rendering is the useful text. It goes in the envelope's `message`,
