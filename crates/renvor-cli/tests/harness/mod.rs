@@ -394,6 +394,13 @@ impl Terminal {
         self.send_line("");
     }
 
+    /// How long to wait for the child to exit before declaring it hung and naming the test.
+    ///
+    /// Generous — a run that reaches the review screen has already run `cargo build` and
+    /// `cargo test` on the generated project, and the Windows runner is the slowest of the three.
+    /// What matters is that it is **finite**.
+    const EXIT_TIMEOUT: Duration = Duration::from_secs(300);
+
     /// Sends one keypress, with **no** carriage return after it.
     ///
     /// # Why this is not [`Terminal::send_line`]
@@ -420,8 +427,50 @@ impl Terminal {
 
     /// Waits for exit and returns the code.
     pub fn wait(&mut self) -> i32 {
+        // ── DRAIN WHILE WAITING. THIS LOOP IS THE LOAD-BEARING PART. ────────────────────
+        //
+        // This used to be a bare `child.wait()`, which reads nothing until the child has already
+        // exited. Every pty test written before `tests/terminal.rs` calls `expect` first, so the
+        // terminal was always being read continuously and nobody noticed. Seven newer tests go
+        // straight from `spawn` to `wait` — a shape the harness had never been exercised with —
+        // and on ConPTY that **deadlocks**: the console host stops accepting writes once its
+        // buffer is full, so the child blocks mid-write and never exits, while `wait` blocks on a
+        // child that is waiting to be read.
+        //
+        // It cost two forty-five-minute Windows jobs to find, because a deadlock prints nothing:
+        // both were cancelled at the job timeout with the log ending mid-suite and no test named.
+        // Linux and macOS never showed it — their pty buffers are larger than anything these
+        // tests write.
+        //
+        // Draining here makes the calling shape stop mattering, which is better than a rule that
+        // every test must remember to `expect` before it waits.
+        let deadline = Instant::now() + Self::EXIT_TIMEOUT;
+        loop {
+            while let Ok(byte) = self.receiver.try_recv() {
+                self.transcript.push(byte as char);
+            }
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Ok(None) => {
+                    // A NAMED FAILURE, NOT A HANG. The whole reason the two Windows jobs taught
+                    // nothing is that a blocked `wait` produces no test name, no assertion, and no
+                    // output — on CI it is indistinguishable from a slow machine until the job is
+                    // killed.
+                    let _ = self.child.kill();
+                    panic!(
+                        "the child did not exit within {}s and was killed{}",
+                        Self::EXIT_TIMEOUT.as_secs(),
+                        self.diagnosis()
+                    );
+                }
+                Err(error) => panic!("the child could not be waited on: {error}"),
+            }
+        }
         let status = self.child.wait().expect("the child is waitable");
-        // Drain whatever is still in flight so failure messages show the final screen.
+        // Whatever is still in flight, so a failure message shows the final screen.
         while let Ok(byte) = self.receiver.recv_timeout(Duration::from_millis(200)) {
             self.transcript.push(byte as char);
         }
