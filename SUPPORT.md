@@ -98,12 +98,16 @@ This section summarises it.
 
 Only platforms with passing evidence are listed as supported. Claiming a platform without
 a verification run behind it would be a claim exceeding measurement, and **a claim is carried
-by passing CI attached to the exact commit whose tree is being claimed**.
+by passing CI attached to the exact tree that CI actually tested**.
 
-A pull-request branch head **is** valid evidence — every commit is on some branch, so excluding
-branches would exclude everything. A later commit does not inherit the previous head's result;
-it needs its own passing run first. The normative form of the rule, including the squash-merge
-case and the distinction between acceptance evidence and ongoing evidence, is in
+On a pull request, that tree is **GitHub's synthetic merge commit** — the candidate integration
+that GitHub builds from an exact pair, the base commit and the pull-request head commit. That is
+what the workflows check out, so that is what the six contexts test, and the evidence belongs to
+that candidate integration rather than to the branch head on its own. Move either SHA and it is
+a different candidate needing its own passing run; nothing carries forward. On a push to `main`,
+CI tests the actual `main` commit — and after a squash merge, that push run rather than the pull
+request's is what confirms `main`. The normative form of the rule, including the separation of
+acceptance evidence from ongoing evidence, is in
 [`contracts/support-policy.md`](contracts/support-policy.md).
 
 | Platform | Status | Evidence |
@@ -152,7 +156,8 @@ outside the change that added them.
 
 ### What "supported" does and does not mean here
 
-It means the tests above pass on that platform at the exact commit being claimed. It does
+It means the tests above pass on that platform for the exact tree CI tested — the candidate
+merge tree before a merge, the actual `main` commit after one. It does
 **not** mean every platform-specific behaviour has received **independent human review** —
 none has, on any platform. W-003, W-005, and W-008 are open for exactly that reason, and a
 platform claim does not narrow any of them.

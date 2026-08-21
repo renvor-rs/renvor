@@ -1,7 +1,7 @@
 ---
 description: "Contract — supported toolchains, platforms, MSRV floor, and change rules"
-version: "1.1.1"
-status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.1 (2026-08-21) corrects the platform-evidence rule, which 1.1.0 stated in a form no commit could satisfy; NO platform is added or withdrawn, and the MSRV is unchanged. 1.1.0 (2026-08-21) added macOS and Windows as supported platforms, named the six platform/toolchain contexts, and stated which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. This version identifies the contract text, not a stability promise"
+version: "1.1.2"
+status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.2 (2026-08-21) corrects the provenance description of platform evidence: on a `pull_request` event CI validates GitHub's synthetic merge commit built from an exact base SHA and pull-request head SHA, not the isolated branch head. NO platform is added or withdrawn, the MSRV is unchanged, required-check enforcement is unchanged, and the CI workflows are unchanged. 1.1.1 (2026-08-21) corrects the platform-evidence rule, which 1.1.0 stated in a form no commit could satisfy; NO platform is added or withdrawn, and the MSRV is unchanged. 1.1.0 (2026-08-21) added macOS and Windows as supported platforms, named the six platform/toolchain contexts, and stated which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Support and Version Policy
@@ -38,38 +38,67 @@ This framing was chosen deliberately over a release-count window. Rust 1.98.0 pr
 ## Platform support
 
 **Linux, macOS, and Windows are supported.** Only platforms with passing evidence are listed,
-and **a supported-platform claim is carried by passing CI attached to the exact commit whose
-tree is being claimed** — not by a result inherited from an earlier commit, and not by "it
-worked last week".
+and **a supported-platform claim is carried by passing CI attached to the exact tree that CI
+actually tested** — not by a result inherited from an earlier commit, and not by "it worked
+last week".
 
-### What "the exact commit" means, and why a branch head qualifies
+### What CI actually tests, and what the evidence therefore attaches to
 
-Evidence binds to a **commit**, because a commit is what a CI result attaches to.
+The six contexts run on two different events, and those events test two different objects. The
+evidence attaches to the object that was tested, which is not always the object a reader would
+assume.
 
-- **A pull-request branch head is valid evidence.** Being on a branch does not disqualify a
-  result. Every commit is on some branch — `main` included — so a rule that excluded branches
-  would exclude every commit that has ever been reviewed, which is no rule at all.
-- **A later commit does not inherit the previous head's evidence.** Each new commit needs its
-  own passing contexts before it carries the claim. Until it has them, the claim rests on the
-  last head that does, and that head is named rather than implied.
-- **On a squash merge**, where the merge commit's tree is verified identical to the reviewed
-  head's tree, the reviewed evidence carries to the merge commit; `main`'s own run then
-  confirms it on `main`. Tree identity is the thing verified, not the commit hash, which
-  necessarily differs.
+**On a `pull_request` event, CI validates GitHub's synthetic merge commit.** The workflows check
+out `refs/pull/<n>/merge` — the *candidate integration* that GitHub constructs from an exact
+pair, the **base commit SHA** and the **pull-request head commit SHA**, and regenerates whenever
+either one moves. That candidate integration tree is what the six contexts compile and test.
+**This is deliberate and is not a defect to be worked around**: the tree that matters is the one
+that would exist after merging, not the source branch considered in isolation.
+
+- **The evidence belongs to that candidate integration tree**, not directly to the isolated
+  pull-request head commit. GitHub records the check runs *against* the head SHA, which is how
+  the results are addressed and looked up; that is not the same as what was built and tested.
+- **A change to either the base SHA or the head SHA creates a different candidate integration
+  tree, and requires its own fresh passing CI.** An advanced base disqualifies a prior result
+  exactly as a new head commit does: both regenerate the merge ref, and the earlier run
+  describes a candidate that is no longer the one on offer.
+- **A later head, or a regenerated merge ref, inherits nothing.** There is no carry-forward and
+  no grace period. Until the current candidate has its own passing contexts, the claim rests on
+  the last recorded pair that does, and that pair is named rather than implied.
 - **No document is required to name its own commit.** A commit cannot contain its own hash, so
   a rule demanding that a record cite the CI result for the very commit that introduces it is
   unsatisfiable by construction.
 
+**On a push to `main`, CI validates the actual pushed `main` commit and its tree.** No synthetic
+object is involved: the six contexts test `main` exactly as it now stands.
+
+**After a squash merge, the `main` push run is what confirms the resulting `main` commit** — not
+an assumption carried over from the pull request, and not an assumption about the pull-request
+branch head. A squash commit is a new commit with a new hash, and the pre-merge evidence
+describes a candidate integration tree rather than that commit, so the standing claim on `main`
+rests on `main`'s own run. Where a squash commit's tree is separately verified identical to the
+tested candidate tree, that identity is a fact worth recording, but it is the `main` run that
+carries the claim.
+
 **Acceptance evidence and ongoing evidence are different things.** A dated run recorded in a
-decision record is *historical acceptance evidence*: it is fixed at the head it names, it
-proves the acceptance sequence was followed, and it stays true about that head permanently. The
-*ongoing* support claim is carried by the current head's six contexts, which live in CI rather
-than in any document. Neither substitutes for the other, and neither expires the other.
+decision record is *historical acceptance evidence*: it is fixed to the exact tested merge tree
+or `main` commit and the exact run it names, it proves the acceptance sequence was followed, and
+it stays true about that object permanently. The **ongoing** support claim is carried by the
+current applicable CI run — the synthetic merge tree before merge, the actual `main` commit
+after it — which lives in CI rather than in any document. Neither substitutes for the other, and
+neither expires the other.
 
 **Version 1.1.0 stated this rule as "at the exact head being claimed — not at an earlier head,
 not on a branch."** That form was unsatisfiable: it disqualified every pre-merge head for being
-on a branch, and demanded a self-reference no commit can contain. It is corrected here, dated,
-rather than quietly reworded — see the version history at the end of this contract.
+on a branch, and demanded a self-reference no commit can contain. **Version 1.1.1 repaired the
+satisfiability defect but described the evidence as attaching to the pull-request branch head,
+which is not the object CI tests.** Both corrections are dated here rather than quietly
+reworded — see the version history at the end of this contract.
+
+**What 1.1.2 does not change.** No platform is added or withdrawn. The MSRV is unchanged. The
+required-status-check list is unchanged. **The CI workflows are unchanged**: checking out the
+synthetic merge commit is the intended behaviour and was deliberately *not* altered to make the
+earlier wording true. Only the description of where platform evidence comes from is corrected.
 
 | Platform | Status | Contexts carrying the claim |
 |---|---|---|
@@ -175,3 +204,4 @@ Version history of this contract text:
 | 1.0.0 | 2026-08-19 | First explicit version assigned to the existing text; earlier revisions are in public Git history | ADR-0003 |
 | **1.1.0** | **2026-08-21** | Adds macOS and Windows as supported platforms, names the six contexts, states the required-versus-running distinction and the known evidence limitations, and replaces the fixed stable version number with the floating channel. **Additive; no MSRV change** | **ADR-0011** *(`accepted`)* |
 | **1.1.1** | **2026-08-21** | Corrects the platform-evidence rule. 1.1.0 required evidence "at the exact head being claimed — not at an earlier head, not on a branch", which no commit can satisfy: every head is on a branch, and no commit can cite its own hash. Replaced with commit-attached evidence that a branch head satisfies, plus the squash-merge tree-identity rule and the separation of acceptance evidence from ongoing evidence. **No platform added or withdrawn; no MSRV change** | **ADR-0011** *(`accepted`)* |
+| **1.1.2** | **2026-08-21** | Corrects the **provenance** of platform evidence. 1.1.1 said the claim was carried by CI attached to the pull-request branch head; on a `pull_request` event the workflows check out `refs/pull/<n>/merge`, so the six contexts validate GitHub's synthetic merge commit built from an exact base SHA and head SHA. Names that candidate integration tree as the evidence object, requires fresh CI when either SHA moves, and states that a push to `main` tests the actual `main` commit — which, after a squash merge, is what confirms `main`. **PATCH correction: no platform added or withdrawn, no MSRV change, no change to required-check enforcement, and no change to the CI workflows** | **ADR-0011** *(`accepted`)* |

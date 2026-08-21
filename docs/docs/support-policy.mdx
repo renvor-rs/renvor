@@ -54,8 +54,14 @@ Summary of `contracts/support-policy.md` §Platform support.
 
 Only platforms with passing evidence are listed. Claiming one without a verification run
 behind it would be a claim exceeding measurement, and a claim is carried by **passing CI
-attached to the exact commit whose tree is being claimed**. A pull-request branch head is valid
-evidence; a later commit needs its own passing run before it carries the claim.
+attached to the exact tree that CI actually tested**.
+
+On a pull request that tree is **GitHub's synthetic merge commit** — the candidate integration
+of an exact pair, the base commit and the pull-request head commit. The workflows check that out,
+so that is what the six contexts test, and the evidence belongs to the candidate integration
+rather than to the branch head alone. Changing either SHA produces a different candidate that
+needs its own passing run; nothing is inherited. A push to `main` tests the actual `main` commit,
+and after a squash merge that push run is what confirms `main`.
 
 | Platform | Status | Contexts that run on every pull request |
 | --- | --- | --- |

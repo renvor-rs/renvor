@@ -130,6 +130,19 @@ a link check against github.com three times learns nothing three times.
 
 ### What a support claim means, and what it does not
 
+> **Erratum, 2026-08-21 — provenance correction.** The paragraphs below describe support
+> evidence as attaching to the **pull-request branch head**. That description is **inaccurate
+> about what CI measured**. On a `pull_request` event the workflows check out
+> `refs/pull/<n>/merge`, so the six contexts validated **GitHub's synthetic merge commit** — the
+> candidate integration built from an exact base commit SHA and pull-request head commit SHA —
+> and not the branch head in isolation. **The runs recorded in this record remain valid evidence
+> for the merge trees they actually tested**: what was wrong is the name this record gave the
+> tested object, not the result. **No platform claim, no support decision, no MSRV, and no
+> enforcement level changes**, and the CI workflows are deliberately unchanged — testing the
+> candidate integration is the intended behaviour. The corrected normative statement is
+> [`contracts/support-policy.md`](../contracts/support-policy.md) **1.1.2** §Platform support.
+> The accepted body below is retained unedited.
+
 **A supported-platform claim is carried by passing CI attached to the exact commit whose tree
 is being claimed.** Not a result inherited from an earlier commit, and not "it worked last week".
 
@@ -393,6 +406,13 @@ repeated.
 
 ### What control 3 proves, and what it does not
 
+> **Erratum, 2026-08-21 — provenance correction.** The control 3 run is recorded *against* head
+> `758bd50`, which is how GitHub addresses those check runs. What it **tested** was the synthetic
+> merge commit for the base/head pair of that `pull_request` event. The result stands unchanged
+> as historical acceptance evidence for the tree it actually tested; only the description of
+> which object that is has been corrected. See
+> [`contracts/support-policy.md`](../contracts/support-policy.md) **1.1.2**.
+
 Control 3 is **historical acceptance evidence**. It records that the required and platform
 contexts passed on `758bd50` — the commit at which this record was `proposed` — and that finding
 is permanently true about that commit.
@@ -482,6 +502,15 @@ also not an independent review**, and nothing here should be read as making it o
   as historical acceptance evidence and is now explicitly scoped to the acceptance sequence.
   **No platform claim is withdrawn**, the decision is unchanged, and the state remains
   `accepted`.
+- **2026-08-21, provenance corrected after external review.** A further automated review found
+  that this record, and `contracts/support-policy.md` 1.1.1, described platform evidence as
+  attaching to the pull-request branch head — while `pull_request` workflows check out
+  `refs/pull/<n>/merge` and therefore test GitHub's synthetic merge commit for an exact
+  base/head pair. Recorded as dated errata in §What a support claim means and §What control 3
+  proves; the accepted decision body is otherwise unedited. `contracts/support-policy.md` is
+  corrected to **1.1.2**, and **the CI workflows are deliberately left unchanged** because
+  testing the candidate integration is the intended behaviour. **No platform claim is
+  withdrawn**, the decision is unchanged, and the state remains `accepted`.
 
 Reviewed by **`Ahmed Anbar — self-review under W-002`** on **2026-08-21**. That review is **not
 independent** and must not be described as such — here, in the evidence packs, in `GOVERNANCE.md`,
