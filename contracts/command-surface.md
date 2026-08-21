@@ -76,8 +76,11 @@ silently ignored, because that would let a Phase 003 command line quietly change
 
 - The wizard is entered **only** when `stdin` is a terminal.
 - It additionally needs somewhere to **draw**: prompts are written to `stderr`, so if `stdin` is a
-  terminal and `stderr` is not, the command exits `2` naming the flags to use instead. It refuses
-  **before drawing anything**, so a redirected `stderr` receives the diagnostic and nothing else.
+  terminal and `stderr` is not, the command exits `2` and directs the operator to supply the
+  answers as command-line arguments instead. That is the **generic prompt adapter's** refusal: it
+  names the kind of input to supply rather than enumerating the caller's specific flags, which it
+  has no way to know. It refuses **before drawing anything**, so a redirected `stderr` receives the
+  diagnostic and nothing else.
 
   `stdin` still decides *eligibility* and `stderr` only decides *drawability*, and the two are
   deliberately not merged: treating a redirected `stderr` as "no wizard" would make
