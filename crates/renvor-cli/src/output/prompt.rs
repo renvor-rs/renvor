@@ -11,11 +11,12 @@
 //!   so the three cannot drift apart across six prompts.
 //! - **Prompts are `stderr`.** Contract C-1 reserves `stdout` for the result, and a prompt on
 //!   `stdout` breaks `renvor new --dry-run --output json | jq .` for everyone.
-//! - **Nothing dynamic reaches the library's own writers.** Its logging and note helpers write
-//!   straight to the terminal, bypassing this crate's redaction and control-character
-//!   neutralisation. The wrappers here take `&'static str` for every string the library will
-//!   render as chrome, which makes "no application data down that path" a **compile error**
-//!   rather than a review comment.
+//! - **Nothing dynamic reaches the library's own writers unneutralised.** Its logging and note
+//!   helpers write straight to the terminal, bypassing this crate's redaction and
+//!   control-character neutralisation. Every string the library renders as **chrome** is
+//!   `&'static str`, which makes "no application data down that path" a **compile error** rather
+//!   than a review comment — and the one string that cannot be a literal, a prompt's suggested
+//!   default, is redacted and neutralised by [`text`] before the library ever sees it.
 //!
 //! # The library was chosen by measurement
 //!
@@ -29,6 +30,7 @@ use std::io::ErrorKind;
 
 use cliclack::{Confirm, Input};
 
+use super::redact;
 use super::style::{Permission, Role};
 use crate::exit::{CliError, Code};
 
@@ -197,7 +199,25 @@ pub fn text(
     default: &str,
     hint: Option<&'static str>,
 ) -> Result<String, CliError> {
-    let mut prompt = Input::new(question).default_input(default);
+    // ── THE SUGGESTED DEFAULT IS THE ONE STRING HERE THAT CANNOT BE A LITERAL ────────────
+    //
+    // It is **derived from operator input**: the project name comes from `argv`, and the domain
+    // comes from the project name. The prompt library draws it through its own writer, which
+    // never sees `crate::output::redact`.
+    //
+    // Left raw, `renvor new $'de\x1b[31mmo'` rendered the escape sequence **into the terminal**,
+    // where it recoloured everything after it — and a longer sequence clears the screen or moves
+    // the cursor. Measured, on a real pty, against both this build and the one before it: the
+    // previous prompt library had the same hole, so this is an old defect that the type signature
+    // above claimed did not exist.
+    //
+    // Escaping it makes the sequence visible as text instead of executable. That also changes what
+    // pressing Enter returns — the escaped form rather than the raw one — and that is the correct
+    // trade rather than a side effect: **what the operator sees is what they get.** A value that
+    // needed escaping was never going to survive validation, so the run ends either way; the only
+    // question is whether it ends with a clear refusal or with a reprogrammed terminal.
+    let default = redact::detail(&redact::line(default));
+    let mut prompt = Input::new(question).default_input(&default);
     if let Some(hint) = hint {
         prompt = prompt.placeholder(hint);
     }

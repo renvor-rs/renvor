@@ -227,7 +227,19 @@ question and accepts its default.
   **measured** while checking a claim this document originally made and could not support.
 - The prompt library's own logging and note helpers are **not** used for application data. They
   write straight to the terminal, bypassing redaction and control-character neutralisation. Every
-  string handed to them is a literal, enforced by type.
+  string handed to them as **chrome** is a literal, enforced by type.
+- **A prompt's suggested default is redacted and neutralised before the library draws it.** It is
+  the one string in a prompt that cannot be a literal — the project name comes from `argv` and the
+  local domain is derived from it — so the type cannot enforce this and the wrapper does.
+
+  This was **measured, not assumed**, and it found a real defect: a name containing an escape
+  sequence rendered that sequence into the terminal, where it recoloured everything after it. The
+  build before this contract existed had the same hole. A longer sequence clears the screen or
+  moves the cursor, and a prompt is precisely where the reader is about to type.
+
+  Escaping changes what pressing Enter returns — the escaped form rather than the raw one — and
+  that is the intended consequence rather than a side effect: **what the reader sees is what they
+  get.** A value that needed escaping would not have survived validation anyway.
 
 ## Progress
 
