@@ -1,5 +1,5 @@
 # Facade package. Publishable, so it carries the COMPLETE metadata set required by
-# specs/001-governance-foundation/contracts/package-metadata.md — a missing field
+# contracts/package-metadata.md — a missing field
 # fails metadata validation (FR-040).
 #
 # `edition` and `rust-version` are INHERITED, never restated (FR-017). Restating

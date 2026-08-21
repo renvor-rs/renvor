@@ -14,17 +14,37 @@
 > `renvor new` and the package command is `renvor add`. See
 > `decisions/0010-unify-product-and-executable-name.md`.
 >
-> **Everything below this notice is preserved verbatim as historical evidence.** It records
-> what was decided on 2026-08-12 and why, and it is cited by
-> `governance/phase-001-evidence.md` and by T026. It is **not** current instruction. No
-> sentence below has been edited to agree with the newer decision — superseding a record
-> does not entitle anyone to rewrite what it said, and Phase 001 evidence that cites this
-> record must stay checkable against the text that was actually accepted.
+> **The decision's substance below is preserved as historical evidence. The historical body is
+> not byte-for-byte identical to its accepted version.** It records what was decided on
+> 2026-08-12 and why, and it is cited by `governance/phase-001-evidence.md` and by T026. It is
+> **not** current instruction. No sentence below has been edited to agree with the newer decision
+> — superseding a record does not entitle anyone to rewrite what it said, and Phase 001 evidence
+> that cites this record must stay checkable against the text that was actually accepted.
 >
-> **What ADR-0010 kept:** the product name `Renvor`, the facade crate `renvor`, the CLI
-> package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and `RENVOR_` — all
-> unchanged, and all still decided by the record below. **What ADR-0010 changed:** the
-> installed executable and its command names, and nothing else.
+> **The only change inside the historical body is the W-002 control-2 citation row.** A bare
+> `specs/...` path was replaced with an immutable, full-commit-pinned link to the same file, so
+> the evidence stays reachable: `specs/` is untracked on this branch and the bare path resolves
+> to nothing. The finding text in that row — 77 of 79, with CHK048 and CHK050 failing — is
+> unchanged.
+>
+> **The pinned revision is a later state of that checklist than this row describes.** It shows
+> **79 of 79** checked, the state reached once CHK048 and CHK050 were resolved; the 77-of-79
+> state this row records is at commit `6863226`. The pin gives an immutable copy of the file, not
+> a reconstruction of the moment this record was accepted, and that is stated here rather than
+> left for a reader to discover.
+>
+> **What ADR-0010 carried forward, unchanged:** the product name `Renvor`, the facade crate
+> `renvor`, the CLI package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and
+> `RENVOR_`. **What ADR-0010 changed:** the installed executable and its command names, and
+> nothing else.
+>
+> **Those names are now decided by ADR-0010, not by this record.** ADR-0010 restates each of
+> them in its own decision table, so they are carried by a current record rather than inherited
+> from a superseded one. **This record has no current decision authority**; it is historical
+> evidence of what was decided on 2026-08-12 and why.
+>
+> **A future change to the public identity supersedes ADR-0010**, not this record. This record
+> has already been superseded and cannot be superseded again.
 >
 > **Why**, in one line: ADR-0001 rejected renaming the *product* to `Renover` because
 > `Renover`/`renovate` is a closer pair than `Renvor`/`renovate` — measured Levenshtein 3
@@ -138,7 +158,7 @@ a migration path for anyone who already installed `renover`.
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the naming decision — CHK011 through CHK019 all passed. |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the naming decision — CHK011 through CHK019 all passed. |
 | 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 

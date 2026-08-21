@@ -1,6 +1,12 @@
+---
+description: "Contract — required package metadata and the release rehearsal procedure"
+version: "1.0.0"
+status: "normative — governs release mechanics; no crate has been published. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract: Package Metadata and Release Rehearsal
 
-**Feature**: `specs/001-governance-foundation` | **Satisfies**: FR-032 – FR-034, FR-038 – FR-041, FR-045, FR-046
+**Feature**: Phase 001 — governance foundation | **Satisfies**: FR-032 – FR-034, FR-038 – FR-041, FR-045, FR-046
 
 ## Required metadata
 
@@ -14,7 +20,7 @@ Every package intended for publication declares all of the following. A missing 
 | `license` | `MIT OR Apache-2.0` — no other value permitted (FR-009) |
 | `repository`, `homepage`, `documentation`, `readme` | Present and resolving |
 | `keywords`, `categories` | Present and accurate |
-| `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly |
+| `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly — that contract is the sole authority for the floor |
 | `include` or `exclude` | Explicit — the shipped file set is stated, never inferred |
 
 **Prohibited**: a **git** dependency, or a **path-only** dependency, in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
@@ -69,7 +75,7 @@ Run from a clean checkout. Performs **zero** publish operations.
 > This is a consequence of ADR-0002's own provision that *"later phases add implementation crates
 > behind it"*, so it is an amendment to the procedure rather than a change of decision. `xtask`
 > remains `publish = false` and is excluded automatically — asserted, not assumed, by a positive
-> control in `release-dry-run.yml`. Evidence: `specs/002-core-kernel/research.md` §D13
+> control in `release-dry-run.yml`. Evidence: [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D13
 > (four-case experiment); proposed **ADR-0008**.
 
 Step 6 is the one people skip. Proving a negative requires looking; "we didn't run publish" is an assertion, while "the registry reports no versions" is evidence.

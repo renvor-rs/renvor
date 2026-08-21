@@ -24,7 +24,7 @@
 //! positive claim** — the injector proves it can make each step fail, `an_uninjected_run_into_the
 //! _same_fixtures_succeeds` proves the harness is not simply refusing everything, and the prompt
 //! census proves a newly added prompt cannot slip past the cancellation coverage. See the
-//! "Ordering requirements that were missed" section of `tasks.md`.
+//! "Ordering requirements that were missed" section of [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md).
 
 mod harness;
 

@@ -10,13 +10,28 @@ import Stamp from './_stamp.mdx';
 
 <Stamp />
 
+:::info Where the authority lives
+
+This page is a **summary**. The sole normative authority is the versioned contract
+`contracts/support-policy.md` in the [Renvor repository](https://github.com/renvor-rs/renvor).
+Where this page and that contract disagree, **the contract wins**.
+
+The three-platform claim is carried by the decision record
+`decisions/0011-support-linux-macos-and-windows.md`.
+
+Both are given as repository paths rather than as links: neither file is on `main` until the
+pull request introducing them merges, so a link would 404 for every reader who followed it in
+the meantime.
+
+:::
+
 ## Supported Rust versions
 
 | Field | Value |
 | --- | --- |
 | Minimum supported Rust version (MSRV) | **1.94.0** |
 | Kind | **Fixed floor** — not an offset from current stable |
-| Also tested | **Current stable** (1.97.1 at time of writing) |
+| Also tested | **The current stable channel** — resolved and recorded by CI at run time |
 | Edition | 2024 |
 | Cargo resolver | 3, declared explicitly |
 
@@ -25,30 +40,70 @@ import Stamp from './_stamp.mdx';
 A new Rust stable release **does not** invalidate the MSRV, shorten it, or trigger a
 review. The minimum-version CI job stays pinned at 1.94.0; only the stable job moves.
 
-This was chosen over a release-count window deliberately. Rust 1.98.0 promotes to stable
+This was chosen over a release-count window deliberately. Rust 1.98.0 promoted to stable
 on 2026-08-20, which would have pushed 1.94.0 to four releases behind and broken an "N-3"
 policy through the calendar alone — no code change, no decision by anyone.
 
+**No stable version number appears on this page.** A number written into a document does not
+float — it is correct the day it is typed and silently false afterwards. The stable channel is
+whatever CI resolves it to on the run that produced the evidence.
+
 ## Supported platforms
 
+Summary of `contracts/support-policy.md` §Platform support.
+
 Only platforms with passing evidence are listed. Claiming one without a verification run
-behind it would be a claim exceeding measurement.
+behind it would be a claim exceeding measurement, and a claim is carried by **passing CI
+attached to the exact tree that CI actually tested**.
 
-| Platform | Status |
-| --- | --- |
-| Linux (`ubuntu-latest`) | **Supported** |
-| macOS | Not yet claimed |
-| Windows | Not yet claimed |
+On a pull request that tree is **GitHub's synthetic merge commit** — the candidate integration
+of an exact pair, the base commit and the pull-request head commit. The workflows check that out,
+so that is what the six contexts test, and the evidence belongs to the candidate integration
+rather than to the branch head alone. Changing either SHA produces a different candidate that
+needs its own passing run; nothing is inherited. A push to `main` tests the actual `main` commit,
+and after a squash merge that push run is what confirms `main`.
 
-"Not yet claimed" means nothing has been verified, so nothing is promised. It is not a
-statement that Renvor fails there.
+| Platform | Status | Contexts that run on every pull request |
+| --- | --- | --- |
+| Linux (`ubuntu-latest`) | **Supported** | `verify (1.94.0)`, `verify (stable)` — the full verification sequence |
+| macOS (`macos-latest`) | **Supported** | `platform (macos-latest, 1.94.0)`, `platform (macos-latest, stable)` |
+| Windows (`windows-latest`) | **Supported** | `platform (windows-latest, 1.94.0)`, `platform (windows-latest, stable)` |
+
+### Running is not the same as being required
+
+Six platform/toolchain contexts run on every pull request. **Of those six, only the two
+Linux contexts are in `main`'s required-status-check list.** (That list also contains
+`security` and `docs`, which are not platform contexts.)
+
+| Platform | Runs on every pull request | Required by branch protection |
+| --- | --- | --- |
+| Linux | yes | **yes** — `verify (1.94.0)`, `verify (stable)` |
+| macOS | yes | **no** |
+| Windows | yes | **no** |
+
+The four `platform (…)` contexts are not in `main`'s required-status-check list. They run
+on every pull request and a failure is visible, but branch protection alone would not block
+a merge on them — so the macOS and Windows claims rest on review practice rather than on an
+enforced gate. Making them required is a repository-settings change and has not been made.
+
+What the platform jobs actually run is the workspace test suite serially plus the
+no-default-features check — not the full verification sequence, which runs on Linux only.
+
+**Support does not imply independent human review.** No platform-specific behaviour has
+received one. Two behaviours are `#[cfg(unix)]`-gated and therefore exercised on Linux and
+macOS only, and Windows has had no adversarial review. The contract lists these limits in full.
+
+The normative statement is `contracts/support-policy.md`.
+[`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md) is the repository's
+human-facing summary of the same contract. Any disagreement between the three resolves in
+favour of the contract.
 
 ## Raising the MSRV
 
 A raise may occur only in a planned minor or major release, after an accepted decision
-record naming the concrete requirement that forces it, documented in the support policy,
-the changelog, and the release notes, and only after the outgoing MSRV has been supported
-for at least six months.
+record naming the concrete requirement that forces it, documented in
+`contracts/support-policy.md`, the changelog, and the release notes, and only after the
+outgoing MSRV has been supported for at least six months.
 
 The policy is reviewed quarterly. A review records its outcome and by itself changes
 nothing.

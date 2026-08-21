@@ -4,7 +4,9 @@
 # `renvor` is publishable and, from Phase 002 onward, depends on this crate. A publishable
 # package cannot depend on an unpublishable one — `cargo publish --dry-run --workspace` fails at
 # the first `publish = false` member in the chain. Verified by experiment, recorded in
-# specs/002-core-kernel/research.md D13, and captured as proposed ADR-0008.
+# the Phase 002 research record §D13, and captured as proposed ADR-0008. That record is a
+# working artifact and is no longer tracked; it remains in public Git history at:
+# https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md
 #
 # `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002). A second
 # literal declaration is a defect, asserted mechanically at T037 in Phase 001.
@@ -39,11 +41,11 @@ include = [
 ]
 
 [dependencies]
-# Error taxonomy (research D1). Generates `Error` impls while leaving the enum — and therefore
+# Error taxonomy (Phase 002 research §D1). Generates `Error` impls while leaving the enum — and therefore
 # the match-on-category surface FR-019 requires — entirely ours.
 thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 
-# Provider dependency resolution via a single `tarjan_scc` pass (research D8).
+# Provider dependency resolution via a single `tarjan_scc` pass (Phase 002 research §D8).
 # Minimal features: `tarjan_scc` needs only the algo traits.
 petgraph = { version = "0.8.3", default-features = false }
 
@@ -51,18 +53,18 @@ petgraph = { version = "0.8.3", default-features = false }
 # kernel cannot acquire a transport by accident (constitution principle VIII, FR-033).
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
 
-# Hierarchical cancellation scopes (research D3, FR-023/FR-024).
+# Hierarchical cancellation scopes (Phase 002 research §D3, FR-023/FR-024).
 tokio-util = { version = "0.7.19", default-features = false }
 
-# Instrumentation only. This crate NEVER installs a process-global subscriber (research D4,
+# Instrumentation only. This crate NEVER installs a process-global subscriber (Phase 002 research §D4,
 # contract C-O7) — that is the author's decision, not the library's.
 tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
 
-# Run-identifier entropy, behind a Renvor `EntropySource` port (research D5, FR-043).
+# Run-identifier entropy, behind a Renvor `EntropySource` port (Phase 002 research §D5, FR-043).
 getrandom = { version = "0.4.3", default-features = false }
 
 [dev-dependencies]
-# Deterministic time for deadline and drain tests (research D10, FR-031). Dev-only: `test-util`
+# Deterministic time for deadline and drain tests (Phase 002 research §D10, FR-031). Dev-only: `test-util`
 # must never reach a consumer's production graph.
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
 

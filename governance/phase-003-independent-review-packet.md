@@ -53,7 +53,7 @@ reading them:
 - `04abb07` predates the 2026-08-19 defect audit and carries **all fourteen** of the defects it
   confirmed — including three HIGH ones: `--output json dev` and `--output json docker` emit
   unparseable stdout on every run, and a quoted credential is printed **alongside** its
-  `[redacted]` marker. See evidence §6.0.6. Reviewing it would mean reviewing known-broken code.
+  `[redacted]` marker. See [evidence §6.0.6][ev-6.0.6]. Reviewing it would mean reviewing known-broken code.
 
 ### -1.2 The only remaining open blocker — WAIVED FOR THE MERGE, STILL OPEN AS A REQUIREMENT
 
@@ -162,10 +162,12 @@ This section exists so the decision to close Phase 003 is on the record with its
 > **not satisfied**. Automated and maintainer reviews are supporting evidence, **not** independent
 > review.
 
-**On the automated reviews.** Phase 003 used automated, agent-assisted review extensively, and that
-is recorded rather than hidden. It does not move the needle on independence: §0 requires a
-**person**, and an automated reviewer is not one. Its value was finding defects — 14 confirmed,
-8 refuted with stated grounds — not conferring approval.
+**On the internal advisory reviews.** Phase 003 used internal advisory review extensively, much
+of it performed by automated tooling rather than by a person. That is recorded rather than
+hidden, and it does not move the needle on independence: §0 requires **a person who is not the
+author**, and none of this review was that. **The independent human review requirement was not
+satisfied.** Its value was finding defects — 14 confirmed, 8 refuted with stated grounds — not
+conferring approval.
 
 ## 0. What counts as independent, and what does not
 
@@ -175,9 +177,9 @@ offered as if it did:
 
 | Not independent | Why |
 |---|---|
-| The advisory AI reviews in [`phase-003-evidence.md`](phase-003-evidence.md) §6 | Spawned by, prompted by, and reporting to the same process that wrote the code. Labelled NON-INDEPENDENT and ADVISORY throughout. |
+| The automated advisory reviews in [`phase-003-evidence.md` §6][ev-6] | Spawned by, prompted by, and reporting to the same process that wrote the code. Labelled NON-INDEPENDENT and ADVISORY throughout. |
 | The maintainer's own review | Single-maintainer repository. This is the standing condition the six existing waivers all describe. |
-| Claude, or any agent | Same as the first row. |
+| Any automated reviewer, of any kind | Same as the first row. **Not a person**, so it cannot satisfy criterion 1 regardless of how capable it is. |
 | CI | CI runs the tests the author wrote. It cannot notice a test that was never written. |
 
 **No Phase 003 phase-level waiver exists and none has been drafted.** If you conclude the work is not
@@ -198,13 +200,29 @@ ready, saying so is the expected outcome, not a problem to be managed.
 
 ## 2. Where to start
 
+**Several rows below are commit-pinned links, not repository paths.** The specifications, task
+ledgers, and the review pack are working artifacts and are no longer tracked in the current public
+tree. They remain in the public Git history at the Phase 003 merge commit `01327b1`, and a
+commit-pinned link resolves to the exact bytes that were there — a commit's content is immutable,
+so the link cannot silently come to mean something else.
+
+**What is and is not guaranteed.** These links are expected to resolve **for the lifetime of the
+project, while the public Git history and its hosting remain available**. That is the real
+guarantee and it is the one made here. It is *not* a claim of permanence: this project does not
+control GitHub, and no promise about a third party's hosting would be ours to make. Anyone who
+needs an independent copy should clone the repository, which carries the full history.
+
+A commit-pinned link is still strictly better than the relative path it replaces, which resolves to
+nothing at all in the current tree — the first version of this cleanup left four such paths
+dangling in this very table, and an automated review found them.
+
 | Order | Read | Why |
 |---|---|---|
-| 1 | [`phase-003-review-pack.md`](phase-003-review-pack.md) | The two files that can write outside the operator's directory, in depth. **Highest value per minute.** |
-| 2 | [`specs/003-interactive-cli/spec.md`](../specs/003-interactive-cli/spec.md) | 48 functional requirements, 16 success criteria, 6 user stories |
-| 3 | [`specs/003-interactive-cli/contracts/`](../specs/003-interactive-cli/contracts/) | C-1 command surface, C-2 JSON, C-4 templates, C-5 the transaction |
-| 4 | [`specs/003-interactive-cli/data-model.md`](../specs/003-interactive-cli/data-model.md) | Invariants I-1 … I-17 |
-| 5 | [`phase-003-evidence.md`](phase-003-evidence.md) §3 | The requirement-to-evidence map, 64 rows |
+| 1 | [`phase-003-review-pack.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-review-pack.md) | The two files that can write outside the operator's directory, in depth. **Highest value per minute.** |
+| 2 | [`spec.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | 48 functional requirements, 16 success criteria, 6 user stories |
+| 3 | [`contracts/`](../contracts/) | C-1 command surface, C-2 JSON, C-4 templates, C-5 the transaction |
+| 4 | [`data-model.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/data-model.md) | Invariants I-1 … I-17 |
+| 5 | [`phase-003-evidence.md` §3][ev-3] | The requirement-to-evidence map, 64 rows |
 | 6 | `crates/renvor-cli/src/` | 22 files, ~5,700 lines |
 | 7 | `crates/renvor-cli/tests/` | 9 files + a shared pty harness |
 
@@ -227,18 +245,18 @@ Stated up front so you spend your time on what nobody has found yet.
 
 | # | Issue | Where |
 |---|---|---|
-| 1 | **Constitution principle VII said the wizard MUST ask eleven things; it asks three.** **RESOLVED 2026-08-18** — the principle was amended, 2.0.0 → 3.0.0 MAJOR, rather than waived. Whether the amendment is legitimate is a fair thing for you to challenge. | evidence §2, §7.7; `constitution-amendment-3.0.0.md` |
-| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | `tasks.md` "Ordering requirements that were missed" |
+| 1 | **Constitution principle VII said the wizard MUST ask eleven things; it asks three.** **RESOLVED 2026-08-18** — the principle was amended, 2.0.0 → 3.0.0 MAJOR, rather than waived. Whether the amendment is legitimate is a fair thing for you to challenge. | [evidence §2][ev-2], [§7.7][ev-7.7]; `constitution-amendment-3.0.0.md` |
+| 2 | **T008 and T015–T024 were specified as failing-first and were not written that way.** The behaviour is complete; the ordering is permanently missed, by ruling, and does not block closure. | [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md), "Ordering requirements that were missed" |
 | 3 | **Invariant I-17: the TOCTOU window is narrowed, not closed.** Specifically, POSIX `rename(2)` will silently replace an **empty** directory another process creates between the last check and the rename. Stated residual risk; not portably closable. | review pack §6.1 |
 | 3b | **The fail-closed destination check has no Windows-specific test.** `a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`. | review pack §10 item 5 |
 | 3c | **The "renvor never *deliberately* deletes the destination" claim is guarded by a source-text scan.** It would not catch a removal expressed through an alias or another crate. The qualifier matters: POSIX `rename(2)` replaces an empty directory created in the TOCTOU window, which is the system call's behaviour, not renvor's. | review pack §5.3, §6.1 |
-| 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | evidence §6.3 |
-| 3e | **Human output escapes path-derived control characters completely**, newline and tab included, at each interpolation site. The `Reporter`-level backstop still exempts `\n`/`\t`, correctly — by then the line is legitimately multi-line. The open question is whether an untrusted value can reach a stream by a route neither escaper covers. | evidence §6.0.1; review pack S14 |
-| 3f | **Windows has had no adversarial review at all.** All seven advisory reviews ran on macOS. CI exercises Windows; no reviewer has attacked it. | evidence §6.0.4 |
+| 3d | **B-R3 is the one advisory finding still only partially fixed.** The redaction corpus is narrow: two values through one injection point, plus one successful-run case. No explicit dry-run case. | [evidence §6.3][ev-6.3] |
+| 3e | **Human output escapes path-derived control characters completely**, newline and tab included, at each interpolation site. The `Reporter`-level backstop still exempts `\n`/`\t`, correctly — by then the line is legitimately multi-line. The open question is whether an untrusted value can reach a stream by a route neither escaper covers. | [evidence §6.0.1][ev-6.0.1]; review pack S14 |
+| 3f | **Windows has had no adversarial review at all.** All seven advisory reviews ran on macOS. CI exercises Windows; no reviewer has attacked it. | [evidence §6.0.4][ev-6.0.4] |
 | 4 | **Offline proof is proxy-based plus a structural no-HTTP-client assertion**, not a network namespace. Limitation stated in the test file's own header. | `tests/offline.rs` |
-| 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | evidence §3.1 |
+| 5 | **24 of 64 requirement identifiers are not cited by name at their point of test.** Traceability gap, not a coverage gap. | [evidence §3.1][ev-3.1] |
 | 6 | **Data-model §5 rule 8 has no `details.rule`** — containment is structural. | review pack §4 |
-| 7 | **Three template bounds were enforced and untested until 2026-08-18.** Now tested with boundary cases. | `tasks.md` register |
+| 7 | **Three template bounds were enforced and untested until 2026-08-18.** Now tested with boundary cases. | [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md) register |
 
 ## 5. Eleven defects were found and fixed during this phase. Every one lived in a **seam**
 
@@ -271,7 +289,8 @@ You should know the commit history is misleading without these.
 2. **Commit `2448e47` was pushed with a failing test in it.** The verification chain was joined with
    `;` instead of `&&`, so the test's failure was discarded and the chain reported success.
 
-Both are recorded in `specs/003-interactive-cli/tasks.md`. If you find the record understates what
+Both are recorded in [`tasks.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+at that same commit. If you find the record understates what
 happened, say so.
 
 ## 7. What your review needs to produce
@@ -307,3 +326,21 @@ artefact rather than sitting in somebody's inbox. Attach or link your findings f
 **PR #28 is NOT merge-ready** until §-1.3 is completed and committed ·
 **Branch**: `feat/phase-003-interactive-cli` · **PR**: #28 (open, unmerged, 0 approvals) ·
 **Packet revision 2**: 2026-08-18 · **Head to review**: see §-1
+
+<!--
+  Pinned evidence targets. `governance/phase-003-evidence.md` in the current tree is a public
+  SUMMARY and does not carry these numbered sections; the sections a reviewer is sent to exist
+  only in the full ledger, which is preserved at merge commit 01327b1. Every link below is pinned
+  to that commit and is therefore immutable. `?plain=1` is what makes the `#L` line anchor work
+  on a Markdown blob — without it GitHub renders the preview and ignores the fragment.
+-->
+
+[ev-2]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L36
+[ev-3]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L85
+[ev-3.1]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L156
+[ev-6]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L328
+[ev-6.0.1]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L350
+[ev-6.0.4]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L443
+[ev-6.0.6]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L460
+[ev-6.3]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L550
+[ev-7.7]: https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L821

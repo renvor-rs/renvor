@@ -1,6 +1,12 @@
+---
+description: "Contract — frozen public identity values: product, crate, and executable names"
+version: "1.0.0"
+status: "normative — amended 2026-08-17 by ADR-0010, which supersedes ADR-0001. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract: Public Identity
 
-**Feature**: `specs/001-governance-foundation` | **Status**: **Confirmed 2026-08-11**, **amended 2026-08-17 by ADR-0010** — every row of the Name Availability Record reads `available` or `owned-by-project` | **Satisfies**: FR-001 – FR-006, FR-048, FR-049, FR-052
+**Feature**: Phase 001 — governance foundation | **Status**: **Confirmed 2026-08-11**, **amended 2026-08-17 by ADR-0010** — every row of the Name Availability Record reads `available` or `owned-by-project` | **Satisfies**: FR-001 – FR-006, FR-048, FR-049, FR-052
 
 > **Amended 2026-08-17 — the executable is `renvor`.** ADR-0010 supersedes ADR-0001 and
 > unifies the product, facade-crate, and executable spellings. The rows and binding rules

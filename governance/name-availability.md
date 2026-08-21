@@ -19,7 +19,7 @@
 
 **Status**: Complete — all ten rows verified 2026-08-11 (T016–T021). **T022 stop gate: PASSED.**
 **Satisfies**: spec FR-001 – FR-006, FR-048, FR-049
-**Schema**: `specs/001-governance-foundation/data-model.md` §Name Availability Record
+**Schema**: [`data-model.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/data-model.md) §Name Availability Record
 **Checked by**: Ahmed Anbar (maintainer)
 **Validity window**: 30 days. Every row below expires **2026-09-10** and must be re-verified before the first content push (T053/T054).
 
@@ -97,7 +97,7 @@ collision in those spaces remains possible.
 
 ## Residual risks carried forward
 
-These belong in `governance/phase-001-evidence.md` §6 with owners (T083).
+These belong in [`phase-001-evidence.md` §6 Known limitations](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L4045) with owners (T083).
 
 | ID | Risk | Owner | Closes in |
 |---|---|---|---|

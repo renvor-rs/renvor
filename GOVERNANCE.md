@@ -4,8 +4,8 @@ How decisions get made in Renvor, who makes them, and how this document changes.
 
 ## Supreme authority
 
-The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.0, ratified 2026-08-11,
-last amended 2026-08-18** — is the highest authority in this project. Where this document
+The [**Renvor Constitution**](CONSTITUTION.md) — **version 3.0.1, ratified 2026-08-11,
+last amended 2026-08-19** — is the highest authority in this project. Where this document
 and the constitution conflict, the constitution wins, and the conflict is a defect in
 this document.
 
@@ -21,6 +21,7 @@ section. It is not amended by practice, precedent, or convenience.
 
 | Version | Date | Change | Record |
 |---|---|---|---|
+| **3.0.1** | 2026-08-19 | Development and Phase Workflow clause 1 drops a third-party tool name from a normative rule. PATCH — wording only; the one-active-phase MUST is unchanged. **No waiver created** | [`governance/constitution-amendment-3.0.1.md`](governance/constitution-amendment-3.0.1.md) |
 | **3.0.0** | 2026-08-18 | Principle VII's wizard-scope sentence redefined for staged delivery. MAJOR. **No waiver created** | [`governance/constitution-amendment-3.0.0.md`](governance/constitution-amendment-3.0.0.md) |
 | 2.0.0 | 2026-08-17 | Principles VII and XIII name `renvor` rather than `renover`. MAJOR | [`decisions/0010-unify-product-and-executable-name.md`](decisions/0010-unify-product-and-executable-name.md) |
 | 1.0.0 | 2026-08-11 | Ratified | — |
@@ -92,7 +93,7 @@ requires. While W-002 is active:
 The four compensating controls that must all be met before acceptance:
 
 1. A written alternatives-and-consequences review completed against the ADR template.
-2. Verification against `specs/001-governance-foundation/checklists/governance.md`.
+2. Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md).
 3. All required CI and security checks passing.
 4. A dated review record stored with the ADR.
 
@@ -117,8 +118,24 @@ original six has changed state:
   verbatim as historical evidence; a superseded record is not an unaccepted one, and the
   Phase 001 evidence that cites it stays checkable.
 
-So the accurate statement is: **seven Phase 001 decision records, six `accepted` and one
-`superseded`, every one of them reviewed non-independently under W-002.**
+**Updated 2026-08-21.** There are now **eight** Phase 001 decision records, and a second one
+has changed state:
+
+- **ADR-0011** was accepted under W-002 on 2026-08-21. It makes **Linux, macOS, and Windows**
+  supported platforms with explicitly different enforcement levels, and its reviewer field reads
+  exactly `Ahmed Anbar — self-review under W-002`. **That review is not independent either.**
+- **ADR-0003 is now `superseded`**, superseded by ADR-0011. Its decision body is preserved
+  verbatim, and the MSRV floor, testing, dependency, and advisory rules it set are carried
+  forward unchanged — ADR-0011 changed the platform claim and nothing else.
+
+**No new waiver was created for ADR-0011.** It is a Phase 001 decision record amending a Phase 001
+contract through the superseding-ADR clause that contract itself names, which is the scope W-002
+already covers and the same reasoning ADR-0010 recorded. The scope analysis, including the
+counter-argument, is in ADR-0011 §Waiver authority.
+
+So the accurate statement is: **eight Phase 001 decision records, six `accepted` and two
+`superseded` — ADR-0001 and ADR-0003 — every one of them reviewed non-independently under
+W-002.**
 
 When a second qualified person joins, W-002 ends immediately, every record accepted under
 it is re-reviewed, and the waiver is closed.
@@ -183,9 +200,10 @@ falsify the amendment. The identifier is retired. See
 
 **Ahmed Anbar's acceptance of Phase 003 is a human maintainer decision, and it is not independent
 review.** No independent human requirements-and-security review of Phase 003 has occurred. Every
-review performed inside Phase 003 — including automated and agent-assisted review — is advisory and
-non-independent, and an automated reviewer is not a person and so cannot be independent under any
-reading of the criteria. Windows coverage came from CI, which is automated platform evidence rather
+review performed inside Phase 003 was **internal advisory review** — advisory and
+**non-independent**. Some of it was performed by automated tooling rather than by a person, and
+no reviewer of any kind was independent of the author. **The independent human review
+requirement was not satisfied.** Windows coverage came from CI, which is automated platform evidence rather
 than human review.
 
 ### Decision-record review under W-006
@@ -228,10 +246,11 @@ and is not something W-001 waives — W-001 covers the *approving review* requir
 
 | Document | Covers |
 |---|---|
-| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v3.0.0, ratified 2026-08-11, last amended 2026-08-18 |
+| [`CONSTITUTION.md`](CONSTITUTION.md) | Supreme authority — principles, v3.0.1, ratified 2026-08-11, last amended 2026-08-19 |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, verification, dependency policy, licensing of contributions |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting and response commitments |
-| [`SUPPORT.md`](SUPPORT.md) | Supported Rust versions, platforms, and change rules |
+| [`contracts/support-policy.md`](contracts/support-policy.md) | **Normative** — supported toolchains, supported platforms, the MSRV floor, and change rules |
+| [`SUPPORT.md`](SUPPORT.md) | Human-facing summary of the support contract. Resolves in the contract's favour |
 | [`governance/waivers.md`](governance/waivers.md) | The waiver ledger |
 | [`decisions/`](decisions/) | Architecture decision records |

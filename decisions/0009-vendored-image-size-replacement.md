@@ -244,7 +244,7 @@ enumerated findings, so both are recorded as **performed**; a review returning n
 been recorded as *not performed*, never as passed.
 
 **All 24 findings are dispositioned individually** — no grouped dispositions — in
-`governance/phase-002-evidence.md` §W-006. Every Critical, High, and **Medium** finding is fixed, as
+[`phase-002-evidence.md` §W-006](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-002-evidence.md?plain=1#L2225). Every Critical, High, and **Medium** finding is fixed, as
 W-006 requires. Three findings were reproduced independently by both reviewers and by the
 maintainer; the corrections they forced are in the Decision, "Why this is safe here specifically",
 Alternatives, Consequences, and Compliance sections above, and in the guard, its controls, the CI

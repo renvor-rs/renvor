@@ -26,7 +26,7 @@
 ## Context
 
 A read-only audit of the Hostinger VPS on 2026-08-11 (recorded in
-`governance/phase-001-evidence.md` §3u) changed the question this record answers.
+[`phase-001-evidence.md` §3u](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L756)) changed the question this record answers.
 
 **The premise "install Kubernetes on the VPS" was wrong.** Kubernetes is already installed,
 already serving production traffic, and already hosting unrelated third-party workloads.
@@ -47,7 +47,7 @@ already serving production traffic, and already hosting unrelated third-party wo
 | Firewall | **`ufw` inactive** |
 | Addresses | IPv4 `153.92.208.x`, IPv6 `2a02:4780:f:88ec::/48` |
 | Backups | **No etcd snapshots (SQLite backend); no restic/borg/duplicity installed** |
-| Cloudflare | *(observed 2026-08-11)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` had **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied). **Superseded 2026-08-12**: the maintainer manually created three DNS-only A records for `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` — see `governance/phase-001-evidence.md` §3af. **Re-verified read-only 2026-08-12 (§3ai)**: all three resolve to `153.92.208.119` on both authoritative nameservers, no wildcard, no `AAAA`, **no `CAA` record yet** |
+| Cloudflare | *(observed 2026-08-11)* `renvor.dev` and `ahmedanbar.dev` both on Cloudflare nameservers; `renvor.dev` had **no A record yet**; `ahmedanbar.dev` resolves **directly to the origin IP** (not proxied). **Superseded 2026-08-12**: the maintainer manually created three DNS-only A records for `renvor.dev`, `docs.renvor.dev`, and `www.renvor.dev` — see [`phase-001-evidence.md` §3af](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L1924). **Re-verified read-only 2026-08-12 ([§3ai](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L2368))**: all three resolve to `153.92.208.119` on both authoritative nameservers, no wildcard, no `AAAA`, **no `CAA` record yet** |
 
 Two consequences dominate every choice below:
 
@@ -193,7 +193,7 @@ that is the same exposure every domain on any authoritative provider carries.
 |---|---|---|
 | HSTS | **Only after** every deployed hostname serves valid TLS and has survived at least one renewal cycle. Enabling it early makes a TLS mistake unrecoverable for the `max-age`. No preload until then | Traefik response headers |
 | Cache | Hashed static assets: long `max-age`, `immutable`. HTML: short TTL with revalidation, so a rollback is visible immediately. **There is no edge cache — every request is an origin request**, so cache headers now govern browser behaviour only | Workload response headers |
-| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors`. **CSP was validated 2026-08-14 against the exact tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`** (site pull request #3, merge `206cefdff74399d96f723a75d961fb8d700e0fd5`): a 434-byte candidate policy ran in full **Enforcement** — negative control 3/3, matrix 48/48 across three engines, both routes, both viewports, both themes, and both motion settings — with **zero application CSP violations**. GSAP ran without `unsafe-inline` or `unsafe-eval`; `Outfit Variable` and `Geist Mono Variable` were fetched from same-origin `/assets/fonts/...` resources under `font-src 'self'`, and although the candidate policy also allowed `data:` fonts, r4 did not establish that allowance as necessary. The policy does carry one hashed style-attribute allowance using `unsafe-hashes`, and `data:` for images and fonts. **T101 — RESOLVED 2026-08-14**, evidence §3at. **The middleware itself is still not written, configured, or enabled**, and the candidate policy's hashes are artifact-bound | Traefik middleware |
+| Security headers | CSP, `Referrer-Policy`, `X-Content-Type-Options`, `frame-ancestors`. **CSP was validated 2026-08-14 against the exact tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`** (site pull request #3, merge `206cefdff74399d96f723a75d961fb8d700e0fd5`): a 434-byte candidate policy ran in full **Enforcement** — negative control 3/3, matrix 48/48 across three engines, both routes, both viewports, both themes, and both motion settings — with **zero application CSP violations**. GSAP ran without `unsafe-inline` or `unsafe-eval`; `Outfit Variable` and `Geist Mono Variable` were fetched from same-origin `/assets/fonts/...` resources under `font-src 'self'`, and although the candidate policy also allowed `data:` fonts, r4 did not establish that allowance as necessary. The policy does carry one hashed style-attribute allowance using `unsafe-hashes`, and `data:` for images and fonts. **T101 — RESOLVED 2026-08-14**, [evidence §3at](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3214). **The middleware itself is still not written, configured, or enabled**, and the candidate policy's hashes are artifact-bound | Traefik middleware |
 | Rate limiting | Both sites are static, so sustained POST volume is abuse by definition. **This is no longer defence-in-depth behind an edge; it is the only rate limit that exists** | Traefik middleware |
 
 **Struck entirely:**
@@ -621,9 +621,9 @@ this record being accepted — it would remain true if this record were rejected
 authorised the visibility change and the abandonment of the GitLab cutover.
 
 **Neither, by itself, made this record normative.** *(This paragraph stated that ADR-0006 was
-`proposed` pending T106. **T106 was resolved by maintainer ruling on 2026-08-15** — evidence
-§3ay — and this record was accepted the same day. The distinction it drew is preserved because
-it still governs how the record should be read.)*
+`proposed` pending T106. **T106 was resolved by maintainer ruling on 2026-08-15** —
+[evidence §3ay](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3816) — and this record was accepted the same day. The distinction it
+drew is preserved because it still governs how the record should be read.)*
 
 **The topology would remain true even if this record were rejected**, because it is an
 observation; and **the record is now `accepted`**, so its decisions may be cited as settled
@@ -703,8 +703,8 @@ be forgotten.** Questions 1, 2 and 5 were resolved on 2026-08-12 — **T099**, *
 |---|---|---|---|
 | ~~1~~ | ~~GitHub Container Registry versus the VPS GitLab registry, including the credential model~~ | Ahmed Anbar | **T099 — RESOLVED 2026-08-12: GHCR, `GITHUB_TOKEN` publishing, public image, no pull secret. See D7** |
 | ~~2~~ | ~~Whether the `www.renvor.dev` redirect is served by Cloudflare or by Traefik~~ | Ahmed Anbar | **T105 — RESOLVED 2026-08-12 (Cloudflare). Superseded 2026-08-12 by T110 → Traefik, see D11.** T105 is not reopened |
-| ~~3~~ | ~~Maintainer ruling on the shared server's absent backups~~ | Ahmed Anbar | **T106 — RESOLVED 2026-08-15.** The absence of shared-cluster backups does not block deployment of Renvor's **stateless** properties; it remediates nothing for the unrelated stateful namespaces; any **stateful** Renvor workload stays blocked; a deployment must be additive, isolated, resource-bounded, digest-addressed, and reversible. Resource-bounding and isolation must be **created, not inherited** — **no cluster-wide `ResourceQuota`, `LimitRange`, or `NetworkPolicy` exists to inherit** — and **NetworkPolicy enforcement must be verified on the CNI in use first**. The absence of backups is **total**, so the exemption ends the moment any Renvor workload holds state. Evidence §3ay |
-| ~~4~~ | ~~CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts)~~ | Ahmed Anbar | **T101 — RESOLVED 2026-08-14: a 434-byte policy enforced against tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`; negative control 3/3, matrix 48/48, zero application violations. See D5 and evidence §3at.** A local harness served the enforcement header; **no production response header was configured or enabled, no Traefik middleware was written, configured, or enabled, and no live-server access or production-infrastructure action occurred** |
+| ~~3~~ | ~~Maintainer ruling on the shared server's absent backups~~ | Ahmed Anbar | **T106 — RESOLVED 2026-08-15.** The absence of shared-cluster backups does not block deployment of Renvor's **stateless** properties; it remediates nothing for the unrelated stateful namespaces; any **stateful** Renvor workload stays blocked; a deployment must be additive, isolated, resource-bounded, digest-addressed, and reversible. Resource-bounding and isolation must be **created, not inherited** — **no cluster-wide `ResourceQuota`, `LimitRange`, or `NetworkPolicy` exists to inherit** — and **NetworkPolicy enforcement must be verified on the CNI in use first**. The absence of backups is **total**, so the exemption ends the moment any Renvor workload holds state. [Evidence §3ay](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3816) |
+| ~~4~~ | ~~CSP compatibility with the V7 landing implementation (GSAP, self-hosted variable fonts)~~ | Ahmed Anbar | **T101 — RESOLVED 2026-08-14: a 434-byte policy enforced against tree `e7fbc9d1438eaf58dee2c7d634dac4003b8664ec`; negative control 3/3, matrix 48/48, zero application violations. See D5 and [evidence §3at](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3214).** A local harness served the enforcement header; **no production response header was configured or enabled, no Traefik middleware was written, configured, or enabled, and no live-server access or production-infrastructure action occurred** |
 | ~~5~~ | ~~Whether the Cloudflare proxy is enabled and the origin authenticated to the edge~~ | Ahmed Anbar | **T110 — RESOLVED 2026-08-12: DNS-only, no proxy. See D3, D4, D5, D10, D11** |
 
 1. ~~**Registry choice is not decided.**~~ **Resolved 2026-08-12 — GHCR (T099).** Publishing
@@ -734,7 +734,7 @@ be forgotten.** Questions 1, 2 and 5 were resolved on 2026-08-12 — **T099**, *
    `/assets/fonts/...` resources under `font-src 'self'`. The candidate policy also allowed
    `data:` fonts, but r4 did not establish that allowance as necessary. The policy is not
    allowance-free — it carries one hashed style-attribute allowance using `unsafe-hashes`,
-   plus `data:` for images and fonts. See D5 and evidence §3at. **Boundary: this was a local
+   plus `data:` for images and fonts. See D5 and [evidence §3at](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3214). **Boundary: this was a local
    enforcement harness, not production and not Traefik. That harness did configure and serve
    the enforcement header; what did not happen is production. No production response header
    was configured or enabled, no Traefik middleware was written, configured, or enabled, and
@@ -756,7 +756,7 @@ be forgotten.** Questions 1, 2 and 5 were resolved on 2026-08-12 — **T099**, *
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — seven alternatives, with Cloudflare Tunnel analysed rather than assumed |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete; neither failure (CHK048, CHK050) falls inside this record's scope |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-12** — T086 complete; neither failure (CHK048, CHK050) falls inside this record's scope |
 | 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — all four required checks passing on `renvor-rs/renvor` |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 
@@ -772,7 +772,7 @@ document asserting authority it did not have.
 
 **All five questions are now closed** — **T099** (registry), **T101** (CSP compatibility,
 2026-08-14), **T105** (`www` redirect location), **T110** (proxy versus DNS-only), and
-**T106** (the backup ruling, **2026-08-15**, evidence §3ay). The condition for acceptance is
+**T106** (the backup ruling, **2026-08-15**, [evidence §3ay](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3816)). The condition for acceptance is
 therefore met.
 
 | Acceptance requirement | Status |
@@ -816,7 +816,7 @@ no GitLab restore is required for Renvor recovery. **No GitLab recovery guarante
 
 ~~**T113 remains open, T106 remains open, this record is not accepted, and Phase 001 is not complete.**~~ **Superseded 2026-08-15**: **T113 closed** on live re-verification (§3aw), **T106 closed** by maintainer ruling (§3ay), and **this record was accepted the same day**. Phase 001 is a closure candidate with **0 open tasks** — 108 completed, 1 waived (T088, under W-003), 1 cancelled (T114), and 4 transferred and still non-completed (T102, T108, T109, T111).
 
-~~**T106 cannot close on the current evidence.**~~ **Superseded 2026-08-15 — T106 closed** on a successful read-only inspection (evidence §3ay). The paragraph below records the earlier failure and is retained as the reason acceptance waited: A read-only reinspection of the server was
+~~**T106 cannot close on the current evidence.**~~ **Superseded 2026-08-15 — T106 closed** on a successful read-only inspection ([evidence §3ay](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3816)). The paragraph below records the earlier failure and is retained as the reason acceptance waited: A read-only reinspection of the server was
 attempted on 2026-08-12 and **failed at authentication** — the SSH profile targets user
 `deploy` while the host mapping uses a different user and identity. The 2026-08-11 audit is
 retained as **historical evidence, not current proof**. Resolving the credential mismatch

@@ -11,7 +11,7 @@
 //! check gets reported as a pass.
 //!
 //! The step list and exit codes are fixed by
-//! `specs/001-governance-foundation/contracts/verification-sequence.md`.
+//! `contracts/verification-sequence.md`.
 
 use std::env;
 use std::ffi::OsStr;
@@ -78,28 +78,28 @@ const REQUIRED: &[Tool] = &[
         program: "gitleaks",
         probe: &["version"],
         name: "gitleaks",
-        purpose: "secret scan, step 7",
+        purpose: "secret scan, step 8",
         install: "brew install gitleaks   (or see github.com/gitleaks/gitleaks)",
     },
     Tool {
         program: "node",
         probe: &["--version"],
         name: "node",
-        purpose: "documentation site, step 8",
+        purpose: "documentation site, step 9",
         install: "see .nvmrc for the required version",
     },
     Tool {
         program: "npm",
         probe: &["--version"],
         name: "npm",
-        purpose: "documentation site, step 8",
+        purpose: "documentation site, step 9",
         install: "ships with node — see .nvmrc",
     },
     Tool {
         program: "lychee",
         probe: &["--version"],
         name: "lychee",
-        purpose: "link checking, step 9",
+        purpose: "link checking, step 10",
         install: "cargo install lychee --locked",
     },
 ];
@@ -250,8 +250,8 @@ fn verify() -> i32 {
         );
         eprintln!();
         eprintln!("This is a FAILURE, not a skip. The sequence has no conditional steps:");
-        eprintln!("a check that cannot run is a failure (FR-023). Steps 1-7 above did run");
-        eprintln!("and did pass; steps 8-10 did not run.");
+        eprintln!("a check that cannot run is a failure (FR-023). Steps 1-8 above did run");
+        eprintln!("and did pass; steps 9-11 did not run.");
         return EXIT_STEP_FAILED;
     }
     if !run(
@@ -946,12 +946,12 @@ fn workspace_manifests(root: &std::path::Path) -> Option<Vec<(String, String)>> 
 /// T104: the instability-closure sentence is byte-identical in all three normative locations, and
 /// **0** phase numbers appear inside FR-036's normative closure clause.
 fn instability_wording_agrees(root: &std::path::Path) -> bool {
-    let spec = root.join("specs/002-core-kernel/spec.md");
+    let spec = root.join("contracts/api-stability.md");
     let Ok(text) = std::fs::read_to_string(&spec) else {
         step_fail(
             7,
             "architecture invariants",
-            "specs/002-core-kernel/spec.md is unreadable",
+            "contracts/api-stability.md is unreadable",
         );
         return false;
     };
@@ -959,14 +959,14 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
     // Located by its own text rather than by line number, so editing the document around it does
     // not silently disable this check.
     let occurrences = text.matches(SC022_SENTENCE).count();
-    if occurrences < SC022_REQUIRED_OCCURRENCES {
+    if occurrences != SC022_REQUIRED_OCCURRENCES {
         step_fail(
             7,
             "architecture invariants",
             &format!(
-                "the instability-closure sentence appears {occurrences} time(s); SC-022 requires \
-                 {SC022_REQUIRED_OCCURRENCES} byte-identical copies across the clarification \
-                 record, FR-036, and the Dependencies section"
+                "the instability-closure sentence appears {occurrences} time(s) in \
+                 contracts/api-stability.md; SC-022 requires exactly \
+                 {SC022_REQUIRED_OCCURRENCES}"
             ),
         );
         return false;
@@ -1016,12 +1016,287 @@ fn instability_wording_agrees(root: &std::path::Path) -> bool {
 const SC022_SENTENCE: &str =
     "the first real transport adapter has exercised the surface and its feedback has been applied";
 
-/// How many normative locations must carry it: the clarification record, FR-036, and Dependencies.
-const SC022_REQUIRED_OCCURRENCES: usize = 3;
+/// How many copies of the sentence must exist. **Exactly** this many, not at least.
+///
+/// # Why this went from 3 to 1 on 2026-08-19, and why that is not a loosened gate
+///
+/// It was **3** because the statement lived in three places inside one phase specification — the
+/// clarification record, FR-036, and the Dependencies section — and the failure this guarded
+/// against was somebody editing one copy and not the others. Counting them was the only way to
+/// detect that drift.
+///
+/// The statement now has **one** authoritative home, `contracts/api-stability.md`, and the phase
+/// specification that held the three copies is no longer part of the public tree. Two copies
+/// cannot disagree when there is one copy, so the drift class is eliminated rather than merely
+/// unchecked. The substantive checks below — that the closure clause names **no phase number**,
+/// and the two positive controls proving the clause was really extracted — are unchanged and still
+/// run.
+///
+/// # Why the comparison is `!=` and not `<`
+///
+/// A lower bound would accept a second copy appearing later. That is exactly the drift the single
+/// authoritative home was adopted to eliminate: with two copies, one can be edited and the other
+/// left, and a `>=` check passes throughout. `contracts/api-stability.md` states it is the single
+/// authoritative copy, so the check enforces precisely that rather than a weaker property the
+/// contract does not claim.
+const SC022_REQUIRED_OCCURRENCES: usize = 1;
 
 #[cfg(test)]
 mod tests {
     use super::scan_manifests;
+
+    /// `TOTAL_STEPS` equals the number of steps the published contract lists.
+    ///
+    /// The contract table drifted from the implementation once already: it listed ten steps while
+    /// `xtask` ran eleven, having never mentioned the architecture-invariants step at all. Nothing
+    /// detected that, because nothing compared the two. This does.
+    ///
+    /// The contract is read with `include_str!`, so it resolves at COMPILE time — a moved or
+    /// deleted contract is a build failure rather than a silently skipped test.
+    #[test]
+    fn the_step_count_matches_the_published_contract() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+
+        // Rows of the step table look like `| 7 | Architecture invariants | ... |`.
+        let mut numbers: Vec<usize> = Vec::new();
+        for line in CONTRACT.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix('|') else {
+                continue;
+            };
+            let Some((first, _)) = rest.split_once('|') else {
+                continue;
+            };
+            if let Ok(number) = first.trim().parse::<usize>() {
+                numbers.push(number);
+            }
+        }
+
+        // POSITIVE CONTROL FIRST. A parse that matched nothing would make every assertion below
+        // vacuously true, which is the failure mode this whole file is written against.
+        assert!(
+            numbers.len() >= super::TOTAL_STEPS,
+            "the contract parse found only {} numbered rows; it is not reading the step table",
+            numbers.len()
+        );
+
+        // The step table is the leading run 1, 2, 3, ... — the exit-code table that follows also
+        // has numbered rows, and it legitimately starts again at 0.
+        let mut steps = 0usize;
+        for (index, number) in numbers.iter().enumerate() {
+            if *number == index + 1 {
+                steps = *number;
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(
+            steps,
+            super::TOTAL_STEPS,
+            "the contract publishes {steps} steps but TOTAL_STEPS is {}. One of them was changed \
+             without the other; they are the same promise stated twice.",
+            super::TOTAL_STEPS
+        );
+    }
+
+    /// The published contract does not claim that a step of the sequence currently fails.
+    ///
+    /// It did. Under "Working-tree cleanliness" the contract carried a **Known starting
+    /// condition** asserting that `.DS_Store`, `.idea/`, and `.playwright-mcp/` were
+    /// inadequately ignored and that *"step 11 fails until the ignore rules are corrected"*.
+    /// The ignore rules were corrected; the sentence was not. So a normative document
+    /// described its own subject as failing while `cargo xtask verify` exited 0 — and this
+    /// test file runs inside step 4 of that very sequence, which means the contract was
+    /// predicting a failure of the run that was executing it.
+    ///
+    /// Two independent bindings, neither of which is a prose search for a failure claim:
+    ///
+    /// 1. **Structural** — the `Known starting condition` label must not reappear. That
+    ///    label is the exact vector: it is where a *current-state* assertion was parked
+    ///    inside a document that otherwise states obligations.
+    /// 2. **Factual** — the three artefact paths that label named must carry a rule in the
+    ///    tracked ignore file.
+    ///
+    /// **What this does not do**, stated so the guard is not credited with more than it
+    /// buys: binding 1 catches the label, not every conceivable false current-state claim
+    /// phrased some other way; and binding 2 proves a *rule is present*, not that a given
+    /// path resolves as ignored. The end-to-end proof is step 11 itself, which runs
+    /// `git status --porcelain` on every invocation. This test guards the prose; step 11
+    /// guards the behaviour.
+    #[test]
+    fn the_contract_does_not_claim_the_sequence_currently_fails() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+        const IGNORE_RULES: &str = include_str!("../../.gitignore");
+
+        // POSITIVE CONTROL FIRST. If either file were empty or moved, every assertion below
+        // would pass vacuously — which is the failure mode this whole module is written
+        // against. `include_str!` already makes a moved file a build error; these prove the
+        // *content* being searched is the content that matters.
+        assert!(
+            CONTRACT.contains("## Working-tree cleanliness"),
+            "the verification contract has no working-tree cleanliness section; this test is \
+             searching the wrong content"
+        );
+        assert!(
+            IGNORE_RULES.lines().any(|line| line.trim() == "target/"),
+            "the tracked ignore file does not contain the build-output rule; this test is \
+             searching the wrong content"
+        );
+
+        // (1) The defect vector.
+        assert!(
+            !CONTRACT.contains("Known starting condition"),
+            "contracts/verification-sequence.md carries a `Known starting condition` block \
+             again. That block asserted a CURRENT failure of step 11 and stayed after the \
+             cause was fixed. A contract states obligations; the current result of meeting \
+             them belongs in a CI run, not in normative text."
+        );
+
+        // (2) The artefacts that block named are covered by the tracked ignore rules.
+        for rule in [".idea/", ".DS_Store", ".playwright-mcp/"] {
+            assert!(
+                IGNORE_RULES.lines().any(|line| line.trim() == rule),
+                "the tracked ignore file has no `{rule}` rule. Step 11 asserts the working \
+                 tree is clean after a full run, so an uncovered editor or OS artefact fails \
+                 the sequence — and the contract no longer warns anyone that it would."
+            );
+        }
+
+        // NEGATIVE CONTROL. A rule-matcher that reported everything present would make the
+        // loop above meaningless. A tracked file must NOT be found as an ignore rule.
+        assert!(
+            !IGNORE_RULES.lines().any(|line| line.trim() == "README.md"),
+            "the rule matcher reports a tracked file as an ignore rule; it is not \
+             discriminating and the assertions above prove nothing"
+        );
+    }
+
+    /// The published documentation site lists the same number of steps.
+    ///
+    /// The site's page duplicates the step table, and it has been left behind **three times**:
+    /// the constitution version, the amendment count, and the step list were each corrected in
+    /// `.md` sources while `docs/docs/*.mdx` kept the old values, because the sweeps that found
+    /// them globbed `*.md`. A reader following the published site was told the command runs ten
+    /// steps while it ran eleven, because the site's table omitted the architecture-invariants
+    /// step exactly as the contract's did.
+    ///
+    /// Checking it here is the only thing that has actually stopped that recurring.
+    #[test]
+    fn the_documentation_site_lists_the_same_step_count() {
+        const PAGE: &str = include_str!("../../docs/docs/verification.mdx");
+
+        let mut numbers: Vec<usize> = Vec::new();
+        for line in PAGE.lines() {
+            let trimmed = line.trim();
+            let Some(rest) = trimmed.strip_prefix('|') else {
+                continue;
+            };
+            let Some((first, _)) = rest.split_once('|') else {
+                continue;
+            };
+            if let Ok(number) = first.trim().parse::<usize>() {
+                numbers.push(number);
+            }
+        }
+
+        // POSITIVE CONTROL: a parse that matched nothing would pass every assertion below.
+        assert!(
+            numbers.len() >= super::TOTAL_STEPS,
+            "the site parse found only {} numbered rows; it is not reading the step table",
+            numbers.len()
+        );
+
+        let mut steps = 0usize;
+        for (index, number) in numbers.iter().enumerate() {
+            if *number == index + 1 {
+                steps = *number;
+            } else {
+                break;
+            }
+        }
+
+        assert_eq!(
+            steps,
+            super::TOTAL_STEPS,
+            "docs/docs/verification.mdx publishes {steps} steps but the command runs {}. The \
+             site is what a contributor reads before running anything.",
+            super::TOTAL_STEPS
+        );
+    }
+
+    /// Every required tool names the step that actually consumes it.
+    ///
+    /// `report_missing` prints `Tool::purpose` verbatim, so these strings are **observable
+    /// output**, and `contracts/verification-sequence.md` publishes an example of that output.
+    /// They drifted: after the architecture-invariants step was restored to the published table,
+    /// `gitleaks` still said step 7, `node` and `npm` said 8, and `lychee` said 9 — one behind
+    /// the sequence the command actually runs.
+    ///
+    /// The step-count tests did not catch it and could not: they compare a **count**, and the
+    /// count was right the whole time. A defect in which value sits next to which name is only
+    /// visible to a test that asserts the values. This one does, exactly, per tool.
+    #[test]
+    fn every_required_tool_names_the_step_that_consumes_it() {
+        // The right-hand side is the executable sequence, read off the `run`/`step_ok` call
+        // sites in `verify` — not copied from the table it is meant to check.
+        const EXPECTED: &[(&str, &str)] = &[
+            (
+                "git",
+                "secret scanning and working-tree cleanliness, steps 8 and 11",
+            ),
+            ("rustfmt", "formatting, step 2"),
+            ("clippy", "lint, step 3"),
+            ("cargo-deny", "dependency and licence policy, step 6"),
+            ("gitleaks", "secret scan, step 8"),
+            ("node", "documentation site, step 9"),
+            ("npm", "documentation site, step 9"),
+            ("lychee", "link checking, step 10"),
+        ];
+
+        // POSITIVE CONTROL: the expectation table must cover the real table exactly. Without
+        // this, adding a tool with a wrong purpose would pass by never being looked at, and
+        // deleting a tool would pass by leaving an expectation nothing compares against.
+        assert_eq!(
+            EXPECTED.len(),
+            super::REQUIRED.len(),
+            "REQUIRED has {} tools but this test expects {}. A tool was added or removed \
+             without updating the expected purpose beside it.",
+            super::REQUIRED.len(),
+            EXPECTED.len()
+        );
+
+        for (name, expected_purpose) in EXPECTED {
+            let tool = super::REQUIRED
+                .iter()
+                .find(|t| t.name == *name)
+                .unwrap_or_else(|| panic!("REQUIRED has no tool named `{name}`"));
+            assert_eq!(
+                tool.purpose, *expected_purpose,
+                "`{name}` tells the user its purpose is {:?}, but it is consumed by {:?}. \
+                 This string is printed verbatim by `report_missing`, so it is a published \
+                 contract, not a comment.",
+                tool.purpose, expected_purpose
+            );
+        }
+
+        // No purpose may name a step the sequence does not have. This catches the direction the
+        // table above cannot: an expectation and an implementation that are wrong together.
+        for tool in super::REQUIRED {
+            for token in tool.purpose.split(|c: char| !c.is_ascii_digit()) {
+                if token.is_empty() {
+                    continue;
+                }
+                let step: usize = token.parse().expect("digits parse");
+                assert!(
+                    (1..=super::TOTAL_STEPS).contains(&step),
+                    "`{}` names step {step}, outside the 1..={} sequence",
+                    tool.name,
+                    super::TOTAL_STEPS
+                );
+            }
+        }
+    }
 
     /// A publishable manifest with the `{ path, version }` form the rule permits.
     fn compliant() -> (String, String) {

@@ -6,14 +6,14 @@ status: "unstable — the surface it describes is explicitly unstable under FR-0
 
 # Contract: Provider Graph
 
-**Feature**: [../spec.md](../spec.md) | **Satisfies**: FR-012…FR-014, FR-039; SC-005, SC-021
+**Feature**: the phase specification *(internal record)* | **Satisfies**: FR-012…FR-014, FR-039; SC-005, SC-021
 **Status**: contract for an **explicitly unstable** surface (FR-036). *Revision 2 — resolver redesigned.*
 
 > **Revision 2 corrects a design that could not meet its own budget.** Revision 1 specified Kahn's
 > algorithm for ordering plus Tarjan for cycle reporting. Kahn alone examines each node twice and
 > each edge twice — **the entire allowance** — so any second traversal broke the budget. It also
 > rejected `petgraph` on a property of the wrong function. **The budget is unchanged; the design
-> is.** See [../research.md](../research.md) D8.
+> is.** See the phase research record *(internal record)* D8.
 
 ## C-G1 — Two independent families of bound
 
@@ -56,7 +56,7 @@ normative — two independent implementations counting by them **MUST** arrive a
 > The correction is to the **definition**, not to the budget: the allowances (2048 / 16384 /
 > 18432) and the observed values (2048 / 8192 / 10240) are unchanged, and the implementation now
 > reproduces them exactly. Evidence: `crates/renvor-core/tests/resolver_proof.rs`;
-> `specs/002-core-kernel/research.md` §D8.
+> [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D8.
 
 Two consequences follow, and both are intended:
 

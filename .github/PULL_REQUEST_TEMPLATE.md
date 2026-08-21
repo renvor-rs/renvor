@@ -6,7 +6,7 @@
 
 ## Verification
 
-- [ ] `cargo xtask verify` passes locally (exit 0, all ten steps)
+- [ ] `cargo xtask verify` passes locally (exit 0, every contract-defined step)
 - [ ] The change is focused on one thing
 - [ ] Documentation is updated where the change makes it inaccurate
 

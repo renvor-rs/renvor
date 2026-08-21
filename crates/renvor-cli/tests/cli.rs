@@ -1,4 +1,5 @@
-//! The command surface as **expected output** (contract C-1, research D14).
+//! The command surface as **expected output** (contract C-1,
+//! [Phase 003 research §D14](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md)).
 //!
 //! # Why the contract is asserted as text rather than in code
 //!
@@ -29,7 +30,7 @@ fn the_command_surface_matches_its_recorded_contract() {
         .default_bin_name("renvor");
 }
 
-// ── The JSON documents, as SHAPES (contract C-2, research D14) ───────────────────────────────
+// ── The JSON documents, as SHAPES (contract C-2, Phase 003 research §D14) ────────────────────
 //
 // `tests/cmd/*.trycmd` above records the command surface as byte-exact expected output. That is
 // the right instrument for `--help` and for exit codes, and the wrong one for JSON: a document

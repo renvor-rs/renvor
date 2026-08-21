@@ -51,7 +51,7 @@ body:
     attributes:
       label: Platform
       description: >-
-        Linux, macOS, and Windows are verified in CI. See SUPPORT.md for what each
-        claim rests on.
+        Linux, macOS, and Windows are supported. See contracts/support-policy.md — the
+        normative policy — for what each claim rests on, and which contexts are required.
     validations:
       required: true

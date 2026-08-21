@@ -1,6 +1,6 @@
 # Phase 002 — Complete resolved transitive dependency inventory
 
-**Feature**: [`specs/002-core-kernel`](../specs/002-core-kernel/spec.md) | **Satisfies**: FR-040, SC-012, SC-017 | **Tasks**: T030–T034
+**Feature**: [Phase 002 — core kernel](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/spec.md) | **Satisfies**: FR-040, SC-012, SC-017 | **Tasks**: T030–T034
 **Produced**: 2026-08-16 | **Toolchain**: 1.94.0 | **Source of truth**: the tracked `Cargo.lock`, read by `cargo metadata --locked`
 
 ## Why this document exists
@@ -36,7 +36,7 @@ table" — 37 rows. The difference is **`zeroize`**, which research §3 evaluate
 one row reading *"Arrived transitively, evaluated by nobody until the inventory | 38"*, which
 attached the second label to the first measure and so overstated the unevaluated set by one. Every
 figure in this section is reproduced by the Gate 15 comparison in
-[`quickstart.md`](../specs/002-core-kernel/quickstart.md), which now reads the prose as well as the
+[`quickstart.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/quickstart.md), which now reads the prose as well as the
 table.
 
 ## Revision — 2026-08-16, after the configuration proof gate failed
@@ -331,7 +331,7 @@ looking.
 Every figure above is read from a **committed** `Cargo.lock`, which is what FR-040 requires. ADR-0003
 records that *reusable library crates* do not commit a lockfile. Both hold, because the two
 statements govern **different objects** — the full reconciliation is in
-[`specs/002-core-kernel/research.md`](../specs/002-core-kernel/research.md) §D12, and the short form
+[`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D12, and the short form
 is:
 
 - the *version-requirement* half of ADR-0003's row is a property of **each crate's manifest**, and

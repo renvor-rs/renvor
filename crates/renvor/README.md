@@ -37,12 +37,16 @@ The product, this crate, and the installed executable share one spelling: **`ren
 [ADR-0010](https://github.com/renvor-rs/renvor/blob/main/decisions/0010-unify-product-and-executable-name.md),
 which supersedes ADR-0001.
 
-## Supported Rust versions
+## Support
 
 The minimum supported Rust version is **1.94.0**. This is a fixed support floor, not a
 rolling offset from current stable — a new Rust release does not invalidate it. Raising it
-requires a planned minor or major release and an accepted decision record. See
-[`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md).
+requires a planned minor or major release and an accepted decision record.
+
+Linux, macOS, and Windows are supported, with different enforcement levels. The normative
+policy — including which CI contexts are branch-protection-required and which are evidence
+only — is `contracts/support-policy.md`;
+[`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md) summarises it.
 
 ## Licence
 

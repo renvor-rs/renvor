@@ -3,10 +3,57 @@
 | Field | Value |
 |---|---|
 | **ID** | 0003 |
-| **State** | `accepted` |
+| **State** | `superseded` |
 | **Reviewer** | `Ahmed Anbar — self-review under W-002` |
 | **Review date** | 2026-08-12 |
-| **Superseded by** | — |
+| **Superseded by** | **ADR-0011** *(2026-08-21)* |
+
+> ## Superseded 2026-08-21 by ADR-0011 — three platforms are now supported
+>
+> **Linux, macOS, and Windows are supported platforms**, with explicitly different
+> enforcement levels: six platform/toolchain contexts run on every pull request, and only the
+> two Linux `verify` contexts are required by branch protection. See
+> `decisions/0011-support-linux-macos-and-windows.md`.
+>
+> **The decision's substance below is preserved as historical evidence. The historical body is
+> not byte-for-byte identical to its accepted version.** No sentence below has been edited to
+> agree with the newer decision — superseding a record does not entitle anyone to rewrite what it
+> said, and the Phase 001 and Phase 002 evidence that cites this record must stay checkable
+> against the text that was actually accepted.
+>
+> **The only change inside the historical body is the W-002 control-2 citation row.** A bare
+> `specs/...` path was replaced with an immutable, full-commit-pinned link to the same file, so
+> the evidence stays reachable: `specs/` is untracked on this branch and the bare path resolves
+> to nothing. The finding text in that row is unchanged, and the pinned revision records the same
+> **79 of 79** outcome this row reports. Its SHA-256 is independently recorded in ADR-0011's
+> control 2.
+>
+> **What ADR-0011 carried forward, unchanged in substance:** the **fixed MSRV floor of 1.94.0**
+> and its whole shape, the current-stable-channel testing rule, Rust **2024** edition, Cargo
+> **resolver 3**, the five rules for raising the MSRV, the quarterly review, the **scheduled
+> Phase 006 MSRV reassessment** (FR-061), and the dependency, lockfile, licence, and advisory
+> rules — the last still incorporated **by reference** to
+> `governance/dependency-advisory-policy.md` so the numbers cannot drift.
+>
+> **Those rules are now decided by ADR-0011, not by this record.** ADR-0011 restates each of
+> them in its §Supersession table, so they are carried by a current record rather than inherited
+> from a superseded one. **This record has no current decision authority**; it is historical
+> evidence of what was decided on 2026-08-12 and why.
+>
+> **A future MSRV, toolchain, or dependency-policy change supersedes ADR-0011**, not this
+> record. This record has already been superseded and cannot be superseded again.
+>
+> **What ADR-0011 changed:** the platform claim, and nothing else. **This is not an MSRV
+> change**, which is why `contracts/support-policy.md` went to **1.1.0** rather than 2.0.0.
+>
+> **Why ADR-0011 exists at all**: `contracts/support-policy.md` — the contract this record set
+> — says it *"changes only through a superseding ADR"*. The Phase 001 platform table it carried
+> justified withholding macOS and Windows with *"No platform-sensitive code exists to verify"*,
+> which stopped being true during Phase 002. A superseding ADR was the only mechanism the
+> contract admits.
+>
+> **ADR-0011's acceptance review is NOT independent.** It was accepted under waiver **W-002**,
+> exactly as this record was.
 
 ## Context
 
@@ -167,7 +214,7 @@ Re-reviewed 2026-08-12 after T104 closed the gap that previously blocked control
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives with rejection reasons; accepted costs stated, including that the current MSRV rests on an anticipated rather than measured requirement |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 final re-review: **79 of 79 passed**. CHK050, which previously blocked this record, is resolved by T104 and verified present in every authoritative location. CHK048 is resolved by T103 and never concerned this record's scope |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-12** — T086 final re-review: **79 of 79 passed**. CHK050, which previously blocked this record, is resolved by T104 and verified present in every authoritative location. CHK048 is resolved by T103 and never concerned this record's scope |
 | 3 | All required CI and security checks passing | ✅ **Met** — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` all passing on `renvor-rs/renvor`, including on the pull request carrying this change |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 

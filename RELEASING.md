@@ -23,8 +23,8 @@ changes, and reviewers then trust the stale one.
 | [`governance/dependency-advisory-policy.md`](governance/dependency-advisory-policy.md) | Advisory triage and remediation deadlines against dependencies |
 | [`SECURITY.md`](SECURITY.md) | Inbound private vulnerability reports about Renvor itself |
 | [`deny.toml`](deny.toml) | The enforced licence and dependency allow-list |
-| [`SUPPORT.md`](SUPPORT.md) | MSRV, supported platforms, and the support window |
-| [`specs/001-governance-foundation/contracts/package-metadata.md`](specs/001-governance-foundation/contracts/package-metadata.md) | Required manifest fields and the rehearsal contract |
+| [`contracts/support-policy.md`](contracts/support-policy.md) | **Normative** — MSRV, supported platforms, and the support window. [`SUPPORT.md`](SUPPORT.md) summarises it |
+| [`contracts/package-metadata.md`](contracts/package-metadata.md) | Required manifest fields and the rehearsal contract |
 
 ---
 
@@ -82,7 +82,8 @@ opposite of a reproducible release.
   [`SUPPORT.md`](SUPPORT.md) states it as a promise rather than leaving it implied.
 - **An MSRV raise is a minor or major release only**, never a patch, and requires an
   accepted decision record naming the concrete requirement that forces it. The rules live
-  in [`SUPPORT.md`](SUPPORT.md); this document does not restate them.
+  in [`contracts/support-policy.md`](contracts/support-policy.md); this document does not
+  restate them.
 - **Every release updates the changelog before the tag is created**, not after. A
   changelog written after the fact describes what someone remembers shipping.
 - The changelog records, per version: added, changed, deprecated, removed, fixed, and
@@ -116,10 +117,10 @@ Reject the release if the list contains any of:
   covered by `MIT OR Apache-2.0`).
 
 Then confirm, against
-[`contracts/package-metadata.md`](specs/001-governance-foundation/contracts/package-metadata.md):
+[`contracts/package-metadata.md`](contracts/package-metadata.md):
 
 - every required manifest field is present and resolving;
-- `rust-version` matches [`SUPPORT.md`](SUPPORT.md) exactly;
+- `rust-version` matches [`contracts/support-policy.md`](contracts/support-policy.md) exactly;
 - the licence is `MIT OR Apache-2.0` and nothing else;
 - **no publishable package carries a git dependency, or a path-only dependency.** An
   intra-workspace dependency **must** carry both keys — `{ path = "../x", version = "0.0.0" }` —

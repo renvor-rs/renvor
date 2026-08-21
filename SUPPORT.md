@@ -1,7 +1,16 @@
 # Support Policy
 
-This is a public promise. It changes only through the process described at the end of this
-document.
+This is a public promise.
+
+> **This page is the human-facing summary.** The **sole normative authority** is the versioned
+> contract [`contracts/support-policy.md`](contracts/support-policy.md). Where this page and
+> that contract disagree, **the contract wins** — and the disagreement is a defect in this page,
+> to be fixed here rather than argued from.
+>
+> The three-platform claim below is carried by
+> [`ADR-0011`](decisions/0011-support-linux-macos-and-windows.md).
+
+It changes only through the process described at the end of this document.
 
 ## Current status
 
@@ -24,7 +33,7 @@ whatever happened to be convenient.
 |---|---|
 | **Minimum supported Rust version (MSRV)** | **1.94.0** (released 2026-03-05) |
 | Kind | **Fixed floor** — not N-3, N-4, or any offset from current stable |
-| Also tested | **Current stable** (1.97.1 at time of writing, released 2026-07-16) |
+| Also tested | **The current stable channel** — resolved and recorded by CI at run time, not pinned here |
 | Edition | 2024 |
 | Cargo resolver | 3, declared explicitly in the virtual workspace |
 
@@ -34,11 +43,16 @@ whatever happened to be convenient.
 does not trigger a review. The minimum-version CI job stays pinned at 1.94.0; only the
 stable job moves.
 
-This was chosen deliberately over a release-count window. Rust 1.98.0 promotes to stable
+**No stable version number is stated on this page.** A number written into a document does not
+float: it is correct on the day it is typed and silently false afterwards, with no way for a
+reader to tell which day they are on. The stable channel is whatever CI resolves it to on the
+run that produced the evidence, and the run records it.
+
+This was chosen deliberately over a release-count window. Rust 1.98.0 promoted to stable
 on 2026-08-20, which would have pushed 1.94.0 to four releases behind and violated an
 "N-3" policy **through the calendar alone** — no code change, no dependency change, no
 decision by anyone. A fixed floor removes release count from the policy entirely, and
-means you can read the number here rather than compute it from a release schedule.
+means you can read **the floor** here rather than compute it from a release schedule.
 
 ### Where it is declared
 
@@ -79,8 +93,22 @@ containment. That is a different product, not a configuration of this one.
 
 ## Supported platforms
 
+**Normative statement**: [`contracts/support-policy.md` §Platform support](contracts/support-policy.md).
+This section summarises it.
+
 Only platforms with passing evidence are listed as supported. Claiming a platform without
-a verification run behind it would be a claim exceeding measurement.
+a verification run behind it would be a claim exceeding measurement, and **a claim is carried
+by passing CI attached to the exact tree that CI actually tested**.
+
+On a pull request, that tree is **GitHub's synthetic merge commit** — the candidate integration
+that GitHub builds from an exact pair, the base commit and the pull-request head commit. That is
+what the workflows check out, so that is what the six contexts test, and the evidence belongs to
+that candidate integration rather than to the branch head on its own. Move either SHA and it is
+a different candidate needing its own passing run; nothing carries forward. On a push to `main`,
+CI tests the actual `main` commit — and after a squash merge, that push run rather than the pull
+request's is what confirms `main`. The normative form of the rule, including the separation of
+acceptance evidence from ongoing evidence, is in
+[`contracts/support-policy.md`](contracts/support-policy.md).
 
 | Platform | Status | Evidence |
 |---|---|---|
@@ -128,8 +156,13 @@ outside the change that added them.
 
 ### What "supported" does and does not mean here
 
-It means the tests above pass on that platform at the exact head being claimed. It does
-**not** mean every platform receives the full verification sequence: `cargo xtask verify`
+It means the tests above pass on that platform for the exact tree CI tested — the candidate
+merge tree before a merge, the actual `main` commit after one. It does
+**not** mean every platform-specific behaviour has received **independent human review** —
+none has, on any platform. W-003, W-005, and W-008 are open for exactly that reason, and a
+platform claim does not narrow any of them.
+
+It does **not** mean every platform receives the full verification sequence: `cargo xtask verify`
 also runs secret scanning, a link check, and a commit-history scan, which are properties of
 the repository rather than of the platform, and running them three times would triple a
 link check against github.com to learn nothing.
@@ -151,7 +184,7 @@ A raise may occur **only**:
 1. in a **planned minor or major release** — never a patch;
 2. after an **accepted decision record** naming the concrete dependency, language, or
    security requirement that forces it. *"Newer is better" is not a justification;*
-3. documented in **three** places: this document, the changelog, and the release notes;
+3. documented in **three** places: [`contracts/support-policy.md`](contracts/support-policy.md), the changelog, and the release notes — and mirrored here;
 4. after the outgoing MSRV has been supported for **at least six months**;
 5. with a passing verification run at the new exact version — the declared MSRV is never
    published without one.
@@ -210,6 +243,15 @@ licence header implying otherwise.
 
 ## Changing this policy
 
-This contract changes only through a **superseding decision record** with an impact
-analysis covering published packages, documentation, the compatibility matrix, and any
-downstream consumer relying on the current promise.
+The policy changes only through a **superseding decision record** with an impact analysis
+covering published packages, documentation, the compatibility matrix, and any downstream
+consumer relying on the current promise.
+
+**The document that changes is [`contracts/support-policy.md`](contracts/support-policy.md)**,
+which is versioned and normative. This page is updated to match it; it is not a second contract,
+and editing this page does not change the policy.
+
+| Record | What it governs |
+|---|---|
+| **ADR-0003** | The MSRV floor, the toolchain and dependency policy. **`superseded`** by ADR-0011 on 2026-08-21; its decision body is preserved verbatim, and the MSRV rules it sets are carried forward unchanged |
+| **ADR-0011** *(`accepted` 2026-08-21, under W-002 — **not** an independent review)* | Linux, macOS, and Windows as supported platforms, and the required-versus-running distinction |

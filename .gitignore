@@ -53,12 +53,38 @@ secrets/
 .venv/
 __pycache__/
 
-# --- Local agent and development-tool configuration (T009: excluded from the public repository) ---
+# --- Local agent and development-tool configuration ---
+# Restored to the TRACKED ignore file on 2026-08-19, after two internal advisory review
+# passes flagged its removal. Those passes were automated, and automated review is not
+# independent review.
+#
+# These were moved to `.git/info/exclude` on the reasoning that local-only material does not
+# belong in a rule imposed on everyone who clones. That reasoning does not survive contact with
+# two facts: this repository is **public**, and `.git/info/exclude` is **per-clone**. A second
+# clone — another machine, another contributor, CI — inherits none of it, and a single broad
+# `git add .` there publishes local tool state irreversibly. A published secret is not
+# retractable, and this file is the only protection that travels with the repository.
+#
+# `.git/info/exclude` keeps them too. This is belt and braces, deliberately.
 .claude/
 .claude-flow/
 .playwright-mcp/
 .remember/
 .specify/
+
+# --- Private working material, archived locally 2026-08-19 ---
+# The exact tracked bytes of everything below are preserved in the maintainer's private archive
+# and remain in public Git history at merge commit 01327b1; untracking removed them from the
+# CURRENT tree only.
+#
+# These rules are TRACKED, deliberately, for the same reason as the block above. The phase
+# tooling recreates `specs/<phase>/` on disk whenever it runs, and `.git/info/exclude` does not
+# travel to another clone — so without this, one broad `git add .` in a fresh checkout
+# republishes exactly the working material this cleanup removed. Anchored with a leading `/` so
+# they match only at the repository root and cannot shadow a same-named path inside a crate.
+/specs/
+/governance/phase-003-review-pack.md
+/governance/web-properties-migration-plan.md
 
 # --- Separately managed brand package, separate asset licensing (T009) ---
 Branding/

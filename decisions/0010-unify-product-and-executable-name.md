@@ -12,7 +12,7 @@
 > **Accepted 2026-08-17 under waiver W-002. This review is NOT independent.**
 >
 > Spec FR-013 requires a recorded **independent** review before acceptance. `GOVERNANCE.md`
-> and `specs/002-core-kernel/research.md` §D11 define a qualified independent reviewer as a
+> and [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D11 define a qualified independent reviewer as a
 > **person**, **not the author**, **competent in the subject**, and **able to reject without
 > the author's consent**. This project has one maintainer, who wrote this record, so criteria
 > 1, 2, and 4 cannot be met by anyone currently available. That is a staffing fact, not a
@@ -139,7 +139,7 @@ W-002's live scope, read from `governance/waivers.md`:
 
 The question is therefore exactly one thing: **is ADR-0010 a Phase 001 decision record?**
 
-It is, and the Phase 001 contract says so itself. `specs/001-governance-foundation/contracts/public-identity.md`
+It is, and the Phase 001 contract says so itself. `contracts/public-identity.md`
 closes with:
 
 > *"Changing any value after Phase 001 closes requires a **superseding ADR** and an impact
@@ -215,7 +215,7 @@ each one against measured evidence rather than intent.
 publishes `renvor-cli`, a further rename becomes a genuine breaking change for installed
 commands — the cost ADR-0001 anticipated, arriving one phase later against a different name.
 
-**What is locked in:** `specs/001-governance-foundation/contracts/public-identity.md` and
+**What is locked in:** `contracts/public-identity.md` and
 `renvor::EXECUTABLE`, which every phase from 002 onward reads.
 
 **To reverse this**, a superseding ADR must record the new name, an impact analysis, and — if
@@ -232,8 +232,8 @@ Required by `contracts/public-identity.md` for any change to a frozen identity v
 | **Generated projects** | `.renvor/` and `RENVOR_` are unchanged — both were already derived from the product name, not the executable | No change |
 | **Templates** | None exist. Phase 003 creates them | Not applicable |
 | **Documentation** | `README.md`, `crates/renvor/README.md`, `docs/docs/intro.mdx`, `docs/docs/api-reference.mdx`, `docs/src/pages/index.js`, `SECURITY.md` carry active command text | Migrated in this change |
-| **Program plan** | `PLAN.md` carries the executable name, the full command surface for Phases 003/025/028, and the Phase 003 `/speckit-specify` prompts | Migrated in this change |
-| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to **2.0.0** in this change. `CONSTITUTION.md` is the **only tracked copy** — `.specify/memory/constitution.md` exists for the specification tooling but `.specify/` is gitignored, so it is a local working copy and not a repository mirror. Both were changed together and the amendment record lives in the tracked file |
+| **Program plan** | `PLAN.md` carries the executable name, the full command surface for Phases 003/025/028, and the Phase 003 specification prompts | Migrated in this change |
+| **Constitution** | Principles VII and XIII name `renover new` and `renover add` **normatively** | Amended to **2.0.0** in this change. `CONSTITUTION.md` is the **only tracked copy** — a working copy exists for the specification tooling but is untracked, so it is a local working copy and not a repository mirror. Both were changed together and the amendment record lives in the tracked file |
 | **Published links** | None. No crate, release, tag, or deployed site references either spelling | No external reference exists |
 | **External references** | None known. The name has never been published or announced | No action |
 | **Security** | None. The change is a string; it grants no capability, alters no trust boundary, and touches no dependency | No impact |
@@ -296,7 +296,7 @@ deliberately not repeated.
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template **before** acceptance | ✅ **Met** — six alternatives with stated rejection reasons, including two re-affirmed verbatim from ADR-0001; four accepted costs recorded, not only benefits |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-17** — **79 of 79** items checked, 0 unchecked, 0 weakened. **CHK019 was re-examined specifically**, because it is the item this decision could have invalidated: it asks whether the *specification requires the naming distinction to be justified rather than merely restated*. It still passes — the requirement is that the naming decision be justified in a record, and ADR-0010 justifies removing the distinction at length. **This control also found a real defect** — see below |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-17** — **79 of 79** items checked, 0 unchecked, 0 weakened. **CHK019 was re-examined specifically**, because it is the item this decision could have invalidated: it asks whether the *specification requires the naming distinction to be justified rather than merely restated*. It still passes — the requirement is that the naming decision be justified in a record, and ADR-0010 justifies removing the distinction at length. **This control also found a real defect** — see below |
 | 3 | All required CI and security checks passing | ✅ **Met 2026-08-17** — on head `dcdf59b1e9a918ceab718ced164aa621ab91b4d5`: **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). Includes `verify (1.94.0)`, `verify (stable)`, `security`, `docs`, `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, and the macOS and Windows platform matrix. **0 unresolved conversations, 0 open CodeQL alerts** |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated **2026-08-17** |
 

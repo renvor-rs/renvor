@@ -18,7 +18,7 @@
 //! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
 //! option would be a question with one answer. An advisory review caught the overstatement by
 //! comparing this comment with `fill` below. It matters because the number in this comment is the
-//! one the principle VII referral in `governance/phase-003-evidence.md` §7 has to be counted
+//! one the principle VII referral in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) has to be counted
 //! against, and overstating compliance by one category in a comment is how it ends up overstated
 //! in the referral.
 //!
@@ -27,7 +27,8 @@
 //! cannot act on would produce a recorded choice that no generated file reflects, which
 //! data-model invariant I-12 forbids outright.
 //!
-//! **This is a real deviation and it is not resolved here.** `tasks.md` T093a refers it to the
+//! **This is a real deviation and it is not resolved here.** [Phase 003 tasks T093a](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+//! refers it to the
 //! maintainer as a governing-document question: either principle VII means "ask about everything
 //! the *product* will eventually support" and this phase is non-compliant, or it means "ask about
 //! everything *this build* honours" and it is compliant. That ruling is not this module's to make.
@@ -44,7 +45,8 @@ use crate::exit::{CliError, Code};
 /// # Why this is worth its own function
 ///
 /// `InquireError` distinguishes `OperationCanceled` (ESC), `OperationInterrupted` (Ctrl-C), and
-/// `NotTTY` as **separate typed variants** — which is exactly why research D2 chose this crate over
+/// `NotTTY` as **separate typed variants** — which is exactly why [Phase 003 research §D2](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md)
+/// chose this crate over
 /// `dialoguer`. Cancellation gets exit `4` because the operator said no, and a missing terminal gets
 /// a usage error because the invocation was wrong; inferring the difference from an I/O error kind
 /// would get one of them wrong.
@@ -220,7 +222,8 @@ mod tests {
 
     #[test]
     fn a_missing_terminal_is_a_usage_error_and_not_a_cancellation() {
-        // The distinction research D2 selected this crate for. `NotTTY` means the invocation was
+        // The distinction Phase 003 research §D2 selected this crate for (see the module
+        // header above for the pinned record). `NotTTY` means the invocation was
         // wrong, not that anybody declined — and the message must say what to do instead.
         let mapped = from_inquire(InquireError::NotTTY);
         assert_eq!(mapped.code, Code::Usage);

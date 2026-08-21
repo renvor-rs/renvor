@@ -6,7 +6,7 @@ status: "unstable — the surface it describes is explicitly unstable under FR-0
 
 # Contract: Lifecycle
 
-**Feature**: [../spec.md](../spec.md) | **Satisfies**: FR-001…FR-009, FR-042; SC-001, SC-002, SC-006, SC-009, SC-015
+**Feature**: the phase specification *(internal record)* | **Satisfies**: FR-001…FR-009, FR-042; SC-001, SC-002, SC-006, SC-009, SC-015
 **Status**: contract for an **explicitly unstable** surface (FR-036). Breaking changes are permitted while the window is open.
 
 ## C-L1 — Phase order

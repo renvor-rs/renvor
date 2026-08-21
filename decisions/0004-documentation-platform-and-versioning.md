@@ -104,7 +104,7 @@ redirects for any indexed page.
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template | ✅ **Met** — five alternatives recorded with rejection reasons, and the accepted costs are stated |
-| 2 | Verification against `specs/001-governance-foundation/checklists/governance.md` | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the documentation-platform decision — CHK053 through CHK058 all passed, including CHK055 on versioning cadence, which this record supplies. |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-12** — T086 complete: 77 of 79 items passed, 2 failed as genuine specification gaps (CHK048, CHK050), 0 weakened. No unresolved requirement affects the documentation-platform decision — CHK053 through CHK058 all passed, including CHK055 on versioning cadence, which this record supplies. |
 | 3 | All required CI and security checks passing | ✅ **Met 2026-08-11** — `verify (1.94.0)` 59s, `verify (stable)` 53s, `security` 43s, `docs` 40s, plus dependency review and CodeQL, all passing on `renvor-rs/renvor` |
 | 4 | A dated review record stored with the ADR | ✅ **Met** — this section, dated 2026-08-12 |
 

@@ -3,12 +3,21 @@
   This file is the discoverable copy referenced by all public documentation (spec FR-012).
   Amendments follow the process in the Governance section below.
 
-  This file is the ONLY copy of the constitution tracked in this repository. A working copy
-  also exists at `.specify/memory/constitution.md` for the specification tooling; `.specify/`
-  is gitignored, so that copy is local-only and is NOT the canonical mirror. Keep the two
-  identical from the `# Renvor Constitution` heading onward; this file wins on any difference.
+  This file is the ONLY copy of the constitution tracked in this repository. A local working
+  copy also exists for the specification tooling; it is untracked, local-only, and is NOT the
+  canonical mirror. Keep the two identical from the `# Renvor Constitution` heading onward;
+  this file wins on any difference.
 
   AMENDMENT HISTORY
+
+  2026-08-19 — 3.0.0 to 3.0.1 (PATCH). Authority: maintainer decision of 2026-08-19.
+    Proposal, impact analysis, and migration plan: governance/constitution-amendment-3.0.1.md.
+    Change: Development and Phase Workflow clause 1 drops the name of a third-party planning
+      tool from a normative rule. "one Spec Kit feature directory represents one active phase"
+      becomes "one feature directory represents one active phase". The MUST, its subject, and
+      the one-active-phase constraint are unchanged; only the vendor name is removed. No
+      behaviour, evidence, waiver, contract, or phase status changes. Prompted by an automated
+      review that found the wording had been changed without an amendment.
 
   2026-08-18 — 2.0.0 to 3.0.0 (MAJOR). Authority: maintainer ruling of 2026-08-18, item 3.
     Proposal, impact analysis, and migration plan: governance/constitution-amendment-3.0.0.md.
@@ -195,7 +204,7 @@ The separately published `renvor-rbac` crate is the first official reference pac
 
 ## Development and Phase Workflow
 
-1. Work MUST follow the numbered phases in `/PLAN.md`; one Spec Kit feature directory represents one active phase.
+1. Work MUST follow the numbered phases in `/PLAN.md`; one feature directory represents one active phase.
 2. The phase specification MUST state user outcomes, exclusions, security properties, and measurable acceptance criteria before implementation planning.
 3. Research MUST verify package APIs, maintenance, versions, licenses, MSRV, and standards against primary sources.
 4. Consequential decisions MUST be captured as proposed ADRs and reviewed before being treated as accepted.
@@ -226,4 +235,4 @@ Constitution versions follow semantic versioning:
 
 Every phase review and release review MUST include a constitution check. Exceptions are allowed only through a time-bounded written waiver naming the violated rule, reason, compensating controls, owner, expiry, and removal plan. Security release blockers cannot be waived for a public release.
 
-**Version:** 3.0.0 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-18
+**Version:** 3.0.1 | **Ratified:** 2026-08-11 | **Last Amended:** 2026-08-19

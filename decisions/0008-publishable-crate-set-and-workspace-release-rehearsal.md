@@ -35,7 +35,7 @@ phases add implementation crates behind it"* — and Phase 002 adds three: `renv
 `renvor-config`, and `renvor-testkit`. The facade's whole purpose is to re-export them.
 
 The Phase 001 release rehearsal (`.github/workflows/release-dry-run.yml`, and the procedure table
-in `specs/001-governance-foundation/contracts/package-metadata.md`) was written around the
+in `contracts/package-metadata.md`) was written around the
 one-crate assumption and runs `cargo publish -p renvor --dry-run`. It triggers on `crates/**`,
 `Cargo.toml`, and `Cargo.lock` — every path Phase 002 touches.
 

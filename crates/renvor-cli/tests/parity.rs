@@ -7,7 +7,8 @@
 //! diverge in the configuration model. That argument is sound and it was, for a while, the whole
 //! of the evidence for SC-003.
 //!
-//! It was not enough. The defect recorded as 2a-0 in `tasks.md` lived entirely **upstream** of the
+//! It was not enough. The defect recorded as 2a-0 in [Phase 003 tasks](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+//! lived entirely **upstream** of the
 //! shared model: the wizard computed its own default project name from the raw requested path
 //! while `resolve` computed it from the validated destination, so the two interfaces could hand
 //! the shared constructor **different answers** and the shared constructor would faithfully turn
@@ -278,7 +279,8 @@ fn without_a_terminal_an_answer_nothing_determines_is_refused_rather_than_invent
     // component, the local domain from the name — are **not** that: they are stated in `--help` as
     // the flag's documented default, they are derived from input the operator did supply, and the
     // SAME derivation is what the wizard offers as its prompt default (one owner each; see the
-    // 2a-0 record in `tasks.md`). This test pins that distinction to the case where the
+    // 2a-0 record in Phase 003 tasks, pinned in the module header). This test pins that
+    // distinction to the case where the
     // distinction bites: when NOTHING the operator typed determines the answer, there is no
     // default to document and the command must refuse rather than invent one.
     let root = tempfile::tempdir().expect("a temporary directory");

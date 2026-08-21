@@ -15,7 +15,9 @@
 //! ```
 //!
 //! Exit code 0 means the chain resolved. Any abort or non-zero exit means that stack was too
-//! small. The resulting boundary is recorded in `specs/002-core-kernel/research.md` §D8.
+//! small. The resulting boundary is recorded in the Phase 002 research record §D8, which is a
+//! working artifact retained in public Git history rather than the current tree:
+//! <https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md>
 //!
 //! This deliberately uses only the public API, so the ceiling in
 //! [`renvor_core::provider::graph::MAX_PROVIDERS`] still applies: the probe varies the **stack**,

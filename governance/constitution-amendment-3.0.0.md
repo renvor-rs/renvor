@@ -172,9 +172,9 @@ Nothing in Phase 003's threat model, path boundary, redaction, or trust-store co
 | Document | Change |
 |---|---|
 | `CONSTITUTION.md` | Principle VII amended; version, date, and amendment history updated |
-| `.specify/memory/constitution.md` | Local tooling working copy synchronised and byte-verified against the canonical text |
-| `specs/003-interactive-cli/spec.md` | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
-| `governance/phase-003-evidence.md` | §2 rewritten: the referral becomes a recorded ruling with an outcome |
+| Local specification-tooling working copy | Synchronised and byte-verified against the canonical text |
+| [`spec.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | Two "v2.0.0" citations updated to v3.0.0 and the compliance statement rewritten |
+| `governance/phase-003-evidence.md` | [§2](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L36) rewritten: the referral becomes a recorded ruling with an outcome |
 | `docs/docs/governance.mdx` | Constitution version reference updated where present |
 
 ### 2.6 Active phases
@@ -196,7 +196,7 @@ consequence of this amendment. The migration is documentary and forward-looking.
 **Immediately, in this PR:**
 
 1. `CONSTITUTION.md` amended, version `3.0.0`, date `2026-08-18`, amendment history entry added.
-2. `.specify/memory/constitution.md` synchronised and verified identical from the `# Renvor
+2. The local specification-tooling working copy synchronised and verified identical from the `# Renvor
    Constitution` heading onward.
 3. Every tracked document citing constitution v2.0.0 or quoting the old sentence updated.
 4. A test added — `crates/renvor-cli/src/config/flags.rs`,
@@ -261,4 +261,4 @@ Stated as a verdict per clause, against the shipped implementation rather than a
 | Once a capability ships, its choice becomes mandatory in both the wizard and non-interactive interface | **NOT YET APPLICABLE** | No capability from the governed set ships in Phase 003 beyond `target`, which is single-valued and therefore covered by clause 2. This clause binds Phase 004 onward and is recorded as a phase-entry obligation in §3 step 5 |
 
 **Verdict: Phase 003 complies with Principle VII as amended.** The T093a referral in
-`governance/phase-003-evidence.md` §7 is closed by this amendment rather than by a waiver.
+[`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) is closed by this amendment rather than by a waiver.

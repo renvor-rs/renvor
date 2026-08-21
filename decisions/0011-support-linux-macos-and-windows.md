@@ -1,0 +1,517 @@
+# ADR-0011: Support Linux, macOS, and Windows with explicitly different enforcement levels
+
+| Field | Value |
+|---|---|
+| **ID** | 0011 |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-21 |
+| **Superseded by** | — |
+| **Supersedes** | **ADR-0003** *(2026-08-21)* |
+| **Owner** | Ahmed Anbar |
+
+> ## Accepted 2026-08-21 under waiver W-002. **This review is NOT independent.**
+>
+> Spec FR-013 requires a recorded **independent** review before acceptance.
+> `GOVERNANCE.md` and [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D11 define a qualified independent reviewer as a
+> **person**, **not the author**, **competent in the subject**, and **able to reject without the
+> author's consent**. This project has one maintainer, who wrote this record, so criteria 1, 2,
+> and 4 cannot be met by anyone currently available. That is a staffing fact, not a process
+> defect, and W-002 is the recorded exception covering it.
+>
+> **No independent human review of ADR-0011 has occurred.** This review must not be described as
+> independent — here, in the evidence packs, in `GOVERNANCE.md`, or in any public document. It is
+> a structured self-review under a time-bounded exception expiring **2027-02-11**, or immediately
+> when a qualified independent reviewer becomes available, whichever comes first.
+>
+> **The maintainer decision of 2026-08-21 that this record implements is also not an independent
+> review**, and nothing here should be read as making it one.
+>
+> **No new waiver is created by this record.** The scope analysis is in §Waiver authority below,
+> stated explicitly rather than assumed, because a waiver applied one record wider than it was
+> granted is a governance failure dressed as a formality.
+
+## Context
+
+**The maintainer decided on 2026-08-21 to keep macOS and Windows as supported platforms.**
+That is a human maintainer decision. It is **not** an independent review and does not
+discharge W-008, W-005, or W-003.
+
+The decision needs a record because the repository currently says two different things.
+
+**What the evidence says.** Six platform/toolchain contexts have run on every pull request
+since T150: `verify (1.94.0)` and `verify (stable)` on `ubuntu-latest`, and four
+`platform (…)` contexts across `macos-latest` and `windows-latest` on both toolchains. All
+six pass at the current head.
+
+**What the versioned contract says.** `contracts/support-policy.md` 1.0.0 still carries the
+Phase 001 table, in which macOS and Windows are *"Not yet claimed"* for the reason *"No
+platform-sensitive code exists to verify"*. That reason stopped being true during Phase 002.
+The configuration layer resolves filesystem paths, refuses non-regular files **by type from an
+open descriptor**, opens files with a platform-specific flag (`O_NONBLOCK` on unix), and reads
+`OsString` environment names that are arbitrary bytes on unix and WTF-8 on Windows. Those are
+precisely the parts most likely to differ between platforms, and until T150 they were verified
+on exactly one.
+
+**What the human-facing documents say.** `SUPPORT.md` and `docs/docs/support-policy.mdx`
+already list all three platforms as supported, and already state that only the two Linux
+contexts are branch-protection-required. So the public documentation moved and the versioned
+contract did not.
+
+That divergence is the problem this record fixes, and it cannot be fixed by editing the
+contract directly: `contracts/support-policy.md` §Change control says it *"changes only through
+a superseding ADR with an impact analysis"*, and the record that set it is **ADR-0003**. A
+superseding ADR is therefore the instrument the contract itself names, and this is that
+instrument.
+
+**A second, narrower force.** The documents currently resolve their disagreement in three
+different directions — `docs/docs/support-policy.mdx` points at `SUPPORT.md` as *"the current
+public platform policy"*, `governance/phase-003-evidence.md` says the same, and
+`SUPPORT.md` closes by describing **itself** as a contract that changes only through a
+superseding decision record. Two documents both claiming to be the sole authority is worse
+than either one being wrong, because a reader who checks one and stops has no way to know
+they picked the non-authoritative copy.
+
+## Decision
+
+**Linux, macOS, and Windows are supported platforms.** Each carries passing evidence attached
+to the exact commit being claimed, and the enforcement level of each claim is stated rather than
+left to be inferred from the presence of a CI job.
+
+### The six contexts
+
+Six platform/toolchain contexts run on **every** pull request:
+
+| # | Context | Platform | Toolchain |
+|---|---|---|---|
+| 1 | `verify (1.94.0)` | Linux (`ubuntu-latest`) | pinned MSRV 1.94.0 |
+| 2 | `verify (stable)` | Linux (`ubuntu-latest`) | current stable channel |
+| 3 | `platform (macos-latest, 1.94.0)` | macOS | pinned MSRV 1.94.0 |
+| 4 | `platform (macos-latest, stable)` | macOS | current stable channel |
+| 5 | `platform (windows-latest, 1.94.0)` | Windows | pinned MSRV 1.94.0 |
+| 6 | `platform (windows-latest, stable)` | Windows | current stable channel |
+
+The stable channel is **whatever the stable channel resolves to when CI runs**. This record
+does not name a stable version number, because a number written here would be stale on a
+schedule nobody controls and would then be a false claim sitting in an accepted record.
+
+### Required is not the same as running
+
+**Only contexts 1 and 2 are required by branch protection.** `main`'s required-status-check
+list is exactly:
+
+```
+verify (1.94.0)   verify (stable)   security   docs
+```
+
+`security` and `docs` are required and are **not** platform contexts. The four `platform (…)`
+contexts are **not** in that list. They run on every pull request, their failure is visible,
+and a maintainer is expected to act on it — but branch protection alone would not block a
+merge on them. **The macOS and Windows claims therefore rest on review practice, not on an
+enforced gate**, and every public document that states the claim must also state that.
+
+Making them required is a repository-settings change. It is deliberately **not** part of this
+record; see §Alternatives, option 2.
+
+### What each job actually runs
+
+| Job | Runs |
+|---|---|
+| `verify` (Linux) | The **complete** verification sequence defined by `contracts/verification-sequence.md` — all eleven steps |
+| `platform` (macOS, Windows) | `cargo test --workspace --all-features -- --test-threads=1` and `cargo check -p renvor --no-default-features --all-targets` — **and nothing else** |
+
+`platform` is a **separate job from `verify` on purpose.** Adding an `os` dimension to
+`verify`'s matrix would have renamed its contexts to `verify (ubuntu-latest, 1.94.0)` and
+silently emptied the branch-protection rule, which matches contexts by name.
+
+The platform jobs deliberately omit gitleaks, lychee, the commit-history scan, and the
+documentation build. Those are properties of the **repository**, not of the platform; running
+a link check against github.com three times learns nothing three times.
+
+### What a support claim means, and what it does not
+
+> **Erratum, 2026-08-21 — provenance correction.** The paragraphs below describe support
+> evidence as attaching to the **pull-request branch head**. That description is **inaccurate
+> about what CI measured**. On a `pull_request` event the workflows check out
+> `refs/pull/<n>/merge`, so the six contexts validated **GitHub's synthetic merge commit** — the
+> candidate integration built from an exact base commit SHA and pull-request head commit SHA —
+> and not the branch head in isolation. **The runs recorded in this record remain valid evidence
+> for the merge trees they actually tested**: what was wrong is the name this record gave the
+> tested object, not the result. **No platform claim, no support decision, no MSRV, and no
+> enforcement level changes**, and the CI workflows are deliberately unchanged — testing the
+> candidate integration is the intended behaviour. The corrected normative statement is
+> [`contracts/support-policy.md`](../contracts/support-policy.md) **1.1.2** §Platform support.
+> The accepted body below is retained unedited.
+
+**A supported-platform claim is carried by passing CI attached to the exact commit whose tree
+is being claimed.** Not a result inherited from an earlier commit, and not "it worked last week".
+
+**A pull-request branch head is valid evidence.** Every commit is on some branch, `main`
+included, so disqualifying branches would disqualify every commit ever reviewed. What matters is
+that the contexts passed *on that commit*, not which ref happens to point at it.
+
+**A later commit does not inherit the previous head's evidence.** Each new commit needs its own
+passing contexts before it carries the claim; until then the claim rests on the last head that
+has them. On a squash merge, where the merge commit's tree is verified identical to the reviewed
+head's tree, the reviewed evidence carries across, and `main`'s own run then confirms it there.
+
+**Ongoing support evidence is external to this record and commit-associated.** It lives in CI,
+attached to whatever the current head is — not in this document. This record cannot enumerate
+it, because the set grows with every commit. The normative statement is
+`contracts/support-policy.md` §Platform support.
+
+An earlier revision of this record, and version 1.1.0 of that contract, stated the rule as *"at
+the exact head being claimed — not at an earlier head, not on a branch."* **That form was
+unsatisfiable**: it excluded every pre-merge head for being on a branch, and demanded a
+self-reference no commit can contain. It is corrected here and dated, rather than quietly
+reworded.
+
+**Support does not imply that every platform-specific behaviour has received independent
+human review.** No behaviour in this repository has. W-003, W-005, and W-008 are open for
+exactly that reason, and this record does not narrow, discharge, or weaken any of them.
+
+### Known evidence limitations, which remain visible
+
+These are carried forward from `governance/phase-003-independent-review-packet.md` and
+`SUPPORT.md` rather than dropped now that the platforms are claimed:
+
+- **Two behaviours are `#[cfg(unix)]`-gated** and therefore exercised on Linux and macOS only:
+  the FIFO refusal, and the test that drives the non-Unicode environment-name path. The FIFO
+  case cannot arise on Windows in that form. The **non-Unicode name** case *can* — a Windows
+  environment name is WTF-8 and may contain unpaired surrogates — so what is unix-gated is the
+  **test**, not the code path. The bound is a statement about reading, not about measurement,
+  and is recorded as the narrower claim it is.
+- **`a_destination_whose_state_cannot_be_established_fails_closed` is `#[cfg(unix)]`**, so the
+  fail-closed destination check has no Windows-specific test.
+- **Windows has had no adversarial review at all.** Every advisory review of Phase 003 ran on
+  macOS. CI exercises Windows and is green, but CI runs the tests the *author* wrote; it cannot
+  notice a test nobody wrote.
+- Several path rules in `crates/renvor-cli/src/paths.rs` — reserved device names, trailing dot
+  or space — are enforced on **every** platform but were **reasoned from Windows behaviour that
+  was never observed on Windows**.
+
+Claiming Windows as supported while these gaps are open is a deliberate, recorded trade: the
+tests that exist pass there on both toolchains, and that is what the claim asserts. It asserts
+nothing more.
+
+### Supersession
+
+**This record supersedes ADR-0003**, and ADR-0003's `Superseded by` field is set to ADR-0011. **ADR-0003's decision body is preserved unchanged.** Superseding a record does not
+entitle anyone to rewrite what it said; the Phase 001 evidence that cites it must remain
+checkable.
+
+Everything still valid in ADR-0003 is carried into this record rather than left to be inherited
+by implication:
+
+| Carried forward from ADR-0003 | Status here |
+|---|---|
+| **MSRV is Rust 1.94.0, a fixed floor**, not N-3, N-4, or any offset from current stable | **Unchanged.** This record does **not** raise, lower, or reinterpret the MSRV |
+| A new Rust stable release does not invalidate, shorten, or trigger review of the MSRV | **Unchanged** |
+| Declared once at `[workspace.package] rust-version`; members inherit; no second declaration | **Unchanged** |
+| `clippy.toml` `msrv = "1.94.0"`; `rust-toolchain.toml` pins the channel with explicit `rustfmt` and `clippy` components | **Unchanged** |
+| **Current stable channel is also tested**, on a job that moves while the MSRV job stays pinned | **Unchanged**, and now stated without a version number |
+| **Rust 2024 edition**, declared explicitly on every package | **Unchanged** |
+| **Cargo resolver 3**, declared explicitly in the virtual workspace | **Unchanged** |
+| The five rules for raising the MSRV — planned minor/major only, accepted decision record, documented in three places, six-month dwell time, passing run at the exact version | **Unchanged** |
+| Quarterly policy review that records an outcome and by itself changes nothing | **Unchanged** |
+| **Scheduled Phase 006 MSRV reassessment** against the actual persistence dependencies (FR-061), owner Ahmed Anbar | **Unchanged and still owed** |
+| Dependency and lockfile rules; `deny.toml` authoritative for licences and sources; wildcards denied; Dependabot across `cargo`, `github-actions`, `npm` | **Unchanged** |
+| Security-advisory response windows, incorporated by reference to `governance/dependency-advisory-policy.md` | **Unchanged**, and still incorporated by reference rather than by copy |
+
+**What ADR-0003 said about platforms was one row of a Phase 001 table and is the only thing
+this record changes.** ADR-0003 is superseded rather than amended because the contract it set
+admits no other mechanism.
+
+### One authority
+
+**`contracts/support-policy.md` is the sole normative current authority** for supported
+toolchains, supported platforms, the MSRV floor, and the rules for changing them.
+
+- `SUPPORT.md` is the **human-facing summary** and links to the contract.
+- `docs/docs/support-policy.mdx` is a **summary** and links to the contract.
+- Every other tracked mention is a pointer or a historical record.
+- **Any disagreement resolves in favour of `contracts/support-policy.md`.**
+
+Historical evidence stays historical. `governance/phase-001-evidence.md` and
+`governance/phase-002-evidence.md` describe what was true in those phases and are **not**
+rewritten to match the current claim.
+
+## Waiver authority
+
+**This record is covered by W-002, and by nothing else.** The reasoning is set out rather than
+assumed.
+
+W-002's live scope, read from `governance/waivers.md`:
+
+| Where | What it says |
+|---|---|
+| Waiver row, Reason | *"no genuinely independent review of a **Phase 001 decision record** is available"* |
+| Axis table | `W-002 \| decision record (FR-013) \| **Phase 001**` |
+| Ruling of 2026-08-11 | *"The reviewer field of **every Phase 001 decision record**…"* |
+| W-004's own row | *"**W-002 covers Phase 001 decision records only** and does not reach a Phase 002 ADR"* |
+
+The question is therefore exactly one thing: **is ADR-0011 a Phase 001 decision record?**
+
+It is, and the Phase 001 contract says so itself. `contracts/support-policy.md` identifies
+itself as **"Feature: Phase 001 — governance foundation | Satisfies: FR-017 – FR-021 | Set by:
+ADR-0003"**, and closes with:
+
+> *"This contract changes only through a **superseding ADR** with an impact analysis covering
+> published packages, documentation, the compatibility matrix, and any downstream consumer
+> relying on the current promise."*
+
+**A superseding ADR is the instrument the Phase 001 contract names for this purpose.** This
+record is that instrument, amending that contract, in the FR-013 domain, superseding a Phase 001
+record, and deciding nothing outside the Phase 001 support contract. Its phase attribution
+follows its subject matter — which is how the ledger's own axis table attributes every other
+record — and not the calendar date on which it was typed.
+
+**This is the same argument ADR-0010 made, on the same contract clause pattern, and it was
+accepted.** ADR-0010 changed `contracts/public-identity.md`, a Phase 001 contract with an
+identically worded superseding-ADR clause, and was covered by W-002 without a new waiver.
+ADR-0006 is the earlier precedent: a Phase 001 record accepted under W-002 on **2026-08-15**,
+days after Phase 001's implementation work had finished.
+
+**The counter-argument, stated so it is on the record rather than omitted.** One could read
+"Phase 001 decision record" **temporally**, as *"a record written during Phase 001"*. On that
+reading ADR-0011 falls outside W-002 and would need a new waiver — W-009.
+
+That reading is **rejected**, for four reasons:
+
+1. It would also have excluded **ADR-0006** and **ADR-0010**, both of which were written after
+   Phase 001's implementation finished and both of which were accepted under W-002.
+2. It makes every Phase 001 contract's own *"superseding ADR"* clause **unusable** without a
+   fresh waiver each time — a contract would name a change mechanism that governance forbids
+   anyone to use.
+3. The ledger scopes waivers by **subject and phase**, not by authorship date. Its axis table
+   has a "Phase" column populated from what each record decides, not from when it was typed.
+4. It would inflate the waiver count with an entry that adds no new control, no new owner, and
+   no new expiry — W-009 would restate W-002 verbatim against a different record number.
+
+**The reading is recorded, not hidden, so a future independent reviewer can overturn it if they
+disagree.** If they do, the remedy is a waiver granted then, not an acceptance defended now.
+
+**No other waiver confers authority here, and none is borrowed:**
+
+| Waiver | Why it confers nothing here |
+|---|---|
+| **W-003** | Phase-level (`PLAN.md` §6.1 step 10), Phase 001. **A phase-level waiver does not authorise accepting a decision record** |
+| **W-004** | Scoped to **ADR-0007 alone**, Phase 002 |
+| **W-005** | Phase-level, Phase 002. Same axis objection as W-003 |
+| **W-006** | Scoped to **ADR-0009 alone**, Phase 002 |
+| **W-007** | **Retired as a burned identifier** and must not be used. It appears fifteen times in this repository, every one asserting that it does not exist |
+| **W-008** | Phase-level, Phase 003. Same axis objection as W-003 |
+
+**No new waiver is created. The active waiver set is unchanged by this record**, the
+approval-waiver count stays exactly **1** (W-001), and the control-unavailability count stays
+**0**. W-002's four compensating controls apply unchanged, and the acceptance gate below records
+each against measured evidence rather than intent.
+
+## Alternatives considered
+
+| Alternative | Rejected because |
+|---|---|
+| **1. Linux supported; macOS and Windows tested but unclaimed** — keep the Phase 001 table, keep running the four jobs | This is the status quo, and it is **the option that produces the current contradiction**. Four jobs already run on every pull request and already gate nothing but review practice; withholding the claim does not make them cheaper, does not make the code more portable, and does not reduce any obligation — it only means users cannot rely on evidence the project is already producing and paying for. It also leaves `SUPPORT.md` and the versioned contract asserting opposite things, which is worse than either being wrong alone. The Phase 001 *reason* for withholding — *"no platform-sensitive code exists to verify"* — has been false since Phase 002. |
+| **2. Support all three and make all six contexts required immediately** | The right end state, and **not this change**. Making a context required is a **repository-settings change**, and this workflow is explicitly barred from changing repository settings. More importantly, requiring a context is a promise about *merge blocking* that should be made deliberately and verified live, not bundled into a documentation record — the same reasoning that kept `platform` out of `verify`'s matrix. Recorded as the intended direction, with the honest cost stated in §Consequences: until it happens, four of the six contexts are enforced by review practice. |
+| **3. Keep the current contradictory documents** — leave the contract at its Phase 001 table and let readers work it out from the pointers | A reader who opens the **versioned normative contract** — the document the repository tells them is authoritative — is told macOS and Windows are *"not yet claimed"*, which is false. Resolving that by adding more pointers has already been tried: three documents currently carry a parenthetical explaining that the contract's table is not current. **A contract that needs a footnote in three other files to stop misleading people is a contract that is wrong.** Constitution principle XII forbids leaving a known-false statement standing because correcting it is procedurally inconvenient. |
+| **4. Remove the macOS and Windows CI jobs** — narrow the promise to what is enforced | Deletes real evidence to resolve a documentation inconsistency. The four jobs have found platform behaviour worth knowing about, and the code they exercise — path resolution, file-type refusal, `OsString` handling — is exactly the code most likely to differ. Removing them would return the project to verifying platform-sensitive behaviour on one platform, which is the defect T150 was created to fix. It also lowers a public promise for no user's benefit. |
+
+## Consequences
+
+**Positive:**
+
+- **The public promise matches the evidence that is already running.** Six contexts have been
+  passing on every pull request; the documents now say so, once, in the place that governs.
+- **Users get a clear three-platform statement** with the enforcement level of each claim
+  attached, rather than a table they must cross-check against a workflow file.
+- **The current documents and the versioned contract converge.** One normative authority, two
+  summaries that link to it, and a stated rule that disagreements resolve in the contract's
+  favour.
+
+**Negative — accepted costs:**
+
+- **macOS and Windows become lasting compatibility commitments.** A platform claim is a promise.
+  Withdrawing one later requires governance — a superseding ADR and an impact analysis — not a
+  quiet edit, which is the point of putting it in a contract and also its price.
+- **Four of the six contexts remain dependent on review practice rather than branch-protection
+  enforcement.** A merge could proceed with a red `platform (windows-latest, stable)` if nobody
+  looked. This is stated in every public document that carries the claim precisely because it is
+  the kind of distinction that decays: adding a job *feels* like adding a gate, and it is not one
+  until the protection rule names it.
+- **CI cost and maintenance obligations increase**, and they increase permanently. Two additional
+  runners on every pull request, on both toolchains, with the macOS and Windows toolchain
+  installs that implies. A flaky platform test now costs maintainer attention on a job that
+  cannot block the merge it is delaying.
+- **A platform claim may need withdrawal through governance if the evidence stops passing.**
+  If Windows breaks and cannot be fixed quickly, the honest response is a superseding ADR that
+  withdraws the claim — not leaving a green-looking table above a red job. That is a slower
+  remedy than the situation may feel like it deserves.
+
+**What is locked in:** `contracts/support-policy.md` becomes the single normative statement of
+supported platforms, and every summary resolves in its favour.
+
+**To reverse this** — to withdraw a platform, or to return the contract to a Linux-only claim —
+requires a superseding ADR with an impact analysis, on the same terms this record used.
+
+## Impact analysis
+
+Required by `contracts/support-policy.md` §Change control for any change to the support
+contract.
+
+| Surface | Impact | Status |
+|---|---|---|
+| **Published packages** | **None.** Nothing is published — neither `renvor` nor `renvor-cli` exists on crates.io | No impact |
+| **Tags and releases** | **None.** `renvor-rs/renvor` has **0** tags and **0** releases | No impact |
+| **Installed downstream users** | **None known, because nothing is published.** There is no installed user whose platform assumption could break. This is the cheapest moment this claim will ever be made | No impact |
+| **Documentation surfaces** | `SUPPORT.md`, `docs/docs/support-policy.mdx`, `README.md`, `CONTRIBUTING.md`, `RELEASING.md`, `GOVERNANCE.md`, and `.github/ISSUE_TEMPLATE/bug_report.yml` each carry a support or platform statement | Converged in this change; each points at the contract |
+| **Compatibility matrix** | The platform table moves from **one claimed platform** to **three**, each with its contexts and its enforcement level named | Rewritten in `contracts/support-policy.md` 1.1.0 |
+| **CI job names and the branch-protection distinction** | **No workflow change.** `ci.yml` already produces all six contexts. What changes is that the distinction between *running* and *required* is now stated normatively instead of only in prose | No CI change |
+| **Branch protection** | **Unchanged.** The required list stays `verify (1.94.0)`, `verify (stable)`, `security`, `docs`. Changing it is out of scope for this record — see §Alternatives, option 2 | No settings change |
+| **MSRV** | **Unchanged at 1.94.0.** This is an **additive compatibility commitment**, not an MSRV break, which is why the contract goes to **1.1.0** and not 2.0.0 | No change |
+| **Future downstream consumers** | Gain a three-platform promise with its enforcement level disclosed, before the first release rather than retrofitted after one | Improved |
+| **Security** | **None.** No trust boundary, capability, or dependency changes. The `security` check remains required | No impact |
+| **Rollback / withdrawal process** | Withdrawing a platform requires a **superseding ADR** with an impact analysis, a contract version bump, and synchronisation of both summaries. Evidence of the failing platform is recorded rather than the claim being quietly dropped | Stated here so a future withdrawal has a named route |
+
+## Compliance
+
+| Authority | How this record satisfies it |
+|---|---|
+| **FR-013** | State, reviewer, and date recorded; acceptance gated on W-002's four compensating controls; the non-independence of that review is stated prominently and not softened |
+| **FR-017 – FR-021** | The support contract this record governs continues to satisfy them; the MSRV declaration, testing, dependency, and change rules are carried forward unchanged |
+| **FR-061** | The scheduled Phase 006 MSRV revalidation is carried forward with its named owner, not dropped in the supersession |
+| **Constitution principle V** | The support policy is a release contract; it is changed through the mechanism the contract itself names |
+| **Constitution principle X — no claim exceeds measurement** | Every platform claim names the contexts that carry it; the enforcement gap is stated; the `#[cfg(unix)]`-gated behaviours and the absence of Windows adversarial review are recorded as limits rather than smoothed over; **no stable version number is asserted**, because the stable channel is resolved by CI and not by this document |
+| **Constitution principle XII** | A known-false statement — the Phase 001 platform table presented as current policy — is corrected rather than left standing behind footnotes |
+| **`contracts/support-policy.md` §Change control** | Changed by a superseding ADR carrying the impact analysis that contract requires |
+| **PLAN.md §17.2** | macOS and Windows enter the matrix in the phase that introduces platform-sensitive behaviour. That phase was 002; the jobs landed at T150; this record makes the claim the jobs already support |
+
+## Acceptance gate
+
+**Acceptance was a separate, later commit, and the sequence is the point.** This record was
+pushed `proposed` as `758bd50ecc590026f9fb7ef79e8113825a769460`; W-002's controls were then run
+against that pushed state; and only then was this acceptance made. Controls 3 and 4 could not
+honestly have been marked met before the CI run that satisfies control 3 existed. Recording
+acceptance in the same commit that proposes a decision asserts that controls passed before they
+were run — an error made once already in this project, in Phase 002, and deliberately not
+repeated.
+
+| # | W-002 compensating control | Status |
+|---|---|---|
+| 1 | Written alternatives-and-consequences review completed against the ADR template **before** acceptance | ✅ **Met 2026-08-21** — four alternatives, each with a stated rejection reason, including the status quo and the option this record declines to take; three benefits and **four accepted costs** recorded, not only benefits |
+| 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-21** — see §What control 2 found |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-21** — on head `758bd50ecc590026f9fb7ef79e8113825a769460`, **the commit at which this record was `proposed`** (see §What control 3 proves, and what it does not): **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). All four required contexts green — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` — together with `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, `package and verify without publishing`, **and all four non-required `platform (…)` contexts across macOS and Windows on both toolchains**. **0 open CodeQL alerts.** Locally on the same tree, `cargo xtask verify` exits 0 with **11/11** steps on both `1.94.0` and stable |
+| 4 | A dated review record stored with the ADR | ✅ **Met 2026-08-21** — this section, dated **2026-08-21**, stored with the record |
+
+**All four controls are met. This record is `accepted`.**
+
+### What control 3 proves, and what it does not
+
+> **Erratum, 2026-08-21 — provenance correction.** The control 3 run is recorded *against* head
+> `758bd50`, which is how GitHub addresses those check runs. What it **tested** was the synthetic
+> merge commit for the base/head pair of that `pull_request` event. The result stands unchanged
+> as historical acceptance evidence for the tree it actually tested; only the description of
+> which object that is has been corrected. See
+> [`contracts/support-policy.md`](../contracts/support-policy.md) **1.1.2**.
+
+Control 3 is **historical acceptance evidence**. It records that the required and platform
+contexts passed on `758bd50` — the commit at which this record was `proposed` — and that finding
+is permanently true about that commit.
+
+It is **not** the standing support claim, and it certifies no later commit:
+
+- **`758bd50` is not the final head of this pull request.** Acceptance was a later commit, and
+  further commits followed it. This record deliberately names **no** "current" head, because any
+  hash written here stops being current the moment the next commit lands and would then be a
+  false claim sitting inside an accepted record.
+- **Every subsequent commit re-opens the gate until its own CI passes.** A passing run does not
+  transfer forward. The head under review must itself show the six contexts green.
+- **The ongoing claim lives in CI**, attached to whatever the current head is, and is read from
+  the checks on that head — not from this section.
+
+Control 3 therefore proves that the **acceptance sequence** was followed: the controls were run
+against a pushed state and recorded before acceptance rather than asserted alongside it. It does
+not, and cannot, discharge the per-commit evidence requirement for every future support claim.
+
+The macOS and Windows results are recorded here deliberately. They are **not** required checks,
+so they could not by themselves satisfy control 3 — but this record's central claim is that those
+platforms carry passing evidence, and an acceptance gate that omitted the evidence for the very
+thing being decided would be a formality.
+
+### What control 2 found
+
+The governance checklist was run against the **local ignored working copy** of
+`specs/001-governance-foundation/checklists/governance.md`. That copy is **byte-identical to the
+immutable source** at `01327b1ee61b73ebbd4f9198c04d651b38367ba8` — SHA-256
+`c91f812367e5800738d38df6962f1647f292e2186c4a5a47bdaa3a8527e70feb` for both — so running it
+locally is not a weaker check than reading it from the pinned commit. **Nothing under `specs/`
+was staged, republished, or restored to Git** by this change; the directory remains ignored at
+`.gitignore:85` and untracked.
+
+**79 items, 79 checked, 0 unchecked**, counted mechanically from the pinned blob rather than
+read off a summary line.
+
+Three items were re-examined specifically, because they are the ones this decision could have
+invalidated:
+
+| Item | Question | Outcome |
+|---|---|---|
+| **CHK019** | Is the product-versus-executable naming distinction required to be *justified* in the decision record? | **Unaffected.** This record decides nothing about naming |
+| **CHK050** | Is a response window defined for security advisories? | **Still passes.** The window is carried forward *by reference* to `governance/dependency-advisory-policy.md`; this record does not copy it, so the two cannot drift |
+| **CHK034** | Are the pinned minimum and the **floating stable channel** distinguished, so *"tested toolchains"* cannot be read as two fixed versions? | **This is the finding.** See below |
+
+**Control 2 found a real defect, and it is CHK034.** The checklist asks that the floating
+stable channel be distinguishable from a fixed version. Four tracked documents were stating it
+as a **fixed number** — `contracts/support-policy.md`, `SUPPORT.md`, and
+`docs/docs/support-policy.mdx` each carried *"current stable, 1.97.1 at time of writing"*, and
+`PLAN.md` §8.1 carried it in a planning snapshot.
+
+A version number written into a document does not float. It is correct on the day it is typed
+and silently false afterwards, and the reader has no way to tell which day they are on. That is
+precisely the read CHK034 exists to prevent, and the documents had drifted into it.
+
+**This is what drove §6 of this change**, and it was found by consulting the checklist rather
+than by re-reading the draft — which is the case for having a control that looks at a different
+artefact than the author was. The remedy is durable wording (*"the current stable channel,
+resolved and recorded by CI at run time"*) rather than a newer number, because a newer number
+would reintroduce the same defect with a later expiry date.
+
+`PLAN.md` §8.1 is left unchanged: it is explicitly a **dated registry snapshot** from
+2026-08-11, and a snapshot is allowed to name the version that was current when it was taken.
+It does not claim to be current policy.
+
+### Still owed
+
+**W-002 does not close on acceptance.** When the first qualified independent reviewer becomes
+available they re-review this record in full — including the alternatives it rejects and the
+Phase 001 scope argument in §Waiver authority — alongside every other record accepted under
+W-002.
+
+Until then the underlying problem is unchanged: there is one maintainer, and no second person
+qualifies as independent. **The maintainer decision of 2026-08-21 that this record implements is
+also not an independent review**, and nothing here should be read as making it one.
+
+### Review history
+
+- **2026-08-21, proposed.** Controls 1 and 2 completed and recorded above. Controls 3 and 4
+  deliberately left open, with the reason stated, rather than pre-filled.
+- **2026-08-21, accepted after the CI run on `758bd50`.** Controls 3 and 4 completed against
+  measured results. ADR-0003 marked `superseded`, its decision body preserved verbatim.
+- **2026-08-21, corrected after external review.** An automated review found the
+  platform-evidence rule unsatisfiable as written. The rule is corrected here and in
+  `contracts/support-policy.md` (1.1.1); control 3's `758bd50` result is retained **unchanged**
+  as historical acceptance evidence and is now explicitly scoped to the acceptance sequence.
+  **No platform claim is withdrawn**, the decision is unchanged, and the state remains
+  `accepted`.
+- **2026-08-21, provenance corrected after external review.** A further automated review found
+  that this record, and `contracts/support-policy.md` 1.1.1, described platform evidence as
+  attaching to the pull-request branch head — while `pull_request` workflows check out
+  `refs/pull/<n>/merge` and therefore test GitHub's synthetic merge commit for an exact
+  base/head pair. Recorded as dated errata in §What a support claim means and §What control 3
+  proves; the accepted decision body is otherwise unedited. `contracts/support-policy.md` is
+  corrected to **1.1.2**, and **the CI workflows are deliberately left unchanged** because
+  testing the candidate integration is the intended behaviour. **No platform claim is
+  withdrawn**, the decision is unchanged, and the state remains `accepted`.
+
+Reviewed by **`Ahmed Anbar — self-review under W-002`** on **2026-08-21**. That review is **not
+independent** and must not be described as such — here, in the evidence packs, in `GOVERNANCE.md`,
+or in any public document.

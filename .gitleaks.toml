@@ -4,7 +4,8 @@
 #
 # POLICY: allowlist entries MUST be narrow and individually justified. Broad path
 # exclusions, whole-rule disables, and directory-wide suppressions defeat the control
-# and are not acceptable (tasks.md, "T013 permits documented false positives").
+# and are not acceptable (Phase 001 tasks T013, which permits documented false positives:
+# https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/tasks.md).
 #
 # Every entry below must state: the rule, the exact location, why the match is not a
 # secret, and what would make the entry removable.

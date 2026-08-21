@@ -1,3 +1,9 @@
+---
+description: "Contract C-2 — machine-readable output envelope and error-code registry"
+version: "1.0.0"
+status: "normative — the wire payload carries its own `schemaVersion`, currently 2, which is independent of this document version. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-2 — Machine-readable output
 
 **Status**: defined before implementation. **A compatibility contract** (FR-022, FR-023).
@@ -111,6 +117,6 @@ machine-readable — a secret in a log a tool writes is a secret in a log.
 
 ## `--dry-run` result
 
-`result.manifest` carries the entries from `FileManifest` (see [`../data-model.md`](../data-model.md)),
+`result.manifest` carries the entries from `FileManifest` (see the phase data model *(internal record)*),
 sorted by path, each with `path`, `kind`, and — for files — `size` and `digest`. SC-006 requires
 this to match the real run's created set exactly.

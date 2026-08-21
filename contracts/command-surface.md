@@ -1,3 +1,9 @@
+---
+description: "Contract C-1 — CLI command surface, exit codes, and stream discipline"
+version: "1.0.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-1 — Command surface, exit codes, and stream discipline
 
 **Status**: defined before implementation, per constitution principle V and FR-002.

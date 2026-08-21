@@ -11,7 +11,8 @@
 //! It is gone. Everything the generator writes goes through a [`cap_std::fs::Dir`] handle, and
 //! inside a handle there is **no ambient path API to escape with**. Traversal, absolute-path
 //! injection, and symlinks that leave the tree are refused by `cap-std`, not by this program
-//! remembering to look. `research.md` D6 records the measurements that reversed the decision.
+//! remembering to look. [Phase 003 research §D6](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md)
+//! records the measurements that reversed the decision.
 //!
 //! The practical difference, stated so nobody has to take it on faith: the old boundary rejected a
 //! symlink **at** the destination and would have followed a symlink **inside** the rendered tree.

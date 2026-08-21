@@ -466,4 +466,4 @@ Recorded so that no later reader infers more than was measured:
   reconciliation this deployment depends on. No claim is made that Renvor's footprint on this shared
   host is reversible without downtime for Renvor.
 - **The independent-review gap is untouched.** Every review supporting this deployment was an
-  advisory agent review, explicitly **NON-INDEPENDENT**. W-001 through W-006 remain active.
+  automated advisory review, explicitly **NON-INDEPENDENT**. W-001 through W-006 remain active.

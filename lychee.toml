@@ -24,9 +24,17 @@ exclude = [
   # EX-001 — the documentation site is not deployed yet
   # ---------------------------------------------------------------------------
   # `https://renvor.dev/...` appears in the generated sitemap and canonical tags
-  # because `url` is set to the production domain. The domain is owned by the
-  # project but nothing is served from it yet, so every such link fails.
-  # REMOVE WHEN: the documentation site is first deployed to renvor.dev.
+  # because `url` is set to the production domain.
+  #
+  # RE-CHECKED 2026-08-21: the apex now serves a landing page (`https://renvor.dev`
+  # -> 200), but the *documentation site* is not deployed: `/docs/intro`,
+  # `/docs/support-policy`, and `/sitemap.xml` each returned 404. The sitemap and
+  # canonical tags point at exactly those `/docs/...` paths, so every such link
+  # still fails and this exclusion is still load-bearing. An earlier revision of
+  # this comment said "nothing is served from it yet", which stopped being true
+  # when the landing page went up on 2026-08-17.
+  # REMOVE WHEN: the documentation site is first deployed to renvor.dev - measured
+  # by `https://renvor.dev/docs/intro` returning 2xx, NOT by the apex answering.
   '^https://renvor\.dev',
 
   # ---------------------------------------------------------------------------
@@ -34,25 +42,33 @@ exclude = [
   # ---------------------------------------------------------------------------
   # The API reference links to docs.rs/renvor, which 404s until the first
   # publication. Phase 001 deliberately publishes nothing (FR-049).
+  # RE-CHECKED 2026-08-21: `https://docs.rs/renvor` -> 404. Still unpublished, so
+  # the removal condition remains future work.
   # REMOVE WHEN: `renvor` is first published to crates.io.
   '^https://docs\.rs/renvor',
 
-  # ---------------------------------------------------------------------------
-  # EX-004 — the "Edit this page" link for a page that is not on `main` yet
-  # ---------------------------------------------------------------------------
-  # Docusaurus generates an edit link from `editUrl`, which points at
-  # `tree/main/docs/`. `cli.mdx` is added by the Phase 003 branch and therefore does
-  # not exist on `main` until that branch merges, so the link 404s **on the branch
-  # and only on the branch**. It is correct in the artifact being reviewed and
-  # correct after merge; it is unresolvable in between, by construction, for every
-  # branch that adds a documentation page.
-  #
-  # Scoped to this ONE file rather than to the edit-link prefix, deliberately. A
-  # pattern like `tree/main/docs/` would also stop catching a page that was renamed
-  # or deleted, which is a real breakage this check exists to find.
-  # REMOVE WHEN: PR #28 merges, at which point `docs/docs/cli.mdx` exists on `main`.
-  '^https://github\.com/renvor-rs/renvor/tree/main/docs/docs/cli\.mdx$',
 ]
+
+# ---------------------------------------------------------------------------
+# RETIRED EXCLUSIONS — recorded so the numbers are never silently reused
+# ---------------------------------------------------------------------------
+# EX-004 (`tree/main/docs/docs/cli.mdx`) — REMOVED 2026-08-21. Its stated removal
+#   condition was "PR #28 merges". PR #28 merged 2026-08-19 as
+#   `01327b1ee61b73ebbd4f9198c04d651b38367ba8`, `docs/docs/cli.mdx` is present on
+#   `main`, and the URL resolves 200 (one redirect to `blob/main/...`). All six
+#   Docusaurus edit links were probed and returned 200, against a negative control
+#   (`.../tree/main/docs/docs/no-such-page.mdx` -> 404) proving the probe
+#   discriminates. The exemption was satisfied and therefore stale.
+#
+# EX-005 (`blob/main/contracts/support-policy.md`, `blob/main/decisions/0011-*.md`)
+#   — REMOVED 2026-08-21, never merged to `main`. It existed only to tolerate two
+#   links whose targets do not exist on `main` until this pull request merges. A
+#   "REMOVE WHEN" comment is not an executable mechanism: the exemption would have
+#   entered `main` and permanently stopped checking the two links to the normative
+#   support contract and its governing ADR, so a later rename or deletion of either
+#   would have passed silently. Fixed at the source instead — the citations in
+#   `docs/docs/support-policy.mdx` are now repository paths in code form rather than
+#   `blob/main` hyperlinks, so there is nothing to exempt.
 
 # ---------------------------------------------------------------------------
 # EX-003 — Docusaurus' bundled CSS, excluded from scanning
@@ -61,6 +77,18 @@ exclude = [
 # lychee parses those data URIs as relative file paths and reports them as missing
 # files — a parser false positive, not a broken link. The bundle is generated
 # output containing no authored hyperlinks.
+#
+# RE-CHECKED 2026-08-21 against the real generated bundle, lychee 0.24.2, by running
+# with this `exclude_path` removed: 3 errors, each a data URI reported as
+# "File not found" (`.../assets/css/%22data:image/svg+xml;utf8,...`). With the
+# exclusion in place: 0 errors. The condition is therefore NOT satisfied and this
+# exclusion is still load-bearing.
+#
+# Note for whoever re-tests this: a hand-written fixture is NOT a valid test. A
+# synthetic `url("data:...")` with properly escaped inner quotes is excluded cleanly
+# by lychee 0.24.2 and reports 0 errors, which wrongly suggests the bug is fixed.
+# Docusaurus emits UNESCAPED inner quotes, and that is the form lychee mis-parses.
+# Test against `docs/build/assets/css/` after a real `npm run build`, never a fixture.
 # REMOVE WHEN: lychee no longer treats inline data URIs in CSS as file paths.
 exclude_path = ["docs/build/assets/css"]
 

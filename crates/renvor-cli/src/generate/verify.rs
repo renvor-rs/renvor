@@ -48,8 +48,11 @@ const CHECKS: [(&str, &[&str], &str); 5] = [
     // FR-029 names FOUR things — "formatting, **linting**, building, and testing" — and until
     // 2026-08-18 this array had three. Nothing lint-checked the generated project: not this
     // verifier, not `tests/generated.rs`, not CI, and not a `[lints]` table in the generated
-    // manifest. `grep -rn clippy crates/renvor-cli/` returned nothing, while `tasks.md` T036 and
-    // `quickstart.md` gate 5 both stated that clippy ran. An advisory review found the gap by
+    // manifest. `grep -rn clippy crates/renvor-cli/` returned nothing, while Phase 003 tasks T036
+    // (https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+    // and Phase 003 quickstart Gate 5
+    // (https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/quickstart.md)
+    // both stated that clippy ran. An advisory review found the gap by
     // reading the array instead of the prose.
     //
     // `-D warnings` because SC-005 says "0 warnings escalated to errors", which is only meaningful

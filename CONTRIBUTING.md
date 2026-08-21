@@ -53,11 +53,19 @@ see it, the output names every missing tool and how to install it.
 
 The toolchain itself is pinned by `rust-toolchain.toml`; rustup will fetch it for you.
 
-## Supported Rust versions
+## Supported Rust versions and platforms
 
 The minimum supported Rust version is **1.94.0** — a fixed floor, not a rolling offset
-from stable. CI tests exactly two toolchains: `1.94.0` and current stable. See
-[`SUPPORT.md`](SUPPORT.md) for the full policy and the rules for raising it.
+from stable. CI tests exactly two toolchains: the pinned `1.94.0` and the current stable
+channel, resolved by CI at run time.
+
+**Linux, macOS, and Windows are supported.** Six platform/toolchain contexts run on every
+pull request, but **only `verify (1.94.0)` and `verify (stable)` are required by branch
+protection** — the four `platform (…)` contexts are evidence, not gates. Do not describe all
+six as required checks.
+
+The normative policy is [`contracts/support-policy.md`](contracts/support-policy.md);
+[`SUPPORT.md`](SUPPORT.md) is the human-facing summary.
 
 Do not use an API newer than the floor. `clippy.toml` sets `msrv = "1.94.0"` so clippy
 will not suggest one.

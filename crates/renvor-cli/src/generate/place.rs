@@ -1,6 +1,6 @@
 //! Staging and placement — the two halves of the transaction that touch the destination.
 //!
-//! See `specs/003-interactive-cli/contracts/generation-transaction.md`.
+//! See `contracts/generation-transaction.md`.
 
 use cap_std::fs::Dir;
 

@@ -52,12 +52,12 @@ Everything below is one link from here.
 
 | Document | What it covers |
 |---|---|
-| [**CONSTITUTION.md**](CONSTITUTION.md) | **Supreme authority — version 3.0.0, ratified 2026-08-11, last amended 2026-08-18.** The principles every other document answers to |
+| [**CONSTITUTION.md**](CONSTITUTION.md) | **Supreme authority — version 3.0.1, ratified 2026-08-11, last amended 2026-08-19.** The principles every other document answers to |
 | [GOVERNANCE.md](GOVERNANCE.md) | Who decides what, decision records, the reviewer definition, waivers, and how to amend |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, the one verification command, and the dependency policy |
 | [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |
 | [SECURITY.md](SECURITY.md) | Private vulnerability reporting, response times, and disclosure |
-| [SUPPORT.md](SUPPORT.md) | Supported Rust versions and platforms, and the rules for changing them |
+| [SUPPORT.md](SUPPORT.md) | Supported Rust versions and platforms, and the rules for changing them — a summary of [`contracts/support-policy.md`](contracts/support-policy.md), which is normative |
 
 Supporting records: the [waiver ledger](governance/waivers.md), the
 [decision records](decisions/), and the [name availability evidence](governance/name-availability.md).
@@ -70,9 +70,11 @@ One command, identical locally and in CI:
 cargo xtask verify
 ```
 
-Ten ordered steps: toolchain probe, formatting, lint, tests, API documentation, dependency
-and licence policy, secret scanning, documentation build, link checking, and working-tree
-cleanliness.
+The ordered steps are defined by [`contracts/verification-sequence.md`](contracts/verification-sequence.md),
+which is the normative list — this page does not keep a second copy of the numbering. The
+categories it covers: toolchain probe, formatting, lint, tests, API documentation, dependency
+and licence policy, architecture invariants, secret scanning, documentation build, link
+checking, and working-tree cleanliness.
 
 **A check that cannot run is a failure, never a skip.** If required tooling is missing the
 command exits `2`, names every missing tool with its install command, and prints
@@ -86,11 +88,20 @@ whole sequence exists to prevent.
 | `2` | Required tooling missing — no steps ran |
 | `3` | Working tree dirty after an otherwise successful run |
 
-## Supported Rust versions
+## Support
 
 **MSRV: 1.94.0** — a fixed support floor, not a rolling offset from stable. A new Rust
-release does not invalidate it. CI tests exactly two toolchains: `1.94.0` and current
-stable. Full policy in [SUPPORT.md](SUPPORT.md).
+release does not invalidate it. CI tests exactly two toolchains: the pinned `1.94.0` and
+the current stable channel, resolved by CI at run time.
+
+**Supported platforms: Linux, macOS, and Windows.** Six platform/toolchain contexts run on
+every pull request. **Only the two Linux contexts — `verify (1.94.0)` and `verify (stable)` —
+are required by branch protection**; the four `platform (…)` contexts are executed evidence,
+not enforced gates.
+
+The **normative** statement is [`contracts/support-policy.md`](contracts/support-policy.md).
+[SUPPORT.md](SUPPORT.md) is the human-facing summary; any disagreement resolves in favour of
+the contract.
 
 ## Licence
 

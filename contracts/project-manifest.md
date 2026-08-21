@@ -1,3 +1,9 @@
+---
+description: "Contract C-3 — the `renvor.toml` project manifest read by `renvor check`"
+version: "1.0.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+---
+
 # Contract C-3 — `renvor.toml`
 
 **Status**: defined before implementation. Read by `renvor check`; the input to reproducibility.

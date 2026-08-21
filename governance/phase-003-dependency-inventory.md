@@ -1,11 +1,11 @@
 # Phase 003 — Complete resolved transitive dependency inventory
 
-**Feature**: [`specs/003-interactive-cli`](../specs/003-interactive-cli/spec.md) | **Satisfies**: FR-044, SC-015 | **Tasks**: T083, T084
+**Feature**: [Phase 003 — interactive CLI](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | **Satisfies**: FR-044, SC-015 | **Tasks**: T083, T084
 **Produced**: 2026-08-18 | **Toolchain**: 1.94.0 | **Source of truth**: the tracked `Cargo.lock`, read by `cargo metadata --locked`
 
 ## Why this document exists, and why it is not `research.md`
 
-[`research.md`](../specs/003-interactive-cli/research.md) evaluates the **direct candidates** — the
+[`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md) evaluates the **direct candidates** — the
 fifteen decisions D1–D15, each a package chosen deliberately. That is not the set that ships.
 A consumer resolves the **transitive closure**, and every package in it carries a licence, an
 MSRV, and an advisory history whether or not anybody evaluated it.
