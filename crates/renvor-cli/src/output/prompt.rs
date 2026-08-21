@@ -178,7 +178,10 @@ pub fn install(stderr: Permission) {
 ///
 /// # Errors
 ///
-/// [`Code::Usage`], naming the flags to use instead.
+/// [`Code::Usage`], with the generic adapter message: it directs the operator to supply the
+/// answers as command-line arguments and does **not** enumerate the caller's flags. This function
+/// is reached from every wizard and knows none of them, so a command that wants its own flags
+/// named needs its own refusal — `renvor tls trust` has one, and names its consent flag there.
 pub fn require_drawable() -> Result<(), CliError> {
     if std::io::stderr().is_terminal() {
         return Ok(());
@@ -338,7 +341,7 @@ mod tests {
         assert_eq!(refused.exit(), Exit::Usage);
         assert!(
             refused.message.contains("flags"),
-            "the refusal must name what to supply instead: {}",
+            "the refusal must direct the operator to supply the answers as arguments: {}",
             refused.message
         );
     }

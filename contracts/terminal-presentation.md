@@ -223,9 +223,19 @@ as behaviour, which it is not.
 
 Ctrl-C and Escape are different events with the same meaning, and distinguishing them in the exit
 code would make every script handle two cases for one outcome. A missing terminal is a wrong
-*invocation*, not a refusal, and its message names the flags to use instead. Exit `1` stays
-reserved for defects: folding an unknown prompt failure into `cancelled` would hide a bug behind an
-outcome that looks deliberate.
+*invocation*, not a refusal, and its message directs the operator to supply the answers as
+command-line arguments or flags instead.
+
+**That message is the generic prompt adapter's, and it does not enumerate the caller's flags.** A
+command with a dedicated non-interactive refusal does name its concrete required flags: `renvor tls
+trust` without a terminal names `--i-understand-this-modifies-my-system-trust-store` and carries it
+as a `required` detail. The generic adapter is reached from every wizard and knows none of its
+callers' flags, so it names the *kind* of input rather than inventing a list. An earlier version of
+this paragraph promised the stronger thing for both paths. That was never true of either this
+implementation or the `inquire` one it replaced — both emit the identical generic sentence.
+
+Exit `1` stays reserved for defects: folding an unknown prompt failure into `cancelled` would hide
+a bug behind an outcome that looks deliberate.
 
 **The terminal and the cursor are restored on every one of these paths**, and on success, and on a
 validation failure, and on a panic.
@@ -240,12 +250,16 @@ question and accepts its default.
 
 ### What prompts may not do
 
-- A prompt is **never** shown when `stdin` is not a terminal; the command exits naming the flags
-  that would have supplied the answer. This is the case every automated consumer is in.
+- A prompt is **never** shown when `stdin` is not a terminal. This is the case every automated
+  consumer is in. What the operator is told then depends on the command: one with a dedicated
+  non-interactive refusal names its concrete required flags, and a required argument that no flag
+  supplied is reported by the argument parser, which names it.
 - A prompt is **never** shown when `stderr` is not a terminal either, because that is where it
-  would be drawn. Same exit code, same message, and — this is the part worth stating — the refusal
-  happens **before any chrome is written**, so a redirected `stderr` gets the diagnostic and
-  nothing else.
+  would be drawn. Same exit code — and the message is the **generic prompt adapter's**, directing
+  the operator to supply the answers as command-line arguments without enumerating caller-specific
+  flags, because nothing at that point knows which they are. And — this is the part worth stating —
+  the refusal happens **before any chrome is written**, so a redirected `stderr` gets the
+  diagnostic and nothing else.
 
   `stdin` decides eligibility; `stderr` decides drawability. They are checked separately on
   purpose: see [`command-surface.md`](command-surface.md) for why merging them would silently
