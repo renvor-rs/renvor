@@ -1,0 +1,33 @@
+# Line-ending policy.
+#
+# # Why this file exists
+#
+# Without it, git applies its own default text conversion, and on a Windows checkout that rewrites
+# `\n` into `\r\n` on the way to disk. For source that is harmless. For a file whose whole purpose
+# is to be compared **byte for byte** it is not: the comparison then measures the checkout rather
+# than the program.
+#
+# That is not hypothetical. `crates/renvor-cli/tests/json/*.json` records what each JSON envelope
+# looked like before contract C-8 existed, and `tests/presentation.rs` asserts the shipped binary
+# still emits those exact bytes. On the Windows leg of the matrix both toolchains failed with the
+# document differing only in line endings — the binary emitting `\n`, the fixture arriving as
+# `\r\n`. The envelope was identical on every platform; the fixture was not.
+
+# THE DEFAULT: normalise to LF in the repository, and check out LF everywhere.
+#
+# This project has no Windows-only text file that needs CRLF, and every consumer of these files —
+# rustc, cargo, lychee, the docs toolchain — reads LF happily on all three platforms. Pinning it
+# means a file's bytes are the same wherever it is read, which is the property the expected-output
+# tests rest on.
+* text=auto eol=lf
+
+# BYTE-EXACT FIXTURES. Not text at all, as far as git is concerned.
+#
+# `-text` is stronger than `eol=lf`: it disables conversion entirely rather than choosing a
+# direction, so no future `core.autocrlf` setting on a contributor's machine can reach them.
+crates/renvor-cli/tests/json/*.json -text
+
+# Expected-output snapshots, for the same reason. `trycmd` normalises line endings itself, so
+# these were never the failure — but they are the same kind of artifact and there is no reason for
+# them to depend on a tool's leniency.
+crates/renvor-cli/tests/cmd/*.trycmd -text

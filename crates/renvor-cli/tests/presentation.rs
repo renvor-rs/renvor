@@ -83,6 +83,22 @@ const RECORDED: &[(&str, &[&str], &str)] = &[
 fn every_recorded_json_document_is_still_byte_for_byte_what_it_was() {
     let root = workspace();
     for (name, arguments, expected) in RECORDED {
+        // THE FIXTURE'S OWN LINE ENDINGS, CHECKED FIRST AND SEPARATELY.
+        //
+        // These files are compared byte for byte, so a checkout that rewrote them is a broken
+        // measurement rather than a failing program. Both Windows legs of the matrix failed
+        // exactly that way once: git applied its default text conversion, the fixture arrived as
+        // `\r\n`, the binary emitted `\n`, and the diff below said "the JSON document changed"
+        // about a document that had not changed on any platform.
+        //
+        // `.gitattributes` now marks them `-text`. This says so out loud if that is ever undone,
+        // because the assertion underneath cannot tell a rewritten fixture from a regression.
+        assert!(
+            !expected.contains('\r'),
+            "{name} was checked out with CRLF line endings, so the comparison below would measure \
+             the checkout rather than the program. `.gitattributes` marks these `-text`; something \
+             has overridden it"
+        );
         let (_, stdout, _) = renvor(arguments, root.path(), &[]);
         assert_eq!(
             stdout, *expected,
