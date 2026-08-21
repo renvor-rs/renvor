@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 2,
+  "status": "failure",
+  "command": "docker",
+  "error": {
+    "code": "container_controls_missing",
+    "message": "`.` has no `compose.yaml`; generate the project with `--container` to get container development controls",
+    "details": {
+      "expected": "compose.yaml",
+      "remedy": "generate the project with `--container`"
+    }
+  }
+}
