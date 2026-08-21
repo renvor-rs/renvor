@@ -76,14 +76,46 @@ impl Drop for Permit {
     }
 }
 
+/// How long to wait for a slot before giving up on the cap and proceeding anyway.
+///
+/// # The cap must never be the reason a suite hangs
+///
+/// The first version of this waited on the condition variable **with no timeout**. A permit is
+/// released only once the reader thread has also finished with its handle, and that thread ends
+/// when the pty reaches end of file — so anything leaving a child alive holds a slot
+/// indefinitely, and after [`CONCURRENT_TERMINALS`] of those every later test blocks forever with
+/// no diagnostic at all.
+///
+/// That is the worst failure a suite can have. A hang produces no test name, no assertion, and no
+/// output; on CI it is indistinguishable from a slow machine until the job is killed. An advisory
+/// review predicted exactly this, and it then happened on the Windows leg — forty-one minutes of
+/// silence and `The operation was canceled`, with nothing in the log naming the test responsible.
+///
+/// So the cap is now **advisory**. It is an optimisation that avoids exhausting a finite operating
+/// system resource; it is not a correctness requirement, and it is never worth a deadlock.
+/// Overshooting prints why and carries on — a noisy pass beats a silent hang.
+const SLOT_WAIT: Duration = Duration::from_secs(30);
+
 fn acquire_terminal_slot() -> std::sync::Arc<Permit> {
     let mut count = IN_FLIGHT
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
+    let deadline = Instant::now() + SLOT_WAIT;
     while *count >= CONCURRENT_TERMINALS {
-        count = RELEASED
-            .wait(count)
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            eprintln!(
+                "harness: {} pseudo-terminals still in flight after {}s; proceeding without a \
+                 slot. An earlier test left a child alive.",
+                *count,
+                SLOT_WAIT.as_secs()
+            );
+            break;
+        }
+        let (guard, _) = RELEASED
+            .wait_timeout(count, remaining)
             .unwrap_or_else(|poison| poison.into_inner());
+        count = guard;
     }
     *count += 1;
     std::sync::Arc::new(Permit)
