@@ -534,3 +534,77 @@ fn a_dumb_terminal_gets_no_progress_indicator() {
         terminal.visible()
     );
 }
+
+// ── 6. JSON MODE ON A TERMINAL ──────────────────────────────────────────────────────────────
+
+#[test]
+fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
+    // THE CLAIM THIS TEST REPLACED WAS FALSE, AND THAT IS WHY THE TEST EXISTS.
+    //
+    // Contract C-8 originally said "a prompt is never shown in JSON mode". Measuring it showed
+    // otherwise: C-1 makes the wizard conditional on `stdin` being a terminal and on nothing else,
+    // so `renvor --output json new` on a terminal asks its questions exactly as the human-format
+    // run does. A consumer that has left a terminal on `stdin` has asked for that.
+    //
+    // What actually has to hold is narrower and is what C-2 requires: the questions are on
+    // `stderr`, and `stdout` carries exactly one JSON document. Asserting the true property is
+    // worth more than asserting the memorable one.
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = Terminal::spawn(
+        &[
+            "--output",
+            "json",
+            "--dry-run",
+            "new",
+            "--path",
+            destination.to_str().expect("utf-8"),
+        ],
+        root.path(),
+        &[],
+    );
+    // The pty merges the two streams, so the prompt IS visible in the transcript — which is the
+    // point: it proves the wizard ran.
+    terminal.expect("Project name");
+    terminal.send_line("demo");
+    for prompt in [
+        "Local development domain",
+        "Generate the example domain module?",
+        "Generate seed data for it?",
+        "Generate container development controls?",
+        "Record that local HTTPS is wanted?",
+    ] {
+        terminal.expect(prompt.split(' ').next().expect("a first word"));
+        terminal.enter();
+    }
+    terminal.enter();
+    assert_eq!(terminal.wait(), 0, "{}", terminal.visible());
+
+    // And exactly one document was produced. A pty cannot separate the streams, so the document is
+    // found in the transcript and parsed — a second document, or a prompt inside the first, makes
+    // this fail.
+    let visible = terminal.visible().replace('\r', "");
+    let start = visible
+        .find('{')
+        .unwrap_or_else(|| panic!("no JSON document was emitted\n{visible}"));
+    let end = visible
+        .rfind('}')
+        .unwrap_or_else(|| panic!("the JSON document is unterminated\n{visible}"));
+    let document: serde_json::Value = serde_json::from_str(&visible[start..=end])
+        .unwrap_or_else(|error| panic!("stdout is not one JSON document: {error}\n{visible}"));
+    assert_eq!(document["schemaVersion"], 2);
+    assert_eq!(document["status"], "success");
+    assert_eq!(
+        visible[start..=end].matches("\"schemaVersion\"").count(),
+        1,
+        "more than one document reached stdout\n{visible}"
+    );
+
+    // AND THE PROGRESS INDICATOR IS STILL ABSENT, on a terminal, because the format forbids it.
+    // `presentation.rs` asserts the same thing on a pipe, where the stream forbids it anyway —
+    // which means that test alone could not tell the two reasons apart. This one can.
+    assert!(
+        !visible.contains("verifying the generated project"),
+        "a progress indicator drew during a JSON run on a terminal\n{visible}"
+    );
+}

@@ -211,9 +211,20 @@ question and accepts its default.
 
 ### What prompts may not do
 
-- A prompt is **never** shown in JSON mode.
 - A prompt is **never** shown when `stdin` is not a terminal; the command exits naming the flags
-  that would have supplied the answer.
+  that would have supplied the answer. This is the case every automated consumer is in.
+- A prompt **never touches `stdout`**, so it cannot appear inside a JSON document.
+
+  This clause is written the way it is because the obvious stronger version — *"a prompt is never
+  shown in JSON mode"* — **is not true**, and stating it would have been a claim nothing enforces.
+  `renvor --output json new` on a terminal enters the wizard, exactly as the human-format run does:
+  [`command-surface.md`](command-surface.md) makes the wizard conditional on `stdin` being a
+  terminal and on nothing else, and a JSON consumer that has left a terminal on `stdin` has asked
+  for that. The questions are drawn on `stderr` and `stdout` still carries exactly one document,
+  which is what [`json-output.md`](json-output.md) actually requires.
+
+  The behaviour predates this contract and is unchanged by it. It is recorded here because it was
+  **measured** while checking a claim this document originally made and could not support.
 - The prompt library's own logging and note helpers are **not** used for application data. They
   write straight to the terminal, bypassing redaction and control-character neutralisation. Every
   string handed to them is a literal, enforced by type.
