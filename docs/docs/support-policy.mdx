@@ -10,13 +10,24 @@ import Stamp from './_stamp.mdx';
 
 <Stamp />
 
+:::info Where the authority lives
+
+This page is a **summary**. The sole normative authority is the versioned contract
+[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+Where this page and that contract disagree, **the contract wins**.
+
+The three-platform claim is carried by
+[`ADR-0011`](https://github.com/renvor-rs/renvor/blob/main/decisions/0011-support-linux-macos-and-windows.md).
+
+:::
+
 ## Supported Rust versions
 
 | Field | Value |
 | --- | --- |
 | Minimum supported Rust version (MSRV) | **1.94.0** |
 | Kind | **Fixed floor** — not an offset from current stable |
-| Also tested | **Current stable** (1.97.1 at time of writing) |
+| Also tested | **The current stable channel** — resolved and recorded by CI at run time |
 | Edition | 2024 |
 | Cargo resolver | 3, declared explicitly |
 
@@ -25,14 +36,22 @@ import Stamp from './_stamp.mdx';
 A new Rust stable release **does not** invalidate the MSRV, shorten it, or trigger a
 review. The minimum-version CI job stays pinned at 1.94.0; only the stable job moves.
 
-This was chosen over a release-count window deliberately. Rust 1.98.0 promotes to stable
+This was chosen over a release-count window deliberately. Rust 1.98.0 promoted to stable
 on 2026-08-20, which would have pushed 1.94.0 to four releases behind and broken an "N-3"
 policy through the calendar alone — no code change, no decision by anyone.
 
+**No stable version number appears on this page.** A number written into a document does not
+float — it is correct the day it is typed and silently false afterwards. The stable channel is
+whatever CI resolves it to on the run that produced the evidence.
+
 ## Supported platforms
 
+Summary of
+[`contracts/support-policy.md` §Platform support](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+
 Only platforms with passing evidence are listed. Claiming one without a verification run
-behind it would be a claim exceeding measurement.
+behind it would be a claim exceeding measurement, and a claim requires passing evidence **at
+the exact head being claimed**.
 
 | Platform | Status | Contexts that run on every pull request |
 | --- | --- | --- |
@@ -60,15 +79,21 @@ enforced gate. Making them required is a repository-settings change and has not 
 What the platform jobs actually run is the workspace test suite serially plus the
 no-default-features check — not the full verification sequence, which runs on Linux only.
 
-This page follows [`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md),
-which is the current public platform policy. The platform table in
-`contracts/support-policy.md` records the **Phase 001 baseline** and is not the current
-status.
+**Support does not imply independent human review.** No platform-specific behaviour has
+received one. Two behaviours are `#[cfg(unix)]`-gated and therefore exercised on Linux and
+macOS only, and Windows has had no adversarial review. The contract lists these limits in full.
+
+The normative statement is
+[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+[`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md) is the repository's
+human-facing summary of the same contract. Any disagreement between the three resolves in
+favour of the contract.
 
 ## Raising the MSRV
 
 A raise may occur only in a planned minor or major release, after an accepted decision
-record naming the concrete requirement that forces it, documented in the support policy,
+record naming the concrete requirement that forces it, documented in
+[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md),
 the changelog, and the release notes, and only after the outgoing MSRV has been supported
 for at least six months.
 

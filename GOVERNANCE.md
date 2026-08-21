@@ -234,6 +234,7 @@ and is not something W-001 waives — W-001 covers the *approving review* requir
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to contribute, verification, dependency policy, licensing of contributions |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Expected behaviour and enforcement |
 | [`SECURITY.md`](SECURITY.md) | Private vulnerability reporting and response commitments |
-| [`SUPPORT.md`](SUPPORT.md) | Supported Rust versions, platforms, and change rules |
+| [`contracts/support-policy.md`](contracts/support-policy.md) | **Normative** — supported toolchains, supported platforms, the MSRV floor, and change rules |
+| [`SUPPORT.md`](SUPPORT.md) | Human-facing summary of the support contract. Resolves in the contract's favour |
 | [`governance/waivers.md`](governance/waivers.md) | The waiver ledger |
 | [`decisions/`](decisions/) | Architecture decision records |

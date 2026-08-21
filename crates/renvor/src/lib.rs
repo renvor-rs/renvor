@@ -64,7 +64,10 @@
 //! ## Support
 //!
 //! The minimum supported Rust version is **1.94.0**, a fixed floor rather than a
-//! rolling offset from stable. See `SUPPORT.md` for the full policy.
+//! rolling offset from stable. Linux, macOS, and Windows are supported, with
+//! different enforcement levels.
+//!
+//! The normative policy is `contracts/support-policy.md`; `SUPPORT.md` summarises it.
 //!
 //! ## Licence
 //!

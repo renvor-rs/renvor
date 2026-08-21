@@ -52,6 +52,30 @@ exclude = [
   # or deleted, which is a real breakage this check exists to find.
   # REMOVE WHEN: PR #28 merges, at which point `docs/docs/cli.mdx` exists on `main`.
   '^https://github\.com/renvor-rs/renvor/tree/main/docs/docs/cli\.mdx$',
+
+  # ---------------------------------------------------------------------------
+  # EX-005 — live-document links to two files that PR #29 creates
+  # ---------------------------------------------------------------------------
+  # `docs/docs/support-policy.mdx` names its normative authority. That authority is
+  # `contracts/support-policy.md`, and the governing record is `ADR-0011`. Neither
+  # path exists on `main` yet: `contracts/` is created by PR #29 (the contracts were
+  # previously under `specs/*/contracts/`), and ADR-0011 is introduced by that same
+  # branch. Both URLs therefore 404 **on the branch and only on the branch**.
+  #
+  # Verified 2026-08-21 with a positive control: both targets returned 404, while
+  # `blob/main/SUPPORT.md` returned 200 from the same probe — so the 404 is the
+  # target's absence, not a broken check.
+  #
+  # A `blob/main/` link is deliberate rather than a commit-pinned one: this page
+  # cites the *current* authority, and a pinned URL would freeze the reader on a
+  # revision of a contract that is expected to change.
+  #
+  # Scoped to these TWO exact URLs, not to a `blob/main/contracts/` prefix. A prefix
+  # exclusion would also stop catching a contract that was renamed or deleted, which
+  # is a real breakage this check exists to find.
+  # REMOVE WHEN: PR #29 merges, at which point both paths exist on `main`.
+  '^https://github\.com/renvor-rs/renvor/blob/main/contracts/support-policy\.md$',
+  '^https://github\.com/renvor-rs/renvor/blob/main/decisions/0011-support-linux-macos-and-windows\.md$',
 ]
 
 # ---------------------------------------------------------------------------

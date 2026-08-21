@@ -1100,6 +1100,78 @@ mod tests {
         );
     }
 
+    /// The published contract does not claim that a step of the sequence currently fails.
+    ///
+    /// It did. Under "Working-tree cleanliness" the contract carried a **Known starting
+    /// condition** asserting that `.DS_Store`, `.idea/`, and `.playwright-mcp/` were
+    /// inadequately ignored and that *"step 11 fails until the ignore rules are corrected"*.
+    /// The ignore rules were corrected; the sentence was not. So a normative document
+    /// described its own subject as failing while `cargo xtask verify` exited 0 — and this
+    /// test file runs inside step 4 of that very sequence, which means the contract was
+    /// predicting a failure of the run that was executing it.
+    ///
+    /// Two independent bindings, neither of which is a prose search for a failure claim:
+    ///
+    /// 1. **Structural** — the `Known starting condition` label must not reappear. That
+    ///    label is the exact vector: it is where a *current-state* assertion was parked
+    ///    inside a document that otherwise states obligations.
+    /// 2. **Factual** — the three artefact paths that label named must carry a rule in the
+    ///    tracked ignore file.
+    ///
+    /// **What this does not do**, stated so the guard is not credited with more than it
+    /// buys: binding 1 catches the label, not every conceivable false current-state claim
+    /// phrased some other way; and binding 2 proves a *rule is present*, not that a given
+    /// path resolves as ignored. The end-to-end proof is step 11 itself, which runs
+    /// `git status --porcelain` on every invocation. This test guards the prose; step 11
+    /// guards the behaviour.
+    #[test]
+    fn the_contract_does_not_claim_the_sequence_currently_fails() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+        const IGNORE_RULES: &str = include_str!("../../.gitignore");
+
+        // POSITIVE CONTROL FIRST. If either file were empty or moved, every assertion below
+        // would pass vacuously — which is the failure mode this whole module is written
+        // against. `include_str!` already makes a moved file a build error; these prove the
+        // *content* being searched is the content that matters.
+        assert!(
+            CONTRACT.contains("## Working-tree cleanliness"),
+            "the verification contract has no working-tree cleanliness section; this test is \
+             searching the wrong content"
+        );
+        assert!(
+            IGNORE_RULES.lines().any(|line| line.trim() == "target/"),
+            "the tracked ignore file does not contain the build-output rule; this test is \
+             searching the wrong content"
+        );
+
+        // (1) The defect vector.
+        assert!(
+            !CONTRACT.contains("Known starting condition"),
+            "contracts/verification-sequence.md carries a `Known starting condition` block \
+             again. That block asserted a CURRENT failure of step 11 and stayed after the \
+             cause was fixed. A contract states obligations; the current result of meeting \
+             them belongs in a CI run, not in normative text."
+        );
+
+        // (2) The artefacts that block named are covered by the tracked ignore rules.
+        for rule in [".idea/", ".DS_Store", ".playwright-mcp/"] {
+            assert!(
+                IGNORE_RULES.lines().any(|line| line.trim() == rule),
+                "the tracked ignore file has no `{rule}` rule. Step 11 asserts the working \
+                 tree is clean after a full run, so an uncovered editor or OS artefact fails \
+                 the sequence — and the contract no longer warns anyone that it would."
+            );
+        }
+
+        // NEGATIVE CONTROL. A rule-matcher that reported everything present would make the
+        // loop above meaningless. A tracked file must NOT be found as an ignore rule.
+        assert!(
+            !IGNORE_RULES.lines().any(|line| line.trim() == "README.md"),
+            "the rule matcher reports a tracked file as an ignore rule; it is not \
+             discriminating and the assertions above prove nothing"
+        );
+    }
+
     /// The published documentation site lists the same number of steps.
     ///
     /// The site's page duplicates the step table, and it has been left behind **three times**:

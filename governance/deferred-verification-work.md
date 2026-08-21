@@ -15,7 +15,7 @@ unchecked.
 |---|---|
 | **State** | withdrawn 2026-08-20, replacement not yet designed in detail |
 | **Withdrawn from** | `contracts/verification-sequence.md` (proposed step 11) and `cargo xtask verify` |
-| **Reached `main`?** | **No.** It existed only on `chore/public-repository-surface` and was removed before that branch merged |
+| **Reached `main`?** | **No.** It existed only on `chore/public-repository-surface`, and was removed by a later commit on that branch — so no merge of that branch carries it |
 | **Source reference** | commit `a8b70009e0ed619746377ea9f57676f419108907`, path `scripts/check-doc-references.py` |
 | **Decided by** | Ahmed Anbar, project maintainer. Not an independent review |
 
@@ -31,8 +31,8 @@ carried its own control suite — 13 negative, 9 positive, 1 invariant — run o
 
 It found real defects. An earlier filesystem-based version of the same check had reported
 "0 broken" while eight links were in fact broken, four of them in the independent-review packet a
-reviewer is meant to open first. Those eight are fixed, and the fixes are part of the merged
-public-surface work; only the *gate* is withdrawn.
+reviewer is meant to open first. Those eight are fixed, and the fixes are part of the
+public-surface work carried by this branch; only the *gate* is withdrawn.
 
 ### Why it was withdrawn
 
@@ -78,19 +78,43 @@ Not designed in detail, and deliberately not part of the branch that withdrew th
 Whether the result becomes a step of `cargo xtask verify` is a separate decision, to be made
 against the same standard this check failed.
 
-### Retention requirement
+### Where the withdrawn implementation lives, and how durable that is
 
-The withdrawn implementation is reachable only through commit
-`a8b70009e0ed619746377ea9f57676f419108907`. That commit is on branch
-`chore/public-repository-surface`, which was squash-merged; the individual commit is therefore
-**not** in `main`'s history.
+| Field | Value |
+|---|---|
+| **Commit** | `a8b70009e0ed619746377ea9f57676f419108907` |
+| **Path at that commit** | `scripts/check-doc-references.py` |
+| **Branch it was authored on** | `chore/public-repository-surface` |
+| **In `main`'s history?** | **No** — the file was removed by a later commit on the same branch, so `main` never carries it as a tracked path |
 
-**Do not delete branch `chore/public-repository-surface`.** Deleting it makes the commit
-unreachable and this reference dead. If the branch is ever deleted, the implementation must first
-be preserved elsewhere and this record updated to point at the new location.
+Read it with `git show a8b70009e0ed619746377ea9f57676f419108907:scripts/check-doc-references.py`
+in any clone that holds the commit, or on the hosting provider at
+<https://github.com/renvor-rs/renvor/blob/a8b70009e0ed619746377ea9f57676f419108907/scripts/check-doc-references.py>.
 
-Permalink (valid while the branch exists):
-<https://github.com/renvor-rs/renvor/blob/a8b70009e0ed619746377ea9f57676f419108907/scripts/check-doc-references.py>
+**Reachability of that commit is not promised, and this record does not create an obligation to
+preserve it.** Whether the commit stays reachable depends on Git history and on the hosting
+provider's retention behaviour — whether a ref still reaches it, and how long the provider serves
+unreferenced objects. Neither is under this record's control, and neither is guaranteed
+indefinitely.
+
+**No MUST is placed on retaining the branch.** An earlier revision of this record said *"Do not
+delete branch `chore/public-repository-surface`"*, which turned a routine post-merge cleanup into
+a permanent, undeclared maintenance obligation enforced by nothing but a sentence in a governance
+file. **A feature branch is not a durable archive**, and treating one as an archive is how a
+repository accumulates refs nobody dares delete for reasons nobody remembers. That requirement is
+withdrawn. An ADR is **not** created to retain an obsolete branch; a decision record is for
+decisions, not for pinning a ref.
+
+**What actually needs to survive is in this file, not in that commit.** The reasons for withdrawal
+— the seven mishandled CommonMark constructs reproduced above, the flat defect-rate evidence, and
+the intended replacement design — are recorded here, in a tracked document on the default branch.
+The 443 lines of withdrawn Python are **a reference, not a dependency**: the replacement is
+specified above as a design, and rebuilding from that design is the intended path. If the commit
+becomes unreachable, this record stays correct and only the convenience of reading the original
+is lost.
+
+Anyone who wants a durable copy should take one now — the source reference above is exact — rather
+than relying on a branch surviving.
 
 ### What this record does not claim
 

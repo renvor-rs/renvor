@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.1.0"
-status: "normative — enforced executably by `xtask`. 1.1.0 (2026-08-20) restores the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+version: "1.1.1"
+status: "normative — enforced executably by `xtask`. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -104,7 +104,11 @@ The last line matters. A partial run that reports success is the failure mode th
 
 Step 11 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
 
-**Known starting condition**: the repository currently contains `.DS_Store`, `.idea/`, and `.playwright-mcp/`, and the existing `.gitignore` does not cover all of them. Step 11 fails until the ignore rules are corrected — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
+**Historical note, dated.** When this contract was first written the repository contained `.DS_Store`, `.idea/`, and `.playwright-mcp/` while the ignore rules did not cover all of them, and step 11 failed on that account — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
+
+**That was fixed. It is no longer true, and this contract said otherwise until 2026-08-21.** All three are covered by the tracked ignore rules — `.gitignore:24` (`.idea/`), `.gitignore:31` (`.DS_Store`), `.gitignore:71` (`.playwright-mcp/`), and `docs/.gitignore:12` — verified with `git check-ignore -v`, with `README.md` as a negative control confirming the probe discriminates rather than reporting everything ignored. **Step 11 passes at the current head**, and `cargo xtask verify` exits 0 on both toolchains.
+
+A contract that describes its own subject as currently failing, while the command it governs succeeds, is a false statement in a normative document — the same defect class as a step the table omits. It is corrected here and the correction is dated rather than the sentence being quietly deleted.
 
 ## Performance target
 

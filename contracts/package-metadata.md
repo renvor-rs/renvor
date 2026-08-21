@@ -20,7 +20,7 @@ Every package intended for publication declares all of the following. A missing 
 | `license` | `MIT OR Apache-2.0` — no other value permitted (FR-009) |
 | `repository`, `homepage`, `documentation`, `readme` | Present and resolving |
 | `keywords`, `categories` | Present and accurate |
-| `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly |
+| `rust-version` | Matches the [support policy](./support-policy.md) MSRV exactly — that contract is the sole authority for the floor |
 | `include` or `exclude` | Explicit — the shipped file set is stated, never inferred |
 
 **Prohibited**: a **git** dependency, or a **path-only** dependency, in a publishable package (FR-040). `xtask` is exempt because it declares `publish = false`.
