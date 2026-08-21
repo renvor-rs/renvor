@@ -117,6 +117,14 @@ fn each_refusal_suppresses_colour_on_a_terminal_that_could_have_had_it() {
         let root = workspace();
         let mut terminal = Terminal::spawn_sized(&arguments, root.path(), &environment, 100);
         assert_eq!(terminal.wait(), 0, "{label}: {}", terminal.visible());
+        // POSITIVE CONTROL. "No colour" is satisfied by no output at all, so the assertions below
+        // would pass against a binary that printed nothing — which is the failure mode that makes
+        // an absence assertion worthless.
+        assert!(
+            terminal.visible().contains("cargo") || terminal.visible().contains("schemaVersion"),
+            "{label} produced no readiness output, so the assertions below prove nothing: {}",
+            terminal.visible()
+        );
         for (name, sequence) in [("cyan", CYAN), ("green", GREEN), ("blue", BLUE)] {
             assert!(
                 !terminal.transcript.contains(sequence),
@@ -219,7 +227,18 @@ fn a_very_wide_terminal_does_not_produce_a_very_wide_leader() {
     // and its value, and the leader stops doing the job it exists for.
     let transcript = doctor(400, &[]);
     let visible = transcript.replace('\r', "");
-    for line in visible.lines().filter(|line| line.contains("...")) {
+    let rows: Vec<&str> = visible
+        .lines()
+        .filter(|line| line.contains("..."))
+        .collect();
+    // POSITIVE CONTROL. A `for` over an empty iterator passes without executing its body, so
+    // without this the test would report success on a build that produced no leader rows at all.
+    assert!(
+        !rows.is_empty(),
+        "no leader row was produced at 400 columns, so the assertion below proves nothing: \
+         {visible:?}"
+    );
+    for line in rows {
         assert!(
             line.chars().count() <= 120,
             "a row was allowed to grow to {} columns on a 400-column terminal: {line:?}",
