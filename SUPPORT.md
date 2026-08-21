@@ -242,5 +242,5 @@ and editing this page does not change the policy.
 
 | Record | What it governs |
 |---|---|
-| **ADR-0003** | The MSRV floor, the toolchain and dependency policy. Superseded by ADR-0011 on acceptance; its decision body is preserved |
-| **ADR-0011** *(`proposed`)* | Linux, macOS, and Windows as supported platforms, and the required-versus-running distinction |
+| **ADR-0003** | The MSRV floor, the toolchain and dependency policy. **`superseded`** by ADR-0011 on 2026-08-21; its decision body is preserved verbatim, and the MSRV rules it sets are carried forward unchanged |
+| **ADR-0011** *(`accepted` 2026-08-21, under W-002 — **not** an independent review)* | Linux, macOS, and Windows as supported platforms, and the required-versus-running distinction |

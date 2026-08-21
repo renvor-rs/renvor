@@ -34,9 +34,11 @@ the waiver ledger.
 
 ## Decision records
 
-**Seven records: six `accepted`, one `superseded`.** ADR-0002 through ADR-0006 and **ADR-0010**
-(accepted 2026-08-17 under W-002) are accepted; **ADR-0001 is `superseded`** by ADR-0010 and does
-**not** currently govern. Each was reviewed as a **non-independent self-review** under W-002.
+**Eight records: six `accepted`, two `superseded`.** ADR-0002, ADR-0004, ADR-0005, ADR-0006,
+**ADR-0010** (accepted 2026-08-17 under W-002) and **ADR-0011** (accepted 2026-08-21 under W-002)
+are accepted. **ADR-0001 is `superseded`** by ADR-0010 and **ADR-0003 is `superseded`** by
+ADR-0011; neither currently governs, and the decision body of each is preserved verbatim. Each
+record was reviewed as a **non-independent self-review** under W-002.
 
 Stated by state rather than as a total, because a reader scoping current decision authority must
 not treat the superseded record as live — `GOVERNANCE.md` is authoritative on this split.
@@ -68,7 +70,7 @@ omitted — an absent row would read as an oversight instead of a fact.
 
 | # | Evidence class | Where it is |
 |---|---|---|
-| 1 | Accepted ADRs | [`decisions/`](../decisions/) — ADR-0002 … ADR-0006 and ADR-0010 `accepted`; **ADR-0001 `superseded`** by ADR-0010 |
+| 1 | Accepted ADRs | [`decisions/`](../decisions/) — ADR-0002, ADR-0004, ADR-0005, ADR-0006, ADR-0010, and ADR-0011 `accepted`; **ADR-0001 `superseded`** by ADR-0010 and **ADR-0003 `superseded`** by ADR-0011 |
 | 2 | Package versions and licence review | **No runtime dependency was introduced by this phase**; it ships no runtime code. The licence and advisory gates that would review one are [`deny.toml`](../deny.toml) and [`governance/dependency-advisory-policy.md`](dependency-advisory-policy.md), both active from this phase onward, over the committed [`Cargo.lock`](../Cargo.lock) |
 | 3 | Verification commands and platforms | [`contracts/verification-sequence.md`](../contracts/verification-sequence.md) — the ordered sequence `cargo xtask verify` runs; [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) for the platforms it runs on |
 | 4 | Compatibility rows exercised | MSRV floor and tested toolchains. **This phase's declared row is Linux on the pinned MSRV and the current stable channel**; macOS and Windows entered in a later phase. *(Historical. The current claim is three platforms, carried by [ADR-0011](../decisions/0011-support-linux-macos-and-windows.md) in [`contracts/support-policy.md`](../contracts/support-policy.md), which is the sole current authority. This row records Phase 001 and is not rewritten to match.)* |

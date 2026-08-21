@@ -118,8 +118,24 @@ original six has changed state:
   verbatim as historical evidence; a superseded record is not an unaccepted one, and the
   Phase 001 evidence that cites it stays checkable.
 
-So the accurate statement is: **seven Phase 001 decision records, six `accepted` and one
-`superseded`, every one of them reviewed non-independently under W-002.**
+**Updated 2026-08-21.** There are now **eight** Phase 001 decision records, and a second one
+has changed state:
+
+- **ADR-0011** was accepted under W-002 on 2026-08-21. It makes **Linux, macOS, and Windows**
+  supported platforms with explicitly different enforcement levels, and its reviewer field reads
+  exactly `Ahmed Anbar — self-review under W-002`. **That review is not independent either.**
+- **ADR-0003 is now `superseded`**, superseded by ADR-0011. Its decision body is preserved
+  verbatim, and the MSRV floor, testing, dependency, and advisory rules it set are carried
+  forward unchanged — ADR-0011 changed the platform claim and nothing else.
+
+**No new waiver was created for ADR-0011.** It is a Phase 001 decision record amending a Phase 001
+contract through the superseding-ADR clause that contract itself names, which is the scope W-002
+already covers and the same reasoning ADR-0010 recorded. The scope analysis, including the
+counter-argument, is in ADR-0011 §Waiver authority.
+
+So the accurate statement is: **eight Phase 001 decision records, six `accepted` and two
+`superseded` — ADR-0001 and ADR-0003 — every one of them reviewed non-independently under
+W-002.**
 
 When a second qualified person joins, W-002 ends immediately, every record accepted under
 it is re-reviewed, and the waiver is closed.

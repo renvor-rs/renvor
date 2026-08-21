@@ -3,17 +3,16 @@
 | Field | Value |
 |---|---|
 | **ID** | 0011 |
-| **State** | `proposed` |
-| **Reviewer** | *(required to enter `accepted`)* |
-| **Review date** | *(required to enter `accepted`)* |
+| **State** | `accepted` |
+| **Reviewer** | `Ahmed Anbar — self-review under W-002` |
+| **Review date** | 2026-08-21 |
 | **Superseded by** | — |
-| **Supersedes** | **ADR-0003** *(on acceptance — see §Supersession)* |
+| **Supersedes** | **ADR-0003** *(2026-08-21)* |
 | **Owner** | Ahmed Anbar |
 
-> **This record is `proposed`. It is not authoritative and nothing below is in force yet.**
+> ## Accepted 2026-08-21 under waiver W-002. **This review is NOT independent.**
 >
-> When it is accepted it will be accepted under waiver **W-002**, and **that review will not be
-> independent**. Spec FR-013 requires a recorded **independent** review before acceptance.
+> Spec FR-013 requires a recorded **independent** review before acceptance.
 > `GOVERNANCE.md` and [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D11 define a qualified independent reviewer as a
 > **person**, **not the author**, **competent in the subject**, and **able to reject without the
 > author's consent**. This project has one maintainer, who wrote this record, so criteria 1, 2,
@@ -21,7 +20,12 @@
 > defect, and W-002 is the recorded exception covering it.
 >
 > **No independent human review of ADR-0011 has occurred.** This review must not be described as
-> independent — here, in the evidence packs, in `GOVERNANCE.md`, or in any public document.
+> independent — here, in the evidence packs, in `GOVERNANCE.md`, or in any public document. It is
+> a structured self-review under a time-bounded exception expiring **2027-02-11**, or immediately
+> when a qualified independent reviewer becomes available, whichever comes first.
+>
+> **The maintainer decision of 2026-08-21 that this record implements is also not an independent
+> review**, and nothing here should be read as making it one.
 >
 > **No new waiver is created by this record.** The scope analysis is in §Waiver authority below,
 > stated explicitly rather than assumed, because a waiver applied one record wider than it was
@@ -159,8 +163,7 @@ nothing more.
 
 ### Supersession
 
-**On acceptance, this record supersedes ADR-0003**, and ADR-0003's `Superseded by` field is set
-to ADR-0011. **ADR-0003's decision body is preserved unchanged.** Superseding a record does not
+**This record supersedes ADR-0003**, and ADR-0003's `Superseded by` field is set to ADR-0011. **ADR-0003's decision body is preserved unchanged.** Superseding a record does not
 entitle anyone to rewrite what it said; the Phase 001 evidence that cites it must remain
 checkable.
 
@@ -351,20 +354,27 @@ contract.
 
 ## Acceptance gate
 
-**This record is `proposed`. Acceptance is a separate, later commit**, and the sequence is the
-point. W-002's controls 3 and 4 cannot honestly be marked met before the CI run that satisfies
-control 3 exists. Recording acceptance in the same commit that proposes a decision asserts that
-controls passed before they were run — an error made once already in this project, in Phase 002,
-and deliberately not repeated.
+**Acceptance was a separate, later commit, and the sequence is the point.** This record was
+pushed `proposed` as `758bd50ecc590026f9fb7ef79e8113825a769460`; W-002's controls were then run
+against that pushed state; and only then was this acceptance made. Controls 3 and 4 could not
+honestly have been marked met before the CI run that satisfies control 3 existed. Recording
+acceptance in the same commit that proposes a decision asserts that controls passed before they
+were run — an error made once already in this project, in Phase 002, and deliberately not
+repeated.
 
 | # | W-002 compensating control | Status |
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template **before** acceptance | ✅ **Met 2026-08-21** — four alternatives, each with a stated rejection reason, including the status quo and the option this record declines to take; three benefits and **four accepted costs** recorded, not only benefits |
 | 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-21** — see §What control 2 found |
-| 3 | All required CI and security checks passing | ⏳ **Not yet met** — pending the Wave-A CI run on the exact head that carries this record. **Will be completed with the measured result, or this record does not advance** |
-| 4 | A dated review record stored with the ADR | ⏳ **Not yet met** — recorded at acceptance, dated with the date the review was actually performed |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-21** — on head `758bd50ecc590026f9fb7ef79e8113825a769460`: **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). All four required contexts green — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` — together with `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, `package and verify without publishing`, **and all four non-required `platform (…)` contexts across macOS and Windows on both toolchains**. **0 open CodeQL alerts.** Locally on the same tree, `cargo xtask verify` exits 0 with **11/11** steps on both `1.94.0` and stable |
+| 4 | A dated review record stored with the ADR | ✅ **Met 2026-08-21** — this section, dated **2026-08-21**, stored with the record |
 
-**Two of four controls are met. This record remains `proposed`.**
+**All four controls are met. This record is `accepted`.**
+
+The macOS and Windows results are recorded here deliberately. They are **not** required checks,
+so they could not by themselves satisfy control 3 — but this record's central claim is that those
+platforms carry passing evidence, and an acceptance gate that omitted the evidence for the very
+thing being decided would be a formality.
 
 ### What control 2 found
 
@@ -423,3 +433,9 @@ also not an independent review**, and nothing here should be read as making it o
 
 - **2026-08-21, proposed.** Controls 1 and 2 completed and recorded above. Controls 3 and 4
   deliberately left open, with the reason stated, rather than pre-filled.
+- **2026-08-21, accepted after the CI run on `758bd50`.** Controls 3 and 4 completed against
+  measured results. ADR-0003 marked `superseded`, its decision body preserved verbatim.
+
+Reviewed by **`Ahmed Anbar — self-review under W-002`** on **2026-08-21**. That review is **not
+independent** and must not be described as such — here, in the evidence packs, in `GOVERNANCE.md`,
+or in any public document.

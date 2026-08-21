@@ -3,10 +3,41 @@
 | Field | Value |
 |---|---|
 | **ID** | 0003 |
-| **State** | `accepted` |
+| **State** | `superseded` |
 | **Reviewer** | `Ahmed Anbar — self-review under W-002` |
 | **Review date** | 2026-08-12 |
-| **Superseded by** | — |
+| **Superseded by** | **ADR-0011** *(2026-08-21)* |
+
+> ## Superseded 2026-08-21 by ADR-0011 — three platforms are now supported
+>
+> **Linux, macOS, and Windows are supported platforms**, with explicitly different
+> enforcement levels: six platform/toolchain contexts run on every pull request, and only the
+> two Linux `verify` contexts are required by branch protection. See
+> `decisions/0011-support-linux-macos-and-windows.md`.
+>
+> **Everything below this notice is preserved verbatim as historical evidence.** No sentence
+> below has been edited to agree with the newer decision — superseding a record does not
+> entitle anyone to rewrite what it said, and the Phase 001 and Phase 002 evidence that cites
+> this record must stay checkable against the text that was actually accepted.
+>
+> **What ADR-0011 kept, unchanged:** the **fixed MSRV floor of 1.94.0** and its whole shape,
+> the current-stable-channel testing rule, Rust **2024** edition, Cargo **resolver 3**, the
+> five rules for raising the MSRV, the quarterly review, the **scheduled Phase 006 MSRV
+> reassessment** (FR-061), and the dependency, lockfile, licence, and advisory rules — the
+> last still incorporated **by reference** to `governance/dependency-advisory-policy.md` so the
+> numbers cannot drift. **All of it is still decided by the record below.**
+>
+> **What ADR-0011 changed:** the platform claim, and nothing else. **This is not an MSRV
+> change**, which is why `contracts/support-policy.md` went to **1.1.0** rather than 2.0.0.
+>
+> **Why ADR-0011 exists at all**: `contracts/support-policy.md` — the contract this record set
+> — says it *"changes only through a superseding ADR"*. The Phase 001 platform table it carried
+> justified withholding macOS and Windows with *"No platform-sensitive code exists to verify"*,
+> which stopped being true during Phase 002. A superseding ADR was the only mechanism the
+> contract admits.
+>
+> **ADR-0011's acceptance review is NOT independent.** It was accepted under waiver **W-002**,
+> exactly as this record was.
 
 ## Context
 

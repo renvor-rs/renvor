@@ -1,21 +1,22 @@
 ---
 description: "Contract — supported toolchains, platforms, MSRV floor, and change rules"
 version: "1.1.0"
-status: "PROPOSED REVISION — 1.1.0 (2026-08-21) adds macOS and Windows as supported platforms and states the required-versus-running distinction. It is NOT yet authoritative: it takes effect only when ADR-0011 is accepted, and ADR-0011 is currently `proposed`. Until then the platform section below is a proposal and 1.0.0's Linux-only claim remains the record. Everything outside the platform section is unchanged from 1.0.0 and remains normative. A public promise and a release contract under principle V; no release has occurred. This version identifies the contract text, not a stability promise"
+status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.0 (2026-08-21) adds macOS and Windows as supported platforms, names the six platform/toolchain contexts, and states which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. Additive: the MSRV is unchanged. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Support and Version Policy
 
-**Feature**: Phase 001 — governance foundation | **Satisfies**: FR-017 – FR-021 | **Set by**: ADR-0003, superseded by **ADR-0011** *(proposed)*
+**Feature**: Phase 001 — governance foundation | **Satisfies**: FR-017 – FR-021 | **Governed by**: **ADR-0011** *(accepted 2026-08-21)*, superseding ADR-0003
 
 > **This is the sole normative current authority** for supported toolchains, supported platforms,
 > the MSRV floor, and the rules for changing them. [`SUPPORT.md`](../SUPPORT.md) is the
 > human-facing summary and `docs/docs/support-policy.mdx` is the published summary; both link
 > here, and **any disagreement resolves in favour of this document**.
 >
-> **The platform section is a proposed revision.** It becomes authoritative when
-> [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md) is accepted. That record is
-> currently `proposed`.
+> The governing record is
+> [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md), **accepted 2026-08-21 under
+> waiver W-002 — a self-review that is NOT independent.** It supersedes ADR-0003, whose decision
+> body is preserved verbatim.
 
 This is a public promise. Under constitution principle V it is a release contract, and under principle X no value here may be claimed without a passing verification run behind it.
 
@@ -35,12 +36,6 @@ This is a public promise. Under constitution principle V it is a release contrac
 This framing was chosen deliberately over a release-count window. Rust 1.98.0 promoted to stable on 2026-08-20, which would have pushed 1.94.0 to four releases behind and violated an "N-3" policy through the calendar alone, with no code change involved. A fixed floor removes release count from the policy entirely.
 
 ## Platform support
-
-> **Proposed revision, not yet authoritative.** This section takes effect when
-> [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md) is accepted. That record is
-> currently `proposed`. Until then, the Phase 001 baseline recorded under
-> [§Historical: the Phase 001 platform table](#historical-the-phase-001-platform-table) is the
-> standing claim.
 
 **Linux, macOS, and Windows are supported.** Only platforms with passing evidence are listed,
 and **a supported-platform claim requires passing evidence at the exact head being claimed** —
@@ -148,4 +143,4 @@ Version history of this contract text:
 | Version | Date | Change | Governing record |
 |---|---|---|---|
 | 1.0.0 | 2026-08-19 | First explicit version assigned to the existing text; earlier revisions are in public Git history | ADR-0003 |
-| **1.1.0** | **2026-08-21** | **Proposed** — adds macOS and Windows as supported platforms, names the six contexts, states the required-versus-running distinction and the known evidence limitations, and replaces the fixed stable version number with the floating channel. **Additive; no MSRV change** | **ADR-0011** *(`proposed`)* |
+| **1.1.0** | **2026-08-21** | Adds macOS and Windows as supported platforms, names the six contexts, states the required-versus-running distinction and the known evidence limitations, and replaces the fixed stable version number with the floating channel. **Additive; no MSRV change** | **ADR-0011** *(`accepted`)* |

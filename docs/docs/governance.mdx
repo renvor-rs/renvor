@@ -65,10 +65,17 @@ on becomes available — whichever comes first:
 | **W-006** | **No independent reviewer exists for ADR-0009**, the record removing `image-size` from this site *(granted 2026-08-17)* | Phase 002 | 2027-02-11 |
 
 Under W-002, decision-record review is a **structured self-review**, and it is never
-described as independent. **All six** Phase 001 decision records — ADR-0001 through
-ADR-0006 — are `accepted` under W-002's compensating controls, each with a recorded
-reviewer and review date. ADR-0006 was the last, accepted on 2026-08-15 once **T106**,
-the maintainer ruling on the shared server's absent backups, was closed.
+described as independent. There are **eight** Phase 001 decision records: **six `accepted`**
+— ADR-0002, ADR-0004, ADR-0005, ADR-0006, ADR-0010, and ADR-0011 — and **two `superseded`**,
+ADR-0001 (by ADR-0010) and ADR-0003 (by ADR-0011). Each was accepted under W-002's
+compensating controls with a recorded reviewer and review date; a superseded record keeps the
+review it received, and its decision body is preserved verbatim.
+
+The two most recent are **ADR-0010** (2026-08-17), which unified the product and executable
+spellings on `renvor`, and **ADR-0011** (2026-08-21), which makes Linux, macOS, and Windows
+supported platforms with explicitly different enforcement levels. **Neither review is
+independent.** No new waiver was created for either: both amend a Phase 001 contract through
+the superseding-ADR clause that contract names, which is the scope W-002 already covers.
 
 **None of those reviews is independent**, and none may be described as such. A separate
 waiver, **W-003**, covers the same gap at the phase level: Phase 001 has had **no
