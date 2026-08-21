@@ -3,6 +3,86 @@
 **Feature**: [Phase 003 — interactive CLI](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/spec.md) | **Satisfies**: FR-044, SC-015 | **Tasks**: T083, T084
 **Produced**: 2026-08-18 | **Toolchain**: 1.94.0 | **Source of truth**: the tracked `Cargo.lock`, read by `cargo metadata --locked`
 
+> ## Addendum, 2026-08-21 — the graph below is a **2026-08-18 measurement** and is no longer current
+>
+> This document's header says its source of truth is *"the tracked `Cargo.lock`"*. The tracked
+> `Cargo.lock` changed on **2026-08-21**, when contract C-8
+> ([`terminal-presentation.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/terminal-presentation.md))
+> replaced the prompt library and added the presentation primitives. **Every table below still
+> describes the graph exactly as it was on 2026-08-18** and is preserved unedited, because it is
+> the record the phase closed against; what follows is the delta, not a rewrite.
+>
+> **The lockfile has the same number of entries as before: 190, of which 184 are external.**
+> Twenty-two packages were added and twenty-two removed. That the totals match is a coincidence and
+> is stated so nobody reads an unchanged number as an unchanged graph.
+>
+> ### What actually compiles, per platform
+>
+> The number that matters is not the lockfile's — it is the closure that a compiler walks for a
+> given target, which excludes entries reachable only under a `cfg` that is never true here.
+>
+> | Target | Before | After | Delta |
+> |---|---|---|---|
+> | `x86_64-unknown-linux-gnu` | 94 | **90** | **−4** |
+> | `aarch64-apple-darwin` | 92 | **89** | **−3** |
+> | `x86_64-pc-windows-msvc` | 91 | **95** | **+4** |
+>
+> The change **shrinks** the compiled graph on Linux and macOS and **grows** it by four on Windows.
+> The Windows figure is the honest one to lead with: the previous prompt library reached the
+> console through `crossterm`, which brought `crossterm_winapi` and `winapi`; the new one reaches it
+> through `console` plus `anstyle-wincon`, which is a different and slightly larger set.
+>
+> ### Added to the compiled graph
+>
+> `anstream`, `anstyle-parse`, `anstyle-query`, `cliclack`, `colorchoice`, `console`, `indicatif`,
+> `is_terminal_polyfill`, `portable-atomic`, `smawk`, `strsim`, `textwrap`, `unicode-linebreak`,
+> `unit-prefix`, `utf8parse`, `zeroize_derive` — plus, on Windows only, `anstyle-wincon`, `libc`,
+> `once_cell_polyfill`, and `encode_unicode`.
+>
+> `anstyle`, `unicode-width`, and `terminal_size` are **not** in that list. They were already in the
+> graph — `anstyle` and `terminal_size` via the argument parser, `unicode-width` via the prompt
+> library — so declaring them directly added an edge rather than a package. `anstream` was already
+> in the **lockfile** as a development-only dependency of the expected-output test harness; this
+> promotes it to a runtime edge.
+>
+> ### Removed from the compiled graph
+>
+> `convert_case`, `crossterm`, `derive_more`, `derive_more-impl`, `document-features`, `dyn-clone`,
+> `inquire`, `litrs`, `lock_api`, `log`, `mio`, `parking_lot`, `parking_lot_core`, `scopeguard`,
+> `signal-hook`, `signal-hook-mio`, `signal-hook-registry`, `smallvec`, `unicode-segmentation` —
+> plus, on Windows, `crossterm_winapi` and `winapi`.
+>
+> **`inquire` is gone entirely.** Two prompt stacks are not shipped side by side, and the removal
+> is asserted by a test rather than left to a reader of this list.
+>
+> ### Lockfile entries that never compile on a supported platform
+>
+> `bumpalo`, `futures-task`, `futures-util`, `js-sys`, `rustversion`, `slab`, `wasm-bindgen`,
+> `wasm-bindgen-macro`, `wasm-bindgen-macro-support`, `wasm-bindgen-shared`, and `web-time` appear
+> in `Cargo.lock` and appear in **none** of the three per-target closures above. They are reachable
+> only under `cfg(target_arch = "wasm32")`, through `web-time`, which the progress library depends
+> on for a clock the browser provides.
+>
+> This is recorded rather than glossed because it is exactly the sort of thing a lockfile reader
+> alarms at: `wasm-bindgen` in a command-line tool's lockfile looks wrong, and the reason it is not
+> wrong is a `cfg` that no supported target satisfies. It was **verified per target**, not reasoned
+> about.
+>
+> ### Gates
+>
+> `cargo deny check` passes all four sections — **advisories ok, bans ok, licenses ok, sources ok** —
+> against the new graph. Every added package is `MIT`, `Apache-2.0`, or `MIT OR Apache-2.0`, all
+> already on the allow-list; `deny.toml`'s `exceptions` list is still empty and was not touched.
+>
+> ### The one policy cost, stated plainly
+>
+> **`cliclack` declares no `rust-version`.** Decision record ADR-0003's policy and this project's own
+> precedent — `blake3` was rejected for exactly this — make that a real objection rather than a
+> footnote. It was accepted on evidence stronger than a declaration: the crate compiles clean on
+> **1.94.0**, it is pinned to an exact version, and the MSRV leg of CI recompiles it on every pull
+> request. A declaration is a promise about the future; the MSRV job is a measurement of the
+> present, and it runs every time.
+
 ## Why this document exists, and why it is not `research.md`
 
 [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md) evaluates the **direct candidates** — the

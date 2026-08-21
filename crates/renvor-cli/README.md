@@ -13,9 +13,9 @@ package and that default is wrong here.
 workspace: Phase 003 ships no release, and a package marked publishable that nobody has rehearsed
 publishing is a claim without evidence.
 
-Every interface this crate exposes — the flag surface, the exit codes, the JSON envelope, and the
-error-code registry — is a **contract** from the first release that ships it. Until then it may
-change. The contracts are in
+Every interface this crate exposes — the flag surface, the exit codes, the JSON envelope, the
+error-code registry, and the terminal presentation — is a **contract** from the first release that
+ships it. Until then it may change. The contracts are in
 [`contracts/`](../../contracts/).
 
 ## Commands
@@ -35,6 +35,21 @@ zero without doing the work reports success for something that did not happen.
 
 `0` success · `1` **internal defect — report it** · `2` usage · `3` validation · `4` cancelled ·
 `5` environment.
+
+## Human output
+
+Styled when it is talking to a terminal and never otherwise. Five separate conditions each switch
+styling off on their own — `--output json`, a stream that is not a terminal, `TERM=dumb`,
+`--no-color`, and a non-empty `NO_COLOR` — and an explicit refusal beats any force-colour
+environment variable. The decision is made **per stream**, so `renvor doctor > report.txt` writes a
+plain file while your terminal is still attached to `stderr`.
+
+Colour is never the only signal: every state also carries a word (`INFO`, `WARN`, `ERROR`, `DONE`,
+`OK`, `TOO OLD`, `MISSING`, `ABSENT`). There are no emoji. Rows measure width in columns, so CJK
+text aligns, and a row that cannot fit **stacks** rather than truncating a value.
+
+The rules are [`contracts/terminal-presentation.md`](../../contracts/terminal-presentation.md).
+**They govern presentation only** and change nothing about the flags, the exit codes, or the JSON.
 
 ## What it will not do
 
