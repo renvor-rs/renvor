@@ -424,10 +424,16 @@ fn no_shipped_file_writes_to_a_stream_without_going_through_the_reporter() {
             .expect("under src")
             .to_string_lossy()
             .replace('\\', "/");
-        if DIRECT_OUTPUT_IS_ALLOWED
+        if let Some((_, reason)) = DIRECT_OUTPUT_IS_ALLOWED
             .iter()
-            .any(|(allowed, _)| *allowed == relative)
+            .find(|(allowed, _)| *allowed == relative)
         {
+            // The reason is read rather than merely written down. An exemption whose justification
+            // nothing consults is an exemption nobody re-reads when it stops being true.
+            assert!(
+                !reason.is_empty(),
+                "{relative} is exempt with no stated reason"
+            );
             return;
         }
         for (number, line) in text.lines().enumerate() {
@@ -449,18 +455,21 @@ fn no_shipped_file_writes_to_a_stream_without_going_through_the_reporter() {
                 "cliclack::note",
                 "cliclack::outro_note",
             ] {
-                assert!(
-                    !code.contains(forbidden),
-                    "{relative}:{} writes directly: {forbidden} in {code:?}",
-                    number + 1
-                );
                 if code.contains(forbidden) {
-                    offences.push(format!("{relative}:{}", number + 1));
+                    // COLLECTED, not asserted here. Asserting inside the loop reports the first
+                    // offence and hides every other one, which turns a single review pass into as
+                    // many passes as there are breaches.
+                    offences.push(format!("  {relative}:{}  {forbidden}", number + 1));
                 }
             }
         }
     });
-    assert!(offences.is_empty(), "{offences:?}");
+    assert!(
+        offences.is_empty(),
+        "a shipped file writes to a stream without going through the reporter. One `println!` on \
+         `stdout` breaks `renvor new --dry-run --output json | jq .` for everyone.\n{}",
+        offences.join("\n")
+    );
     // POSITIVE CONTROL. A scan that walked nothing would pass silently, which is the failure mode
     // that makes a scan worse than no scan — it reports "clean" for "did not look".
     assert!(
