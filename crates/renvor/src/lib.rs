@@ -46,7 +46,8 @@
 //! **This surface is explicitly unstable** (FR-036). Breaking changes are permitted without a
 //! compatibility procedure and no semantic-versioning promise applies while that window is open.
 //! The two event-gated closure conditions are defined solely by the public API stability
-//! contract, [`contracts/api-stability.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/api-stability.md).
+//! contract, `contracts/api-stability.md`, in the
+//! [Renvor repository](https://github.com/renvor-rs/renvor).
 //! No phase number forms part of either condition.
 //!
 //! *(Roadmap, not part of the condition: the current roadmap places the first real transport
