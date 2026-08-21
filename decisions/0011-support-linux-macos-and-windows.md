@@ -74,9 +74,9 @@ they picked the non-authoritative copy.
 
 ## Decision
 
-**Linux, macOS, and Windows are supported platforms.** Each carries passing evidence at the
-exact head being claimed, and the enforcement level of each claim is stated rather than left
-to be inferred from the presence of a CI job.
+**Linux, macOS, and Windows are supported platforms.** Each carries passing evidence attached
+to the exact commit being claimed, and the enforcement level of each claim is stated rather than
+left to be inferred from the presence of a CI job.
 
 ### The six contexts
 
@@ -130,8 +130,28 @@ a link check against github.com three times learns nothing three times.
 
 ### What a support claim means, and what it does not
 
-**A supported-platform claim requires passing evidence at the exact head being claimed.** Not
-at an earlier head, not on a branch, not "it worked last week".
+**A supported-platform claim is carried by passing CI attached to the exact commit whose tree
+is being claimed.** Not a result inherited from an earlier commit, and not "it worked last week".
+
+**A pull-request branch head is valid evidence.** Every commit is on some branch, `main`
+included, so disqualifying branches would disqualify every commit ever reviewed. What matters is
+that the contexts passed *on that commit*, not which ref happens to point at it.
+
+**A later commit does not inherit the previous head's evidence.** Each new commit needs its own
+passing contexts before it carries the claim; until then the claim rests on the last head that
+has them. On a squash merge, where the merge commit's tree is verified identical to the reviewed
+head's tree, the reviewed evidence carries across, and `main`'s own run then confirms it there.
+
+**Ongoing support evidence is external to this record and commit-associated.** It lives in CI,
+attached to whatever the current head is — not in this document. This record cannot enumerate
+it, because the set grows with every commit. The normative statement is
+`contracts/support-policy.md` §Platform support.
+
+An earlier revision of this record, and version 1.1.0 of that contract, stated the rule as *"at
+the exact head being claimed — not at an earlier head, not on a branch."* **That form was
+unsatisfiable**: it excluded every pre-merge head for being on a branch, and demanded a
+self-reference no commit can contain. It is corrected here and dated, rather than quietly
+reworded.
 
 **Support does not imply that every platform-specific behaviour has received independent
 human review.** No behaviour in this repository has. W-003, W-005, and W-008 are open for
@@ -366,10 +386,31 @@ repeated.
 |---|---|---|
 | 1 | Written alternatives-and-consequences review completed against the ADR template **before** acceptance | ✅ **Met 2026-08-21** — four alternatives, each with a stated rejection reason, including the status quo and the option this record declines to take; three benefits and **four accepted costs** recorded, not only benefits |
 | 2 | Verification against [`checklists/governance.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/checklists/governance.md) | ✅ **Met 2026-08-21** — see §What control 2 found |
-| 3 | All required CI and security checks passing | ✅ **Met 2026-08-21** — on head `758bd50ecc590026f9fb7ef79e8113825a769460`: **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). All four required contexts green — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` — together with `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, `package and verify without publishing`, **and all four non-required `platform (…)` contexts across macOS and Windows on both toolchains**. **0 open CodeQL alerts.** Locally on the same tree, `cargo xtask verify` exits 0 with **11/11** steps on both `1.94.0` and stable |
+| 3 | All required CI and security checks passing | ✅ **Met 2026-08-21** — on head `758bd50ecc590026f9fb7ef79e8113825a769460`, **the commit at which this record was `proposed`** (see §What control 3 proves, and what it does not): **13 checks passed, 1 skipped** (`attest rehearsal artifacts`, `push`-gated by design and inapplicable to a pull request). All four required contexts green — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` — together with `dependency-review`, CodeQL `Analyze (rust)` and `Analyze (actions)`, `package and verify without publishing`, **and all four non-required `platform (…)` contexts across macOS and Windows on both toolchains**. **0 open CodeQL alerts.** Locally on the same tree, `cargo xtask verify` exits 0 with **11/11** steps on both `1.94.0` and stable |
 | 4 | A dated review record stored with the ADR | ✅ **Met 2026-08-21** — this section, dated **2026-08-21**, stored with the record |
 
 **All four controls are met. This record is `accepted`.**
+
+### What control 3 proves, and what it does not
+
+Control 3 is **historical acceptance evidence**. It records that the required and platform
+contexts passed on `758bd50` — the commit at which this record was `proposed` — and that finding
+is permanently true about that commit.
+
+It is **not** the standing support claim, and it certifies no later commit:
+
+- **`758bd50` is not the final head of this pull request.** Acceptance was a later commit, and
+  further commits followed it. This record deliberately names **no** "current" head, because any
+  hash written here stops being current the moment the next commit lands and would then be a
+  false claim sitting inside an accepted record.
+- **Every subsequent commit re-opens the gate until its own CI passes.** A passing run does not
+  transfer forward. The head under review must itself show the six contexts green.
+- **The ongoing claim lives in CI**, attached to whatever the current head is, and is read from
+  the checks on that head — not from this section.
+
+Control 3 therefore proves that the **acceptance sequence** was followed: the controls were run
+against a pushed state and recorded before acceptance rather than asserted alongside it. It does
+not, and cannot, discharge the per-commit evidence requirement for every future support claim.
 
 The macOS and Windows results are recorded here deliberately. They are **not** required checks,
 so they could not by themselves satisfy control 3 — but this record's central claim is that those
@@ -435,6 +476,12 @@ also not an independent review**, and nothing here should be read as making it o
   deliberately left open, with the reason stated, rather than pre-filled.
 - **2026-08-21, accepted after the CI run on `758bd50`.** Controls 3 and 4 completed against
   measured results. ADR-0003 marked `superseded`, its decision body preserved verbatim.
+- **2026-08-21, corrected after external review.** An automated review found the
+  platform-evidence rule unsatisfiable as written. The rule is corrected here and in
+  `contracts/support-policy.md` (1.1.1); control 3's `758bd50` result is retained **unchanged**
+  as historical acceptance evidence and is now explicitly scoped to the acceptance sequence.
+  **No platform claim is withdrawn**, the decision is unchanged, and the state remains
+  `accepted`.
 
 Reviewed by **`Ahmed Anbar — self-review under W-002`** on **2026-08-21**. That review is **not
 independent** and must not be described as such — here, in the evidence packs, in `GOVERNANCE.md`,

@@ -20,12 +20,20 @@
 > entitle anyone to rewrite what it said, and the Phase 001 and Phase 002 evidence that cites
 > this record must stay checkable against the text that was actually accepted.
 >
-> **What ADR-0011 kept, unchanged:** the **fixed MSRV floor of 1.94.0** and its whole shape,
-> the current-stable-channel testing rule, Rust **2024** edition, Cargo **resolver 3**, the
-> five rules for raising the MSRV, the quarterly review, the **scheduled Phase 006 MSRV
-> reassessment** (FR-061), and the dependency, lockfile, licence, and advisory rules — the
-> last still incorporated **by reference** to `governance/dependency-advisory-policy.md` so the
-> numbers cannot drift. **All of it is still decided by the record below.**
+> **What ADR-0011 carried forward, unchanged in substance:** the **fixed MSRV floor of 1.94.0**
+> and its whole shape, the current-stable-channel testing rule, Rust **2024** edition, Cargo
+> **resolver 3**, the five rules for raising the MSRV, the quarterly review, the **scheduled
+> Phase 006 MSRV reassessment** (FR-061), and the dependency, lockfile, licence, and advisory
+> rules — the last still incorporated **by reference** to
+> `governance/dependency-advisory-policy.md` so the numbers cannot drift.
+>
+> **Those rules are now decided by ADR-0011, not by this record.** ADR-0011 restates each of
+> them in its §Supersession table, so they are carried by a current record rather than inherited
+> from a superseded one. **This record has no current decision authority**; it is historical
+> evidence of what was decided on 2026-08-12 and why.
+>
+> **A future MSRV, toolchain, or dependency-policy change supersedes ADR-0011**, not this
+> record. This record has already been superseded and cannot be superseded again.
 >
 > **What ADR-0011 changed:** the platform claim, and nothing else. **This is not an MSRV
 > change**, which is why `contracts/support-policy.md` went to **1.1.0** rather than 2.0.0.

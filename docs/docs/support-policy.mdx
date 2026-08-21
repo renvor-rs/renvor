@@ -13,11 +13,15 @@ import Stamp from './_stamp.mdx';
 :::info Where the authority lives
 
 This page is a **summary**. The sole normative authority is the versioned contract
-[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+`contracts/support-policy.md` in the [Renvor repository](https://github.com/renvor-rs/renvor).
 Where this page and that contract disagree, **the contract wins**.
 
-The three-platform claim is carried by
-[`ADR-0011`](https://github.com/renvor-rs/renvor/blob/main/decisions/0011-support-linux-macos-and-windows.md).
+The three-platform claim is carried by the decision record
+`decisions/0011-support-linux-macos-and-windows.md`.
+
+Both are given as repository paths rather than as links: neither file is on `main` until the
+pull request introducing them merges, so a link would 404 for every reader who followed it in
+the meantime.
 
 :::
 
@@ -46,12 +50,12 @@ whatever CI resolves it to on the run that produced the evidence.
 
 ## Supported platforms
 
-Summary of
-[`contracts/support-policy.md` §Platform support](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+Summary of `contracts/support-policy.md` §Platform support.
 
 Only platforms with passing evidence are listed. Claiming one without a verification run
-behind it would be a claim exceeding measurement, and a claim requires passing evidence **at
-the exact head being claimed**.
+behind it would be a claim exceeding measurement, and a claim is carried by **passing CI
+attached to the exact commit whose tree is being claimed**. A pull-request branch head is valid
+evidence; a later commit needs its own passing run before it carries the claim.
 
 | Platform | Status | Contexts that run on every pull request |
 | --- | --- | --- |
@@ -83,8 +87,7 @@ no-default-features check — not the full verification sequence, which runs on 
 received one. Two behaviours are `#[cfg(unix)]`-gated and therefore exercised on Linux and
 macOS only, and Windows has had no adversarial review. The contract lists these limits in full.
 
-The normative statement is
-[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md).
+The normative statement is `contracts/support-policy.md`.
 [`SUPPORT.md`](https://github.com/renvor-rs/renvor/blob/main/SUPPORT.md) is the repository's
 human-facing summary of the same contract. Any disagreement between the three resolves in
 favour of the contract.
@@ -93,9 +96,8 @@ favour of the contract.
 
 A raise may occur only in a planned minor or major release, after an accepted decision
 record naming the concrete requirement that forces it, documented in
-[`contracts/support-policy.md`](https://github.com/renvor-rs/renvor/blob/main/contracts/support-policy.md),
-the changelog, and the release notes, and only after the outgoing MSRV has been supported
-for at least six months.
+`contracts/support-policy.md`, the changelog, and the release notes, and only after the
+outgoing MSRV has been supported for at least six months.
 
 The policy is reviewed quarterly. A review records its outcome and by itself changes
 nothing.

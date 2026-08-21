@@ -21,10 +21,18 @@
 > does not entitle anyone to rewrite what it said, and Phase 001 evidence that cites this
 > record must stay checkable against the text that was actually accepted.
 >
-> **What ADR-0010 kept:** the product name `Renvor`, the facade crate `renvor`, the CLI
-> package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and `RENVOR_` — all
-> unchanged, and all still decided by the record below. **What ADR-0010 changed:** the
-> installed executable and its command names, and nothing else.
+> **What ADR-0010 carried forward, unchanged:** the product name `Renvor`, the facade crate
+> `renvor`, the CLI package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and
+> `RENVOR_`. **What ADR-0010 changed:** the installed executable and its command names, and
+> nothing else.
+>
+> **Those names are now decided by ADR-0010, not by this record.** ADR-0010 restates each of
+> them in its own decision table, so they are carried by a current record rather than inherited
+> from a superseded one. **This record has no current decision authority**; it is historical
+> evidence of what was decided on 2026-08-12 and why.
+>
+> **A future change to the public identity supersedes ADR-0010**, not this record. This record
+> has already been superseded and cannot be superseded again.
 >
 > **Why**, in one line: ADR-0001 rejected renaming the *product* to `Renover` because
 > `Renover`/`renovate` is a closer pair than `Renvor`/`renovate` — measured Levenshtein 3

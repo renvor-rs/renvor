@@ -1,7 +1,7 @@
 ---
 description: "Contract — supported toolchains, platforms, MSRV floor, and change rules"
-version: "1.1.0"
-status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.0 (2026-08-21) adds macOS and Windows as supported platforms, names the six platform/toolchain contexts, and states which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. Additive: the MSRV is unchanged. This version identifies the contract text, not a stability promise"
+version: "1.1.1"
+status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.1 (2026-08-21) corrects the platform-evidence rule, which 1.1.0 stated in a form no commit could satisfy; NO platform is added or withdrawn, and the MSRV is unchanged. 1.1.0 (2026-08-21) added macOS and Windows as supported platforms, named the six platform/toolchain contexts, and stated which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Support and Version Policy
@@ -38,8 +38,38 @@ This framing was chosen deliberately over a release-count window. Rust 1.98.0 pr
 ## Platform support
 
 **Linux, macOS, and Windows are supported.** Only platforms with passing evidence are listed,
-and **a supported-platform claim requires passing evidence at the exact head being claimed** —
-not at an earlier head, not on a branch.
+and **a supported-platform claim is carried by passing CI attached to the exact commit whose
+tree is being claimed** — not by a result inherited from an earlier commit, and not by "it
+worked last week".
+
+### What "the exact commit" means, and why a branch head qualifies
+
+Evidence binds to a **commit**, because a commit is what a CI result attaches to.
+
+- **A pull-request branch head is valid evidence.** Being on a branch does not disqualify a
+  result. Every commit is on some branch — `main` included — so a rule that excluded branches
+  would exclude every commit that has ever been reviewed, which is no rule at all.
+- **A later commit does not inherit the previous head's evidence.** Each new commit needs its
+  own passing contexts before it carries the claim. Until it has them, the claim rests on the
+  last head that does, and that head is named rather than implied.
+- **On a squash merge**, where the merge commit's tree is verified identical to the reviewed
+  head's tree, the reviewed evidence carries to the merge commit; `main`'s own run then
+  confirms it on `main`. Tree identity is the thing verified, not the commit hash, which
+  necessarily differs.
+- **No document is required to name its own commit.** A commit cannot contain its own hash, so
+  a rule demanding that a record cite the CI result for the very commit that introduces it is
+  unsatisfiable by construction.
+
+**Acceptance evidence and ongoing evidence are different things.** A dated run recorded in a
+decision record is *historical acceptance evidence*: it is fixed at the head it names, it
+proves the acceptance sequence was followed, and it stays true about that head permanently. The
+*ongoing* support claim is carried by the current head's six contexts, which live in CI rather
+than in any document. Neither substitutes for the other, and neither expires the other.
+
+**Version 1.1.0 stated this rule as "at the exact head being claimed — not at an earlier head,
+not on a branch."** That form was unsatisfiable: it disqualified every pre-merge head for being
+on a branch, and demanded a self-reference no commit can contain. It is corrected here, dated,
+rather than quietly reworded — see the version history at the end of this contract.
 
 | Platform | Status | Contexts carrying the claim |
 |---|---|---|
@@ -144,3 +174,4 @@ Version history of this contract text:
 |---|---|---|---|
 | 1.0.0 | 2026-08-19 | First explicit version assigned to the existing text; earlier revisions are in public Git history | ADR-0003 |
 | **1.1.0** | **2026-08-21** | Adds macOS and Windows as supported platforms, names the six contexts, states the required-versus-running distinction and the known evidence limitations, and replaces the fixed stable version number with the floating channel. **Additive; no MSRV change** | **ADR-0011** *(`accepted`)* |
+| **1.1.1** | **2026-08-21** | Corrects the platform-evidence rule. 1.1.0 required evidence "at the exact head being claimed — not at an earlier head, not on a branch", which no commit can satisfy: every head is on a branch, and no commit can cite its own hash. Replaced with commit-attached evidence that a branch head satisfies, plus the squash-merge tree-identity rule and the separation of acceptance evidence from ongoing evidence. **No platform added or withdrawn; no MSRV change** | **ADR-0011** *(`accepted`)* |
