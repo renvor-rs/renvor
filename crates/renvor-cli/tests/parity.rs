@@ -192,7 +192,7 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     answered.expect("Generate seed data for it?");
     answered.enter();
     answered.expect("Generate container development controls?");
-    answered.send_line("y");
+    answered.key("y");
     answered.expect("Record that local HTTPS is wanted?");
     answered.enter();
     answered.expect("Create this project?");
@@ -405,7 +405,7 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         declined.enter();
     }
     declined.expect("Create this project?");
-    declined.send_line("n");
+    declined.key("n");
     assert_eq!(declined.wait(), 4, "declining exits 4");
     assert!(
         !from_command.join("demo").exists(),

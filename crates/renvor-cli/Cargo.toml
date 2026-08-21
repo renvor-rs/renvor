@@ -46,12 +46,71 @@ renvor-config = { path = "../renvor-config", version = "0.0.0" }
 # Phase 003 research §D1 — argument parsing. `derive` because the flag surface IS the contract and one
 # declaration keeps help, validation, and completions from drifting apart. `wrap_help` so `--help`
 # is readable at a narrow width, which the spec's edge cases require.
-clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "wrap_help"] }
+#
+# `color` IS THE FEATURE THAT MAKES `--help` STYLEABLE AT ALL, and it was deliberately absent until
+# now. Without it clap ignores `Command::styles` entirely, so the help renderer emitted plain text
+# no matter what was configured — which was correct while there was no styling to configure. It
+# pulls `anstream` into the runtime graph; `anstream` was already in `Cargo.lock` as a dev-only
+# dependency of `trycmd`, so this adds an edge rather than a package.
+#
+# The renderer stays clap's. C-8 requires the *content* of `--help` to be clap's own generated
+# usage, options, and descriptions; only the colours are ours. Replacing the renderer with
+# handwritten strings would let the documented surface drift from the parsed one.
+clap = { version = "4.6.6", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "wrap_help", "color"] }
 
-# Phase 003 research §D2 — prompts. Selected over `dialoguer` because `InquireError` distinguishes
-# `OperationCanceled`, `OperationInterrupted`, and `NotTTY` as separate typed outcomes, which is
-# what lets cancellation exit 4 without inferring intent from an I/O error kind.
-inquire = { version = "0.9.4", default-features = false, features = ["crossterm", "one-liners"] }
+# THE GUIDED PROMPT PRESENTATION. This replaced `inquire` on 2026-08-21.
+#
+# Phase 003 research §D2 chose `inquire` over `dialoguer` because `InquireError` distinguishes
+# `OperationCanceled`, `OperationInterrupted`, and `NotTTY` as separate typed outcomes — which is
+# what let cancellation exit 4 without inferring intent from an I/O error kind. That property is
+# the one this swap had to preserve, and it is the reason the swap was measured before it was made
+# rather than after.
+#
+# `cliclack` returns `io::Result<T>` rather than a typed enum, which looks weaker on paper. It is
+# not, because the two outcomes that matter arrive as **distinct, deliberate** `io::ErrorKind`s
+# rather than as one generic failure:
+#
+#   Ctrl-C, Escape  ->  ErrorKind::Interrupted   ->  Code::Cancelled  (exit 4)
+#   no terminal     ->  ErrorKind::NotConnected  ->  Code::Usage      (exit 2)
+#   anything else   ->  ErrorKind::*             ->  Code::Internal   (exit 1)
+#
+# **That table was measured, not read.** A prototype outside this tree drove the real crate through
+# a `portable-pty` terminal on Rust 1.94.0 and recorded the kind for every case, including that
+# **Escape cancels** — `interaction.rs` contains an Escape/Cancel toggle whose presence made that
+# worth proving rather than assuming. It also proved the cursor is restored (`\x1b[?25h`) after
+# success, after a validation failure, and after cancellation; that prompts land on `stderr` with
+# **zero** bytes on `stdout`; and that `NO_COLOR` and `TERM=dumb` suppress colour. The equivalent
+# assertions now live in `tests/prompt_contract.rs` against the shipped binary, so the finding is a
+# gate rather than a memory.
+#
+# **It declares no `rust-version`, and that is a real cost**, not one to gloss: §D11 rejected
+# `blake3` for exactly this. It is accepted here on stronger evidence than a declaration —
+# a clean compile on 1.94.0, pinned to an exact version, and re-proved by the MSRV leg of CI on
+# every pull request. A declaration is a promise; the MSRV job is a measurement.
+#
+# `indicatif` arrives underneath this crate whether or not we call it, so the progress adapter
+# below costs no additional package.
+cliclack = "0.5.6"
+
+# DIRECT because Renvor's colour policy must OVERRIDE this crate's own environment sniffing.
+#
+# `console` decides colour from `CLICOLOR_FORCE`, `CLICOLOR`, and `NO_COLOR` by itself, and
+# `cliclack` draws through it. Left alone, `CLICOLOR_FORCE=1 renvor new --no-color` would produce
+# unstyled Renvor output next to styled prompts — one process disagreeing with itself about a flag
+# the operator set explicitly. `output::style` therefore resolves the question once and calls
+# `console::set_colors_enabled_stderr` with the answer, which is only reachable from a direct
+# dependency edge. Already in the graph via `cliclack`: an edge, not a package.
+console = { version = "0.16.4", default-features = false }
+
+# Progress for the ONE operation long enough to need it: `generate::verify::in_staging`, which runs
+# five `cargo` invocations with `.output()` — fully captured — against a cold target directory.
+# That is tens of seconds during which a `renvor new` printed one static line and then nothing.
+#
+# `renvor dev` deliberately gets none: it hands `cargo` the terminal (`Reporter::child_stdout`
+# returns `inherit()` in human mode), so a spinner would render on top of cargo's own bar.
+#
+# Already in the graph via `cliclack`, so this is an edge rather than a package.
+indicatif = { version = "0.18.6", default-features = false }
 
 # Phase 003 research §D4 — templating. Selected for three properties this phase requires as CONFIGURATION
 # rather than convention: bounded expansion, an allow-listed function set, and strict undefined.
@@ -87,6 +146,44 @@ tempfile = { version = "3.27.0", default-features = false }
 # It also replaces `walkdir` for the manifest walk: a `Dir`-relative recursive read_dir gives
 # deterministic traversal AND containment, where walkdir gave only the first.
 cap-std = { version = "4.0.2", default-features = false }
+
+# THE SEMANTIC STYLE VOCABULARY. `anstyle::Style` is a value, not a writer: it carries a colour and
+# an effect and knows how to render its own on/off sequences, which is exactly the boundary
+# `output::style` needs. Nothing in this crate writes a raw escape sequence.
+#
+# Already in `Cargo.lock` via `clap_builder`, so this is a direct edge and not a new package.
+anstyle = { version = "1.0.14", default-features = false }
+
+# THE PORTABLE WAY TO ACTUALLY WRITE THOSE SEQUENCES, and the belt to the policy's braces.
+#
+# `AutoStream::new(stream, ColorChoice::Never)` **strips** ANSI from whatever is written through
+# it. `output::style` resolves the policy and hands the result down as an explicit `ColorChoice`,
+# so on every path that forbids styling — JSON, a pipe, `TERM=dumb`, `--no-color`, `NO_COLOR` —
+# an escape sequence that leaked from anywhere is removed at the boundary rather than emitted.
+# The tests assert the absence; this is what makes the absence structural.
+#
+# `wincon` is why this crate is used rather than `writeln!`: on Windows it translates to console
+# API calls where virtual-terminal processing is unavailable, which no amount of care with
+# `format!` can do. Already in `Cargo.lock` via `trycmd`; this promotes it to a runtime edge.
+anstream = { version = "1.0.0", default-features = false, features = ["auto", "wincon"] }
+
+# DISPLAY width, which is not `len()` and not `chars().count()`.
+#
+# The dotted-leader rows align a value to the right edge, so a wrong width is a visibly broken
+# column. `日本語` is three characters and six columns; a combining acute is one character and zero
+# columns. Package-first over a hand-rolled table: the East Asian Width property is a Unicode data
+# file that changes with each release, and owning a copy means owning its updates forever.
+#
+# Already in `Cargo.lock` — it arrived via `inquire`, which this change removes, so this edge is
+# what keeps it in the graph.
+unicode-width = { version = "0.2.2", default-features = false }
+
+# How wide the terminal actually is, per stream. `terminal_size_of` takes the handle rather than
+# assuming `stdout`, which matters because the human result and the diagnostics go to different
+# streams and either one may be redirected on its own.
+#
+# Already in `Cargo.lock` via `clap_builder`'s `wrap_help`.
+terminal_size = { version = "0.4.4", default-features = false }
 
 # Phase 003 research §D10 — the machine-readable output contract.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }

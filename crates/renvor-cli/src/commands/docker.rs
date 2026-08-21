@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::exit::{CliError, Code, Exit};
 use crate::output::Reporter;
+use crate::output::layout::{Report, Status};
 
 /// What `renvor docker` was asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -220,9 +221,12 @@ pub fn run(
     if dry_run {
         return Ok(reporter.finish(
             "docker",
-            &format!(
-                "dry run: would run `docker {}`",
-                action.arguments().join(" ")
+            &Report::new().status(
+                Status::Info,
+                format!(
+                    "Dry run: would run `docker {}`",
+                    action.arguments().join(" ")
+                ),
             ),
             serde_json::json!({
                 "dryRun": true,
@@ -270,7 +274,10 @@ pub fn run(
 
     Ok(reporter.finish(
         "docker",
-        "ok",
+        &Report::new().status(
+            Status::Done,
+            format!("`docker {}` completed", action.arguments().join(" ")),
+        ),
         serde_json::json!({ "action": action, "ran": action.arguments() }),
     ))
 }

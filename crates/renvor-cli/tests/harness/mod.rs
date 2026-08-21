@@ -31,6 +31,64 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 /// gets retried — see the module note in `transaction.rs`.
 const EXPECT_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How many pseudo-terminals this test binary may hold open at once.
+///
+/// # This exists because `openpty` ran out, and did so intermittently
+///
+/// A pseudo-terminal is a **finite operating-system resource** — macOS caps them at
+/// `kern.tty.ptmx_max`, and a CI container's limit is usually lower. Four pty-driving test files
+/// running their tests in parallel, inside a `cargo test` that also runs those files in parallel,
+/// reached the cap during a full verification run and produced
+/// `failed to openpty: Os { code: -6 }` in one test while fifteen others passed.
+///
+/// That is the worst shape a failure can take: it depends on machine load, so it passes locally,
+/// passes on a rerun, and fails on someone else's pull request. Capping the concurrency makes the
+/// resource use bounded instead of merely usually-sufficient.
+///
+/// Four, rather than one: these tests are dominated by waiting for a subprocess, so serialising
+/// them entirely would multiply the suite's wall-clock time for no benefit.
+const CONCURRENT_TERMINALS: usize = 4;
+
+/// The counter behind [`CONCURRENT_TERMINALS`], and the condition variable waiters sleep on.
+static IN_FLIGHT: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static RELEASED: std::sync::Condvar = std::sync::Condvar::new();
+
+/// One terminal's share of the cap, released when the last holder drops it.
+///
+/// # The reader thread holds a clone, and that is the load-bearing part
+///
+/// Dropping a [`Terminal`] drops its writer, but the **reader thread still holds a cloned handle
+/// to the same pty** and only closes it when it observes end of file, which happens a moment
+/// later. A permit released when `Terminal` drops would therefore hand the slot to the next test
+/// while the file descriptor was still open — which is the exact race this cap exists to remove.
+///
+/// So the permit is an `Arc` and the reader thread owns a clone. The slot frees when *both* are
+/// gone, which is when the descriptors are actually closed.
+struct Permit;
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        let mut count = IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *count = count.saturating_sub(1);
+        RELEASED.notify_one();
+    }
+}
+
+fn acquire_terminal_slot() -> std::sync::Arc<Permit> {
+    let mut count = IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    while *count >= CONCURRENT_TERMINALS {
+        count = RELEASED
+            .wait(count)
+            .unwrap_or_else(|poison| poison.into_inner());
+    }
+    *count += 1;
+    std::sync::Arc::new(Permit)
+}
+
 /// A live `renvor` process attached to a real terminal.
 pub struct Terminal {
     writer: Box<dyn Write + Send>,
@@ -47,11 +105,34 @@ pub struct Terminal {
     reader_ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// How many cursor-position reports we have already answered. See [`Terminal::answer_status_reports`].
     reports_answered: usize,
+    /// This terminal's share of [`CONCURRENT_TERMINALS`]. Dropped last, by the reader thread.
+    _permit: std::sync::Arc<Permit>,
 }
 
 impl Terminal {
-    /// Spawns `renvor` with `args`, in `directory`, attached to a pty.
+    /// Spawns `renvor` with `args`, in `directory`, attached to a very wide pty.
     pub fn spawn(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> Self {
+        Self::spawn_sized(args, directory, env, 1000)
+    }
+
+    /// Spawns `renvor` attached to a pty of a chosen width.
+    ///
+    /// # Why the width is a parameter at all
+    ///
+    /// Contract C-8's layout rules are **about** the width: leaders appear when a run of them
+    /// fits and the row stacks when it does not, and the threshold is derived from the content
+    /// rather than from a column count. A harness fixed at one width can assert neither branch.
+    ///
+    /// [`Terminal::spawn`] keeps 1000 for everything else, for the reason recorded below.
+    pub fn spawn_sized(
+        args: &[&str],
+        directory: &Path,
+        env: &[(&str, &str)],
+        columns: u16,
+    ) -> Self {
+        // Before `openpty`, not after: the cap is only a cap if it is taken while the resource is
+        // still free.
+        let permit = acquire_terminal_slot();
         let pty = native_pty_system()
             // DELIBERATELY VERY WIDE, AND THIS IS NOT COSMETIC.
             //
@@ -66,7 +147,7 @@ impl Terminal {
             // to un-wrap — means modelling the screen, which is writing a terminal emulator.
             .openpty(PtySize {
                 rows: 200,
-                cols: 1000,
+                cols: columns,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -78,7 +159,10 @@ impl Terminal {
         }
         command.cwd(directory);
         // Keep the prompt rendering stable and free of hyperlink/styling variation between the
-        // matrix legs. `inquire` still draws its prompts; only the colouring is suppressed.
+        // matrix legs. The prompt library still draws its prompts; only the colouring is
+        // suppressed. `TERM=dumb` and `NO_COLOR` are two of the five refusals in contract C-8,
+        // so a transcript captured here carries no SGR sequences at all — which is what lets
+        // these tests assert on text rather than on styled text.
         command.env("NO_COLOR", "1");
         command.env("TERM", "dumb");
         for (key, value) in env {
@@ -97,7 +181,11 @@ impl Terminal {
         let (sender, receiver) = mpsc::channel();
         let reader_ended = std::sync::Arc::new(std::sync::Mutex::new(None));
         let ended = std::sync::Arc::clone(&reader_ended);
+        // The thread's own clone of the permit. See [`Permit`]: the slot is not free until this
+        // thread has finished with its handle to the pty, which is later than `Terminal::drop`.
+        let held = std::sync::Arc::clone(&permit);
         std::thread::spawn(move || {
+            let _held = held;
             let mut buffer = [0_u8; 1024];
             let mut total = 0_usize;
             let reason = loop {
@@ -128,6 +216,7 @@ impl Terminal {
             _slave: pty.slave,
             transcript: String::new(),
             reader_ended,
+            _permit: permit,
             reports_answered: 0,
         }
     }
@@ -272,7 +361,25 @@ impl Terminal {
         self.send_line("");
     }
 
-    /// Sends ESC — `inquire`'s cancellation key.
+    /// Sends one keypress, with **no** carriage return after it.
+    ///
+    /// # Why this is not [`Terminal::send_line`]
+    ///
+    /// A confirmation now **submits on the keypress**: `y` answers yes and `n` answers no, without
+    /// an Enter. That is the behaviour of the prompt library this crate adopted on 2026-08-21, and
+    /// it differs from the previous one, which read `y`/`n` as text and waited for Enter.
+    ///
+    /// `send_line("y")` therefore writes one keystroke too many. The confirmation consumes the `y`
+    /// and the stray carriage return falls through to the **next** prompt, silently accepting its
+    /// default — which is exactly what happened to two tests here when the library changed, and
+    /// exactly what will happen to an operator with the old muscle memory. It is recorded as a
+    /// known interaction difference rather than hidden behind a harness that papers over it.
+    pub fn key(&mut self, key: &str) {
+        write!(self.writer, "{key}").expect("the pty accepts input");
+        self.writer.flush().expect("the pty flushes");
+    }
+
+    /// Sends ESC, which cancels a prompt.
     pub fn escape(&mut self) {
         write!(self.writer, "\u{1b}").expect("the pty accepts input");
         self.writer.flush().expect("the pty flushes");

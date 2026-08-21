@@ -39,6 +39,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::exit::{CliError, Code};
+use crate::output::progress::Progress;
 
 /// The checks run, in order, each with the failure it reports.
 ///
@@ -85,7 +86,7 @@ const CHECKS: [(&str, &[&str], &str); 5] = [
 /// format, test, or start check. A consumer matching the registry would have looked for a template
 /// defect over a compile error. This is the same class of misreporting as A-R6's three sites, found
 /// in the same sweep and corrected with them.
-pub fn in_staging(staging: &Path) -> Result<(), CliError> {
+pub fn in_staging(staging: &Path, progress: &Progress) -> Result<(), CliError> {
     let target = tempfile::tempdir().map_err(|error| {
         CliError::new(
             Code::ProjectVerificationFailed,
@@ -95,6 +96,11 @@ pub fn in_staging(staging: &Path) -> Result<(), CliError> {
     })?;
 
     for (program, arguments, complaint) in CHECKS {
+        // WHICH check is running, not merely THAT something is. `.output()` captures everything
+        // cargo says, so without this the operator watches a spinner for a cold `cargo build` with
+        // no way to tell a slow compile from a hung one — and no way to know, when it does hang,
+        // which of the five to reproduce by hand.
+        progress.step(&format!("{program} {}", arguments.join(" ")));
         let output = Command::new(program)
             .args(arguments)
             .current_dir(staging)
@@ -135,6 +141,20 @@ pub fn in_staging(staging: &Path) -> Result<(), CliError> {
 
 #[cfg(test)]
 mod tests {
+    /// An indicator that renders nowhere.
+    ///
+    /// These tests run `cargo build` for real, so they are slow — but they are not the place to
+    /// assert anything about a spinner, and a visible one would interleave with libtest's own
+    /// output. `Progress` is deliberately constructible in this state, which is the same state
+    /// every JSON and non-terminal run uses.
+    fn silent() -> crate::output::progress::Progress {
+        crate::output::progress::Progress::start(
+            "verifying",
+            false,
+            crate::output::style::Permission::denied(),
+        )
+    }
+
     use super::*;
 
     fn project(main: &str) -> tempfile::TempDir {
@@ -154,13 +174,13 @@ mod tests {
         // POSITIVE CONTROL. Without it, a verifier that rejected everything would satisfy every
         // failure test below and make `renvor new` impossible to use.
         let dir = project("fn main() {}\n");
-        in_staging(dir.path()).expect("a correct project must verify");
+        in_staging(dir.path(), &silent()).expect("a correct project must verify");
     }
 
     #[test]
     fn a_project_that_does_not_compile_is_a_generation_failure() {
         let dir = project("fn main() { this is not rust }\n");
-        let error = in_staging(dir.path()).unwrap_err();
+        let error = in_staging(dir.path(), &silent()).unwrap_err();
         assert_eq!(error.code, Code::ProjectVerificationFailed);
         assert!(
             error
@@ -177,7 +197,7 @@ mod tests {
         // project that compiled and failed `cargo fmt --check`. Compilation alone would have
         // shipped it.
         let dir = project("fn main() {   }");
-        let error = in_staging(dir.path()).unwrap_err();
+        let error = in_staging(dir.path(), &silent()).unwrap_err();
         assert_eq!(error.code, Code::ProjectVerificationFailed);
         assert!(
             error
@@ -193,7 +213,7 @@ mod tests {
         // The rename moves whatever is in staging. A `target/` left here would be renamed into the
         // destination and would appear in the manifest as generated source.
         let dir = project("fn main() {}\n");
-        in_staging(dir.path()).expect("verifies");
+        in_staging(dir.path(), &silent()).expect("verifies");
         assert!(
             !dir.path().join("target").exists(),
             "verification left build output that placement would have moved into the project"

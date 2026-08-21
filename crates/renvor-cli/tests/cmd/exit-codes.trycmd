@@ -42,10 +42,10 @@ An unsupported `--output` value is exit 3 with `supported` listed, not clap's ex
 ```
 $ renvor new demo --output yaml
 ? 3
-error: `--output yaml` is not supported; use `human` or `json`
-  flag: --output
-  value: yaml
-  supported: human, json
+ERROR  `--output yaml` is not supported; use `human` or `json`
+flag .................................................................. --output
+value ..................................................................... yaml
+supported .......................................................... human, json
 
 ```
 
@@ -64,9 +64,9 @@ $ renvor tls trust
 
   Consequence: any certificate that authority signs would be trusted by every program on this machine that uses the system trust store, until it is removed by hand.
 
-error: this would modify your system trust store and there is no terminal to ask on. Pass `--i-understand-this-modifies-my-system-trust-store` to consent explicitly. `--yes` does not grant this consent and is not intended to. Nothing was changed
-  required: --i-understand-this-modifies-my-system-trust-store
-  trustStoreModifications: 0
+ERROR  this would modify your system trust store and there is no terminal to ask on. Pass `--i-understand-this-modifies-my-system-trust-store` to consent explicitly. `--yes` does not grant this consent and is not intended to. Nothing was changed
+required .................... --i-understand-this-modifies-my-system-trust-store
+trustStoreModifications ...................................................... 0
 
 ```
 
@@ -83,9 +83,9 @@ $ renvor tls trust --i-understand-this-modifies-my-system-trust-store
 
   Consequence: any certificate that authority signs would be trusted by every program on this machine that uses the system trust store, until it is removed by hand.
 
-error: consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no transport yet, so a certificate issued now would protect nothing. Nothing was changed. This becomes available in Phase 004 (the first real transport)
-  flag: tls trust
-  phase: Phase 004 (the first real transport)
-  trustStoreModifications: 0
+ERROR  consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no transport yet, so a certificate issued now would protect nothing. Nothing was changed. This becomes available in Phase 004 (the first real transport)
+flag ................................................................. tls trust
+phase ..................................... Phase 004 (the first real transport)
+trustStoreModifications ...................................................... 0
 
 ```

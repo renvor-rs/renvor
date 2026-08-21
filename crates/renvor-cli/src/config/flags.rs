@@ -22,6 +22,42 @@ use clap::{Args, Parser, Subcommand};
 
 use super::model::Answers;
 use crate::exit::{CliError, Code};
+use crate::output::style::Role;
+
+/// How `--help` is coloured.
+///
+/// # The renderer stays clap's; only the palette is ours
+///
+/// Contract C-8 requires the *content* of `--help` to be clap's own generated usage, options, and
+/// descriptions. Replacing the renderer with handwritten strings is the tempting shortcut and it is
+/// how a documented surface drifts from the parsed one: the flag surface **is** the contract, and
+/// one declaration is what keeps help, validation, and future completions agreeing.
+///
+/// So this styles what clap draws and changes nothing about what clap says.
+///
+/// The colours come from [`Role`] rather than from `anstyle` literals, so `--help` shares one
+/// palette with every other line the program prints — a heading here is the same heading as a
+/// heading in `renvor doctor`.
+///
+/// # Colour here is decoration and clap already guarantees that
+///
+/// clap's own help remains fully structured without it: the section headings are still on their own
+/// lines and the flags still start their own. Nothing in `--help` is distinguished by colour alone.
+///
+/// # This is applied unconditionally, and clap resolves it
+///
+/// `Command::styles` describes the palette; clap's `color` feature decides whether to emit it,
+/// suppressing it when the stream is not a terminal or `NO_COLOR` is set. The two remaining
+/// policies — `--no-color` and `TERM=dumb` — are enforced where `--help` is actually written, in
+/// `main`, which strips through the same `AutoStream` boundary every other line goes through.
+const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::styled()
+    .header(Role::Heading.style())
+    .usage(Role::Heading.style())
+    .literal(Role::Accent.style())
+    .placeholder(Role::Muted.style())
+    .valid(Role::Success.style())
+    .invalid(Role::Error.style())
+    .error(Role::Error.style());
 
 /// The `renvor` command line.
 #[derive(Debug, Parser)]
@@ -31,7 +67,8 @@ use crate::exit::{CliError, Code};
     long_about = "Create and run Renvor projects.\n\nExit codes: 0 success, 1 internal defect, \
                   2 usage, 3 validation, 4 cancelled, 5 environment.",
     version,
-    disable_help_subcommand = true
+    disable_help_subcommand = true,
+    styles = HELP_STYLES
 )]
 pub struct Cli {
     /// Result format for stdout.

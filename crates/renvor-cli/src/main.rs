@@ -74,6 +74,30 @@ fn set_panic_context(format: Format, command: &'static str) {
     }
 }
 
+/// Undoes the terminal state a prompt or a progress bar may have left behind.
+///
+/// # Deliberately **not** gated on the colour policy
+///
+/// Hiding the cursor is not styling. The prompt library hides it whatever `NO_COLOR` and
+/// `TERM=dumb` say — measured, not assumed — so restoring it has to be unconditional in exactly
+/// the same way. Gating this on the same flag that governs colour would leave the cursor hidden on
+/// precisely the terminals least able to cope with it.
+///
+/// Gated on `stderr` being a terminal, because that is the only stream anything here draws on, and
+/// writing a control sequence into a redirected file would be putting the very thing this crate
+/// escapes everywhere else into somebody's log.
+fn restore_terminal() {
+    use std::io::Write as _;
+    if std::io::stderr().is_terminal() {
+        // DECTCEM set: show the cursor. The one sequence written directly rather than through a
+        // style, because it is not a style — and because at this point the reporter may be the
+        // thing that panicked.
+        let mut stderr = std::io::stderr();
+        let _ = stderr.write_all(b"\x1b[?25h");
+        let _ = stderr.flush();
+    }
+}
+
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -102,6 +126,16 @@ fn install_panic_hook() {
             }
         }
         previous(info);
+        // ── THE TERMINAL IS PUT BACK BEFORE THIS PROCESS DISAPPEARS ──────────────────
+        //
+        // `std::process::exit` does not unwind, so **no destructor runs** — not the progress
+        // bar's, not the prompt's. Both of those hide the cursor while they draw, and a hidden
+        // cursor outlives the process: the operator's shell keeps drawing without one until they
+        // work out that `tput cnorm` is the fix.
+        //
+        // This is why the guarantee is here rather than in a `Drop` impl. A `Drop` that covers
+        // every exit except the one that matters is a guarantee that quietly does not hold.
+        restore_terminal();
         std::process::exit(Exit::Unclassified.code());
     }));
 }
@@ -146,7 +180,26 @@ fn requested_format_from_argv() -> Format {
     Format::default()
 }
 
-/// Escapes every control character in one argument, so a diagnostic may echo it back.
+/// Redacts an argument, then escapes it, in that order.
+///
+/// # Redaction moved here on 2026-08-21, and the reason is contract C-8's ordering rule
+///
+/// It used to be enough to redact the **assembled** rendering: the credential shape
+/// `password=hunter2` was plainly visible in the sentence clap produced, and `redact::line`
+/// found it there.
+///
+/// Styling broke that, and broke it silently. Once `--help` and usage errors carry the parser's
+/// own escape sequences, the rendering reads
+/// `unexpected argument '\x1b[33mpassword=hunter2\x1b[0m'`, and the scanner that walks backwards
+/// from the `=` looking for a key walks into `33m` first — `m` and `3` are perfectly good key
+/// characters — and concludes the key is `33mpassword`, which is in no secret list. **The
+/// credential came out verbatim**, and `tests/redaction.rs` caught it.
+///
+/// The fix is not a cleverer scanner. It is C-8's own rule, applied here: **redact first, style
+/// second.** The argument is redacted while it is still a bare token with no escape sequence in
+/// it, and clap then interpolates something that has no credential left to hide. The redaction of
+/// the assembled rendering is kept as well, because two independent passes are worth more than a
+/// cleverer single one.
 ///
 /// # Why the escaping happens HERE and not on the rendered message
 ///
@@ -161,7 +214,9 @@ fn requested_format_from_argv() -> Format {
 /// crate. It is applied to `argv[0]` too, which is echoed into clap's `Usage:` line on the
 /// *success* path of `--help` as well as the failure path.
 fn argument_for_display(argument: &std::ffi::OsStr) -> std::ffi::OsString {
-    std::ffi::OsString::from(output::redact::detail(&argument.to_string_lossy()))
+    std::ffi::OsString::from(output::redact::detail(&output::redact::line(
+        &argument.to_string_lossy(),
+    )))
 }
 
 /// clap's own rendering of `error`, with every argument it echoes already neutralised.
@@ -177,12 +232,27 @@ fn safe_clap_rendering(error: &clap::Error) -> String {
     // into a sentence. Control-character escaping is the opposite case and is done per-argument
     // above, because after assembly the attacker's newlines are indistinguishable from clap's.
     match Cli::try_parse_from(&escaped) {
-        Err(safe) => output::redact::line(&safe.render().to_string()),
+        // `.ansi()` RATHER THAN `.to_string()`, AND THE DIFFERENCE IS THE WHOLE PALETTE.
+        //
+        // `StyledStr`'s `Display` writes the plain text: the styles the parser resolved are
+        // present in the value and are dropped on the way out. `--help` therefore came out
+        // unstyled no matter what `Command::styles` said, on a terminal as much as in a pipe —
+        // which looked like the policy working and was the palette never arriving.
+        //
+        // The sequences go in here and are removed again at the boundary in `write_rendering`
+        // whenever the policy forbids them, which is the same two-mechanism arrangement the rest
+        // of this crate uses: emit deliberately, strip structurally.
+        Err(safe) => output::redact::line(&safe.render().ansi().to_string()),
         // Escaping cannot turn a rejected invocation into an accepted one: no flag, subcommand, or
         // value this CLI recognises contains a control character, so escaping is a no-op on every
         // argument clap matches against. If that ever stopped holding, fall back to escaping the
         // whole rendering rather than printing the unescaped original.
-        Ok(_) => output::redact::line(&output::redact::detail(&error.render().to_string())),
+        // The fallback arm deliberately takes the **plain** rendering. It runs only when escaping
+        // somehow turned a rejected invocation into an accepted one, which is a state this program
+        // does not understand — and redacting text that carries escape sequences is exactly the
+        // hazard documented on `argument_for_display`. An unstyled diagnostic on a path that should
+        // never be taken is the right trade.
+        Ok(_) => output::redact::detail(&output::redact::line(&error.render().to_string())),
     }
 }
 
@@ -194,15 +264,46 @@ fn safe_clap_rendering(error: &clap::Error) -> String {
 /// so on a full filesystem it wrote nothing, said nothing, and reported success.
 fn write_rendering(text: &str, to_stdout: bool) -> std::io::Result<()> {
     use std::io::Write as _;
+    // Through `AutoStream`, with **this program's** answer rather than clap's.
+    //
+    // clap's `color` feature makes it suppress its own styling for a pipe, for `NO_COLOR`, and for
+    // `TERM=dumb` — three of the five policies in C-8, and it gets those right. It cannot know
+    // about the fourth: `--no-color` is a Renvor flag that clap has never heard of, and `--output
+    // json` is decided after clap has already failed. So `renvor --help --no-color` on a terminal
+    // emitted colour, which is the flag not working on the one command most likely to be piped
+    // into `less`.
+    //
+    // Constructed with `ColorChoice::Never` on every forbidden path, which makes `AutoStream`
+    // **strip** — so the answer is enforced on the bytes rather than requested of the renderer.
+    let permission = help_permission(to_stdout);
     if to_stdout {
-        let mut stream = std::io::stdout();
+        let mut stream = anstream::AutoStream::new(std::io::stdout(), permission.choice());
         write!(stream, "{text}")?;
         stream.flush()
     } else {
-        let mut stream = std::io::stderr();
+        let mut stream = anstream::AutoStream::new(std::io::stderr(), permission.choice());
         write!(stream, "{text}")?;
         stream.flush()
     }
+}
+
+/// The styling policy for clap's own rendering, resolved before clap has parsed anything.
+///
+/// # Why the flag is read from `argv` rather than from the parsed `Cli`
+///
+/// The same chicken-and-egg problem [`requested_format_from_argv`] solves, for the same reason:
+/// `--help` and every usage error are produced by clap **before** a `Cli` exists, and a usage error
+/// exists precisely because the command line could not be parsed. A scan of the raw arguments is
+/// the honest answer, and it is deliberately narrow — it recognises one exact spelling, the only
+/// one clap accepts for a long flag with no value, and decides nothing else.
+fn help_permission(to_stdout: bool) -> output::style::Permission {
+    let opt_out = std::env::args_os().any(|argument| argument == "--no-color");
+    let is_terminal = if to_stdout {
+        std::io::stdout().is_terminal()
+    } else {
+        std::io::stderr().is_terminal()
+    };
+    output::style::Permission::resolve(opt_out, requested_format_from_argv(), is_terminal)
 }
 
 fn main() {
@@ -277,6 +378,19 @@ fn main() {
         }
     };
     let reporter = Reporter::new(format, cli.no_color);
+
+    // THE PROCESS-GLOBAL PRESENTATION STATE, INSTALLED ONCE, HERE.
+    //
+    // The prompt library keeps its theme in a global lock and `console` keeps its colour decision
+    // in a global flag. Both are installed from this one place, before any prompt can run and
+    // while the program is still single-threaded — the same discipline the panic hook above
+    // follows, for the same reason: a global mutated later races with whoever is already reading
+    // it.
+    //
+    // It is done here rather than inside `Reporter::new` because `Reporter` is constructed in four
+    // places on the error paths above, and installing global state as a side effect of building a
+    // value is how it ends up installed four times with three different answers.
+    output::prompt::install(reporter.stderr_permission());
 
     let command_name = match &cli.command {
         Command::New(_) => "new",

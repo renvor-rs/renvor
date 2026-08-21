@@ -311,7 +311,7 @@ fn the_description_precedes_the_question_and_names_this_platforms_store() {
         "the description must say a private key would be created:\n{visible}"
     );
 
-    terminal.send_line("n");
+    terminal.key("n");
     let exit = terminal.wait();
     assert_eq!(
         exit,
@@ -334,7 +334,7 @@ fn granting_consent_at_the_prompt_also_modifies_nothing() {
     let before = snapshot();
     let mut terminal = Terminal::spawn(&["tls", "trust"], base.path(), &[]);
     terminal.expect("Install a new certificate authority into your system trust store?");
-    terminal.send_line("y");
+    terminal.key("y");
     let exit = terminal.wait();
 
     assert_eq!(
