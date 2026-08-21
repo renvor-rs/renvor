@@ -279,6 +279,14 @@ impl Reporter {
                 for line in lines {
                     report = report.text(line.to_owned());
                 }
+                // A blank line between the message and the details, because they are different
+                // kinds of thing: the message is prose an operator reads, the details are
+                // structured values a script would match on. Run together they read as one
+                // paragraph, which is what the multi-line messages — a TOML parse error brings its
+                // own caret diagram — made obvious.
+                if !error.details.is_empty() {
+                    report = report.blank();
+                }
                 for (key, value) in &error.details {
                     report = report.row(key.clone(), value.clone());
                 }
