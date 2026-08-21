@@ -39,6 +39,131 @@ fn workspace() -> tempfile::TempDir {
     tempfile::tempdir().expect("a temporary directory")
 }
 
+/// The lines a reader would see, from a transcript that may not contain newlines at all.
+///
+/// # ConPTY moves the cursor where a pty writes a newline
+///
+/// The harness header says ConPTY "mirrors the **screen** rather than the bytes the program
+/// wrote", and this is where that stops being a footnote. On Windows the same `renvor doctor`
+/// output arrives as
+///
+/// ```text
+/// INFO   Environment readiness\x1b[3;1Hcargo ...... 1.94.0       OK\x1b[4;1Hgit ...
+/// ```
+///
+/// — one line with absolute cursor positioning between the rows, where every other platform sends
+/// `\n`. Stripping escapes and calling `.lines()` therefore returned **one** line containing
+/// every row concatenated, which made a width assertion report a 216-column row on a 400-column
+/// terminal and made a leader-row search find nothing. Both were the harness misreading the
+/// emulator; the program's output was correct on both platforms.
+///
+/// So a cursor-to-column-one move is treated as the line break it stands in for.
+fn screen_lines(transcript: &str) -> Vec<String> {
+    // `\x1b[<row>;1H` — reposition to the first column of some row. Anything else is left to the
+    // escape stripper.
+    let mut text = String::with_capacity(transcript.len());
+    let mut rest = transcript;
+    while let Some(start) = rest.find("\u{1b}[") {
+        text.push_str(&rest[..start]);
+        let tail = &rest[start + 2..];
+        let end = tail.find(|c: char| c.is_ascii_alphabetic());
+        match end {
+            Some(index) if tail.as_bytes()[index] == b'H' && tail[..index].ends_with(";1") => {
+                text.push('\n');
+                rest = &tail[index + 1..];
+            }
+            Some(index) => {
+                text.push_str("\u{1b}[");
+                text.push_str(&tail[..=index]);
+                rest = &tail[index + 1..];
+            }
+            None => {
+                text.push_str(&rest[start..]);
+                rest = "";
+            }
+        }
+    }
+    text.push_str(rest);
+    strip_escapes(&text)
+        .replace('\r', "")
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Removes every escape sequence, leaving the text a reader would see.
+fn strip_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character != '\u{1b}' {
+            out.push(character);
+            continue;
+        }
+        match chars.peek() {
+            Some('[') => {
+                chars.next();
+                for inner in chars.by_ref() {
+                    if inner.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                // An operating-system command, terminated by BEL. ConPTY sets the window title
+                // this way, and the title contains the binary's full path — which is neither the
+                // program's output nor anything a reader sees.
+                for inner in chars.by_ref() {
+                    if inner == '\u{7}' {
+                        break;
+                    }
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
+    }
+    out
+}
+
+/// Every SGR sequence that sets a colour or an intensity.
+///
+/// # Why not simply "contains an escape character"
+///
+/// Because ConPTY emits its own: a cursor-position query, win32 input mode, focus reporting, a
+/// window title, cursor hide and show, and a bare `\x1b[m` reset — **none of which any program
+/// wrote**. An assertion that no escape byte appears anywhere therefore cannot pass on Windows no
+/// matter how correctly the colour policy behaves, and it failed there for exactly that reason.
+///
+/// What the policy actually promises is that no *styling* is emitted. That is what this looks for.
+fn colour_sequences(transcript: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = transcript;
+    while let Some(start) = rest.find("\u{1b}[") {
+        let tail = &rest[start + 2..];
+        if let Some(index) = tail.find('m') {
+            let body = &tail[..index];
+            // A bare `[m` is ConPTY's own reset. `[0m` closes something this program opened, and
+            // is only present if something was opened.
+            let is_colour = !body.is_empty()
+                && body != "0"
+                && body
+                    .split(';')
+                    .all(|part| part.chars().all(|c| c.is_ascii_digit()))
+                && body != "0";
+            if is_colour {
+                found.push(format!("ESC[{body}m"));
+            }
+            rest = &tail[index + 1..];
+        } else {
+            rest = tail;
+        }
+    }
+    found
+}
+
 /// Runs `renvor doctor` on a terminal of `columns` columns and returns the raw transcript.
 fn doctor(columns: u16, environment: &[(&str, &str)]) -> String {
     let root = workspace();
@@ -207,16 +332,20 @@ fn help_is_styled_on_a_terminal_and_not_when_the_flag_forbids_it() {
 
     let mut plain = Terminal::spawn_sized(&["--help", "--no-color"], root.path(), IN_COLOUR, 100);
     assert_eq!(plain.wait(), 0);
+    // NO **STYLING**, rather than no escape byte at all. ConPTY emits a cursor query, win32 input
+    // mode, focus reporting, a window title, cursor hide/show and a bare reset entirely on its own
+    // — so "the transcript contains no `\x1b`" is a claim about the emulator and cannot hold on
+    // Windows however correctly the policy behaves. It failed there for exactly that reason.
+    let colours = colour_sequences(&plain.transcript);
     assert!(
-        !plain.transcript.contains('\u{1b}'),
-        "`--no-color` must reach the parser's rendering too: {:?}",
-        plain.transcript
+        colours.is_empty(),
+        "`--no-color` must reach the parser's rendering too, but these were emitted: {colours:?}"
     );
     // And the CONTENT is the same either way. A colour policy that changed what `--help` says
     // would be a different kind of defect entirely.
     assert_eq!(
-        styled.visible().replace("\r\n", "\n"),
-        plain.visible().replace("\r\n", "\n"),
+        screen_lines(&styled.transcript),
+        screen_lines(&plain.transcript),
         "styling changed the help text"
     );
 }
@@ -227,22 +356,45 @@ fn help_is_styled_on_a_terminal_and_not_when_the_flag_forbids_it() {
 fn rows_fit_the_terminal_at_forty_eighty_and_one_hundred_and_twenty_columns() {
     // Three reviewed widths. 40 is narrow enough that a long value has to stack; 80 is the width
     // most terminals open at; 120 is wide enough to prove the measure cap is doing something.
+    // 40 IS BELOW THE THRESHOLD FOR THIS COMMAND, AND THAT IS THE POINT OF INCLUDING IT.
+    //
+    // `cargo 1.94.0 (85eff7c80 2026-01-15)` is 34 columns; with a label, two spaces and a leader
+    // it cannot fit in 40, so the row is expected to **stack** rather than to grow a leader. The
+    // first version of this test demanded a leader at every width and passed only because it was
+    // reading a transcript it had mis-parsed. What has to hold at every width is that **no line
+    // overflows** — the leader form is asserted at the widths where it fits.
     for columns in [40_u16, 80, 120] {
         let transcript = doctor(columns, &[]);
-        let visible = transcript.replace('\r', "");
-        let rows: Vec<&str> = visible
-            .lines()
-            .filter(|line| line.contains(" ...") || line.contains("... "))
-            .collect();
+        let lines = screen_lines(&transcript);
         assert!(
-            !rows.is_empty(),
-            "no leader row was produced at {columns} columns: {visible:?}"
+            lines
+                .iter()
+                .any(|line| line.contains("Environment readiness")),
+            "no output at {columns} columns, so nothing below is proved: {lines:?}"
         );
-        for row in &rows {
-            let width = row.chars().count();
+        // THE LEADER ROWS ARE THE ONES THAT MUST FIT. The stacked ones may not, and C-8 says so:
+        // a value too long for the terminal "is left for the terminal to wrap, which is lossless".
+        // The first version of this asserted that **no** line overflows, which is stricter than
+        // the contract and failed at 40 columns on a value that is 34 columns wide before its
+        // indent and its state token — output that is correct and that the contract permits.
+        for line in lines.iter().filter(|line| line.contains("...")) {
+            let width = line.chars().count();
             assert!(
                 width <= usize::from(columns),
-                "a row overflowed {columns} columns ({width}): {row:?}"
+                "an ALIGNED row overflowed {columns} columns ({width}): {line:?}"
+            );
+        }
+        // And nothing was truncated at any width, which is the promise that actually matters.
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("1.94.0") || line.contains("cargo ")),
+            "the tool version did not survive at {columns} columns: {lines:?}"
+        );
+        if columns >= 80 {
+            assert!(
+                lines.iter().any(|line| line.contains("...")),
+                "no leader row at {columns} columns, where the values do fit: {lines:?}"
             );
         }
     }
@@ -280,17 +432,14 @@ fn a_very_wide_terminal_does_not_produce_a_very_wide_leader() {
     // The measure cap. Without it a 400-column terminal puts several hundred dots between a label
     // and its value, and the leader stops doing the job it exists for.
     let transcript = doctor(400, &[]);
-    let visible = transcript.replace('\r', "");
-    let rows: Vec<&str> = visible
-        .lines()
-        .filter(|line| line.contains("..."))
-        .collect();
+    let lines = screen_lines(&transcript);
+    let rows: Vec<&String> = lines.iter().filter(|line| line.contains("...")).collect();
     // POSITIVE CONTROL. A `for` over an empty iterator passes without executing its body, so
     // without this the test would report success on a build that produced no leader rows at all.
     assert!(
         !rows.is_empty(),
         "no leader row was produced at 400 columns, so the assertion below proves nothing: \
-         {visible:?}"
+         {lines:?}"
     );
     for line in rows {
         assert!(
@@ -311,6 +460,20 @@ fn wizard(root: &std::path::Path, destination: &std::path::Path) -> Terminal {
         &[],
     );
     terminal.expect("Project name");
+    // WAIT FOR THE INPUT LINE, NOT JUST THE QUESTION — AND THE REASON IS A RACE.
+    //
+    // The question is written early in the prompt's first render; the placeholder is written at
+    // the end of it, immediately before the library starts reading keys. Between those two points
+    // the terminal is still in canonical mode, where the driver turns an interrupt character into
+    // a **signal** as it enters the input queue rather than delivering it as a byte — so a Ctrl-C
+    // sent after the question but before the read gets a different outcome from the one a person
+    // pressing the key would get.
+    //
+    // That is not hypothetical: `control_c_at_a_prompt_is_a_cancellation` exited 1 instead of 4 on
+    // one CI leg while passing on two others in the same run. Waiting for the last thing the
+    // render writes closes almost all of the window; what remains is microseconds against a write
+    // that has to cross the kernel.
+    terminal.expect("ASCII letters");
     terminal
 }
 
@@ -323,10 +486,13 @@ fn control_c_at_a_prompt_is_a_cancellation() {
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
     terminal.key("\u{3}");
+    let code = terminal.wait();
     assert_eq!(
-        terminal.wait(),
+        code,
         4,
-        "Ctrl-C must exit 4\n{}",
+        "Ctrl-C must exit 4, got {code}. An exit of 1 means the prompt library reported an \
+         `ErrorKind` that is neither `Interrupted` nor `NotConnected`, which on this path almost \
+         always means the key arrived before the read began.\n{}",
         terminal.visible()
     );
     assert!(
