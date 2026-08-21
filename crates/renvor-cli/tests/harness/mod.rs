@@ -449,6 +449,25 @@ impl Terminal {
             while let Ok(byte) = self.receiver.try_recv() {
                 self.transcript.push(byte as char);
             }
+            // ── AND ANSWER THE TERMINAL'S QUESTIONS. THIS IS THE OTHER HALF. ────────────
+            //
+            // ConPTY asks where the cursor is (`\x1b[6n`) and **blocks until something replies**.
+            // `expect` has always answered those; `wait` never did, because until this branch no
+            // test reached `wait` without going through `expect` first.
+            //
+            // The failure this produced is worth recording exactly, because it looked like a
+            // product defect and was not. The diagnostic said:
+            //
+            //     child EXITED with code 1
+            //     reader still running
+            //     bytes received: 4
+            //     cursor-position queries seen: 1, answered: 0
+            //
+            // Four bytes and one unanswered question: the child had written `\x1b[6n`, was
+            // waiting for a reply that only `expect` knew how to send, and sat there until the
+            // 300-second deadline killed it. Two Windows jobs were cancelled at forty-five
+            // minutes before the deadline existed to say so.
+            self.answer_status_reports();
             match self.child.try_wait() {
                 Ok(Some(_)) => break,
                 Ok(None) if Instant::now() < deadline => {
