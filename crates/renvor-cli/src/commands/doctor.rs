@@ -17,6 +17,7 @@ use serde::Serialize;
 
 use crate::exit::{CliError, Exit};
 use crate::output::Reporter;
+use crate::output::layout::{Mark, Report, Status};
 
 /// One thing checked.
 ///
@@ -264,62 +265,86 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
 
     let orphans = orphaned_staging();
 
-    let mut human = probes
-        .iter()
-        .map(
-            // `version` is ANOTHER PROGRAM'S output, so it is escaped at the point it is
-            // interpolated — the same rule `redact::path` follows for a path. A newline in it used
-            // to end renvor's row and begin one the tool had written, which renvor then presented
-            // as its own finding while exiting 0. `redact::for_terminal` cannot catch that: by
-            // design it exempts newline, because by the time it runs the line is legitimately
-            // multi-line.
-            |probe| match (
-                &probe.version.as_deref().map(crate::output::redact::detail),
-                probe.compatible,
-                probe.required,
-            ) {
-                (Some(version), true, _) => format!("ok       {:<8} {version}", probe.tool),
-                (Some(version), false, _) => format!(
-                    "TOO OLD  {:<8} {version} — needs {}; {}",
-                    probe.tool,
-                    probe.required_version.clone().unwrap_or_default(),
-                    probe.remedy.clone().unwrap_or_default()
+    // ── THE READINESS TABLE ─────────────────────────────────────────────────────────
+    //
+    // One row per probe: the tool on the left, what was found on the right, and a state token at
+    // the end. The token is the load-bearing part — it is a WORD, so the table is readable with no
+    // colour at all, which is the whole reason the palette is decoration rather than information.
+    //
+    // A remedy is an indented line under its row rather than a fourth column. Remedies are
+    // sentences; a sentence in a column either wraps and destroys the alignment or gets truncated
+    // and stops being a remedy.
+    //
+    // `version` is ANOTHER PROGRAM'S output. It used to be escaped here, at the point it was
+    // interpolated, because a newline in it ended renvor's row and began one the tool had written
+    // — which renvor then presented as its own finding while exiting 0. It is **still** escaped;
+    // what changed is where. Every field of a report is escaped strictly on the way out, newline
+    // included, so the guarantee now covers every value on this screen rather than the one value
+    // somebody remembered to wrap.
+    let mut human = Report::new()
+        .status(Status::Info, "Environment readiness")
+        .blank();
+
+    // ── ONLY TWO OF THE FOUR MARKS ARE REACHABLE TODAY, AND THAT IS WORTH SAYING ────
+    //
+    // `Mark::Missing` needs a tool that is **required and absent** — and that returns
+    // `Code::ToolMissing` above, before this table is built. `Mark::Outdated` needs a tool that is
+    // present and **incompatible**, which requires a declared minimum: only `cargo` has one, and
+    // an incompatible `cargo` takes the same early return.
+    //
+    // So a real run emits `OK` and `ABSENT` and nothing else. The other two arms are not dead
+    // weight — they are what makes this `match` total, and they become reachable the moment
+    // `TOOLS` gains an optional tool with a minimum version — but a reader comparing this code
+    // with a screenshot should know which rows the program can actually produce. An advisory
+    // review found the contract publishing a `MISSING` example that the binary cannot emit.
+    for probe in &probes {
+        let (value, mark) = match (probe.version.as_deref(), probe.compatible, probe.required) {
+            (Some(version), true, _) => (version.to_owned(), Mark::Ok),
+            (Some(version), false, _) => (version.to_owned(), Mark::Outdated),
+            (None, _, true) => (
+                probe.required_version.as_ref().map_or_else(
+                    || "not found".to_owned(),
+                    |required| format!(">= {required}"),
                 ),
-                (None, _, true) => format!(
-                    "MISSING  {:<8} required{}; {}",
-                    probe.tool,
-                    probe
-                        .required_version
-                        .as_ref()
-                        .map(|v| format!(" (>= {v})"))
-                        .unwrap_or_default(),
-                    probe.remedy.clone().unwrap_or_default()
-                ),
-                (None, _, false) => format!(
-                    "absent   {:<8} optional; {}",
-                    probe.tool,
-                    probe.remedy.clone().unwrap_or_default()
-                ),
-            },
-        )
-        .collect::<Vec<_>>()
-        .join("\n");
+                Mark::Missing,
+            ),
+            (None, _, false) => ("optional".to_owned(), Mark::Absent),
+        };
+        human = human.row_marked(probe.tool.clone(), value, mark);
+
+        // The remedy, and — for a tool that is present but too old — what it has to be. Both are
+        // the actionable half of the row, so neither is dropped just because the row above is now
+        // aligned.
+        if mark == Mark::Outdated
+            && let Some(required) = &probe.required_version
+        {
+            human = human.item(format!("needs {required}"));
+        }
+        if mark != Mark::Ok
+            && let Some(remedy) = &probe.remedy
+        {
+            human = human.item(remedy.clone());
+        }
+    }
 
     if !orphans.is_empty() {
-        human.push_str(&format!(
-            "\n\n{} orphaned staging {} in this directory, left by a run that was killed:",
-            orphans.len(),
-            if orphans.len() == 1 {
-                "directory"
-            } else {
-                "directories"
-            }
-        ));
+        human = human.blank().status(
+            Status::Warn,
+            format!(
+                "{} orphaned staging {} in this directory, left by a run that was killed",
+                orphans.len(),
+                if orphans.len() == 1 {
+                    "directory"
+                } else {
+                    "directories"
+                }
+            ),
+        );
         for orphan in &orphans {
-            human.push_str(&format!("\n  {orphan}"));
+            human = human.item(orphan.clone());
         }
-        human.push_str(
-            "\nrenvor has NOT removed them: one may belong to a `renvor new` running right now. \
+        human = human.text(
+            "renvor has NOT removed them: one may belong to a `renvor new` running right now. \
              Check the process id in the name, then remove them yourself.",
         );
     }

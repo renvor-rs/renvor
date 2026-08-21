@@ -9,11 +9,33 @@
 //!
 //! So `print!` and `println!` are not used anywhere in this crate. Everything goes through
 //! [`Reporter`], which owns both streams and gives each a method whose name says where it lands.
+//! `tests/presentation.rs` asserts that mechanically, over the whole source tree, with a
+//! positive control on the walk and a second control that runs the scan's own predicate against
+//! a planted bypass — rather than trusting this paragraph.
+//!
+//! # Contract C-8 added a second rule, and it is the same shape
+//!
+//! **No module outside [`style`] names a colour, and none writes an escape sequence.** Human
+//! output is built as a [`layout::Report`] — structure and raw values — and the only thing that
+//! turns one into text redacts every dynamic field, measures the result, and *then* styles it.
+//! That ordering is not a convention a caller can get wrong, because there is no other way to
+//! render a report.
+//!
+//! Styling is resolved **per stream**. `renvor doctor > report.txt` leaves `stderr` a terminal
+//! while `stdout` is a file; one answer for both would put escape sequences in the file. Both
+//! answers are computed once, here, and handed down.
 
 pub mod json;
+pub mod layout;
+pub mod progress;
+pub mod prompt;
 pub mod redact;
+pub mod style;
 
 use std::io::{IsTerminal, Write};
+
+use layout::{Report, Status};
+use style::Permission;
 
 use crate::exit::{CliError, Code, Exit};
 
@@ -52,7 +74,10 @@ impl Format {
 /// Owns both streams so that nothing else has to remember which is which.
 pub struct Reporter {
     format: Format,
-    colour: bool,
+    /// Whether the command's **result** may be styled. Resolved from `stdout`.
+    stdout: Permission,
+    /// Whether prompts, progress, and diagnostics may be styled. Resolved from `stderr`.
+    stderr: Permission,
     /// Whether `stderr` is a terminal. Progress renders to nothing when it is not (C-1).
     stderr_is_terminal: bool,
 }
@@ -62,7 +87,8 @@ impl std::fmt::Debug for Reporter {
         formatter
             .debug_struct("Reporter")
             .field("format", &self.format)
-            .field("colour", &self.colour)
+            .field("stdout", &self.stdout)
+            .field("stderr", &self.stderr)
             .finish()
     }
 }
@@ -79,29 +105,31 @@ impl Reporter {
         let stderr_is_terminal = std::io::stderr().is_terminal();
         Self {
             format,
-            // Styling is disabled by the flag OR by the stream not being a terminal. Both, not
-            // either — a piped stream with `--no-color` absent must still be unstyled, or every
-            // captured log fills with escape sequences.
-            colour: !no_color && stderr_is_terminal,
+            // TWO ANSWERS, NOT ONE. Until C-8 this was a single `colour` computed from `stderr`,
+            // which was harmless while nothing was styled and would have been a defect the moment
+            // something was: the command's result goes to `stdout`, so styling it on the strength
+            // of `stderr` being a terminal writes escape sequences into `renvor doctor > file`.
+            stdout: Permission::resolve(no_color, format, std::io::stdout().is_terminal()),
+            stderr: Permission::resolve(no_color, format, stderr_is_terminal),
             stderr_is_terminal,
         }
     }
 
-    /// Whether styling would be active.
+    /// The styling policy for `stderr`, for the parts of the program that draw there themselves.
     ///
-    /// # This phase emits no styling at all, and that is stated rather than implied
-    ///
-    /// `--no-color` is in contract C-1 and is accepted. Its observable requirement — that output
-    /// carry no escape sequences — is satisfied **trivially**, because nothing here writes any.
-    /// No colour dependency is taken, and none is needed until there is something to colour.
-    ///
-    /// The resolution logic is still computed and still tested, so that the phase which introduces
-    /// styling inherits a correct answer instead of re-deriving one. It is `#[cfg(test)]` because
-    /// shipping an accessor no shipped code reads would advertise a capability that does not exist.
+    /// The prompt library and the progress library own their own writers. Handing them this rather
+    /// than letting them consult the environment is what makes `--no-color` mean the same thing in
+    /// every part of one process — see [`style::install_prompt_colour_policy`].
+    #[must_use]
+    pub const fn stderr_permission(&self) -> Permission {
+        self.stderr
+    }
+
+    /// Whether styling would be active on `stdout`. Used by tests and by nothing else.
     #[cfg(test)]
     #[must_use]
-    pub fn colour(&self) -> bool {
-        self.colour
+    pub const fn colour(&self) -> bool {
+        self.stdout.allowed()
     }
 
     /// Whether progress should render at all.
@@ -162,15 +190,33 @@ impl Reporter {
     }
 
     /// Writes a diagnostic line to `stderr`, redacted.
+    ///
+    /// Unstyled prose. Anything with structure — a status label, a row, a list — is an
+    /// [`Report`] and goes through [`Reporter::emit`].
     pub fn note(&self, message: &str) {
         // `for_terminal` AFTER `line`: redaction first, so a secret is replaced before anything
         // else looks at it, then control-sequence neutralisation on what survives. Both are needed
         // and neither subsumes the other — one hides values, the other stops the text reprogramming
         // the terminal it is printed to.
-        let _ = writeln!(
-            std::io::stderr(),
-            "{}",
-            redact::for_terminal(&redact::line(message))
+        //
+        // Written through the same styled writer as everything else. This emits no escape
+        // sequences of its own, so the only thing that changes is that a sequence which somehow
+        // survived redaction is stripped again at the boundary on every path that forbids styling.
+        let _ = self.write(&redact::for_terminal(&redact::line(message)), false);
+    }
+
+    /// Writes a structured report to `stderr`.
+    ///
+    /// For everything the command says *about* its work — the plan it is about to carry out, the
+    /// review screen, a warning. The result itself goes to `stdout` through
+    /// [`Reporter::finish`], because C-1 reserves that stream for it.
+    pub fn emit(&self, report: &Report) {
+        if report.is_empty() {
+            return;
+        }
+        let _ = self.write(
+            &report.render(self.stderr, width_of(&std::io::stderr())),
+            false,
         );
     }
 
@@ -185,9 +231,12 @@ impl Reporter {
     /// this does not. C-1 requires exit `0` when the result was already written and a reported
     /// write failure otherwise — and since we cannot distinguish a partial write from a complete
     /// one, a broken pipe is treated as success: the consumer got what it asked for and left.
-    pub fn finish(&self, command: &str, human: &str, result: serde_json::Value) -> Exit {
+    pub fn finish(&self, command: &str, human: &Report, result: serde_json::Value) -> Exit {
         let payload = match self.format {
-            Format::Human => redact::for_terminal(&redact::line(human)),
+            // The report redacts every dynamic field itself, on the way to text. The reporter no
+            // longer redacts a finished string, because by then a styled line and an attacker's
+            // line are the same bytes.
+            Format::Human => human.render(self.stdout, width_of(&std::io::stdout())),
             Format::Json => {
                 match serde_json::to_string_pretty(&json::Envelope::success(command, result)) {
                     Ok(text) => text,
@@ -209,17 +258,40 @@ impl Reporter {
     pub fn fail(&self, command: &str, error: &CliError) -> Exit {
         match self.format {
             Format::Human => {
-                self.note(&format!("error: {error}"));
-                for (key, value) in &error.details {
-                    // ── DETAIL VALUES ARE ESCAPED STRICTLY, AND ONLY HERE ─────────────────
-                    //
-                    // `details.destination` is a path the operator typed and `details.error` is an
-                    // OS message about it — both untrusted, and neither ever legitimately
-                    // multi-line. The JSON path deliberately does **not** do this: there the value
-                    // stays raw and `serde_json` escapes it, which is what keeps
-                    // `details.destination` the exact bytes a consumer needs in order to act on it.
-                    self.note(&format!("  {key}: {}", redact::detail(value)));
+                // ── DETAIL VALUES ARE ESCAPED STRICTLY, AND THAT IS THE REPORT'S JOB NOW ──
+                //
+                // `details.destination` is a path the operator typed and `details.error` is an OS
+                // message about it — both untrusted, and neither ever legitimately multi-line.
+                // Every field of a report is escaped that strictly, so this no longer has to
+                // remember to do it. The JSON path deliberately does **not**: there the value stays
+                // raw and `serde_json` escapes it, which is what keeps `details.destination` the
+                // exact bytes a consumer needs in order to act on it.
+                //
+                // The message may be several sentences — a failed `cargo build` arrives with the
+                // compiler's own output attached — so it is split into one report line per line of
+                // text rather than being handed over as a block. A report line is single-line by
+                // construction, and this is where that becomes the caller's business.
+                let mut report = Report::new();
+                let mut lines = error.message.lines();
+                report = report.status(
+                    Status::Error,
+                    lines.next().unwrap_or(&error.message).to_owned(),
+                );
+                for line in lines {
+                    report = report.text(line.to_owned());
                 }
+                // A blank line between the message and the details, because they are different
+                // kinds of thing: the message is prose an operator reads, the details are
+                // structured values a script would match on. Run together they read as one
+                // paragraph, which is what the multi-line messages — a TOML parse error brings its
+                // own caret diagram — made obvious.
+                if !error.details.is_empty() {
+                    report = report.blank();
+                }
+                for (key, value) in &error.details {
+                    report = report.row(key.clone(), value.clone());
+                }
+                self.emit(&report);
                 error.exit()
             }
             Format::Json => {
@@ -240,12 +312,13 @@ impl Reporter {
     }
 
     fn write_stdout(&self, payload: &str) -> Exit {
-        let mut stdout = std::io::stdout();
-        match writeln!(stdout, "{payload}").and_then(|()| stdout.flush()) {
+        match self.write(payload, true) {
             Ok(()) => Exit::Success,
             // The consumer closed the pipe. It got what it asked for; this is not our failure.
             Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Exit::Success,
             Err(error) => {
+                // Reported with `note`, which writes to the OTHER stream — so a stdout that has
+                // gone away cannot swallow the report that it has gone away.
                 self.note(&format!(
                     "the result could not be written to stdout: {error}"
                 ));
@@ -253,6 +326,55 @@ impl Reporter {
             }
         }
     }
+
+    /// Writes one line to a stream, through a writer that enforces the colour policy.
+    ///
+    /// # `AutoStream` is doing two jobs, and both are load-bearing
+    ///
+    /// **It strips.** Constructed with `ColorChoice::Never` — which is what every forbidden path
+    /// resolves to — it removes escape sequences from whatever is written through it. The policy
+    /// already declines to emit them; this removes any that arrived another way. Two independent
+    /// mechanisms, so a defect in either one is not a leak.
+    ///
+    /// **It translates.** On Windows, where virtual-terminal processing is unavailable, it turns
+    /// the sequences into console API calls. No amount of care with `format!` can do that, and it
+    /// is the reason this is a dependency rather than a `writeln!`.
+    fn write(&self, payload: &str, to_stdout: bool) -> std::io::Result<()> {
+        if to_stdout {
+            let mut stream = anstream::AutoStream::new(std::io::stdout(), self.stdout.choice());
+            writeln!(stream, "{payload}")?;
+            stream.flush()
+        } else {
+            let mut stream = anstream::AutoStream::new(std::io::stderr(), self.stderr.choice());
+            // A diagnostic that cannot be written is not worth failing the command over — the
+            // command's own outcome is the thing the caller asked about, and `stderr` failing is
+            // usually the terminal going away underneath a process that is already finishing.
+            let _ = writeln!(stream, "{payload}");
+            let _ = stream.flush();
+            Ok(())
+        }
+    }
+}
+
+/// How wide a stream is, or [`None`] when it is not a terminal.
+///
+/// `terminal_size_of` takes the specific handle rather than assuming `stdout`, because the human
+/// result and the diagnostics go to different streams and either may be redirected on its own.
+///
+/// # Written twice, for the same reason [`duplicate_stderr`] is
+///
+/// The *name* of a stream handle is platform-specific — a file descriptor on Unix, a `HANDLE` on
+/// Windows — and there is no portable trait covering both. Both arms do the same thing; the
+/// duplication is in the spelling.
+#[cfg(unix)]
+fn width_of<Handle: std::os::fd::AsFd>(handle: &Handle) -> Option<usize> {
+    terminal_size::terminal_size_of(handle).map(|(width, _)| usize::from(width.0))
+}
+
+/// The Windows spelling of [`width_of`].
+#[cfg(windows)]
+fn width_of<Handle: std::os::windows::io::AsHandle>(handle: &Handle) -> Option<usize> {
+    terminal_size::terminal_size_of(handle).map(|(width, _)| usize::from(width.0))
 }
 
 /// Duplicates this process's `stderr` into something a child process can be handed.

@@ -7,128 +7,136 @@
 //! flag inputs serialize to identical configuration" — a property of the type graph rather than a
 //! test that happens to pass. There is one validator and both interfaces go through it.
 //!
-//! # Known non-compliance with constitution principle VII, stated here as well as in the spec
+//! # Constitution principle VII, and the amendment that settled this module's scope
 //!
-//! Principle VII lists eleven things the wizard should ask about: target, transport, persistence
-//! model, database, auth starter, frontend, render mode, styling, desktop option, capabilities, and
-//! local tooling. **This wizard asks about two of them** — local tooling (container and local
-//! HTTPS) and capabilities (example domain, seed data).
+//! Principle VII's original wizard-scope sentence listed eleven things the wizard should ask about:
+//! target, transport, persistence model, database, auth starter, frontend, render mode, styling,
+//! desktop option, capabilities, and local tooling. **This wizard asks about two of them** — local
+//! tooling (container and local HTTPS) and capabilities (example domain, seed data).
 //!
 //! It said "three of them — target, local tooling, and capabilities" until 2026-08-18, and **there
 //! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
 //! option would be a question with one answer. An advisory review caught the overstatement by
-//! comparing this comment with `fill` below. It matters because the number in this comment is the
-//! one the principle VII referral in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) has to be counted
+//! comparing this comment with `fill` below. It mattered because the number in this comment is the
+//! one the principle VII ruling recorded in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) was counted
 //! against, and overstating compliance by one category in a comment is how it ends up overstated
-//! in the referral.
+//! in the ruling.
 //!
 //! The other eight correspond to flags this phase **reserves and refuses**, because the phases that
 //! implement them have not happened. Asking an operator to choose a database that the generator
 //! cannot act on would produce a recorded choice that no generated file reflects, which
 //! data-model invariant I-12 forbids outright.
 //!
-//! **This is a real deviation and it is not resolved here.** [Phase 003 tasks T093a](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
-//! refers it to the
-//! maintainer as a governing-document question: either principle VII means "ask about everything
-//! the *product* will eventually support" and this phase is non-compliant, or it means "ask about
-//! everything *this build* honours" and it is compliant. That ruling is not this module's to make.
-
-use inquire::{Confirm, Text, error::InquireError};
+//! # That question was referred, and it was answered
+//!
+//! [Phase 003 tasks T093a](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+//! referred this to the maintainer as a governing-document question: either principle VII meant
+//! "ask about everything the *product* will eventually support", and this phase was
+//! non-compliant, or it meant "ask about everything *this build* honours", and it was compliant.
+//! That ruling was not this module's to make, and this comment said so while the referral was
+//! open.
+//!
+//! **The referral is closed. Constitution amendment 3.0.0, ratified 2026-08-18, chose the second
+//! reading** — see `governance/constitution-amendment-3.0.0.md` and the amendment history at the
+//! top of `CONSTITUTION.md`. The rule is now about what the *current* generator can honour, with
+//! four supporting clauses: a single-valued choice MAY be defaulted and MUST be recorded;
+//! unsupported choices MUST NOT be solicited or recorded; unsupported choices MUST be exposed as
+//! reserved inputs that fail naming the phase which will introduce support; and a choice becomes
+//! mandatory in **both** interfaces once its capability ships.
+//!
+//! Under that rule this module **complies**, and the amendment records the clause-by-clause
+//! evidence. It was a MAJOR amendment rather than a waiver precisely because the old sentence was
+//! not correct: it required questions for capabilities that do not exist, which contradicts the
+//! same principle's requirement that generated output reflect the selections actually acted on. A
+//! waiver would have expired and left the contradiction standing.
+//!
+//! **Nothing about this module's behaviour changed when the amendment landed, and nothing changes
+//! here now.** The prompts, their order, and the eight reserved-and-refused flags are exactly what
+//! they were; what changed is that the rule they are measured against is now the right rule. The
+//! fourth clause is the one that binds later work: **when a capability ships, its choice becomes
+//! mandatory in both the wizard and the flag surface.**
 
 use crate::generate::manifest::FileManifest;
+use crate::output::layout::{Report, Status};
+use crate::output::prompt;
 
 use super::model::Answers;
-use crate::exit::{CliError, Code};
+use crate::exit::CliError;
 
-/// Maps an `inquire` failure onto the error taxonomy.
+/// The title that opens the guided sequence.
 ///
-/// # Why this is worth its own function
-///
-/// `InquireError` distinguishes `OperationCanceled` (ESC), `OperationInterrupted` (Ctrl-C), and
-/// `NotTTY` as **separate typed variants** — which is exactly why [Phase 003 research §D2](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md)
-/// chose this crate over
-/// `dialoguer`. Cancellation gets exit `4` because the operator said no, and a missing terminal gets
-/// a usage error because the invocation was wrong; inferring the difference from an I/O error kind
-/// would get one of them wrong.
-fn from_inquire(error: InquireError) -> CliError {
-    match error {
-        InquireError::OperationCanceled | InquireError::OperationInterrupted => CliError::new(
-            Code::Cancelled,
-            "cancelled; nothing was written and the destination is unchanged",
-        ),
-        InquireError::NotTTY => CliError::new(
-            Code::Usage,
-            "there is no terminal to prompt on; supply the answers as flags instead",
-        ),
-        other => CliError::new(
-            Code::Internal,
-            format!("the prompt failed unexpectedly: {other}"),
-        ),
-    }
-}
+/// A literal, and it has to be: [`prompt::intro`] writes through the prompt library's own writer,
+/// which performs no redaction. See that function for why the type is the enforcement.
+const TITLE: &str = "Create a Renvor application";
 
 /// Runs the wizard, filling only what the flags did not supply.
 ///
 /// Every flag already given is **not** asked about again. A wizard that re-asks what the operator
 /// already typed teaches them to stop using flags.
 ///
+/// # The sequence is framed, and this function owns both ends
+///
+/// [`prompt::intro`] opens the connected rail and [`prompt::outro`] closes it. Owning both here —
+/// rather than opening in one function and closing in another — means there is no path on which a
+/// rail is opened and never closed, including the cancellation paths, because `?` returns before
+/// the close and cancellation ends the sequence anyway.
+///
+/// # The prompt *kinds* are unchanged, deliberately
+///
+/// Each question is the same kind it was before this crate changed prompt libraries: text stays
+/// text, confirmation stays confirmation. Turning the domain question into a radio would have
+/// matched the visual reference more closely and would have **removed the operator's ability to
+/// type a domain that is not on the list**. That is an interaction change wearing a presentation
+/// change's clothes.
+///
 /// # Errors
 ///
-/// [`Code::Cancelled`] (exit `4`) if the operator cancels at any prompt, or [`Code::Usage`] if
-/// there is no terminal.
+/// [`crate::exit::Code::Cancelled`] (exit `4`) if the operator cancels at any prompt, or
+/// [`crate::exit::Code::Usage`] if there is no terminal.
 pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
+    // BEFORE `intro`, because `intro` draws. `stdin` decided the wizard is eligible; this checks
+    // there is somewhere to draw it. Without the check the opening chrome landed in a redirected
+    // `stderr` and the refusal came afterwards.
+    prompt::require_drawable()?;
+    prompt::intro(TITLE)?;
+
     if answers.name.is_none() {
         // THE SHARED derivation, not a copy of it. See `model::derive_project_name`.
         let derived = super::model::derive_project_name(&answers.destination);
-        let name = Text::new("Project name")
-            .with_default(&derived)
-            .with_help_message("ASCII letters, digits, `-`, and `_`; it becomes a package name")
-            .prompt()
-            .map_err(from_inquire)?;
-        answers.name = Some(name);
+        answers.name = Some(prompt::text(
+            "Project name",
+            &derived,
+            Some("ASCII letters, digits, `-`, and `_`; it becomes a package name"),
+        )?);
     }
 
     if answers.local_domain.is_none() {
         let derived = super::model::derive_local_domain(answers.name.as_deref().unwrap_or("app"));
-        let domain = Text::new("Local development domain")
-            .with_default(&derived)
-            .prompt()
-            .map_err(from_inquire)?;
-        answers.local_domain = Some(domain);
+        answers.local_domain = Some(prompt::text("Local development domain", &derived, None)?);
     }
 
     if !answers.example_domain {
-        answers.example_domain = Confirm::new("Generate the example domain module?")
-            .with_default(true)
-            .prompt()
-            .map_err(from_inquire)?;
+        answers.example_domain = prompt::confirm("Generate the example domain module?", true)?;
     }
 
     if answers.example_domain && !answers.seed_data {
         // Only offered when it can be honoured. Offering seed data without the example domain
         // would present a choice whose only outcome is a validation failure.
-        answers.seed_data = Confirm::new("Generate seed data for it?")
-            .with_default(false)
-            .prompt()
-            .map_err(from_inquire)?;
+        answers.seed_data = prompt::confirm("Generate seed data for it?", false)?;
     }
 
     if !answers.container {
-        answers.container = Confirm::new("Generate container development controls?")
-            .with_default(false)
-            .prompt()
-            .map_err(from_inquire)?;
+        answers.container = prompt::confirm("Generate container development controls?", false)?;
     }
 
     if !answers.local_https {
-        answers.local_https = Confirm::new(
+        answers.local_https = prompt::confirm(
             "Record that local HTTPS is wanted? (nothing is issued and no trust store is touched)",
-        )
-        .with_default(false)
-        .prompt()
-        .map_err(from_inquire)?;
+            false,
+        )?;
     }
 
+    prompt::outro("Answers recorded")?;
     Ok(answers)
 }
 
@@ -152,53 +160,76 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
 /// answers, and printing it only on the success path would lose exactly the case the requirement
 /// is about.
 ///
+/// # It is a report, not the prompt library's note helper
+///
+/// Every value on this screen — the project name, the destination, the file list — comes from
+/// outside the program. The library's `note` would draw them inside its own box and never see
+/// [`crate::output::redact`]. A [`Report`] emitted through the reporter redacts and neutralises
+/// each field on the way out and aligns them into rows, which is also what makes the screen
+/// scannable rather than a wall of prose.
+///
 /// # Errors
 ///
-/// [`Code::Cancelled`] (exit `4`) if the operator declines or interrupts.
+/// [`crate::exit::Code::Cancelled`] (exit `4`) if the operator declines or interrupts.
 pub fn review(
     reporter: &crate::output::Reporter,
     configuration: &super::model::ProjectConfiguration,
     manifest: &FileManifest,
     warnings: &[String],
 ) -> Result<(), CliError> {
-    reporter.note("");
-    reporter.note(&format!("  project      {}", configuration.name()));
-    reporter.note(&format!(
-        "  destination  {}",
-        configuration.destination_display()
-    ));
-    reporter.note(&format!("  local domain {}", configuration.local_domain()));
-    reporter.note(&format!(
-        "  files        {} ({} bytes)",
-        manifest.file_count(),
-        manifest.total_bytes()
-    ));
+    let mut report = Report::new()
+        .blank()
+        .status(Status::Info, "Review before creating")
+        .blank()
+        .row("Project", configuration.name())
+        .row("Destination", configuration.destination_display())
+        .row("Local domain", configuration.local_domain())
+        .row(
+            "Files",
+            format!(
+                "{} ({} bytes)",
+                manifest.file_count(),
+                manifest.total_bytes()
+            ),
+        )
+        .blank();
+
     for path in manifest.paths() {
-        reporter.note(&format!("    {path}"));
+        report = report.item(path);
     }
+
     for warning in warnings {
-        reporter.note(&format!("  warning: {warning}"));
+        report = report.blank().status(Status::Warn, warning.clone());
     }
-    reporter.note("");
-    reporter.note(&format!(
-        "  equivalent command: {}",
-        configuration.equivalent_command()
-    ));
-    reporter.note("");
 
-    let confirmed = Confirm::new("Create this project?")
-        .with_default(true)
-        .prompt()
-        .map_err(from_inquire)?;
+    // THE LITERAL PREFIX IS LOAD-BEARING AND IS NOT A STYLE CHOICE.
+    //
+    // `equivalent command: ` is the anchor `tests/parity.rs` searches for in a pty transcript in
+    // order to extract the command and **run it**, and `tests/transaction.rs` asserts on it too. A
+    // pty transcript has no reliable line structure — ConPTY mirrors the screen and merges lines —
+    // so a heading on its own line with the command underneath would be a shape the harness cannot
+    // find. One greppable token survives any merging.
+    //
+    // `new.rs` prints the same token on the path where there is no review, so the two agree.
+    report = report
+        .blank()
+        .text(format!(
+            "equivalent command: {}",
+            configuration.equivalent_command()
+        ))
+        .blank();
 
-    if !confirmed {
-        return Err(CliError::new(
-            Code::Cancelled,
-            "declined; nothing was written and the destination is unchanged. The equivalent \
-             command above reproduces these answers without the prompts",
-        ));
+    reporter.emit(&report);
+
+    if prompt::confirm("Create this project?", true)? {
+        return Ok(());
     }
-    Ok(())
+
+    Err(CliError::new(
+        crate::exit::Code::Cancelled,
+        "declined; nothing was written and the destination is unchanged. The equivalent \
+         command above reproduces these answers without the prompts",
+    ))
 }
 
 #[cfg(test)]
@@ -206,37 +237,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cancellation_and_interruption_both_exit_four() {
-        // FR-011 and C-1. Ctrl-C and ESC are different events and the same outcome: the operator
-        // said no. Distinguishing them in the exit code would make scripts handle two cases for one
-        // meaning.
-        for error in [
-            InquireError::OperationCanceled,
-            InquireError::OperationInterrupted,
-        ] {
-            let mapped = from_inquire(error);
-            assert_eq!(mapped.code, Code::Cancelled);
-            assert_eq!(mapped.exit(), crate::exit::Exit::Cancelled);
-        }
+    fn the_title_names_the_thing_being_created() {
+        // The frame is the one piece of prompt chrome this module owns. It is asserted because it
+        // is a `&'static str` for a security reason, and a test that reads it is the cheapest
+        // reminder of why it cannot become a `format!`.
+        assert_eq!(TITLE, "Create a Renvor application");
     }
 
     #[test]
-    fn a_missing_terminal_is_a_usage_error_and_not_a_cancellation() {
-        // The distinction Phase 003 research §D2 selected this crate for (see the module
-        // header above for the pinned record). `NotTTY` means the invocation was
-        // wrong, not that anybody declined — and the message must say what to do instead.
-        let mapped = from_inquire(InquireError::NotTTY);
-        assert_eq!(mapped.code, Code::Usage);
-        assert_eq!(mapped.exit(), crate::exit::Exit::Usage);
-        assert!(mapped.message.contains("flags"), "{}", mapped.message);
-    }
-
-    #[test]
-    fn an_unexpected_prompt_failure_is_a_defect_not_a_cancellation() {
-        // Exit 1 is reserved for defects. Folding an unknown prompt failure into `cancelled` would
-        // hide a bug behind an outcome that looks deliberate.
-        let mapped = from_inquire(InquireError::Custom("boom".into()));
-        assert_eq!(mapped.code, Code::Internal);
-        assert_eq!(mapped.exit(), crate::exit::Exit::Unclassified);
+    fn declining_the_review_says_the_destination_is_unchanged() {
+        // The message is the whole remedy: an operator who declines has to know that nothing was
+        // written and that the equivalent command reproduces their answers. Asserted rather than
+        // trusted, because it is prose and prose is what gets shortened.
+        let error = CliError::new(
+            crate::exit::Code::Cancelled,
+            "declined; nothing was written and the destination is unchanged. The equivalent \
+             command above reproduces these answers without the prompts",
+        );
+        assert_eq!(error.exit(), crate::exit::Exit::Cancelled);
+        assert!(error.message.contains("nothing was written"));
+        assert!(error.message.contains("equivalent"));
     }
 }

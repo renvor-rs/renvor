@@ -1,8 +1,14 @@
 # Waiver Ledger
 
-**Status**: **6 active waivers** — W-001 (approval gap, seeded at T015), W-002 (ADR review gap), **W-003 (Phase 001 independent-review gap, granted 2026-08-15 at T088)**, **W-004 and W-005 (Phase 002 review gaps, granted 2026-08-16)**, and **W-006 (ADR-0009 review gap, granted 2026-08-17)** — which is the **third** explicit reviewed exception in Phase 002 and therefore **exceeds this ledger's own expected maximum of two per phase**. That departure is recorded at [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure) rather than absorbed silently.
+**Status**: **7 active waivers** — W-001 (approval gap, seeded at T015), W-002 (ADR review gap), **W-003 (Phase 001 independent-review gap, granted 2026-08-15 at T088)**, **W-004 and W-005 (Phase 002 review gaps, granted 2026-08-16)**, **W-006 (ADR-0009 review gap, granted 2026-08-17)**, and **W-008 (Phase 003 review gap, granted 2026-08-19)**. W-006 is the **third** explicit reviewed exception in Phase 002 and therefore **exceeds this ledger's own expected maximum of two per phase**; that departure is recorded at [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure) rather than absorbed silently. W-008 trips the ledger's **trend guard** — three consecutive phases waiving the same rule for the same reason — which is recorded at [§The trend guard is TRIPPED](#the-trend-guard-is-tripped-and-this-is-the-entry-that-says-so) together with the **RO-001** obligation granted with it.
 **Satisfies**: spec FR-015, FR-051; constitution §Governance
 **Schema**: [`data-model.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/data-model.md) §Waiver Record
+
+> **This headline read “6 active waivers” and omitted W-008 until 2026-08-21.** The table below
+> has carried seven rows since W-008 was granted on 2026-08-19; only this summary and the two
+> category summaries below were left behind. `GOVERNANCE.md` said **Seven** throughout and was
+> already correct. Corrected without changing the scope, controls, expiry, or removal plan of any
+> waiver — the count was wrong, not the grants.
 
 > **All seven fields are mandatory.** The constitution permits exceptions only through a
 > time-bounded written waiver naming the violated rule, reason, compensating controls,
@@ -304,13 +310,14 @@ one category does not consume the allowance of another.
 |---|---|---|
 | Repository **approval** waivers | exactly **1** | **W-001** — single-maintainer approval gap *(seeded 2026-08-11 at T015)*. **Unchanged by W-003, W-004, W-005, and W-006** |
 | **Control-unavailability** waivers | **0** | none expected — research Finding 3 confirmed every required repository control is free on the public tier, so cost or plan tier is never an accepted reason |
-| **Explicit reviewed exceptions** | **at most 2 per phase** — **breached once, in Phase 002, which holds 3** *(see [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure))* | **W-002** — ADR independent-review gap (Phase 001); **W-003** — Phase 001 independent requirements-and-security-review gap *(granted 2026-08-15)*; **W-004** — ADR-0007 independent-review gap *(granted 2026-08-16)*; **W-005** — Phase 002 independent requirements-and-security-review gap *(granted 2026-08-16)*; **W-006** — ADR-0009 independent-review gap *(granted 2026-08-17)* |
+| **Explicit reviewed exceptions** | **at most 2 per phase** — **breached once, in Phase 002, which holds 3** *(see [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure))*. Phase 001 holds 2, Phase 003 holds 1 | **W-002** — ADR independent-review gap (Phase 001); **W-003** — Phase 001 independent requirements-and-security-review gap *(granted 2026-08-15)*; **W-004** — ADR-0007 independent-review gap *(granted 2026-08-16)*; **W-005** — Phase 002 independent requirements-and-security-review gap *(granted 2026-08-16)*; **W-006** — ADR-0009 independent-review gap *(granted 2026-08-17)*; **W-008** — Phase 003 independent requirements-and-security-review gap *(granted 2026-08-19)* |
 
-**W-002, W-003, W-004, W-005, and W-006 are explicit reviewed exceptions, not part of the normal
-expected waiver count.** Each was granted by a recorded maintainer decision — W-002 on
-2026-08-11, W-003 on 2026-08-15, W-004 and W-005 on 2026-08-16, W-006 on 2026-08-17 — rather than
-arising from a design shortfall, and none indicates that anything in the design failed to work.
-**All five exist for the same underlying reason: the project has one person.** They are separate
+**W-002, W-003, W-004, W-005, W-006, and W-008 are explicit reviewed exceptions, not part of the
+normal expected waiver count.** Each was granted by a recorded maintainer decision — W-002 on
+2026-08-11, W-003 on 2026-08-15, W-004 and W-005 on 2026-08-16, W-006 on 2026-08-17, W-008 on
+2026-08-19 — rather than arising from a design shortfall, and none indicates that anything in the
+design failed to work.
+**All six exist for the same underlying reason: the project has one person.** They are separate
 waivers because they cover different rules, at different levels, in different phases:
 
 | Waiver | Level | Phase |
@@ -320,6 +327,7 @@ waivers because they cover different rules, at different levels, in different ph
 | **W-004** | decision record — **ADR-0007 only** | Phase 002 |
 | **W-005** | phase-level review | Phase 002 |
 | **W-006** | decision record — **ADR-0009 only** | Phase 002 |
+| **W-008** | phase-level review | Phase 003 |
 
 **The two axes are deliberately not collapsed.** A record-level waiver does not authorise closing
 a phase, and a phase-level waiver does not authorise accepting a decision record — which is

@@ -10,6 +10,8 @@
 //! making the rest of the acceptance suite give up its diagnostics. That is a real trade: the
 //! failures here are harder to debug, deliberately.
 
+mod harness;
+
 use std::path::Path;
 use std::process::Command;
 
@@ -390,4 +392,91 @@ fn a_credential_in_a_rejected_argument_is_redacted_in_every_mode() {
             }
         }
     }
+}
+
+/// A terminal that is allowed to be in colour.
+///
+/// The shared harness pins `NO_COLOR=1` and `TERM=dumb` so the rest of the suite reads plain text.
+/// The test below needs the opposite, because the defect it guards **only exists when there is
+/// styling to hide behind**.
+const IN_COLOUR: &[(&str, &str)] = &[("NO_COLOR", ""), ("TERM", "xterm-256color")];
+
+#[test]
+fn styling_cannot_hide_a_credential_from_the_redactor() {
+    // A REGRESSION TEST FOR A DEFECT INTRODUCED BY CONTRACT C-8 AND CAUGHT BY THIS SUITE.
+    //
+    // Redaction recognises a credential by its `key=value` shape. When the argument parser's own
+    // rendering gained colour, a rejected argument came back as
+    // `'<ESC>[33mpassword=hunter2<ESC>[0m'` — and the scanner that walks backwards from the `=`
+    // looking for a key walked into `33m` first, because `m` and `3` are perfectly good key
+    // characters. It concluded the key was `33mpassword`, matched no secret, and printed the
+    // credential **verbatim**.
+    //
+    // The fix is C-8's own ordering rule applied to argv: the argument is redacted while it is
+    // still a bare token, before anything styles it. `no_output_mode_leaks_a_credential_shaped_value`
+    // and `a_credential_in_a_rejected_argument_is_redacted_in_every_mode` cover the piped path;
+    // this covers the styled one, and the two differ in exactly the way that hid the defect.
+    //
+    // Both assertions carry fixed messages, per this file's rule. Neither prints the rendering.
+    let base = tempfile::tempdir().expect("tempdir");
+    let mut terminal =
+        harness::Terminal::spawn_sized(&["password=hunter2"], base.path(), IN_COLOUR, 100);
+    let code = terminal.wait();
+    assert_ne!(code, 0, "an unknown argument must be rejected");
+    assert!(
+        !terminal.transcript.contains(PLANTED),
+        "the credential survived into a styled rendering"
+    );
+    // POSITIVE CONTROL: without this, "the secret is absent" would be satisfied by empty output.
+    assert!(
+        terminal.visible().contains("[redacted]"),
+        "nothing was redacted, so the assertion above proved nothing"
+    );
+}
+
+#[test]
+fn a_control_character_from_argv_never_reaches_a_prompt_as_a_control_character() {
+    // A DEFECT THAT PREDATES CONTRACT C-8 AND THAT C-8'S OWN WORDING CLAIMED COULD NOT EXIST.
+    //
+    // A prompt's suggested default is derived from operator input — the project name comes from
+    // `argv`, and the local domain comes from the project name. The prompt library draws it
+    // through its own writer, which never sees `crate::output::redact`.
+    //
+    // Measured on a real pty against both this build and `origin/main`: `renvor new $'de\x1b[31mmo'`
+    // rendered the escape sequence **into the terminal**, where it recoloured every character
+    // after it. A longer sequence clears the screen or repositions the cursor, and a prompt is
+    // exactly where an operator is about to type.
+    //
+    // The default is now escaped before the library sees it, so the sequence is visible as text.
+    // Both assertions carry fixed messages, per this file's rule; neither prints the rendering.
+    let base = tempfile::tempdir().expect("tempdir");
+    let hostile = "de\u{1b}[31mmo";
+    let mut terminal = harness::Terminal::spawn_sized(
+        &["new", hostile, "--path", "./x"],
+        base.path(),
+        IN_COLOUR,
+        100,
+    );
+    terminal.expect("Local development domain");
+    terminal.escape();
+    assert_eq!(terminal.wait(), 4, "cancelling must exit 4");
+
+    // The operator's own escape sequence must not be in the transcript as bytes. The program's
+    // OWN styling is there and is expected, so the needle is the specific sequence argv carried.
+    assert!(
+        !terminal.transcript.contains("\u{1b}[31mmo"),
+        "an escape sequence from argv was rendered into the prompt"
+    );
+    // POSITIVE CONTROL: the default was drawn at all. Without this, "the sequence is absent" would
+    // be satisfied by a prompt that never showed the value.
+    assert!(
+        terminal.visible().contains("mo.test"),
+        "the suggested default was not drawn, so the assertion above proved nothing"
+    );
+    // And it was escaped rather than dropped: a value silently stripped is a value the operator
+    // cannot tell they typed.
+    assert!(
+        terminal.visible().contains("u{1b}[31m"),
+        "the sequence was removed rather than shown as text"
+    );
 }

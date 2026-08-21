@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "status": "failure",
+  "command": "tls",
+  "error": {
+    "code": "reserved_for_later_phase",
+    "message": "consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no transport yet, so a certificate issued now would protect nothing. Nothing was changed. This becomes available in Phase 004 (the first real transport)",
+    "details": {
+      "flag": "tls trust",
+      "phase": "Phase 004 (the first real transport)",
+      "trustStoreModifications": "0"
+    }
+  }
+}

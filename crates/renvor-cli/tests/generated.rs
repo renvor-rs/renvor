@@ -30,7 +30,20 @@ const VARIANTS: [&[&str]; 5] = [
 ];
 
 /// Runs a command in a directory with an isolated target directory, returning combined output.
-fn run(program: &str, args: &[&str], directory: &Path, target: &Path) -> (bool, String) {
+///
+/// # The exit status is part of the output, and that was learned the hard way
+///
+/// This used to return the two streams and drop the status. On 2026-08-21 a full verification run
+/// failed here once, under heavy parallel load, with the message
+/// `generation failed for ["--container"]:` and **nothing after the colon** — the child had
+/// produced no output at all, which is the one case where the streams say nothing and the status
+/// says everything. The failure did not reproduce in six subsequent runs of the same command.
+///
+/// A diagnostic that is empty on the one failure mode nobody can reproduce is worse than no
+/// diagnostic, because it sends the next reader looking at the program instead of at the process.
+/// The status is now reported: an exit code distinguishes a refusal from a crash, and a signal
+/// distinguishes a crash from an out-of-memory kill.
+fn run(program: &str, args: &[&str], directory: &Path, target: &Path) -> Run {
     let output = Command::new(program)
         .args(args)
         .current_dir(directory)
@@ -39,20 +52,57 @@ fn run(program: &str, args: &[&str], directory: &Path, target: &Path) -> (bool, 
         .unwrap_or_else(|error| panic!("`{program}` could not be run: {error}"));
     let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
     combined.push_str(&String::from_utf8_lossy(&output.stderr));
-    (output.status.success(), combined)
+    Run {
+        succeeded: output.status.success(),
+        status: describe(&output.status),
+        output: combined,
+    }
+}
+
+/// One command's result.
+///
+/// `status` is deliberately **not** part of `output`: two call sites parse `output` as a JSON
+/// document, and prefixing it with a status line makes that fail — which is what happened on the
+/// first attempt at this change, and is why the two are separate fields rather than one string.
+struct Run {
+    succeeded: bool,
+    /// Never empty. See [`describe`].
+    status: String,
+    output: String,
+}
+
+/// How a child process ended, in a form that is never empty.
+fn describe(status: &std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        return format!("exit {code}");
+    }
+    // No code means a signal, which is the case an empty diagnostic hides completely: a process
+    // killed for using too much memory looks exactly like a process that chose to fail.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt as _;
+        if let Some(signal) = status.signal() {
+            return format!("killed by signal {signal}");
+        }
+    }
+    format!("ended without an exit code: {status}")
 }
 
 /// Generates one variant and returns its directory.
 fn generate(base: &Path, flags: &[&str]) -> std::path::PathBuf {
     let mut args = vec!["new", "demo", "--yes"];
     args.extend_from_slice(flags);
-    let (ok, output) = run(
+    let outcome = run(
         env!("CARGO_BIN_EXE_renvor"),
         &args,
         base,
         &base.join(".target"),
     );
-    assert!(ok, "generation failed for {flags:?}:\n{output}");
+    assert!(
+        outcome.succeeded,
+        "generation failed for {flags:?} [{}]:\n{}",
+        outcome.status, outcome.output
+    );
     base.join("demo")
 }
 
@@ -63,14 +113,19 @@ fn every_generated_variant_formats_compiles_and_tests() {
         let project = generate(base.path(), flags);
         let target = base.path().join(".build");
 
-        let (formatted, output) = run("cargo", &["fmt", "--check"], &project, &target);
+        let outcome = run("cargo", &["fmt", "--check"], &project, &target);
         assert!(
-            formatted,
-            "`cargo fmt --check` failed for {flags:?}:\n{output}"
+            outcome.succeeded,
+            "`cargo fmt --check` failed for {flags:?} [{}]:\n{}",
+            outcome.status, outcome.output
         );
 
-        let (tested, output) = run("cargo", &["test"], &project, &target);
-        assert!(tested, "`cargo test` failed for {flags:?}:\n{output}");
+        let outcome = run("cargo", &["test"], &project, &target);
+        assert!(
+            outcome.succeeded,
+            "`cargo test` failed for {flags:?} [{}]:\n{}",
+            outcome.status, outcome.output
+        );
     }
 }
 
@@ -80,12 +135,21 @@ fn the_generated_binary_starts_and_names_itself() {
     let base = tempfile::tempdir().expect("tempdir");
     let project = generate(base.path(), &["--example-domain", "--seed-data"]);
     let target = base.path().join(".build");
-    let (ok, output) = run("cargo", &["run", "--quiet"], &project, &target);
-    assert!(ok, "the generated binary did not run:\n{output}");
-    assert!(output.contains("demo is running"), "{output}");
+    let outcome = run("cargo", &["run", "--quiet"], &project, &target);
     assert!(
-        output.contains("2 items"),
-        "seed data did not reach the domain module:\n{output}"
+        outcome.succeeded,
+        "the generated binary did not run [{}]:\n{}",
+        outcome.status, outcome.output
+    );
+    assert!(
+        outcome.output.contains("demo is running"),
+        "{}",
+        outcome.output
+    );
+    assert!(
+        outcome.output.contains("2 items"),
+        "seed data did not reach the domain module:\n{}",
+        outcome.output
     );
 }
 
@@ -137,7 +201,7 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
     let base = tempfile::tempdir().expect("tempdir");
     let target = base.path().join(".target");
 
-    let (ok, dry) = run(
+    let dry_run = run(
         env!("CARGO_BIN_EXE_renvor"),
         &[
             "new",
@@ -151,18 +215,27 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
         base.path(),
         &target,
     );
-    assert!(ok, "the dry run failed:\n{dry}");
+    assert!(
+        dry_run.succeeded,
+        "the dry run failed [{}]:\n{}",
+        dry_run.status, dry_run.output
+    );
     assert!(
         !base.path().join("demo").exists(),
         "the dry run created the destination"
     );
 
-    let dry: serde_json::Value = serde_json::from_str(dry.trim())
-        .unwrap_or_else(|error| panic!("stdout was not one JSON document: {error}\n{dry}"));
+    let dry: serde_json::Value =
+        serde_json::from_str(dry_run.output.trim()).unwrap_or_else(|error| {
+            panic!(
+                "stdout was not one JSON document: {error}\n{}",
+                dry_run.output
+            )
+        });
     assert_eq!(dry["status"], "success");
     assert_eq!(dry["result"]["dryRun"], true);
 
-    let (ok, real) = run(
+    let real_run = run(
         env!("CARGO_BIN_EXE_renvor"),
         &[
             "new",
@@ -175,8 +248,13 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
         base.path(),
         &target,
     );
-    assert!(ok, "the real run failed:\n{real}");
-    let real: serde_json::Value = serde_json::from_str(real.trim()).expect("one JSON document");
+    assert!(
+        real_run.succeeded,
+        "the real run failed [{}]:\n{}",
+        real_run.status, real_run.output
+    );
+    let real: serde_json::Value =
+        serde_json::from_str(real_run.output.trim()).expect("one JSON document");
 
     assert_eq!(
         dry["result"]["manifest"], real["result"]["manifest"],

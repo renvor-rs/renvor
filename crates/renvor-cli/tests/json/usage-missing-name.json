@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 2,
+  "status": "failure",
+  "command": "new",
+  "error": {
+    "code": "usage",
+    "message": "`renvor new` needs either a NAME or `--path`; with neither there is nowhere to create the project",
+    "details": {
+      "missing": "NAME or --path"
+    }
+  }
+}

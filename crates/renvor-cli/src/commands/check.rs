@@ -184,10 +184,14 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
         return Err(invalid("renvor.template_version", "must not be empty"));
     }
 
-    let human = format!(
-        "ok  {} (target {}, template version {})",
-        manifest.project.name, manifest.project.target, manifest.renvor.template_version
-    );
+    let human = crate::output::layout::Report::new()
+        .status(
+            crate::output::layout::Status::Done,
+            "The project manifest is valid",
+        )
+        .row("Project", manifest.project.name.clone())
+        .row("Target", manifest.project.target.clone())
+        .row("Template version", manifest.renvor.template_version.clone());
     Ok(reporter.finish(
         "check",
         &human,

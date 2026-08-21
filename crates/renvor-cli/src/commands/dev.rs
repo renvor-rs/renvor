@@ -12,6 +12,7 @@
 
 use crate::exit::{CliError, Code, Exit};
 use crate::output::Reporter;
+use crate::output::layout::{Report, Status};
 
 /// Runs the command in a project directory.
 ///
@@ -37,7 +38,10 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
     if dry_run {
         return Ok(reporter.finish(
             "dev",
-            "dry run: would run `cargo test` in the project",
+            &Report::new().status(
+                Status::Info,
+                "Dry run: would run `cargo test` in the project",
+            ),
             serde_json::json!({ "dryRun": true, "wouldRun": ["cargo", "test"] }),
         ));
     }
@@ -80,7 +84,7 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
 
     Ok(reporter.finish(
         "dev",
-        "ok  the project builds and its tests pass",
+        &Report::new().status(Status::Done, "The project builds and its tests pass"),
         serde_json::json!({ "ran": "cargo test", "passed": true }),
     ))
 }

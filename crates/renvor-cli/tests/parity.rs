@@ -192,7 +192,7 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     answered.expect("Generate seed data for it?");
     answered.enter();
     answered.expect("Generate container development controls?");
-    answered.send_line("y");
+    answered.key("y");
     answered.expect("Record that local HTTPS is wanted?");
     answered.enter();
     answered.expect("Create this project?");
@@ -405,7 +405,7 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         declined.enter();
     }
     declined.expect("Create this project?");
-    declined.send_line("n");
+    declined.key("n");
     assert_eq!(declined.wait(), 4, "declining exits 4");
     assert!(
         !from_command.join("demo").exists(),
@@ -424,7 +424,12 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         .find("equivalent command: ")
         .unwrap_or_else(|| panic!("no equivalent command was printed\n{visible}"))
         + "equivalent command: ".len();
-    // The end of the command is the earliest of a line break OR `inquire`'s prompt marker `? `.
+    // The end of the command is the earliest of a line break OR a prompt marker `? `.
+    //
+    // `? ` was the previous prompt library's marker and the current one does not emit it, so this
+    // delimiter is now belt to the line break's braces rather than the load-bearing half. It is
+    // kept because it costs nothing and because a shell command emitted by `equivalent_command`
+    // never contains `? `, so it cannot truncate a real command.
     //
     // ConPTY does not merely wrap lines, it merges them: the equivalent-command line and the
     // review screen's question arrived as one line, so bounding on `\r`/`\n` alone swept

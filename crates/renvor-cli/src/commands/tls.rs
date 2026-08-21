@@ -108,7 +108,10 @@ pub fn trust(
     if dry_run {
         return Ok(reporter.finish(
             "tls",
-            "dry run: nothing was asked and nothing would be changed",
+            &crate::output::layout::Report::new().status(
+                crate::output::layout::Status::Info,
+                "Dry run: nothing was asked and nothing would be changed",
+            ),
             serde_json::json!({
                 "dryRun": true,
                 "trustStoreModifications": 0,
@@ -121,17 +124,33 @@ pub fn trust(
     let consented = if consent_flag_given {
         true
     } else if terminal {
-        inquire::Confirm::new("Install a new certificate authority into your system trust store?")
-            .with_default(false) // NEVER default to yes. See the module header.
-            .prompt()
-            .map_err(|error| match error {
-                inquire::error::InquireError::OperationCanceled
-                | inquire::error::InquireError::OperationInterrupted => CliError::new(
+        // NEVER default to yes. See the module header.
+        crate::output::prompt::confirm(
+            "Install a new certificate authority into your system trust store?",
+            false,
+        )
+        .map_err(|error| {
+            // The taxonomy comes from the one classifier; only the WORDS are specialised here.
+            // A cancellation at this particular question has a specific reassurance to give —
+            // that the trust store was not touched — and the generic "nothing was written and the
+            // destination is unchanged" is about a destination this command does not have.
+            if error.code == Code::Cancelled {
+                // NO `details` ADDED HERE, DELIBERATELY.
+                //
+                // A `trustStoreModifications` detail was added on the first pass at this and then
+                // removed: `CliError::details` is serialised straight into the JSON envelope, so
+                // adding a key means `renvor --output json tls trust`, cancelled at the prompt,
+                // emits a field it did not emit before. This branch changes presentation, and a
+                // new key on the machine-readable surface is not presentation. If the key is
+                // wanted it belongs in a change that says so.
+                CliError::new(
                     Code::Cancelled,
                     "consent withheld; the trust store was not modified",
-                ),
-                other => CliError::new(Code::Internal, format!("the prompt failed: {other}")),
-            })?
+                )
+            } else {
+                error
+            }
+        })?
     } else {
         // US6 acceptance scenario 3. Naming the flag is the point: a refusal that says "consent
         // required" and stops leaves an automation author guessing.

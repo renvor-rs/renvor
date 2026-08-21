@@ -31,6 +31,96 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 /// gets retried — see the module note in `transaction.rs`.
 const EXPECT_TIMEOUT: Duration = Duration::from_secs(120);
 
+/// How many pseudo-terminals this test binary may hold open at once.
+///
+/// # This exists because `openpty` ran out, and did so intermittently
+///
+/// A pseudo-terminal is a **finite operating-system resource** — macOS caps them at
+/// `kern.tty.ptmx_max`, and a CI container's limit is usually lower. Four pty-driving test files
+/// running their tests in parallel, inside a `cargo test` that also runs those files in parallel,
+/// reached the cap during a full verification run and produced
+/// `failed to openpty: Os { code: -6 }` in one test while fifteen others passed.
+///
+/// That is the worst shape a failure can take: it depends on machine load, so it passes locally,
+/// passes on a rerun, and fails on someone else's pull request. Capping the concurrency makes the
+/// resource use bounded instead of merely usually-sufficient.
+///
+/// Four, rather than one: these tests are dominated by waiting for a subprocess, so serialising
+/// them entirely would multiply the suite's wall-clock time for no benefit.
+const CONCURRENT_TERMINALS: usize = 4;
+
+/// The counter behind [`CONCURRENT_TERMINALS`], and the condition variable waiters sleep on.
+static IN_FLIGHT: std::sync::Mutex<usize> = std::sync::Mutex::new(0);
+static RELEASED: std::sync::Condvar = std::sync::Condvar::new();
+
+/// One terminal's share of the cap, released when the last holder drops it.
+///
+/// # The reader thread holds a clone, and that is the load-bearing part
+///
+/// Dropping a [`Terminal`] drops its writer, but the **reader thread still holds a cloned handle
+/// to the same pty** and only closes it when it observes end of file, which happens a moment
+/// later. A permit released when `Terminal` drops would therefore hand the slot to the next test
+/// while the file descriptor was still open — which is the exact race this cap exists to remove.
+///
+/// So the permit is an `Arc` and the reader thread owns a clone. The slot frees when *both* are
+/// gone, which is when the descriptors are actually closed.
+struct Permit;
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        let mut count = IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        *count = count.saturating_sub(1);
+        RELEASED.notify_one();
+    }
+}
+
+/// How long to wait for a slot before giving up on the cap and proceeding anyway.
+///
+/// # The cap must never be the reason a suite hangs
+///
+/// The first version of this waited on the condition variable **with no timeout**. A permit is
+/// released only once the reader thread has also finished with its handle, and that thread ends
+/// when the pty reaches end of file — so anything leaving a child alive holds a slot
+/// indefinitely, and after [`CONCURRENT_TERMINALS`] of those every later test blocks forever with
+/// no diagnostic at all.
+///
+/// That is the worst failure a suite can have. A hang produces no test name, no assertion, and no
+/// output; on CI it is indistinguishable from a slow machine until the job is killed. An advisory
+/// review predicted exactly this, and it then happened on the Windows leg — forty-one minutes of
+/// silence and `The operation was canceled`, with nothing in the log naming the test responsible.
+///
+/// So the cap is now **advisory**. It is an optimisation that avoids exhausting a finite operating
+/// system resource; it is not a correctness requirement, and it is never worth a deadlock.
+/// Overshooting prints why and carries on — a noisy pass beats a silent hang.
+const SLOT_WAIT: Duration = Duration::from_secs(30);
+
+fn acquire_terminal_slot() -> std::sync::Arc<Permit> {
+    let mut count = IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let deadline = Instant::now() + SLOT_WAIT;
+    while *count >= CONCURRENT_TERMINALS {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            eprintln!(
+                "harness: {} pseudo-terminals still in flight after {}s; proceeding without a \
+                 slot. An earlier test left a child alive.",
+                *count,
+                SLOT_WAIT.as_secs()
+            );
+            break;
+        }
+        let (guard, _) = RELEASED
+            .wait_timeout(count, remaining)
+            .unwrap_or_else(|poison| poison.into_inner());
+        count = guard;
+    }
+    *count += 1;
+    std::sync::Arc::new(Permit)
+}
+
 /// A live `renvor` process attached to a real terminal.
 pub struct Terminal {
     writer: Box<dyn Write + Send>,
@@ -47,11 +137,34 @@ pub struct Terminal {
     reader_ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     /// How many cursor-position reports we have already answered. See [`Terminal::answer_status_reports`].
     reports_answered: usize,
+    /// This terminal's share of [`CONCURRENT_TERMINALS`]. Dropped last, by the reader thread.
+    _permit: std::sync::Arc<Permit>,
 }
 
 impl Terminal {
-    /// Spawns `renvor` with `args`, in `directory`, attached to a pty.
+    /// Spawns `renvor` with `args`, in `directory`, attached to a very wide pty.
     pub fn spawn(args: &[&str], directory: &Path, env: &[(&str, &str)]) -> Self {
+        Self::spawn_sized(args, directory, env, 1000)
+    }
+
+    /// Spawns `renvor` attached to a pty of a chosen width.
+    ///
+    /// # Why the width is a parameter at all
+    ///
+    /// Contract C-8's layout rules are **about** the width: leaders appear when a run of them
+    /// fits and the row stacks when it does not, and the threshold is derived from the content
+    /// rather than from a column count. A harness fixed at one width can assert neither branch.
+    ///
+    /// [`Terminal::spawn`] keeps 1000 for everything else, for the reason recorded below.
+    pub fn spawn_sized(
+        args: &[&str],
+        directory: &Path,
+        env: &[(&str, &str)],
+        columns: u16,
+    ) -> Self {
+        // Before `openpty`, not after: the cap is only a cap if it is taken while the resource is
+        // still free.
+        let permit = acquire_terminal_slot();
         let pty = native_pty_system()
             // DELIBERATELY VERY WIDE, AND THIS IS NOT COSMETIC.
             //
@@ -66,7 +179,7 @@ impl Terminal {
             // to un-wrap — means modelling the screen, which is writing a terminal emulator.
             .openpty(PtySize {
                 rows: 200,
-                cols: 1000,
+                cols: columns,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -78,7 +191,10 @@ impl Terminal {
         }
         command.cwd(directory);
         // Keep the prompt rendering stable and free of hyperlink/styling variation between the
-        // matrix legs. `inquire` still draws its prompts; only the colouring is suppressed.
+        // matrix legs. The prompt library still draws its prompts; only the colouring is
+        // suppressed. `TERM=dumb` and `NO_COLOR` are two of the five refusals in contract C-8,
+        // so a transcript captured here carries no SGR sequences at all — which is what lets
+        // these tests assert on text rather than on styled text.
         command.env("NO_COLOR", "1");
         command.env("TERM", "dumb");
         for (key, value) in env {
@@ -97,7 +213,11 @@ impl Terminal {
         let (sender, receiver) = mpsc::channel();
         let reader_ended = std::sync::Arc::new(std::sync::Mutex::new(None));
         let ended = std::sync::Arc::clone(&reader_ended);
+        // The thread's own clone of the permit. See [`Permit`]: the slot is not free until this
+        // thread has finished with its handle to the pty, which is later than `Terminal::drop`.
+        let held = std::sync::Arc::clone(&permit);
         std::thread::spawn(move || {
+            let _held = held;
             let mut buffer = [0_u8; 1024];
             let mut total = 0_usize;
             let reason = loop {
@@ -128,6 +248,7 @@ impl Terminal {
             _slave: pty.slave,
             transcript: String::new(),
             reader_ended,
+            _permit: permit,
             reports_answered: 0,
         }
     }
@@ -169,7 +290,8 @@ impl Terminal {
     ///
     /// # Without this, the Windows leg deadlocks, and the reason is worth stating
     ///
-    /// `crossterm` — which `inquire` renders through — asks the terminal where the cursor is by
+    /// `crossterm` — which the prompt library used to render through — asked the terminal where
+    /// the cursor is by
     /// writing a **Device Status Report** and then **blocking until the terminal answers**. A real
     /// terminal emulator replies `ESC [ <row> ; <col> R`. A test harness that only *reads* the pty
     /// is not a terminal emulator, so nobody ever answers and the child waits forever.
@@ -233,8 +355,8 @@ impl Terminal {
     /// The transcript with ANSI escape sequences removed.
     ///
     /// Hand-written rather than pulled in as a dependency: this recognises exactly the two forms
-    /// `inquire` emits (CSI `\x1b[…<final>` and the two-byte `\x1b<char>`), and a general-purpose
-    /// stripper would be a larger surface for one screenful of text.
+    /// the prompt libraries emit (CSI `\x1b[…<final>` and the two-byte `\x1b<char>`), and a
+    /// general-purpose stripper would be a larger surface for one screenful of text.
     pub fn visible(&self) -> String {
         let mut out = String::with_capacity(self.transcript.len());
         let mut characters = self.transcript.chars().peekable();
@@ -272,7 +394,32 @@ impl Terminal {
         self.send_line("");
     }
 
-    /// Sends ESC — `inquire`'s cancellation key.
+    /// How long to wait for the child to exit before declaring it hung and naming the test.
+    ///
+    /// Generous — a run that reaches the review screen has already run `cargo build` and
+    /// `cargo test` on the generated project, and the Windows runner is the slowest of the three.
+    /// What matters is that it is **finite**.
+    const EXIT_TIMEOUT: Duration = Duration::from_secs(300);
+
+    /// Sends one keypress, with **no** carriage return after it.
+    ///
+    /// # Why this is not [`Terminal::send_line`]
+    ///
+    /// A confirmation now **submits on the keypress**: `y` answers yes and `n` answers no, without
+    /// an Enter. That is the behaviour of the prompt library this crate adopted on 2026-08-21, and
+    /// it differs from the previous one, which read `y`/`n` as text and waited for Enter.
+    ///
+    /// `send_line("y")` therefore writes one keystroke too many. The confirmation consumes the `y`
+    /// and the stray carriage return falls through to the **next** prompt, silently accepting its
+    /// default — which is exactly what happened to two tests here when the library changed, and
+    /// exactly what will happen to an operator with the old muscle memory. It is recorded as a
+    /// known interaction difference rather than hidden behind a harness that papers over it.
+    pub fn key(&mut self, key: &str) {
+        write!(self.writer, "{key}").expect("the pty accepts input");
+        self.writer.flush().expect("the pty flushes");
+    }
+
+    /// Sends ESC, which cancels a prompt.
     pub fn escape(&mut self) {
         write!(self.writer, "\u{1b}").expect("the pty accepts input");
         self.writer.flush().expect("the pty flushes");
@@ -280,12 +427,94 @@ impl Terminal {
 
     /// Waits for exit and returns the code.
     pub fn wait(&mut self) -> i32 {
+        // ── DRAIN WHILE WAITING. THIS LOOP IS THE LOAD-BEARING PART. ────────────────────
+        //
+        // This used to be a bare `child.wait()`, which reads nothing until the child has already
+        // exited. Every pty test written before `tests/terminal.rs` calls `expect` first, so the
+        // terminal was always being read continuously and nobody noticed. Seven newer tests go
+        // straight from `spawn` to `wait` — a shape the harness had never been exercised with —
+        // and on ConPTY that **deadlocks**: the console host stops accepting writes once its
+        // buffer is full, so the child blocks mid-write and never exits, while `wait` blocks on a
+        // child that is waiting to be read.
+        //
+        // It cost two forty-five-minute Windows jobs to find, because a deadlock prints nothing:
+        // both were cancelled at the job timeout with the log ending mid-suite and no test named.
+        // Linux and macOS never showed it — their pty buffers are larger than anything these
+        // tests write.
+        //
+        // Draining here makes the calling shape stop mattering, which is better than a rule that
+        // every test must remember to `expect` before it waits.
+        let deadline = Instant::now() + Self::EXIT_TIMEOUT;
+        loop {
+            while let Ok(byte) = self.receiver.try_recv() {
+                self.transcript.push(byte as char);
+            }
+            // ── AND ANSWER THE TERMINAL'S QUESTIONS. THIS IS THE OTHER HALF. ────────────
+            //
+            // ConPTY asks where the cursor is (`\x1b[6n`) and **blocks until something replies**.
+            // `expect` has always answered those; `wait` never did, because until this branch no
+            // test reached `wait` without going through `expect` first.
+            //
+            // The failure this produced is worth recording exactly, because it looked like a
+            // product defect and was not. The diagnostic said:
+            //
+            //     child EXITED with code 1
+            //     reader still running
+            //     bytes received: 4
+            //     cursor-position queries seen: 1, answered: 0
+            //
+            // Four bytes and one unanswered question: the child had written `\x1b[6n`, was
+            // waiting for a reply that only `expect` knew how to send, and sat there until the
+            // 300-second deadline killed it. Two Windows jobs were cancelled at forty-five
+            // minutes before the deadline existed to say so.
+            self.answer_status_reports();
+            match self.child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Ok(None) => {
+                    // A NAMED FAILURE, NOT A HANG. The whole reason the two Windows jobs taught
+                    // nothing is that a blocked `wait` produces no test name, no assertion, and no
+                    // output — on CI it is indistinguishable from a slow machine until the job is
+                    // killed.
+                    let _ = self.child.kill();
+                    panic!(
+                        "the child did not exit within {}s and was killed{}",
+                        Self::EXIT_TIMEOUT.as_secs(),
+                        self.diagnosis()
+                    );
+                }
+                Err(error) => panic!("the child could not be waited on: {error}"),
+            }
+        }
         let status = self.child.wait().expect("the child is waitable");
-        // Drain whatever is still in flight so failure messages show the final screen.
+        // Whatever is still in flight, so a failure message shows the final screen.
         while let Ok(byte) = self.receiver.recv_timeout(Duration::from_millis(200)) {
             self.transcript.push(byte as char);
         }
         i32::try_from(status.exit_code()).unwrap_or(-1)
+    }
+}
+
+impl Drop for Terminal {
+    /// Kills the child, so that a failed test releases its pty slot.
+    ///
+    /// # Without this, one timeout wedges the whole binary
+    ///
+    /// The slot is held by an `Arc<Permit>` shared with the reader thread, and that thread only
+    /// ends when the pty reaches end of file — which only happens when the child exits. A test
+    /// whose `expect` times out panics while its child is still blocked on a prompt nobody will
+    /// answer, so the child never exits, the reader never ends, and the permit is never released.
+    ///
+    /// Four such failures exhaust [`CONCURRENT_TERMINALS`], and `acquire_terminal_slot` then
+    /// blocks on a condition variable with no timeout. Every remaining pty test hangs with no
+    /// diagnostic at all — and a suite that hangs is strictly worse than one reporting four
+    /// failures, because the four failures name themselves.
+    ///
+    /// `kill` on a child that has already exited fails harmlessly, which is the common case.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
     }
 }
 

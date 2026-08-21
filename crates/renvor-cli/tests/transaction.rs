@@ -105,7 +105,10 @@ fn the_wizard_asks_exactly_these_prompts() {
     }
 
     // Property 2. Nothing else was asked.
-    terminal.expect("created ");
+    // `DONE  Created N files` since 2026-08-21. The label is a WORD rather than a colour,
+    // which is what makes this assertion possible at all under `NO_COLOR` and `TERM=dumb`.
+    terminal.expect("DONE");
+    terminal.expect("Created ");
     let exit = terminal.wait();
     assert_eq!(exit, 0, "the census run succeeds\n{}", terminal.visible());
     assert!(
@@ -163,7 +166,7 @@ fn declining_the_review_screen_still_prints_the_equivalent_command() {
         &[],
     );
     drive_to(&mut terminal, PROMPTS.len() - 1);
-    terminal.send_line("n");
+    terminal.key("n");
     let exit = terminal.wait();
 
     assert_eq!(

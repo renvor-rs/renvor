@@ -25,6 +25,8 @@ use crate::generate::manifest::FileManifest;
 use crate::generate::place::Staging;
 use crate::generate::render::Renderer;
 use crate::output::Reporter;
+use crate::output::layout::{Report, Status};
+use crate::output::progress::Progress;
 use crate::templates;
 
 /// The template context. A **separate** type from [`ProjectConfiguration`], deliberately.
@@ -203,11 +205,23 @@ pub fn run(
     // would report a manifest one file short of what a real run creates — and SC-006 requires the
     // two to match exactly. A dry run therefore costs the same couple of seconds, and tells the
     // truth.
-    if reporter.progress_visible() {
-        reporter.note("verifying the generated project…");
-    }
+    //
+    // THIS is the operation that justified a progress indicator, and it is the only one. Five
+    // `cargo` invocations against a cold target directory, every one captured by `.output()`, so
+    // the terminal shows nothing at all for as long as a cold compile takes. What a reader saw
+    // before was a single line saying "verifying" followed by tens of seconds of silence, which is
+    // indistinguishable from a hang.
+    //
+    // `progress_visible` is already false in JSON mode and whenever `stderr` is not a terminal, so
+    // a CI log gets a silent indicator rather than a bar drawn into it.
     let staging_path = destination.parent_display().join(staging.name());
-    crate::generate::verify::in_staging(&staging_path)?;
+    let progress = Progress::start("verifying the generated project", reporter);
+    let verified = crate::generate::verify::in_staging(&staging_path, &progress);
+    // Cleared BEFORE the error propagates, so a failure message is never written over a bar that
+    // is still on screen. `Drop` would do this too, at the closing brace — this puts the ordering
+    // where a reader can see it.
+    progress.finish();
+    verified?;
     crate::inject::fail_at("verify")?;
 
     // ── 5. MANIFEST ─────────────────────────────────────────────────────────────────
@@ -235,18 +249,26 @@ pub fn run(
         // The dry run LISTS what it would create, rather than counting it. A count tells an
         // operator that something would happen; the list tells them whether it is what they meant,
         // which is the entire reason to run a dry run.
-        let human = format!(
-            "dry run: {} files ({} bytes) would be created in {}\n{}",
-            manifest.file_count(),
-            manifest.total_bytes(),
-            crate::output::redact::path(&destination.display_path()),
-            manifest
-                .paths()
-                .iter()
-                .map(|path| format!("  {path}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
+        let mut human = Report::new()
+            .status(
+                Status::Info,
+                format!(
+                    "Dry run: {} files ({} bytes) would be created",
+                    manifest.file_count(),
+                    manifest.total_bytes()
+                ),
+            )
+            .row(
+                "Destination",
+                crate::output::redact::path(&destination.display_path()),
+            )
+            .blank();
+        // One report line per path, rather than one line containing newlines. A report line is
+        // single-line by construction, which is what stops a filename containing a newline from
+        // forging an entry in this list.
+        for path in manifest.paths() {
+            human = human.item(path);
+        }
         drop(staging);
         return Ok(reporter.finish(
             "new",
@@ -264,13 +286,21 @@ pub fn run(
     staging.place(&destination)?;
 
     // ── 7. REPORT ───────────────────────────────────────────────────────────────────
-    let human = format!(
-        "created {} files ({} bytes) in {}\n\nnext: cd {} && cargo run",
-        manifest.file_count(),
-        manifest.total_bytes(),
-        crate::output::redact::path(&destination.display_path()),
-        destination.name()
-    );
+    let human = Report::new()
+        .status(
+            Status::Done,
+            format!(
+                "Created {} files ({} bytes)",
+                manifest.file_count(),
+                manifest.total_bytes()
+            ),
+        )
+        .row(
+            "Destination",
+            crate::output::redact::path(&destination.display_path()),
+        )
+        .blank()
+        .text(format!("next: cd {} && cargo run", destination.name()));
     Ok(reporter.finish(
         "new",
         &human,
