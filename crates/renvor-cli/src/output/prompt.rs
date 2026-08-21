@@ -70,17 +70,22 @@ fn classify(error: &std::io::Error) -> CliError {
 
 /// Renvor's prompt theme.
 ///
-/// # It overrides colour and nothing else
+/// # It overrides four things, and the rest is the library's
 ///
-/// Every method not listed here keeps the library's default, which is the layout: the connected
-/// rail, the state markers, the radio cursor, the position of the validation message. Those are
-/// the parts that make the sequence readable and there is no Renvor-specific improvement to make
-/// to them.
+/// The four are the rail, the state marker, the answer, and the placeholder — the colours that
+/// carry the sequence's structure. Every other method keeps the library's default, which is the
+/// layout: the connected rail's shape, the state symbols themselves, the radio cursor, the
+/// position of the validation message.
 ///
-/// What is *not* left to the library is the palette. Its defaults are close to Renvor's — near
-/// enough that overriding them looks like a formality — but "close" is exactly the problem: it
-/// produces prompts in a slightly different cyan from every other line, and a palette change that
-/// silently moves only half the output. Routing through [`Role`] means the two cannot diverge.
+/// **That is less than "the palette", and the difference is worth naming.** `radio_symbol` is
+/// not overridden, so the `Yes`/`No` markers on every confirmation still take the library's own
+/// green and dim rather than [`Role`] — and those markers are on the hot path, since a
+/// confirmation is four of the six questions this wizard asks. The hues coincide today, which is
+/// precisely the "close is exactly the problem" drift this comment used to claim it had already
+/// prevented. An advisory review read the library and found the overstatement.
+///
+/// What *is* routed through [`Role`] cannot diverge from the rest of the program, and that is the
+/// property being bought. The remainder is a known and stated gap, not an oversight.
 #[derive(Debug, Clone, Copy)]
 struct RenvorTheme;
 

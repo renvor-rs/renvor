@@ -285,6 +285,18 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
         .status(Status::Info, "Environment readiness")
         .blank();
 
+    // ── ONLY TWO OF THE FOUR MARKS ARE REACHABLE TODAY, AND THAT IS WORTH SAYING ────
+    //
+    // `Mark::Missing` needs a tool that is **required and absent** — and that returns
+    // `Code::ToolMissing` above, before this table is built. `Mark::Outdated` needs a tool that is
+    // present and **incompatible**, which requires a declared minimum: only `cargo` has one, and
+    // an incompatible `cargo` takes the same early return.
+    //
+    // So a real run emits `OK` and `ABSENT` and nothing else. The other two arms are not dead
+    // weight — they are what makes this `match` total, and they become reachable the moment
+    // `TOOLS` gains an optional tool with a minimum version — but a reader comparing this code
+    // with a screenshot should know which rows the program can actually produce. An advisory
+    // review found the contract publishing a `MISSING` example that the binary cannot emit.
     for probe in &probes {
         let (value, mark) = match (probe.version.as_deref(), probe.compatible, probe.required) {
             (Some(version), true, _) => (version.to_owned(), Mark::Ok),

@@ -87,9 +87,19 @@ impl Role {
     /// So the mapping lives **here**, beside [`Role::style`], where the two can be read together
     /// and neither can be changed without seeing the other.
     ///
-    /// `BrightBlack` rather than `color256(8)` — which is what the prompt library's own theme uses
-    /// — because the bright-black palette entry is one the reader's terminal theme defines, and an
-    /// absolute 256-colour index is one it does not.
+    /// # The one role where the two spellings genuinely differ
+    ///
+    /// [`Role::Muted`] renders as SGR `90` here and as `38;5;8` through `console`, because
+    /// `console` emits **every** bright foreground as `\x1b[38;5;{n+8}m` and offers no way to ask
+    /// for SGR 90 (`console-0.16.4/src/utils.rs`). The two are the same palette entry on any
+    /// terminal that implements both, and on a terminal that maps its theme onto the aixterm
+    /// range but not onto the 256-colour cube they are not.
+    ///
+    /// This comment previously claimed the opposite — that using `BrightBlack` here **avoided**
+    /// `color256(8)`. It does not, and could not: the choice is not available on this side.
+    /// An advisory review read the library and caught it. The mapping is still worth having in
+    /// one place, because the other five roles do agree exactly and a palette change must move
+    /// both.
     #[must_use]
     pub fn prompt_style(self) -> console::Style {
         let style = console::Style::new();
@@ -404,7 +414,8 @@ mod tests {
         // that is not one of them either.
         //
         // The end-to-end half — that the prompt library, which WOULD honour it, is told this
-        // answer instead — is asserted against the real binary in `tests/colour_policy.rs`.
+        // answer instead — is asserted against the real binary in `tests/presentation.rs` on a
+        // pipe and in `tests/terminal.rs` on a terminal that could have had colour.
         let forced = Environment::permissive();
         assert!(!Permission::decide(true, Format::Human, true, forced).allowed());
     }
@@ -454,9 +465,62 @@ mod tests {
     }
 
     #[test]
-    fn the_two_style_vocabularies_agree_on_every_role() {
+    fn muted_is_the_one_role_whose_two_spellings_differ_and_it_differs_only_in_spelling() {
+        // A GAP THE PREVIOUS TEST LEFT, AND THE REASON IT MATTERED.
+        //
+        // `the_two_style_vocabularies_agree_on_every_role` checked five roles and skipped three.
+        // One of the three skipped — `Muted` — is the only one that actually diverges, so the
+        // test exercised every case except the one it existed to catch.
+        //
+        // The divergence is forced: `console` emits a bright foreground as `38;5;{n+8}` and has
+        // no spelling for SGR 90. What must hold is that both are **bright black and dimmed** —
+        // the same palette entry, the same attenuation — and that is what is asserted.
+        let own = format!("{}x{:#}", Role::Muted.style(), Role::Muted.style());
+        assert!(
+            own.contains("90"),
+            "the anstyle side is not bright black: {own:?}"
+        );
+        assert!(own.contains('2'), "the anstyle side is not dimmed: {own:?}");
+
+        let prompt = format!(
+            "{}",
+            Role::Muted.prompt_style().force_styling(true).apply_to("x")
+        );
+        assert!(
+            prompt.contains("38;5;8"),
+            "the console side is not bright black: {prompt:?}"
+        );
+        assert!(
+            prompt.contains("[2m"),
+            "the console side is not dimmed: {prompt:?}"
+        );
+    }
+
+    #[test]
+    fn value_and_heading_take_no_colour_in_either_vocabulary() {
+        // The other two roles the agreement test skipped. Both must leave the reader's own
+        // foreground alone, in both spellings — a heading that overrode it would be exactly the
+        // thing `Role::style`'s doc comment says it must not do.
+        assert_eq!(Role::Value.style(), Style::new());
+        assert!(
+            !format!(
+                "{}",
+                Role::Value.prompt_style().force_styling(true).apply_to("x")
+            )
+            .contains("38;5;"),
+            "the value role must not set a colour"
+        );
+        assert_eq!(Role::Heading.style().get_fg_color(), None);
+    }
+
+    #[test]
+    fn the_two_style_vocabularies_agree_on_every_coloured_role() {
         // The palette lives in one file precisely so these cannot drift. This asserts they have
         // not: each role's prompt colour is the one its `anstyle` colour names.
+        //
+        // `Muted`, `Value`, and `Heading` are covered by the two tests above — `Muted` because it
+        // is the one genuine divergence, the other two because they take no colour at all. Every
+        // role is therefore checked somewhere, which was not true before.
         for (role, expected) in [
             (Role::Accent, "36"),
             (Role::Success, "32"),

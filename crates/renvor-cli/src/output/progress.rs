@@ -107,11 +107,18 @@ impl Progress {
             "{} {{spinner}} {{msg}}",
             reporter.stderr_permission().paint(Role::Accent, title)
         );
-        if let Ok(style) = ProgressStyle::with_template(&template) {
-            // ASCII frames. The braille spinner most terminals render is invisible in several
-            // fixed-width fonts and is announced character by character by some screen readers.
-            bar.set_style(style.tick_chars("-\\|/ "));
-        }
+        // `expect`, NOT `if let Ok`. A template that failed to parse used to be dropped silently
+        // and the bar drew with the library's default — a silent fallback, which is the one thing
+        // this project's rules forbid outright.
+        //
+        // It cannot fail: the template is a literal plus `paint`, which emits only SGR sequences
+        // and can introduce no `{`. That is exactly why failing loudly costs nothing and why
+        // swallowing it bought nothing.
+        let style = ProgressStyle::with_template(&template)
+            .expect("the progress template is a literal and cannot fail to parse");
+        // ASCII frames. The braille spinner most terminals render is invisible in several
+        // fixed-width fonts and is announced character by character by some screen readers.
+        bar.set_style(style.tick_chars("-\\|/ "));
         bar.enable_steady_tick(TICK);
         Self { bar }
     }

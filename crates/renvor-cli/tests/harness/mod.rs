@@ -258,7 +258,8 @@ impl Terminal {
     ///
     /// # Without this, the Windows leg deadlocks, and the reason is worth stating
     ///
-    /// `crossterm` — which `inquire` renders through — asks the terminal where the cursor is by
+    /// `crossterm` — which the prompt library used to render through — asked the terminal where
+    /// the cursor is by
     /// writing a **Device Status Report** and then **blocking until the terminal answers**. A real
     /// terminal emulator replies `ESC [ <row> ; <col> R`. A test harness that only *reads* the pty
     /// is not a terminal emulator, so nobody ever answers and the child waits forever.
@@ -322,8 +323,8 @@ impl Terminal {
     /// The transcript with ANSI escape sequences removed.
     ///
     /// Hand-written rather than pulled in as a dependency: this recognises exactly the two forms
-    /// `inquire` emits (CSI `\x1b[…<final>` and the two-byte `\x1b<char>`), and a general-purpose
-    /// stripper would be a larger surface for one screenful of text.
+    /// the prompt libraries emit (CSI `\x1b[…<final>` and the two-byte `\x1b<char>`), and a
+    /// general-purpose stripper would be a larger surface for one screenful of text.
     pub fn visible(&self) -> String {
         let mut out = String::with_capacity(self.transcript.len());
         let mut characters = self.transcript.chars().peekable();

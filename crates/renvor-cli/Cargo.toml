@@ -84,9 +84,16 @@ clap = { version = "4.6.6", default-features = false, features = ["std", "derive
 # gate rather than a memory.
 #
 # **It declares no `rust-version`, and that is a real cost**, not one to gloss: §D11 rejected
-# `blake3` for exactly this. It is accepted here on stronger evidence than a declaration —
-# a clean compile on 1.94.0, pinned to an exact version, and re-proved by the MSRV leg of CI on
-# every pull request. A declaration is a promise; the MSRV job is a measurement.
+# `blake3` for exactly this. It is accepted here on stronger evidence than a declaration — a clean
+# compile on 1.94.0, **locked** by the committed `Cargo.lock` that CI resolves with `--locked`, and
+# re-measured by the MSRV leg of CI on every pull request. A declaration is a promise; the MSRV job
+# is a measurement.
+#
+# **"Locked", not "pinned to an exact version"** — the requirement is a caret, as it is for every
+# other dependency here, and `deny.toml` forbids wildcards rather than carets. An earlier version
+# of this comment said "pinned", which claimed a stronger mitigation than the manifest provides. A
+# `cargo update` could take 0.5.7 and raise the real MSRV silently; what catches that is the MSRV
+# job, not this line.
 #
 # `indicatif` arrives underneath this crate whether or not we call it, so the progress adapter
 # below costs no additional package.
@@ -165,7 +172,14 @@ anstyle = { version = "1.0.14", default-features = false }
 # `wincon` is why this crate is used rather than `writeln!`: on Windows it translates to console
 # API calls where virtual-terminal processing is unavailable, which no amount of care with
 # `format!` can do. Already in `Cargo.lock` via `trycmd`; this promotes it to a runtime edge.
-anstream = { version = "1.0.0", default-features = false, features = ["auto", "wincon"] }
+#
+# **`auto` is deliberately NOT enabled.** It gates `ColorChoice::Auto`, which resolves the question
+# by sniffing the stream — and `output::style` has already answered it. Every `AutoStream` in this
+# crate is built with an explicit `Always` or `Never`, so the feature would buy a code path nothing
+# takes. Verified rather than assumed: `grep ColorChoice::` finds only those two, and the binary
+# builds in a clean target directory without it. Constitution VI wants deny-by-default, and an
+# advisory review asked the question.
+anstream = { version = "1.0.0", default-features = false, features = ["wincon"] }
 
 # DISPLAY width, which is not `len()` and not `chars().count()`.
 #

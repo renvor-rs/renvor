@@ -9,8 +9,9 @@
 //!
 //! So `print!` and `println!` are not used anywhere in this crate. Everything goes through
 //! [`Reporter`], which owns both streams and gives each a method whose name says where it lands.
-//! `tests/architecture.rs` asserts that mechanically, with a positive control, rather than
-//! trusting this paragraph.
+//! `tests/presentation.rs` asserts that mechanically, over the whole source tree, with a
+//! positive control on the walk and a second control that runs the scan's own predicate against
+//! a planted bypass — rather than trusting this paragraph.
 //!
 //! # Contract C-8 added a second rule, and it is the same shape
 //!

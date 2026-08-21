@@ -201,6 +201,10 @@ their output is captured. A progress indicator on `stderr` names the check that 
 cold compile looks like work rather than like a hang. It is absent in `--output json` and absent
 whenever `stderr` is not a terminal.
 
+On a terminal that cannot be redrawn — `TERM=dumb`, or `TERM` not set at all — you get **one
+static line naming the operation** instead of the live indicator. The rule is that you are told
+the work is happening, not that a spinner appears.
+
 ## `renvor new` is transactional
 
 Generation runs in this order, and the ordering is the guarantee:

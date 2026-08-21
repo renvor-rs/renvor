@@ -105,8 +105,13 @@ to infer it from a presentation document:
 | `stdout` | **the command's result, and nothing else.** With `--output json`, exactly one JSON document |
 | `stderr` | prompts, progress, warnings, diagnostics, and error text |
 
-In particular: a status label, a review screen, a progress indicator, and a human error message are
-all **`stderr`**. The dotted rows that make up a command's *result* are `stdout`.
+In particular: a review screen, a progress indicator, and a human error message are **`stderr`**.
+
+A **status label is not a stream** — it goes wherever the thing it labels goes. `DONE  Created 10
+files` is part of `renvor new`'s result and is therefore on `stdout`, together with the dotted rows
+beneath it; `ERROR  …` labels a diagnostic and is on `stderr`. An earlier version of this
+paragraph said every status label was `stderr`, which was false for every command that has a
+result — and which the test suite contradicted rather than enforced.
 
 ## JSON invariance
 
@@ -146,11 +151,17 @@ straight edge.
 
 ```
 cargo ..................................... 1.94.0        OK
-docker ...................................... >= 20        MISSING
+docker .................................. optional        ABSENT
 ```
 
 `OK`, `TOO OLD`, `MISSING`, and `ABSENT` are words. They mean the same thing with the colour
 removed.
+
+**The example shows two rows a real run can produce.** It previously showed a `MISSING` row, and
+`renvor doctor` cannot emit one: a required tool that is absent or too old fails before the table
+is built, and the optional tools declare no minimum version. `TOO OLD` and `MISSING` remain part
+of the vocabulary — they are what a future optional tool with a minimum version would use — but a
+contract should not publish an example of output the program does not produce.
 
 ### Status lines
 
@@ -180,7 +191,17 @@ doing the work the leader was supposed to do for them.
 Questions are drawn as a connected sequence: a title, a rail joining the questions, and a close.
 The live question is the accent colour; an answered question's rail and marker recede to muted
 while **its answer stays readable**, because the reason to look back at the sequence is to check
-what was answered. A validation message stays attached to the question that produced it.
+what was answered.
+
+**Nothing is validated at a prompt, and that is deliberate.** An answer is validated once, after
+the sequence, by the same validator the flag surface uses — which is what makes "prompt and flag
+inputs resolve to identical configuration" a property of the type graph rather than a test that
+happens to pass. Validating here would put a second validator on one of the two paths, and an
+operator would get a retry loop from the wizard and a refusal from the flags for the same input.
+
+The consequence is that a validation *message* attached to its question is a capability the
+drawing library has and this program does not use. An earlier version of this section described it
+as behaviour, which it is not.
 
 ### Cancellation
 
@@ -246,16 +267,29 @@ question and accepts its default.
 - **`stderr`, always.**
 - **Absent in JSON mode, and absent whenever `stderr` is not a terminal.** Not hidden — absent: the
   calls still happen and render nowhere, so no caller has an `if` to forget.
-- **Absent under `TERM=dumb`.** An indicator redraws its own line, and a dumb terminal promises no
-  cursor movement to redraw with. This is a *different* condition from "not a terminal" — a dumb
-  terminal is one — and it is stated separately because it was **measured** rather than reasoned
-  about. The command still runs and still reports its result; only the indicator is missing.
+- **Absent under `TERM=dumb`, and under `TERM` unset — but the operator is still told.** A live
+  indicator redraws its own line, and neither of those terminals promises the cursor movement to
+  redraw with, so the indicator is replaced by **one static line naming the operation**.
+
+  This is a *different* condition from "not a terminal" — a dumb terminal is one — and it is
+  stated separately because it was **measured**, and because the first version of this change got
+  it wrong: it dropped the indicator on those terminals and put nothing in its place, turning a
+  line into tens of seconds of silence through a cold five-check build. `TERM` unset is the state
+  of cron, systemd units, and several embedded terminals, so that is not a rare corner.
+
+  **The rule is that the operator is told, not that an indicator appears.**
 - **Attached only to work measured in seconds whose output is captured.** Work that completes
   almost immediately gets no indicator, and work that already shows the reader its own output — a
   child process holding the terminal — gets none either.
 - **Every dynamic label is redacted and neutralised**, because the indicator redraws its own line
   and a label that could move the cursor would not be confined to it.
-- **It is always cleared**: on success, on error, on cancellation, and on panic.
+- **It is cleared on success, on error, and on cancellation** — every exit that runs a
+  destructor.
+- **It is *not* cleared on panic**, and that is stated rather than promised away. The panic path
+  calls `exit` without unwinding, so no destructor runs: the bar's last line survives and the
+  panic message is printed over it. What *is* restored on that path is the **cursor**, which the
+  prompt library hides and which would otherwise outlive the process — see *Cancellation* above.
+  An earlier version of this list claimed the bar was cleared too.
 
 ## Safety
 
