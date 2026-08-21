@@ -151,8 +151,7 @@ fn colour_sequences(transcript: &str) -> Vec<String> {
                 && body != "0"
                 && body
                     .split(';')
-                    .all(|part| part.chars().all(|c| c.is_ascii_digit()))
-                && body != "0";
+                    .all(|part| part.chars().all(|c| c.is_ascii_digit()));
             if is_colour {
                 found.push(format!("ESC[{body}m"));
             }
