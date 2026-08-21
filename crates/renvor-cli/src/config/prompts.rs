@@ -7,31 +7,54 @@
 //! flag inputs serialize to identical configuration" — a property of the type graph rather than a
 //! test that happens to pass. There is one validator and both interfaces go through it.
 //!
-//! # Known non-compliance with constitution principle VII, stated here as well as in the spec
+//! # Constitution principle VII, and the amendment that settled this module's scope
 //!
-//! Principle VII lists eleven things the wizard should ask about: target, transport, persistence
-//! model, database, auth starter, frontend, render mode, styling, desktop option, capabilities, and
-//! local tooling. **This wizard asks about two of them** — local tooling (container and local
-//! HTTPS) and capabilities (example domain, seed data).
+//! Principle VII's original wizard-scope sentence listed eleven things the wizard should ask about:
+//! target, transport, persistence model, database, auth starter, frontend, render mode, styling,
+//! desktop option, capabilities, and local tooling. **This wizard asks about two of them** — local
+//! tooling (container and local HTTPS) and capabilities (example domain, seed data).
 //!
 //! It said "three of them — target, local tooling, and capabilities" until 2026-08-18, and **there
 //! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
 //! option would be a question with one answer. An advisory review caught the overstatement by
-//! comparing this comment with `fill` below. It matters because the number in this comment is the
-//! one the principle VII referral in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) has to be counted
+//! comparing this comment with `fill` below. It mattered because the number in this comment is the
+//! one the principle VII ruling recorded in [`phase-003-evidence.md` §7](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-003-evidence.md?plain=1#L728) was counted
 //! against, and overstating compliance by one category in a comment is how it ends up overstated
-//! in the referral.
+//! in the ruling.
 //!
 //! The other eight correspond to flags this phase **reserves and refuses**, because the phases that
 //! implement them have not happened. Asking an operator to choose a database that the generator
 //! cannot act on would produce a recorded choice that no generated file reflects, which
 //! data-model invariant I-12 forbids outright.
 //!
-//! **This is a real deviation and it is not resolved here.** [Phase 003 tasks T093a](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
-//! refers it to the
-//! maintainer as a governing-document question: either principle VII means "ask about everything
-//! the *product* will eventually support" and this phase is non-compliant, or it means "ask about
-//! everything *this build* honours" and it is compliant. That ruling is not this module's to make.
+//! # That question was referred, and it was answered
+//!
+//! [Phase 003 tasks T093a](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/tasks.md)
+//! referred this to the maintainer as a governing-document question: either principle VII meant
+//! "ask about everything the *product* will eventually support", and this phase was
+//! non-compliant, or it meant "ask about everything *this build* honours", and it was compliant.
+//! That ruling was not this module's to make, and this comment said so while the referral was
+//! open.
+//!
+//! **The referral is closed. Constitution amendment 3.0.0, ratified 2026-08-18, chose the second
+//! reading** — see `governance/constitution-amendment-3.0.0.md` and the amendment history at the
+//! top of `CONSTITUTION.md`. The rule is now about what the *current* generator can honour, with
+//! four supporting clauses: a single-valued choice MAY be defaulted and MUST be recorded;
+//! unsupported choices MUST NOT be solicited or recorded; unsupported choices MUST be exposed as
+//! reserved inputs that fail naming the phase which will introduce support; and a choice becomes
+//! mandatory in **both** interfaces once its capability ships.
+//!
+//! Under that rule this module **complies**, and the amendment records the clause-by-clause
+//! evidence. It was a MAJOR amendment rather than a waiver precisely because the old sentence was
+//! not correct: it required questions for capabilities that do not exist, which contradicts the
+//! same principle's requirement that generated output reflect the selections actually acted on. A
+//! waiver would have expired and left the contradiction standing.
+//!
+//! **Nothing about this module's behaviour changed when the amendment landed, and nothing changes
+//! here now.** The prompts, their order, and the eight reserved-and-refused flags are exactly what
+//! they were; what changed is that the rule they are measured against is now the right rule. The
+//! fourth clause is the one that binds later work: **when a capability ships, its choice becomes
+//! mandatory in both the wizard and the flag surface.**
 
 use inquire::{Confirm, Text, error::InquireError};
 
