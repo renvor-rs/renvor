@@ -148,10 +148,10 @@ mod tests {
     /// output. `Progress` is deliberately constructible in this state, which is the same state
     /// every JSON and non-terminal run uses.
     fn silent() -> crate::output::progress::Progress {
+        // JSON format, so `progress_visible()` is false whatever the terminal is.
         crate::output::progress::Progress::start(
             "verifying",
-            false,
-            crate::output::style::Permission::denied(),
+            &crate::output::Reporter::new(crate::output::Format::Json, true),
         )
     }
 

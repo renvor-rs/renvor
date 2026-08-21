@@ -135,11 +135,18 @@ pub fn trust(
             // that the trust store was not touched — and the generic "nothing was written and the
             // destination is unchanged" is about a destination this command does not have.
             if error.code == Code::Cancelled {
+                // NO `details` ADDED HERE, DELIBERATELY.
+                //
+                // A `trustStoreModifications` detail was added on the first pass at this and then
+                // removed: `CliError::details` is serialised straight into the JSON envelope, so
+                // adding a key means `renvor --output json tls trust`, cancelled at the prompt,
+                // emits a field it did not emit before. This branch changes presentation, and a
+                // new key on the machine-readable surface is not presentation. If the key is
+                // wanted it belongs in a change that says so.
                 CliError::new(
                     Code::Cancelled,
                     "consent withheld; the trust store was not modified",
                 )
-                .with("trustStoreModifications", "0")
             } else {
                 error
             }

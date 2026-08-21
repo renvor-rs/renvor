@@ -396,6 +396,27 @@ impl Terminal {
     }
 }
 
+impl Drop for Terminal {
+    /// Kills the child, so that a failed test releases its pty slot.
+    ///
+    /// # Without this, one timeout wedges the whole binary
+    ///
+    /// The slot is held by an `Arc<Permit>` shared with the reader thread, and that thread only
+    /// ends when the pty reaches end of file — which only happens when the child exits. A test
+    /// whose `expect` times out panics while its child is still blocked on a prompt nobody will
+    /// answer, so the child never exits, the reader never ends, and the permit is never released.
+    ///
+    /// Four such failures exhaust [`CONCURRENT_TERMINALS`], and `acquire_terminal_slot` then
+    /// blocks on a condition variable with no timeout. Every remaining pty test hangs with no
+    /// diagnostic at all — and a suite that hangs is strictly worse than one reporting four
+    /// failures, because the four failures name themselves.
+    ///
+    /// `kill` on a child that has already exited fails harmlessly, which is the common case.
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+    }
+}
+
 /// Runs `renvor` as an ordinary subprocess and returns (exit code, stdout, stderr).
 ///
 /// `stdin` is not a terminal here, which is exactly what makes this the **flag** path.

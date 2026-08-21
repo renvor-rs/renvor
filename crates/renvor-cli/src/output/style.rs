@@ -274,8 +274,23 @@ fn dumb_terminal(value: Option<&std::ffi::OsStr>) -> bool {
 /// requires that an explicit refusal beat a force-colour environment variable, and this is where
 /// that happens.
 ///
-/// Prompts are drawn on `stderr`, so only the `stderr` answer is installed. Setting the `stdout`
-/// one as well would be asserting authority over a stream `console` is not used for.
+/// # BOTH FLAGS, AND THE FIRST ATTEMPT SET ONLY ONE
+///
+/// `console` keeps two answers, one per stream, and a `console::Style` consults the **`stdout`**
+/// one unless it was built with `Style::for_stderr()`. The prompt library builds its theme with
+/// plain `console::Style::new()` and then draws the result on `stderr` — so the styles are
+/// stderr-bound but ask the stdout flag.
+///
+/// Setting only the `stderr` flag therefore left the prompts consulting `console`'s own
+/// environment sniffing, and the two answers diverged exactly where this contract promises they
+/// cannot: with `NO_COLOR=` **empty**, Renvor styled its own lines (the empty-string rule, per
+/// <https://no-color.org>) while the prompts came out plain, because `console` does not implement
+/// that rule. One process, one flag, two answers — which is the failure this function exists to
+/// prevent. Measured on a pty, not reasoned about.
+///
+/// Both flags now carry the `stderr` answer, because every `console::Style` in this program is
+/// drawn to `stderr` whatever flavour it was constructed with. Nothing here uses `console` for
+/// `stdout` at all.
 ///
 /// # Called exactly once, before any prompt
 ///
@@ -283,6 +298,7 @@ fn dumb_terminal(value: Option<&std::ffi::OsStr>) -> bool {
 /// single-threaded, which is the same discipline the panic hook follows and for the same reason.
 pub fn install_prompt_colour_policy(stderr: Permission) {
     console::set_colors_enabled_stderr(stderr.allowed());
+    console::set_colors_enabled(stderr.allowed());
 }
 
 #[cfg(test)]

@@ -343,14 +343,20 @@ fn row(
     let (mark_text, mark_width) = match mark {
         None => (String::new(), 0),
         Some(mark) => {
-            let padding = MARK_COLUMN.saturating_sub(width_of(mark.word()));
+            let word = width_of(mark.word());
+            let padding = MARK_COLUMN.saturating_sub(word);
             (
                 format!(
                     "  {:padding$}{}",
                     "",
                     permission.paint(mark.role(), mark.word())
                 ),
-                2 + MARK_COLUMN,
+                // `max`, NOT the constant. Every word today is at most `MARK_COLUMN` wide, so the
+                // two agree — but a longer one would make the padding zero while this still
+                // claimed `MARK_COLUMN`, and the leader run would be computed from space that is
+                // not there. The row would overflow the terminal **silently**: no panic, just a
+                // wrapped line and a broken column.
+                2 + MARK_COLUMN.max(word),
             )
         }
     };

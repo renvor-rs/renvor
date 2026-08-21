@@ -125,7 +125,14 @@ fn each_refusal_suppresses_colour_on_a_terminal_that_could_have_had_it() {
             "{label} produced no readiness output, so the assertions below prove nothing: {}",
             terminal.visible()
         );
-        for (name, sequence) in [("cyan", CYAN), ("green", GREEN), ("blue", BLUE)] {
+        // GREEN AND BLUE ONLY, AND CYAN IS LEFT OUT ON PURPOSE.
+        //
+        // `doctor` has no prompt and no progress, so it never reaches `Role::Accent` — measured:
+        // a colour pty gives SGR 32 x3, SGR 34 x1, SGR 90 x3, and SGR 36 **x0**. Asserting the
+        // absence of cyan here would have passed with `--no-color` deleted, which is a test that
+        // reports success for a broken flag. The positive control above asserts blue and green
+        // for the same reason: those are the two this command actually emits.
+        for (name, sequence) in [("green", GREEN), ("blue", BLUE)] {
             assert!(
                 !terminal.transcript.contains(sequence),
                 "{label} did not suppress {name}: {:?}",
@@ -133,6 +140,53 @@ fn each_refusal_suppresses_colour_on_a_terminal_that_could_have_had_it() {
             );
         }
     }
+}
+
+#[test]
+fn the_accent_role_is_used_where_it_is_defined_to_be_used_and_suppressed_on_request() {
+    // CYAN'S OWN POSITIVE CONTROL, WHICH THE COLOUR TESTS ABOVE COULD NOT GIVE IT.
+    //
+    // `Role::Accent` is defined for "the active question, the selected choice, a command name" —
+    // and `doctor`, which every other colour test drives, has none of those. So no test asserted
+    // that the accent ever appears, while six asserted it was absent. An absence with no matching
+    // presence is not evidence.
+    //
+    // The wizard is where the accent lives, so the wizard is where it is checked.
+    let root = workspace();
+    let destination = root.path().join("demo");
+
+    let mut styled = Terminal::spawn(
+        &["new", "--path", destination.to_str().expect("utf-8")],
+        root.path(),
+        IN_COLOUR,
+    );
+    styled.expect("Project name");
+    styled.escape();
+    assert_eq!(styled.wait(), 4);
+    assert!(
+        styled.transcript.contains(CYAN),
+        "the live question must be the accent role: {:?}",
+        styled.transcript
+    );
+
+    let mut plain = Terminal::spawn(
+        &[
+            "new",
+            "--no-color",
+            "--path",
+            destination.to_str().expect("utf-8"),
+        ],
+        root.path(),
+        IN_COLOUR,
+    );
+    plain.expect("Project name");
+    plain.escape();
+    assert_eq!(plain.wait(), 4);
+    assert!(
+        !plain.transcript.contains(CYAN),
+        "`--no-color` must reach the prompt library too: {:?}",
+        plain.transcript
+    );
 }
 
 #[test]
@@ -511,13 +565,57 @@ fn the_verification_step_names_each_check_as_it_runs() {
 }
 
 #[test]
-fn a_dumb_terminal_gets_no_progress_indicator() {
-    // Measured rather than assumed, and then written into C-8. A redrawing indicator needs cursor
-    // movement, and `TERM=dumb` promises none — so the progress library declines to draw, which is
-    // the right answer and is not the same answer as "not a terminal".
+fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
+    // A REGRESSION THIS BRANCH INTRODUCED, FOUND BY AN ADVISORY REVIEW, AND MEASURED BOTH WAYS.
     //
-    // Recorded as a test because it is a behaviour this crate does not implement and therefore
-    // cannot notice losing.
+    // The progress library refuses to draw where it cannot redraw: `TERM=dumb`, and **also `TERM`
+    // unset entirely**, which is the state of cron, systemd units, and several embedded
+    // terminals. The code this branch replaced printed one static line unconditionally, so on
+    // those terminals the first version of this change turned a line into tens of seconds of
+    // total silence through a cold five-check build.
+    //
+    // That is the exact "indistinguishable from a hang" failure the indicator exists to fix, and
+    // it landed hardest on the readers the rest of this contract is most careful about. The test
+    // that used to sit here asserted the SILENCE as correct behaviour, which is how a regression
+    // gets a green tick.
+    //
+    // What has to hold is not "an indicator appears" — it is that the operator is told. Both
+    // spellings are checked below, on the two terminals that resolve differently.
+    for term in ["dumb", "xterm-256color"] {
+        let root = workspace();
+        let destination = root.path().join("demo");
+        let mut terminal = Terminal::spawn(
+            &[
+                "--dry-run",
+                "new",
+                "demo",
+                "--path",
+                destination.to_str().expect("utf-8"),
+                "--local-domain",
+                "demo.test",
+                "--example-domain",
+                "--seed-data",
+                "--container",
+                "--local-https",
+            ],
+            root.path(),
+            &[("TERM", term)],
+        );
+        assert_eq!(terminal.wait(), 0, "TERM={term}: {}", terminal.visible());
+        let visible = terminal.visible();
+        assert!(
+            visible.contains("verifying the generated project"),
+            "TERM={term} was told nothing while five cargo checks ran: {visible}"
+        );
+        // And the command still reports its result, which is the half that matters most.
+        assert!(visible.contains("Dry run:"), "TERM={term}: {visible}");
+    }
+}
+
+#[test]
+fn only_a_redrawable_terminal_gets_the_live_indicator() {
+    // The other half: the FALLBACK is a static line, not a spinner drawn into a terminal that
+    // cannot erase it. A dumb terminal must see the operation named once and no redraw at all.
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = Terminal::spawn(
@@ -535,22 +633,19 @@ fn a_dumb_terminal_gets_no_progress_indicator() {
             "--local-https",
         ],
         root.path(),
-        // `TERM=dumb` is the harness default; named here so the test says what it is testing.
         &[("TERM", "dumb")],
     );
     assert_eq!(terminal.wait(), 0, "{}", terminal.visible());
+    let visible = terminal.visible();
+    // The per-check names come from the indicator's message, which only a live bar renders.
     assert!(
-        !terminal
-            .visible()
-            .contains("verifying the generated project"),
-        "a dumb terminal must not be redrawn: {}",
-        terminal.visible()
+        !visible.contains("cargo clippy"),
+        "a dumb terminal was redrawn: {visible}"
     );
-    // And the command still succeeds and still reports its result, which is the half that matters.
-    assert!(
-        terminal.visible().contains("Dry run:"),
-        "{}",
-        terminal.visible()
+    assert_eq!(
+        visible.matches("verifying the generated project").count(),
+        1,
+        "the fallback must be said once, not once per check: {visible}"
     );
 }
 
@@ -580,12 +675,26 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
             destination.to_str().expect("utf-8"),
         ],
         root.path(),
-        &[],
+        // `TERM` MUST BE CAPABLE HERE, AND THAT IS THE WHOLE POINT OF THE TEST.
+        //
+        // The harness pins `TERM=dumb`, on which the progress library refuses to draw whatever
+        // the format says. Left at the default, the final assertion below would have been
+        // satisfied by `TERM` rather than by `--output json`, and deleting
+        // `&& self.format == Format::Human` from `Reporter::progress_visible` would have left it
+        // green. An advisory review caught exactly that.
+        &[("TERM", "xterm-256color")],
     );
     // The pty merges the two streams, so the prompt IS visible in the transcript — which is the
     // point: it proves the wizard ran.
     terminal.expect("Project name");
     terminal.send_line("demo");
+    // THE WHOLE QUESTION, NOT ITS FIRST WORD.
+    //
+    // Three of these begin with "Generate", and `expect` scans a transcript that only grows — so
+    // matching on the first word made the second and third calls return immediately against text
+    // already on screen, and the `enter()` after them was sent before its prompt had been drawn.
+    // Three of five synchronisation points were no-ops, and a prompt going missing in the middle
+    // would not have been noticed.
     for prompt in [
         "Local development domain",
         "Generate the example domain module?",
@@ -593,7 +702,7 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         "Generate container development controls?",
         "Record that local HTTPS is wanted?",
     ] {
-        terminal.expect(prompt.split(' ').next().expect("a first word"));
+        terminal.expect(prompt);
         terminal.enter();
     }
     terminal.enter();

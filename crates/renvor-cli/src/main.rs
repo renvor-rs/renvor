@@ -223,7 +223,7 @@ fn argument_for_display(argument: &std::ffi::OsStr) -> std::ffi::OsString {
 ///
 /// Re-parsing from escaped arguments preserves clap's caret diagnostics and its suggestions —
 /// the useful half — which reformatting the message by hand would destroy.
-fn safe_clap_rendering(error: &clap::Error) -> String {
+fn safe_clap_rendering(error: &clap::Error, styled: bool) -> String {
     let escaped: Vec<std::ffi::OsString> = std::env::args_os()
         .map(|argument| argument_for_display(&argument))
         .collect();
@@ -239,10 +239,21 @@ fn safe_clap_rendering(error: &clap::Error) -> String {
         // unstyled no matter what `Command::styles` said, on a terminal as much as in a pipe —
         // which looked like the policy working and was the palette never arriving.
         //
-        // The sequences go in here and are removed again at the boundary in `write_rendering`
-        // whenever the policy forbids them, which is the same two-mechanism arrangement the rest
-        // of this crate uses: emit deliberately, strip structurally.
-        Err(safe) => output::redact::line(&safe.render().ansi().to_string()),
+        // ── AND `styled` IS FALSE FOR JSON, WHICH IS NOT A DETAIL ───────────────────────
+        //
+        // The rest of this crate relies on `AutoStream` stripping escape sequences on every
+        // forbidden path. **That mechanism cannot see this one.** In JSON mode the rendering
+        // becomes `CliError::message`, and `serde_json` escapes each `ESC` into the six ASCII
+        // characters `\u001b` *before* the writer ever sees the document — so there is no ESC
+        // byte left to strip, and clap's colours travelled intact into
+        // `error.message` on a pipe. A consumer that decodes the document and prints the message
+        // gets live escape sequences, including into a file.
+        //
+        // Found by an advisory review; reproduced with `renvor --output json --nonsense | od -c`.
+        // The fix is to not create them on that path at all, because stripping is the mechanism
+        // that does not work here.
+        Err(safe) if styled => output::redact::line(&safe.render().ansi().to_string()),
+        Err(safe) => output::redact::line(&safe.render().to_string()),
         // Escaping cannot turn a rejected invocation into an accepted one: no flag, subcommand, or
         // value this CLI recognises contains a control character, so escaping is a no-op on every
         // argument clap matches against. If that ever stopped holding, fall back to escaping the
@@ -331,7 +342,7 @@ fn main() {
             // attacker controls by naming (or symlinking) the binary — on **stdout**, at exit 0,
             // which no test covered. It also discarded the write `Result`: on a full filesystem
             // `--help` produced no output, no diagnostic, and reported success.
-            if let Err(failure) = write_rendering(&safe_clap_rendering(&error), true) {
+            if let Err(failure) = write_rendering(&safe_clap_rendering(&error, true), true) {
                 let reporter = Reporter::new(Format::Human, false);
                 let error = CliError::new(Code::Internal, "the help text could not be written")
                     .with("cause", failure.to_string());
@@ -348,15 +359,17 @@ fn main() {
                     // Was `error.print()`, which handed clap's rendering — attacker-controlled
                     // argument text included — to the terminal unfiltered, bypassing the
                     // neutralisation `Reporter` applies to every other human line.
-                    let _ = write_rendering(&safe_clap_rendering(&error), false);
+                    let _ = write_rendering(&safe_clap_rendering(&error, true), false);
                 }
                 Format::Json => {
                     let reporter = Reporter::new(format, false);
                     let usage = CliError::new(
                         Code::Usage,
                         // clap's rendering is the useful text. It goes in the envelope's `message`,
-                        // which C-2 marks explicitly as human-readable and NOT stable.
-                        safe_clap_rendering(&error).trim().to_owned(),
+                        // which C-2 marks explicitly as human-readable and NOT stable — but
+                        // "not stable" is not "may contain escape sequences", so it is taken
+                        // UNSTYLED. See `safe_clap_rendering`.
+                        safe_clap_rendering(&error, false).trim().to_owned(),
                     );
                     reporter.fail("renvor", &usage);
                 }

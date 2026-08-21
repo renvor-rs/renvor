@@ -215,11 +215,7 @@ pub fn run(
     // `progress_visible` is already false in JSON mode and whenever `stderr` is not a terminal, so
     // a CI log gets a silent indicator rather than a bar drawn into it.
     let staging_path = destination.parent_display().join(staging.name());
-    let progress = Progress::start(
-        "verifying the generated project",
-        reporter.progress_visible(),
-        reporter.stderr_permission(),
-    );
+    let progress = Progress::start("verifying the generated project", reporter);
     let verified = crate::generate::verify::in_staging(&staging_path, &progress);
     // Cleared BEFORE the error propagates, so a failure message is never written over a bar that
     // is still on screen. `Drop` would do this too, at the closing brace — this puts the ordering

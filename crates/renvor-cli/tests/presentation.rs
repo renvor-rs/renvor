@@ -106,6 +106,100 @@ fn no_json_document_carries_a_single_escape_sequence() {
     }
 }
 
+/// Every command whose JSON failure envelope is produced by the **argument parser** rather than by
+/// this crate.
+///
+/// They are listed separately from [`RECORDED`] because their bytes are platform-dependent — the
+/// parser writes `renvor.exe` into its usage line on Windows — so they are asserted as a property
+/// rather than as fixtures.
+const PARSER_ERRORS: &[&[&str]] = &[
+    &["--output", "json", "--nonsense"],
+    &["--output", "json", "frobnicate"],
+    &["--output", "json"],
+    &["--output", "json", "new", "a", "b", "c"],
+    &["--output", "json", "new", "demo", "--nonsense"],
+];
+
+/// Every string anywhere in a JSON document, **after decoding**.
+fn decoded_strings(value: &serde_json::Value, out: &mut Vec<String>) {
+    match value {
+        serde_json::Value::String(text) => out.push(text.clone()),
+        serde_json::Value::Array(items) => items.iter().for_each(|item| decoded_strings(item, out)),
+        serde_json::Value::Object(fields) => {
+            for (key, field) in fields {
+                out.push(key.clone());
+                decoded_strings(field, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn no_json_string_carries_an_escape_sequence_once_it_is_decoded() {
+    // THE ASSERTION THAT `escapes()` CANNOT MAKE, AND THE DEFECT IT DID NOT CATCH.
+    //
+    // `escapes()` counts literal `ESC` characters in the raw output. A JSON document never
+    // contains one: `serde_json` writes `\u001b`, six ASCII characters, **before** anything sees
+    // the bytes. So every "no escape sequences" assertion in this file returns 0 for a document
+    // whose decoded content is full of them, and the strip at the writer has nothing to remove
+    // either.
+    //
+    // That is exactly what happened. Styling `--help` meant the parser's usage errors carried its
+    // colours, and in JSON mode that rendering becomes `error.message` — so
+    // `renvor --output json --nonsense | jq -r .error.message` printed live escape sequences on a
+    // pipe. An advisory review found it; both mechanisms this crate relies on were blind to it by
+    // construction.
+    //
+    // This decodes the document and inspects the values, which is what a consumer does.
+    let root = workspace();
+    let mut inspected = 0_usize;
+    for arguments in RECORDED
+        .iter()
+        .map(|(_, arguments, _)| *arguments)
+        .chain(PARSER_ERRORS.iter().copied())
+    {
+        let (_, stdout, _) = renvor(arguments, root.path(), &[]);
+        let document: serde_json::Value = serde_json::from_str(&stdout)
+            .unwrap_or_else(|error| panic!("{arguments:?}: not one JSON document: {error}"));
+        let mut strings = Vec::new();
+        decoded_strings(&document, &mut strings);
+        for text in &strings {
+            assert!(
+                !text.contains('\u{1b}'),
+                "{arguments:?}: a decoded JSON string carries an escape sequence: {text:?}"
+            );
+        }
+        inspected += strings.len();
+    }
+    // POSITIVE CONTROL. A walk that found no strings would pass while inspecting nothing.
+    assert!(
+        inspected > 40,
+        "only {inspected} strings were inspected; the walk is not reaching the documents"
+    );
+}
+
+#[test]
+fn a_parser_error_still_produces_a_usage_envelope_in_json_mode() {
+    // The other half of the same fix: taking the UNSTYLED rendering must not have emptied the
+    // message. C-2 requires a parseable answer precisely when the command line could not be
+    // parsed, and the useful part of that answer is the parser's own text.
+    let root = workspace();
+    for arguments in PARSER_ERRORS {
+        let (code, stdout, _) = renvor(arguments, root.path(), &[]);
+        assert_eq!(code, 2, "{arguments:?} must be a usage error");
+        let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+        assert_eq!(document["error"]["code"], "usage", "{arguments:?}");
+        let message = document["error"]["message"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{arguments:?}: no message"));
+        assert!(
+            message.contains("Usage:") || message.contains("error:"),
+            "{arguments:?}: the parser's text was lost: {message:?}"
+        );
+    }
+}
+
 #[test]
 fn a_json_run_puts_exactly_one_document_on_stdout_and_it_parses() {
     // C-2, restated here because C-8 is the change most able to break it: a status label, a row,
@@ -405,7 +499,61 @@ const DIRECT_OUTPUT_IS_ALLOWED: &[(&str, &str)] = &[
         "writes the parser's own rendering and restores the cursor from the panic hook, both \
          before or instead of a reporter existing",
     ),
+    (
+        "generate/place.rs",
+        "one `writeln!` to stderr from a `Drop`, where no reporter is in scope and no error can \
+         be returned. Found by widening this scan; checked rather than exempted on sight — the \
+         value goes through `redact::path`, which escapes every control character, and stderr is \
+         the diagnostic stream in both output modes, so it cannot disturb the JSON document. \
+         Silence was the previous behaviour and is the one thing that must not happen: a staged \
+         tree survives and nothing says so",
+    ),
 ];
+
+/// Every way a shipped file could reach a stream without the reporter.
+///
+/// # The macros are not the whole list, and the first version of this scan thought they were
+///
+/// `println!` is the obvious bypass. `writeln!(std::io::stdout(), …)` is the same bypass spelled
+/// differently — and it is the spelling the panic hook legitimately uses, so it is the shape a
+/// future one would most plausibly take. A scan that looked only for the macros reported "clean"
+/// for a class of write it never searched for, which an advisory review pointed out.
+const BYPASSES: &[&str] = &[
+    // LONGEST FIRST. `eprintln!` contains `println!`, so a shortest-first list reports the wrong
+    // needle — which the control below caught the moment it started running the real predicate.
+    "eprintln!",
+    "eprint!",
+    "println!",
+    "print!",
+    // The same write, spelled with the writer named explicitly.
+    "std::io::stdout()",
+    "std::io::stderr()",
+    // The prompt and progress libraries' own writers, which do not pass through redaction. The
+    // adapter reaches them through wrappers that take `&'static str`; anything else naming them
+    // is a bypass.
+    "cliclack::log",
+    "cliclack::note",
+    "cliclack::outro_note",
+];
+
+/// Whether one line of source is a bypass, and which one.
+///
+/// Extracted so that the scan and **its own control** run the same code. The control used to
+/// re-implement a two-line predicate over a synthetic string, which meant it would have passed
+/// unchanged if the real needle list had been emptied — a control that does not exercise the
+/// thing it controls.
+fn bypass_in(line: &str) -> Option<&'static str> {
+    let code = line.trim_start();
+    // Comments and doc comments talk ABOUT these at length, which is the point of the surrounding
+    // documentation. Only code counts.
+    if code.starts_with("//") || code.starts_with('*') {
+        return None;
+    }
+    BYPASSES
+        .iter()
+        .find(|forbidden| code.contains(*forbidden))
+        .copied()
+}
 
 #[test]
 fn no_shipped_file_writes_to_a_stream_without_going_through_the_reporter() {
@@ -437,30 +585,11 @@ fn no_shipped_file_writes_to_a_stream_without_going_through_the_reporter() {
             return;
         }
         for (number, line) in text.lines().enumerate() {
-            // Comments and doc comments talk ABOUT these macros at length, which is the point of
-            // the surrounding documentation. Only code counts.
-            let code = line.trim_start();
-            if code.starts_with("//") || code.starts_with("*") {
-                continue;
-            }
-            for forbidden in [
-                "println!",
-                "print!",
-                "eprintln!",
-                "eprint!",
-                // The prompt and progress libraries' own writers, which do not pass through
-                // redaction. The adapter reaches them through wrappers that take `&'static str`;
-                // anything else naming them is a bypass.
-                "cliclack::log",
-                "cliclack::note",
-                "cliclack::outro_note",
-            ] {
-                if code.contains(forbidden) {
-                    // COLLECTED, not asserted here. Asserting inside the loop reports the first
-                    // offence and hides every other one, which turns a single review pass into as
-                    // many passes as there are breaches.
-                    offences.push(format!("  {relative}:{}  {forbidden}", number + 1));
-                }
+            if let Some(found) = bypass_in(line) {
+                // COLLECTED, not asserted here. Asserting inside the loop reports the first
+                // offence and hides every other one, which turns a single review pass into as
+                // many passes as there are breaches.
+                offences.push(format!("  {relative}:{}  {found}", number + 1));
             }
         }
     });
@@ -479,33 +608,33 @@ fn no_shipped_file_writes_to_a_stream_without_going_through_the_reporter() {
 }
 
 #[test]
-fn the_scan_above_would_actually_catch_a_direct_write() {
-    // The control for the control. If the needle list or the comment-skipping were wrong, the scan
-    // would pass on a file that plainly offends — so a plain offender is constructed here and the
-    // same logic is run over it.
-    let offender = "fn main() {\n    println!(\"hello\");\n}\n";
-    let caught = offender
-        .lines()
-        .filter(|line| {
-            let code = line.trim_start();
-            !code.starts_with("//") && code.contains("println!")
-        })
-        .count();
-    assert_eq!(
-        caught, 1,
-        "the scan's own predicate does not catch a bypass"
-    );
+fn the_scan_above_runs_over_a_planted_bypass_and_catches_it() {
+    // THE CONTROL FOR THE CONTROL, and it calls the real predicate rather than a copy of it.
+    //
+    // Every needle is exercised, so emptying `BYPASSES` fails here — which the previous version
+    // of this test would not have noticed, because it re-implemented the check inline.
+    for needle in BYPASSES {
+        let planted = format!("    {needle}(\"boom\");");
+        assert_eq!(
+            bypass_in(&planted),
+            Some(*needle),
+            "the scan does not catch {needle}"
+        );
+    }
 
-    // And the comment exemption must not swallow a real one.
-    let commented = "    // println! is forbidden here\n";
-    let missed = commented
-        .lines()
-        .filter(|line| {
-            let code = line.trim_start();
-            !code.starts_with("//") && code.contains("println!")
-        })
-        .count();
-    assert_eq!(missed, 0, "a comment about the rule is not a breach of it");
+    // And the comment exemption must not swallow a real breach.
+    assert_eq!(
+        bypass_in("    // println! is forbidden here"),
+        None,
+        "a comment about the rule is not a breach of it"
+    );
+    assert_eq!(
+        bypass_in("    /// `eprintln!` is discussed in this doc comment"),
+        None,
+        "a doc comment about the rule is not a breach of it"
+    );
+    // Ordinary code is not a false positive.
+    assert_eq!(bypass_in("    let total = a + b;"), None);
 }
 
 /// Calls `visit` for every `.rs` file under `directory`.
