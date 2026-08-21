@@ -14,12 +14,24 @@
 > `renvor new` and the package command is `renvor add`. See
 > `decisions/0010-unify-product-and-executable-name.md`.
 >
-> **Everything below this notice is preserved verbatim as historical evidence.** It records
-> what was decided on 2026-08-12 and why, and it is cited by
-> `governance/phase-001-evidence.md` and by T026. It is **not** current instruction. No
-> sentence below has been edited to agree with the newer decision — superseding a record
-> does not entitle anyone to rewrite what it said, and Phase 001 evidence that cites this
-> record must stay checkable against the text that was actually accepted.
+> **The decision's substance below is preserved as historical evidence. The historical body is
+> not byte-for-byte identical to its accepted version.** It records what was decided on
+> 2026-08-12 and why, and it is cited by `governance/phase-001-evidence.md` and by T026. It is
+> **not** current instruction. No sentence below has been edited to agree with the newer decision
+> — superseding a record does not entitle anyone to rewrite what it said, and Phase 001 evidence
+> that cites this record must stay checkable against the text that was actually accepted.
+>
+> **The only change inside the historical body is the W-002 control-2 citation row.** A bare
+> `specs/...` path was replaced with an immutable, full-commit-pinned link to the same file, so
+> the evidence stays reachable: `specs/` is untracked on this branch and the bare path resolves
+> to nothing. The finding text in that row — 77 of 79, with CHK048 and CHK050 failing — is
+> unchanged.
+>
+> **The pinned revision is a later state of that checklist than this row describes.** It shows
+> **79 of 79** checked, the state reached once CHK048 and CHK050 were resolved; the 77-of-79
+> state this row records is at commit `6863226`. The pin gives an immutable copy of the file, not
+> a reconstruction of the moment this record was accepted, and that is stated here rather than
+> left for a reader to discover.
 >
 > **What ADR-0010 carried forward, unchanged:** the product name `Renvor`, the facade crate
 > `renvor`, the CLI package `renvor-cli`, the organization `renvor-rs`, `.renvor/`, and

@@ -15,10 +15,18 @@
 > two Linux `verify` contexts are required by branch protection. See
 > `decisions/0011-support-linux-macos-and-windows.md`.
 >
-> **Everything below this notice is preserved verbatim as historical evidence.** No sentence
-> below has been edited to agree with the newer decision — superseding a record does not
-> entitle anyone to rewrite what it said, and the Phase 001 and Phase 002 evidence that cites
-> this record must stay checkable against the text that was actually accepted.
+> **The decision's substance below is preserved as historical evidence. The historical body is
+> not byte-for-byte identical to its accepted version.** No sentence below has been edited to
+> agree with the newer decision — superseding a record does not entitle anyone to rewrite what it
+> said, and the Phase 001 and Phase 002 evidence that cites this record must stay checkable
+> against the text that was actually accepted.
+>
+> **The only change inside the historical body is the W-002 control-2 citation row.** A bare
+> `specs/...` path was replaced with an immutable, full-commit-pinned link to the same file, so
+> the evidence stays reachable: `specs/` is untracked on this branch and the bare path resolves
+> to nothing. The finding text in that row is unchanged, and the pinned revision records the same
+> **79 of 79** outcome this row reports. Its SHA-256 is independently recorded in ADR-0011's
+> control 2.
 >
 > **What ADR-0011 carried forward, unchanged in substance:** the **fixed MSRV floor of 1.94.0**
 > and its whole shape, the current-stable-channel testing rule, Rust **2024** edition, Cargo
