@@ -115,12 +115,20 @@ result — and which the test suite contradicted rather than enforced.
 
 ## JSON invariance
 
-With `--output json`, this contract has **no observable effect at all**. The document is
-byte-for-byte what it was before any of this existed: same schema, same values, same key order,
-same framing, no escape sequences, no prompt, no progress.
+With `--output json`, **`stdout` is byte-for-byte what it was before any of this existed**: same
+schema, same values, same key order, same framing, no escape sequences. No progress either — the
+**Progress** section makes an indicator absent in JSON mode outright.
 
 That is not a promise about intent — it is a property of the structure. The human report and the
 JSON document are built from separate values, and the reporter emits **exactly one of the two**.
+
+**This paragraph deliberately does not say "no prompt".** An earlier version of it did, and that
+was false: `renvor --output json new` on a terminal enters the wizard, which the **Prompts**
+section records and explains at length. The questions are drawn on `stderr`, so the document on
+`stdout` is unaffected — which is the guarantee that actually holds, and therefore the only one
+claimed here. The stronger sentence would have contradicted this contract's own **Prompts**
+section, and a document that disagrees with itself is a worse defect than a narrower claim is a
+weakness.
 
 ## Layout
 
@@ -282,17 +290,33 @@ question and accepts its default.
 - **`stderr`, always.**
 - **Absent in JSON mode, and absent whenever `stderr` is not a terminal.** Not hidden — absent: the
   calls still happen and render nowhere, so no caller has an `if` to forget.
-- **Absent under `TERM=dumb`, and under `TERM` unset — but the operator is still told.** A live
-  indicator redraws its own line, and neither of those terminals promises the cursor movement to
-  redraw with, so the indicator is replaced by **one static line naming the operation**.
+- **Absent wherever the progress library declines to draw — but the operator is still told.** A
+  live indicator redraws its own line, and a terminal that does not promise the cursor movement to
+  redraw with gets **one static line naming the operation** instead.
+
+  Which terminals those are is the progress library's decision rather than this contract's, and
+  **it is platform-dependent**. The library declines on `TERM=dumb` everywhere. It also declines
+  when `TERM` is unset — **on Unix only**: `console::is_dumb` treats an absent `TERM` as dumb off
+  Windows and as *not* dumb on Windows, because native Windows consoles do not conventionally set
+  `TERM` and are detected through the console API instead. So an absent `TERM` produces the static
+  line on Linux and macOS — the state of cron, systemd units, and several embedded terminals, which
+  is not a rare corner — and produces the ordinary live indicator on a native Windows console.
+
+  That asymmetry is left as the library has it, deliberately. Forcing the static line on Windows to
+  make one sentence read the same on every platform would replace a working indicator on the
+  *normal* Windows configuration, which is a worse outcome for the operator than an uneven
+  mechanism is for a reader of this document.
 
   This is a *different* condition from "not a terminal" — a dumb terminal is one — and it is
   stated separately because it was **measured**, and because the first version of this change got
   it wrong: it dropped the indicator on those terminals and put nothing in its place, turning a
-  line into tens of seconds of silence through a cold five-check build. `TERM` unset is the state
-  of cron, systemd units, and several embedded terminals, so that is not a rare corner.
+  line into tens of seconds of silence through a cold five-check build.
 
-  **The rule is that the operator is told, not that an indicator appears.**
+  **The rule is that the operator is told, not that an indicator appears** — and that rule holds on
+  every platform: by the static line where the library declines, by the indicator where it does
+  not. What the test suite enforces is the substitution mechanism, on a dumb terminal, which
+  resolves exactly as an absent `TERM` does on Unix. The mapping from an absent `TERM` to that
+  mechanism is the library's documented platform default and is not separately asserted here.
 - **Attached only to work measured in seconds whose output is captured.** Work that completes
   almost immediately gets no indicator, and work that already shows the reader its own output — a
   child process holding the terminal — gets none either.

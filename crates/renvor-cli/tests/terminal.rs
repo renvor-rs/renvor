@@ -733,11 +733,13 @@ fn the_verification_step_names_each_check_as_it_runs() {
 fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
     // A REGRESSION THIS BRANCH INTRODUCED, FOUND BY AN ADVISORY REVIEW, AND MEASURED BOTH WAYS.
     //
-    // The progress library refuses to draw where it cannot redraw: `TERM=dumb`, and **also `TERM`
-    // unset entirely**, which is the state of cron, systemd units, and several embedded
-    // terminals. The code this branch replaced printed one static line unconditionally, so on
-    // those terminals the first version of this change turned a line into tens of seconds of
-    // total silence through a cold five-check build.
+    // The progress library refuses to draw where it cannot redraw: `TERM=dumb` on every platform,
+    // and **`TERM` unset on Unix** — the state of cron, systemd units, and several embedded
+    // terminals. (`console::is_dumb` maps an absent `TERM` to dumb off Windows and to not-dumb on
+    // Windows, so a native Windows console draws normally; that split is documented in the
+    // contract and is not exercised here.) The code this branch replaced printed one static line
+    // unconditionally, so on those terminals the first version of this change turned a line into
+    // tens of seconds of total silence through a cold five-check build.
     //
     // That is the exact "indistinguishable from a hang" failure the indicator exists to fix, and
     // it landed hardest on the readers the rest of this contract is most careful about. The test

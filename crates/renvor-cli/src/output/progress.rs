@@ -84,8 +84,17 @@ impl Progress {
         // ── THE LIBRARY GETS THE LAST WORD, AND IT SOMETIMES SAYS NO ────────────────────
         //
         // Asking for a visible target is not the same as getting one. The progress library
-        // refuses to draw on a terminal it cannot redraw — `TERM=dumb`, and **also `TERM` unset
-        // entirely**, which is the state of cron, systemd units, and several embedded terminals.
+        // refuses to draw on a terminal it cannot redraw: `TERM=dumb` on every platform, and
+        // **`TERM` unset on Unix** — the state of cron, systemd units, and several embedded
+        // terminals.
+        //
+        // That second case is deliberately platform-split rather than universal. `console::is_dumb`
+        // treats an absent `TERM` as dumb off Windows and as NOT dumb on Windows, where native
+        // consoles do not conventionally set `TERM` at all and are detected through the console
+        // API — so a native Windows console takes the ordinary live-indicator path and never
+        // reaches this branch. The asymmetry is the library's and is left alone on purpose:
+        // forcing the static line on Windows would replace a working indicator on the normal
+        // Windows configuration, which trades a real regression for a tidier sentence.
         //
         // Left there, this change would have been a REGRESSION for exactly those readers: the
         // code it replaced printed one static line unconditionally, and they would have got tens
