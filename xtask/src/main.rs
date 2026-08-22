@@ -474,6 +474,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !crate_dag_holds(root) {
         return false;
     }
+    if !transport_isolation_holds(root) {
+        return false;
+    }
     if !facade_feature_isolation_holds(root) {
         return false;
     }
@@ -658,6 +661,177 @@ fn normal_edges(root: &std::path::Path, args: &[&str]) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The HTTP stack reaches the transport crate and stops there — asserted in BOTH directions.
+///
+/// # Why an absence needs a positive control
+///
+/// "`cargo tree` did not print `axum`" is also what a broken query prints. Every forbidden-name
+/// scan below is therefore paired with a query where the same names MUST appear; if the control
+/// stops finding them, the check reports that it has stopped working rather than reporting a pass
+/// it never earned.
+///
+/// Three claims, and each is worthless without its control:
+///
+/// | Claim | Control |
+/// |---|---|
+/// | `renvor-core` resolves no HTTP crate under **any** feature | `renvor-http` resolves them |
+/// | `renvor` without `transport-rest` resolves none | `renvor` **with** it resolves them |
+/// | `renvor-http` depends inward only | it does depend on `renvor-core` |
+fn transport_isolation_holds(root: &std::path::Path) -> bool {
+    const HTTP_CRATES: [&str; 4] = ["axum ", "tower ", "tower-http ", "hyper "];
+
+    // CLAIM 1 — the kernel carries no transport, under ALL features. `--all-features` matters:
+    // an isolation claim that holds only for the default feature set is not the claim FR-002 makes.
+    let Some(core) = normal_edges(root, &["-p", "renvor-core", "--all-features"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor-core --all-features` failed",
+        );
+        return false;
+    };
+    for forbidden in HTTP_CRATES {
+        if core.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "renvor-core resolves `{}` — the kernel must carry no transport under any \
+                     feature combination (FR-002)",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CONTROL 1 — the same names, in the crate that is supposed to have them.
+    let Some(http) = normal_edges(root, &["-p", "renvor-http"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "`cargo tree -p renvor-http` failed",
+        );
+        return false;
+    };
+    for expected in HTTP_CRATES {
+        if !http.contains(expected) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "renvor-http does not resolve `{}`, so the kernel absence above proves nothing",
+                    expected.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CLAIM 2 — the facade without the transport feature resolves none of it.
+    let Some(lean) = normal_edges(root, &["-p", "renvor", "--no-default-features"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the lean facade tree query failed",
+        );
+        return false;
+    };
+    for forbidden in HTTP_CRATES {
+        if lean.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` without `transport-rest` resolves `{}` (FR-003)",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CLAIM 2b — and the DEFAULT feature set does not either. `transport-rest` is off by default,
+    // and this is what stops it from being quietly added to `default` later.
+    let Some(default_tree) = normal_edges(root, &["-p", "renvor"]) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the default facade tree query failed",
+        );
+        return false;
+    };
+    for forbidden in HTTP_CRATES {
+        if default_tree.contains(forbidden) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor` with DEFAULT features resolves `{}`; `transport-rest` must stay \
+                     off by default",
+                    forbidden.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CONTROL 2 — with the feature, the same query MUST find them.
+    let Some(with_transport) =
+        normal_edges(root, &["-p", "renvor", "--features", "transport-rest"])
+    else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the transport-enabled facade tree query failed",
+        );
+        return false;
+    };
+    for expected in HTTP_CRATES {
+        if !with_transport.contains(expected) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`renvor --features transport-rest` does not resolve `{}`, so the isolation \
+                     check proves nothing",
+                    expected.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CLAIM 3 — the transport depends INWARD. It must not reach back up to the facade, the
+    // configuration crate, or the CLI.
+    for outward in ["renvor v", "renvor-config ", "renvor-cli "] {
+        if http.contains(outward) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "renvor-http depends on `{}` — the transport depends inward only (FR-001)",
+                    outward.trim()
+                ),
+            );
+            return false;
+        }
+    }
+
+    // CONTROL 3 — it DOES depend on the kernel, so the absences above describe a real graph.
+    if !http.contains("renvor-core ") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "renvor-http does not resolve renvor-core, so the inward-dependency check is not \
+             reading the graph",
+        );
+        return false;
+    }
+
+    true
 }
 
 /// T101: the crate DAG has the direction the plan claims, with positive controls.

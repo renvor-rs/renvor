@@ -967,6 +967,7 @@ version = "0.0.0"
 dependencies = [
  "renvor-config",
  "renvor-core",
+ "renvor-http",
  "serde",
  "tokio",
 ]
