@@ -54,6 +54,9 @@ Options:
       --seed-data
           Generate seed data. Requires `--example-domain`
 
+      --transport <TRANSPORT>
+          Delivery transport. `rest` is the only supported value
+
   -h, --help
           Print help (see a summary with '-h')
 
