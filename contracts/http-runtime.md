@@ -40,12 +40,21 @@ holds it for the request's lifetime.
 ```
 shutdown requested
    │
-   ├─ work gate closes ............ new requests refused (503)
-   ├─ listener stops accepting .... no new connections
-   └─ drain(budget) ............... BOUNDED wait
-         ├─ finished in budget ......... Clean
-         └─ budget elapsed ............. Incomplete { outstanding: N }
+   ├─ 1. work gate closes ......... new requests refused (503)
+   ├─ 2. listener stops accepting . no new connections
+   ├─ 3. drain(budget) ............ BOUNDED wait for in-flight work
+   │        ├─ finished in budget ...... Clean
+   │        └─ budget elapsed .......... Incomplete { outstanding: N }
+   ├─ 4. cancel, if work remains .. abandoned work is CANCELLED, never left running
+   └─ 5. the REMAINDER of the budget for connection tasks, and not one millisecond more
 ```
+
+**Every step has an upper bound, and steps 3 and 5 share one budget.** A step that computed a bound
+and then waited on something unbounded would satisfy the diagram and not the contract.
+
+**An idle connection is not outstanding work.** A `Clean` outcome with a keep-alive socket still
+open is correct: `DrainOutcome` reports **work**, which is what an operator needs before stopping a
+process. Bounding on the work gate rather than on the connection count is what keeps that honest.
 
 | Property | Value |
 |---|---|

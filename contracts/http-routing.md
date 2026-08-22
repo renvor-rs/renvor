@@ -40,6 +40,7 @@ dispatch.
 | **Group prefix** | A group contributes a path prefix to every route it contains. Nested groups compose left to right |
 | **Group middleware** | A group's middleware applies to every route it contains, and to no route outside it |
 | **Path shape** | Every registered path is validated at registration. An invalid pattern is a registration error, not a route that never matches |
+| **`OPTIONS`** | **Cannot be registered.** The CORS layer answers every `OPTIONS` request as a preflight, so an application route on `OPTIONS` would never run. Registration is a **reported error** rather than a silent shadow — the same rule as the row above, applied to a method instead of a path |
 
 ## Dispatch outcomes
 
@@ -69,6 +70,7 @@ Two forms, from one registry.
   "status": "success",
   "command": "routes",
   "result": {
+    "protocol": 1,
     "routes": [
       { "method": "GET", "path": "/api/v1/health", "group": "api-v1" }
     ]
@@ -79,18 +81,40 @@ Two forms, from one registry.
 `result.routes` is sorted by path then method, so two runs against the same registry produce
 byte-identical output.
 
+### `result.protocol` — versioned separately, and deliberately
+
+`schemaVersion` describes the **envelope**: the `status`/`command`/`result` shape and the closed
+error-code registry. `result.protocol` describes the **payload inside `result`**, which changes for
+different reasons — adding a field to a route row is not a change to how failures are reported.
+
+**Current value: `1`.**
+
+A consumer checks `protocol` **before** reading the payload and refuses a version it does not
+understand, by name. Parsing an unknown version on a best-effort basis would let a route table
+silently lose a column, which is exactly the quietly-wrong output this capability exists not to
+produce.
+
 ### Where the metadata comes from — stated truthfully
 
 `renvor routes` **cannot dynamically load arbitrary compiled application code**, and this contract
 does not pretend otherwise.
 
-**The route-dump convention.** A Renvor application binary answers a documented invocation by
-printing `result.routes` for its own registry — the same registry that built its router. The
+**The route-dump protocol.** A Renvor application binary answers a documented invocation by
+printing the C-2 envelope for its own registry — the same registry that built its router. The
 `renvor routes` command builds and runs the project binary with that invocation and relays the
 result.
 
 The authority is therefore **the application's own registry**, reached by asking the application.
 There is no static source parsing, no separate manifest file, and no inference.
+
+Four properties are normative:
+
+| Property | Rule |
+|---|---|
+| **One source** | the payload is rendered from the registry that builds the router |
+| **Versioned** | `result.protocol` is checked before the payload is read |
+| **No binary discovery** | the project's own declared default binary is run, through its build tool. Nothing searches build output for something executable |
+| **No boot side effects** | the application answers and exits **before** it starts anything. A protocol that required booting would make listing routes bind ports and run migrations |
 
 ### When the project has no transport wiring
 
@@ -102,9 +126,11 @@ consumer, from an application with no routes — and the two mean entirely diffe
 
 > **Current, dated limitation — 2026-08-22.** No Renvor crate is published, so **no project the
 > current generator produces depends on the framework**, and `renvor routes` therefore succeeds
-> against **none** of them. This is recorded rather than smoothed over: the command's mechanism is
-> correct and its reach today is zero. See [`template-contract.md`](template-contract.md) for what
-> the generator emits and why.
+> against **none** of them. This is recorded rather than smoothed over: the relay **is**
+> implemented and is asserted end to end against a real binary answering through the real library —
+> its reach across *generated* projects is what is zero, and it is zero because nothing is
+> published for them to depend on. See [`template-contract.md`](template-contract.md) for what the
+> generator emits and why.
 
 ## Feature isolation
 

@@ -94,6 +94,36 @@ has not been configured, and guessing on its behalf is how a host-header attack 
 | Allowed origins | **none** |
 | Matching | **exact origins only** — no wildcard, no suffix matching, no pattern |
 | Wildcard origin with credentials | **refused** |
+| Allowed origin | receives `Access-Control-Allow-Origin` with **that exact origin**, plus `Vary: Origin` |
+| Wildcard policy | answers `Access-Control-Allow-Origin: *` and **never** `Access-Control-Allow-Credentials` |
+| Credentials | `Access-Control-Allow-Credentials: true` is emitted **only** when the policy sets it |
+| Preflight | **answered before admission** spends a permit on it, with an empty **`200`** |
+
+### Renvor refuses a disallowed origin; the specification only asks it to stay quiet
+
+CORS as specified is enforced by the **browser**: a server emits headers and the browser decides
+what a page may read. Renvor is stricter. A request carrying an `Origin` that is present,
+**cross-origin**, and not permitted is **refused with `400`** — so a disallowed origin gets no
+response body at all, including from a non-browser caller that would ignore the headers entirely.
+
+Constitution principle VI requires the deny-first posture; this is what it looks like applied to
+CORS.
+
+### The same-origin carve-out
+
+Browsers send `Origin` on same-origin `POST`, `PUT`, `PATCH`, and `DELETE` as well as on
+cross-origin requests. A request whose `Origin` matches the host it was addressed to is by
+definition **not** cross-origin, and CORS governs cross-origin access only — so it is not refused.
+
+The comparison is against the **validated** host, the value host validation already accepted. An
+attacker therefore cannot satisfy the carve-out without first satisfying host validation, which is
+what keeps it from being a bypass.
+
+### `OPTIONS` cannot carry an application route
+
+The CORS implementation answers **every** `OPTIONS` request as a preflight. An application route on
+`OPTIONS` would therefore appear in every route listing and never run, which contract
+[`http-routing.md`](http-routing.md) names as the worse failure. Registration is refused instead.
 
 ### Refused at configuration time
 
@@ -104,6 +134,13 @@ This is Renvor's own validation. The underlying library detects the same conditi
 that can fire **while serving a request**, which turns a configuration mistake into a runtime panic
 in production. Refusing at configuration time means the process never starts in that state. See
 [`ADR-0012`](../decisions/0012-phase-004-custom-http-primitives.md).
+
+**Renvor validates; the selected library implements.** The protocol itself — which headers to emit,
+how to answer a preflight, what goes in `Vary` — is the library's, and Renvor writes none of it.
+The preflight status is therefore **the library's `200`**, not a number Renvor chose. Renvor's
+configuration is constrained so that no policy it accepts can reach the upstream assertion at all:
+the wildcard-with-credentials combination is refused, and the methods and headers it configures are
+request-mirroring rather than the literal `*` the assertion also refuses.
 
 ## Response and telemetry content
 

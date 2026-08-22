@@ -16,7 +16,7 @@ status: "normative — public contract from the first release that ships it; not
 | `renvor new [NAME]` | Create a project | **Full** |
 | `renvor doctor` | Report environment readiness | **Full** |
 | `renvor check` | Validate a project without building it | **Full** |
-| `renvor routes` | Show the routes a project would serve | **Full, and currently reaches no generated project** — see below |
+| `renvor routes` | Show the routes a project would serve | **Full.** The relay is implemented; it currently reaches no *generated* project — see below |
 | `renvor dev` | Run the local development loop | **Full** |
 | `renvor docker up\|down\|status\|logs` | Container development controls | **Full** |
 | `renvor tls trust` | The consent boundary for a trust-store change. **In this phase: consent only — it describes what would change, requires explicit consent, and then declines.** Non-interactive consent is `--i-understand-this-modifies-my-system-trust-store`; `--yes` does not grant it. |
@@ -29,22 +29,39 @@ zero is worse than an absent command, because it reports success for work that d
 
 ### `renvor routes` — where its data comes from, and what it cannot do
 
-It asks the **application binary** for its own route registry, through a documented invocation the
-binary answers by printing the registry as the `result` payload of the C-2 envelope. That registry
-is the same value that builds the router, which is what makes the listing and the router agree by
-construction rather than by maintenance.
+It runs the **application binary** and asks it for its own route registry, through an explicit
+versioned invocation the binary answers by printing the registry as the `result` payload of the C-2
+envelope. That registry is the same value that builds the router, which is what makes the listing
+and the router agree by construction rather than by maintenance.
+
+| Property | Rule |
+|---|---|
+| Invocation | `cargo run --quiet -- --renvor-dump-routes`, in the project directory |
+| Binary selection | the project's **own declared default binary**. Nothing searches `target/` for something executable |
+| Payload version | `result.protocol`, currently **`1`**, checked **before** the payload is read |
+| Unknown version | refused **by name**, never parsed on a best-effort basis |
+| Boot side effects | **none.** The application answers and exits before it starts anything |
+| Streams | `stdout` is captured and must carry exactly the envelope; `stderr` is inherited, so a build's progress reaches the operator |
 
 It does **not** parse the project's source, and it does **not** read a second manifest. Contract
 [`http-routing.md`](http-routing.md) prohibits a second route list that can drift, and a source
 parser would be one.
 
+**Every failure is named.** `details.reason` is one of `no_renvor_dependency`,
+`invocation_failed`, `dump_failed`, `dump_unreadable`, `protocol_unstated`, or
+`protocol_unsupported` — so a consumer can tell "the binary would not build" from "the binary
+answered something I cannot read".
+
 **Dated limitation — 2026-08-22.** No Renvor crate is published, so no project the current
 generator produces depends on the framework, and none of them can answer the invocation. The
-command therefore succeeds against **none** of them today. It reports that with
-`transport_not_wired`, exit `3`, and `details.reason`.
+command therefore succeeds against **none of them today** — not because the relay is missing, but
+because there is nothing published for a generated project to depend on. It reports that with
+`transport_not_wired`, exit `3`, and `details.reason = no_renvor_dependency`.
 
-**It never prints an empty route table and exits `0`.** An empty success is indistinguishable, to a
-consumer, from an application that genuinely declares no routes, and the two mean different things.
+**It never prints an empty route table and exits `0` when the registry could not be obtained.** An
+empty success is indistinguishable, to a consumer, from an application that genuinely declares no
+routes, and the two mean different things. An application that **answers** with an empty registry
+is a different fact, and that *is* reported as a success saying so.
 
 ## Exit codes
 
