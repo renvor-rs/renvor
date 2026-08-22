@@ -6,28 +6,54 @@
 //! It also does not parse the project's source, because a parser and a router are two things that
 //! can disagree, and contract C-9 forbids a second route list that can drift.
 //!
-//! So it asks the **application binary** for its own registry, through a documented convention:
-//! a Renvor application answers [`DUMP_FLAG`] by printing its route registry as the `result`
-//! payload of the C-2 envelope. The registry that answers is the same value that built the
-//! router, which is what makes agreement structural rather than maintained.
+//! So it asks the **application binary** for its own registry, through an explicit versioned
+//! protocol:
 //!
-//! # The limitation this command currently has, and why it is not hidden
+//! ```text
+//!   renvor routes                                    the project's binary
+//!        │                                                    │
+//!        │  cargo run --quiet -- --renvor-dump-routes         │
+//!        ├───────────────────────────────────────────────────►│
+//!        │                                                    │  answer_dump_request(argv, &registry)
+//!        │                                                    │  — BEFORE any boot work
+//!        │  one C-2 envelope on stdout, protocol 1            │
+//!        │◄───────────────────────────────────────────────────┤
+//!        │                                                    │
+//!   relay result.routes verbatim
+//! ```
+//!
+//! Four properties of that protocol are load-bearing, and each is asserted below:
+//!
+//! - **One source.** The payload is rendered from the registry that builds the router. There is no
+//!   second manifest and no source parsing.
+//! - **Versioned.** `result.protocol` is checked before the payload is read. An unrecognised
+//!   version is refused **by name** rather than parsed on a best-effort basis.
+//! - **No binary discovery.** The invocation is `cargo run` in the project directory — the
+//!   project's own declared default binary. Nothing searches `target/` for something executable.
+//! - **No boot side effects.** The application answers and exits before it starts anything. A
+//!   protocol that required booting would make listing routes bind ports and run migrations.
+//!
+//! # What still cannot happen today, stated rather than hidden
 //!
 //! **No Renvor crate is published**, so no project the current generator produces depends on the
-//! framework, and none of them can answer the dump. This command therefore succeeds against
-//! **none** of them today.
+//! framework, and none of them can answer the dump. This command therefore succeeds against **none
+//! of them today** — not because the relay is missing, but because there is nothing published for a
+//! generated project to depend on.
 //!
 //! It reports that with [`Code::TransportNotWired`], exit `3`, and details naming the reason. It
 //! does **not** print an empty route table and exit `0`: an empty success is indistinguishable, to
 //! a consumer, from an application that genuinely declares no routes, and the two mean entirely
 //! different things.
 
-use std::path::Path;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde::Deserialize;
 
 use crate::exit::{CliError, Code, Exit};
 use crate::output::Reporter;
+use crate::output::layout::Report;
 
 /// The documented invocation an application binary answers with its route registry.
 ///
@@ -37,8 +63,21 @@ use crate::output::Reporter;
 /// reads the library's source and fails if the two spellings differ.
 pub const DUMP_FLAG: &str = "--renvor-dump-routes";
 
+/// The payload version this command understands.
+///
+/// Guarded against the library's own constant by `the_protocol_version_matches_the_librarys`, for
+/// the same reason and by the same mechanism as [`DUMP_FLAG`].
+pub const DUMP_PROTOCOL: u32 = 1;
+
 /// The bound on a manifest read, matching `check`'s.
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
+
+/// The bound on what the project binary may print.
+///
+/// A project that emitted an unbounded stream would otherwise be able to exhaust this process's
+/// memory. `MAX_ROUTES` is 4096 and a generous row is well under 256 bytes, so this is roughly an
+/// order of magnitude above any legitimate answer.
+const MAX_DUMP_BYTES: usize = 4 * 1024 * 1024;
 
 /// Just enough of `renvor.toml` to answer "is this a Renvor project, and what transport?".
 ///
@@ -55,14 +94,136 @@ struct ProjectHead {
     transport: Option<String>,
 }
 
+/// One route as the application reported it.
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct RouteRow {
+    method: String,
+    path: String,
+    group: Option<String>,
+}
+
+/// The `result` payload the application printed.
+#[derive(Debug, Deserialize, serde::Serialize)]
+struct RouteReport {
+    protocol: u32,
+    routes: Vec<RouteRow>,
+}
+
+/// How the project binary is invoked.
+///
+/// A value rather than a hard-coded command, so the relay can be driven in a test by a program
+/// that answers the protocol. The **default** is the documented invocation; a test supplying its
+/// own is testing the same parsing, validation, and rendering a real project goes through.
+#[derive(Debug, Clone)]
+pub struct DumpInvocation {
+    program: OsString,
+    arguments: Vec<OsString>,
+    directory: PathBuf,
+}
+
+impl DumpInvocation {
+    /// The documented default: the project's own default binary, run through `cargo`.
+    ///
+    /// `cargo run` rather than a search of `target/`: the project declares its binary, and asking
+    /// its build tool to run "the binary this package defines" is the only way to get that answer
+    /// without guessing. A package with several binaries and no default gets `cargo`'s own error,
+    /// which names the problem better than a guess would.
+    #[must_use]
+    pub fn for_project(directory: &Path) -> Self {
+        Self {
+            program: OsString::from("cargo"),
+            arguments: vec![
+                OsString::from("run"),
+                OsString::from("--quiet"),
+                OsString::from("--"),
+                OsString::from(DUMP_FLAG),
+            ],
+            directory: directory.to_path_buf(),
+        }
+    }
+
+    /// Builds an invocation that runs `program` with `arguments` in `directory`.
+    #[must_use]
+    pub fn new(
+        program: impl Into<OsString>,
+        arguments: Vec<OsString>,
+        directory: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            program: program.into(),
+            arguments,
+            directory: directory.into(),
+        }
+    }
+}
+
 /// Runs the command against a project directory.
 ///
 /// # Errors
 ///
 /// - [`Code::ManifestInvalid`] if `renvor.toml` is absent or unreadable.
-/// - [`Code::TransportNotWired`] if the project declares no Renvor dependency, and therefore has
-///   no route registry to report.
+/// - [`Code::TransportNotWired`] if the project declares no Renvor dependency, if its binary could
+///   not be run, if it answered nothing usable, or if it answered a protocol version this command
+///   does not understand. Every one of those is a **failure**, never an empty success.
 pub fn run(reporter: &Reporter, path: &Path) -> Result<Exit, CliError> {
+    run_with(reporter, path, &DumpInvocation::for_project(path))
+}
+
+/// The relay, with the invocation supplied.
+pub(crate) fn run_with(
+    reporter: &Reporter,
+    path: &Path,
+    invocation: &DumpInvocation,
+) -> Result<Exit, CliError> {
+    let transport = read_transport(path)?;
+
+    // The question this command has to answer before it can run anything: does the project depend
+    // on the framework at all? Without that dependency there is no registry, and no binary that
+    // understands the dump flag.
+    if !declares_renvor_dependency(path) {
+        return Err(CliError::new(
+            Code::TransportNotWired,
+            "this project declares no Renvor dependency, so it has no route registry to report. \
+             Route inspection asks the application binary for its own registry — the only source \
+             that cannot drift from the router — and a project that does not depend on the \
+             framework has none. See the `Serving HTTP` section of the project's README",
+        )
+        .with("transport", transport)
+        .with("reason", "no_renvor_dependency"));
+    }
+
+    let report = obtain_dump(invocation, &transport)?;
+
+    let mut human = Report::new();
+    if report.routes.is_empty() {
+        // A registry that genuinely holds no routes is a fact, and saying so is different from
+        // printing an empty table. This is still exit `0`: the application ANSWERED, and its answer
+        // was "none". That is not the same as SC-019's forbidden case, which is exiting `0` when
+        // the registry could not be obtained at all.
+        human = human.item("the application declares no routes");
+    } else {
+        for route in &report.routes {
+            human = human.row(
+                format!("{} {}", route.method, route.path),
+                route.group.clone().unwrap_or_else(|| "-".to_owned()),
+            );
+        }
+    }
+
+    // The payload is relayed as the application produced it. Re-deriving it here would be the
+    // second source C-9 prohibits, one process further along.
+    let result = serde_json::to_value(&report).map_err(|error| {
+        CliError::new(
+            Code::Internal,
+            format!("the relayed route report could not be re-encoded: {error}"),
+        )
+    })?;
+
+    Ok(reporter.finish("routes", &human, result))
+}
+
+/// Reads the recorded transport, or reports why the manifest could not be read.
+fn read_transport(path: &Path) -> Result<String, CliError> {
     let manifest_path = path.join("renvor.toml");
 
     let text = std::fs::read_to_string(&manifest_path).map_err(|error| {
@@ -95,41 +256,124 @@ pub fn run(reporter: &Reporter, path: &Path) -> Result<Exit, CliError> {
         .with("constraint", "must parse as a renvor manifest")
     })?;
 
-    let transport = manifest
+    Ok(manifest
         .project
         .transport
-        .unwrap_or_else(|| "none".to_owned());
+        .unwrap_or_else(|| "none".to_owned()))
+}
 
-    // The question this command has to answer before it can run anything: does the project depend
-    // on the framework at all? Without that dependency there is no registry, and no binary that
-    // understands the dump flag.
-    if !declares_renvor_dependency(path) {
-        return Err(CliError::new(
-            Code::TransportNotWired,
-            "this project declares no Renvor dependency, so it has no route registry to report. \
-             Route inspection asks the application binary for its own registry — the only source \
-             that cannot drift from the router — and a project that does not depend on the \
-             framework has none. See the `Serving HTTP` section of the project's README",
-        )
-        .with("transport", transport)
-        .with("reason", "no_renvor_dependency"));
+/// Runs the project binary and reads its answer.
+///
+/// Every failure below is reported with the reason named in `details.reason`, so a consumer can
+/// tell "the binary would not build" from "the binary answered something I cannot read". Both used
+/// to be indistinguishable, because neither was reachable.
+fn obtain_dump(invocation: &DumpInvocation, transport: &str) -> Result<RouteReport, CliError> {
+    let refuse = |reason: &'static str, message: String| {
+        CliError::new(Code::TransportNotWired, message)
+            .with("transport", transport.to_owned())
+            .with("reason", reason)
+            .with("invocation", DUMP_FLAG)
+    };
+
+    let output = Command::new(&invocation.program)
+        .args(&invocation.arguments)
+        .current_dir(&invocation.directory)
+        // `stderr` is INHERITED, not captured. A build takes time and prints progress, and
+        // swallowing it would leave an operator watching a silent command. C-1 reserves `stdout`
+        // for the result, which is exactly what is captured here and nothing else.
+        .stderr(std::process::Stdio::inherit())
+        .output()
+        .map_err(|error| {
+            refuse(
+                "invocation_failed",
+                format!(
+                    "the project's binary could not be run: {error}. Route inspection runs the \
+                     application and asks it for its own registry"
+                ),
+            )
+        })?;
+
+    if !output.status.success() {
+        return Err(refuse(
+            "dump_failed",
+            format!(
+                "the project's binary exited with {} when asked for its routes. Run `cargo run -- \
+                 {DUMP_FLAG}` in the project to see why",
+                output.status
+            ),
+        ));
     }
 
-    // Reaching here means the project DOES depend on the framework, so asking its binary is the
-    // next step. Obtaining the dump is deliberately NOT implemented as a fallback to parsing the
-    // project's source: a source parser and a router are two things that can disagree, which is
-    // exactly what contract C-9 forbids. If the registry cannot be obtained, that is reported.
-    let _ = reporter;
-    Err(CliError::new(
-        Code::TransportNotWired,
-        format!(
-            "this project depends on Renvor, but its route registry could not be obtained. Run \
-             `cargo run -- {DUMP_FLAG}` in the project to see why"
-        ),
-    )
-    .with("transport", transport)
-    .with("reason", "dump_unavailable")
-    .with("invocation", DUMP_FLAG))
+    if output.stdout.len() > MAX_DUMP_BYTES {
+        return Err(CliError::new(
+            Code::BoundExceeded,
+            format!("the route dump is above the {MAX_DUMP_BYTES}-byte limit"),
+        )
+        .with("bound", "dump_bytes")
+        .with("limit", MAX_DUMP_BYTES.to_string()));
+    }
+
+    let text = String::from_utf8(output.stdout).map_err(|_| {
+        refuse(
+            "dump_unreadable",
+            "the project's binary answered with bytes that are not UTF-8".to_owned(),
+        )
+    })?;
+
+    let envelope: serde_json::Value = serde_json::from_str(text.trim()).map_err(|error| {
+        refuse(
+            "dump_unreadable",
+            format!(
+                "the project's binary did not answer with one JSON document: {error}. It must \
+                 print exactly the envelope `renvor_http::route::inspect::answer_dump_request` \
+                 returns, and nothing else, on stdout"
+            ),
+        )
+    })?;
+
+    if envelope.get("status").and_then(serde_json::Value::as_str) != Some("success") {
+        return Err(refuse(
+            "dump_failed",
+            "the project's binary reported a failure rather than its routes".to_owned(),
+        ));
+    }
+
+    let payload = envelope.get("result").ok_or_else(|| {
+        refuse(
+            "dump_unreadable",
+            "the answer carried no `result` payload".to_owned(),
+        )
+    })?;
+
+    // THE VERSION CHECK, BEFORE THE PAYLOAD IS READ. An unrecognised version is refused rather
+    // than parsed leniently: a route table that silently lost a column is precisely the quietly
+    // wrong output this command exists not to produce.
+    let declared = payload
+        .get("protocol")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| {
+            refuse(
+                "protocol_unstated",
+                "the answer did not state which route-dump protocol it speaks".to_owned(),
+            )
+        })?;
+
+    if declared != u64::from(DUMP_PROTOCOL) {
+        return Err(refuse(
+            "protocol_unsupported",
+            format!(
+                "the project answered route-dump protocol {declared}; this `renvor` understands \
+                 {DUMP_PROTOCOL}. Refusing rather than guessing at a shape it does not know"
+            ),
+        ));
+    }
+
+    serde_json::from_value(payload.clone()).map_err(|error| {
+        refuse(
+            "dump_unreadable",
+            format!("the route payload could not be read: {error}"),
+        )
+    })
 }
 
 /// Whether the project's `Cargo.toml` names `renvor` as a dependency.
@@ -168,9 +412,11 @@ fn declares_renvor_dependency(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DUMP_FLAG, declares_renvor_dependency, run};
+    use super::{DUMP_FLAG, DUMP_PROTOCOL, DumpInvocation, declares_renvor_dependency, run_with};
     use crate::exit::Code;
     use crate::output::{Format, Reporter};
+    use std::ffi::OsString;
+    use std::path::{Path, PathBuf};
 
     fn reporter() -> Reporter {
         Reporter::new(Format::Human, true)
@@ -200,13 +446,192 @@ seed_data = false
 "#;
 
     const NO_DEPENDENCY: &str = "[package]\nname = \"demo\"\n\n[dependencies]\n";
+    const WITH_DEPENDENCY: &str =
+        "[package]\nname = \"demo\"\n\n[dependencies]\nrenvor = { version = \"0.1\" }\n";
+
+    /// The workspace root, from this crate's manifest directory.
+    fn workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .canonicalize()
+            .expect("the workspace root resolves")
+    }
+
+    /// An invocation that answers with `payload` and exits zero.
+    fn answering(directory: &Path, payload: &str) -> DumpInvocation {
+        DumpInvocation::new(
+            "/bin/sh",
+            vec![
+                OsString::from("-c"),
+                OsString::from(format!("printf '%s' '{payload}'")),
+            ],
+            directory,
+        )
+    }
+
+    /// An invocation that exits non-zero without answering.
+    fn failing(directory: &Path) -> DumpInvocation {
+        DumpInvocation::new(
+            "/bin/sh",
+            vec![OsString::from("-c"), OsString::from("exit 7")],
+            directory,
+        )
+    }
+
+    fn envelope(result: &str) -> String {
+        format!(r#"{{"schemaVersion":2,"status":"success","command":"routes","result":{result}}}"#)
+    }
 
     #[test]
-    fn a_project_without_a_renvor_dependency_is_refused_by_name() {
-        // The headline behaviour of this command today, and it is a FAILURE rather than an empty
-        // success — because an empty success is indistinguishable from "this app has no routes".
+    fn a_binary_that_answers_the_protocol_is_relayed_to_a_successful_exit() {
+        // THE SUCCESS PATH. Every route through this command used to return `Err`, so the command
+        // could not succeed against any input whatsoever — the relay was not written.
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let payload = r#"{"protocol":1,"routes":[{"method":"GET","path":"/health","group":"api"}]}"#;
+
+        let exit = run_with(
+            &reporter(),
+            dir.path(),
+            &answering(dir.path(), &envelope(payload)),
+        )
+        .expect("a binary that answers the protocol must be relayed");
+
+        assert_eq!(exit.code(), 0, "the relayed answer did not exit 0");
+    }
+
+    #[test]
+    fn an_application_declaring_no_routes_still_succeeds_and_says_so() {
+        // An application that ANSWERED "none" is not the forbidden case. SC-019 forbids exiting `0`
+        // when the registry could not be OBTAINED — the two are different facts and this command
+        // must not conflate them.
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let payload = r#"{"protocol":1,"routes":[]}"#;
+
+        let exit = run_with(
+            &reporter(),
+            dir.path(),
+            &answering(dir.path(), &envelope(payload)),
+        )
+        .expect("an explicit empty answer is still an answer");
+        assert_eq!(exit.code(), 0);
+    }
+
+    #[test]
+    fn a_newer_protocol_is_refused_by_name_rather_than_parsed_leniently() {
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let payload = r#"{"protocol":99,"routes":[{"method":"GET","path":"/x","group":null}]}"#;
+
+        let error = run_with(
+            &reporter(),
+            dir.path(),
+            &answering(dir.path(), &envelope(payload)),
+        )
+        .expect_err("an unknown protocol must be refused");
+
+        assert_eq!(error.code, Code::TransportNotWired);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "protocol_unsupported"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn an_answer_with_no_protocol_field_is_refused() {
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let payload = r#"{"routes":[]}"#;
+
+        let error = run_with(
+            &reporter(),
+            dir.path(),
+            &answering(dir.path(), &envelope(payload)),
+        )
+        .expect_err("an unversioned answer must be refused");
+
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "protocol_unstated"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn an_unparseable_answer_is_refused_rather_than_treated_as_no_routes() {
+        // The failure mode this command exists to avoid: something that is not a route table must
+        // never become an empty route table.
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+
+        let error = run_with(
+            &reporter(),
+            dir.path(),
+            &answering(dir.path(), "not json at all"),
+        )
+        .expect_err("unparseable output must be refused");
+
+        assert_eq!(error.code, Code::TransportNotWired);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "dump_unreadable"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_binary_that_exits_non_zero_is_refused_by_name() {
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+
+        let error = run_with(&reporter(), dir.path(), &failing(dir.path()))
+            .expect_err("a failing binary must be refused");
+
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "dump_failed"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_binary_that_cannot_be_run_at_all_is_refused_by_name() {
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let missing = DumpInvocation::new(
+            "/nonexistent/renvor-test-binary",
+            Vec::new(),
+            dir.path().to_path_buf(),
+        );
+
+        let error = run_with(&reporter(), dir.path(), &missing)
+            .expect_err("an unrunnable binary must be refused");
+
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "invocation_failed"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_project_without_a_renvor_dependency_is_refused_before_anything_is_run() {
+        // Checked BEFORE the binary is invoked: a project with no framework dependency has no
+        // registry, and running it would be running an unrelated program.
         let dir = project(MANIFEST, NO_DEPENDENCY);
-        let error = run(&reporter(), dir.path()).expect_err("must be refused");
+        let error = run_with(&reporter(), dir.path(), &failing(dir.path()))
+            .expect_err("must be refused");
 
         assert_eq!(error.code, Code::TransportNotWired);
         assert_eq!(error.code.exit().code(), 3);
@@ -225,32 +650,6 @@ seed_data = false
                 .any(|(k, v)| k == "transport" && v == "rest"),
             "the refusal must name the recorded transport: {:?}",
             error.details
-        );
-    }
-
-    #[test]
-    fn a_project_that_does_depend_on_renvor_is_not_refused_for_that_reason() {
-        // POSITIVE CONTROL. Without it, a command that always reported `no_renvor_dependency`
-        // would pass the test above and the detection would be unproven.
-        let with_dependency =
-            "[package]\nname = \"demo\"\n\n[dependencies]\nrenvor = { version = \"0.1\" }\n";
-        let dir = project(MANIFEST, with_dependency);
-        let error = run(&reporter(), dir.path()).expect_err("the dump is not reachable in a test");
-
-        assert_eq!(error.code, Code::TransportNotWired);
-        assert!(
-            error
-                .details
-                .iter()
-                .any(|(k, v)| k == "reason" && v == "dump_unavailable"),
-            "a project WITH the dependency reported the wrong reason: {:?}",
-            error.details
-        );
-        assert!(
-            error
-                .details
-                .iter()
-                .any(|(k, v)| k == "invocation" && v == DUMP_FLAG)
         );
     }
 
@@ -293,6 +692,26 @@ seed_data = false
         assert!(declares_renvor_dependency(dir.path()));
     }
 
+    /// Reads a constant's value out of the library's source.
+    ///
+    /// Located by the declaration's NAME and then by the next literal, rather than by assuming the
+    /// whole declaration sits on one line. A `rustfmt` wrap used to make this panic with "the
+    /// library still declares DUMP_FLAG", which reads as deletion rather than as reformatting — a
+    /// guard whose failure message misidentifies the cause is worse than a brittle guard.
+    fn library_constant(source: &str, declaration: &str, opener: char, closer: char) -> String {
+        let after_name = source
+            .split_once(declaration)
+            .unwrap_or_else(|| panic!("the library still declares `{declaration}`"))
+            .1;
+        let start = after_name
+            .find(opener)
+            .expect("the declaration assigns a literal");
+        let rest = &after_name[start + 1..];
+        rest[..rest.find(closer).expect("the literal is terminated")].to_owned()
+    }
+
+    const LIBRARY: &str = include_str!("../../../renvor-http/src/route/inspect.rs");
+
     #[test]
     fn the_dump_flag_matches_the_librarys_constant() {
         // TWO DECLARATIONS, ONE VALUE. The CLI cannot import from `renvor-http` — it is
@@ -300,26 +719,23 @@ seed_data = false
         // graph — so the constant is stated twice. This reads the library's source at compile time
         // and fails if they ever differ, which is the whole reason a second declaration is
         // tolerable at all.
-        const LIBRARY: &str = include_str!("../../../renvor-http/src/route/inspect.rs");
-
-        // Located by the declaration's NAME and then by the next quoted string, rather than by
-        // assuming the whole declaration sits on one line. A `rustfmt` wrap used to make this
-        // panic with "the library still declares DUMP_FLAG", which reads as deletion rather than
-        // as reformatting — a guard whose failure message misidentifies the cause is worse than a
-        // brittle guard.
-        let after_name = LIBRARY
-            .split_once("pub const DUMP_FLAG: &str")
-            .expect("the library still declares DUMP_FLAG")
-            .1;
-        let opening = after_name
-            .find('"')
-            .expect("the declaration assigns a string literal");
-        let rest = &after_name[opening + 1..];
-        let declared = &rest[..rest.find('"').expect("the string literal is closed")];
-
         assert_eq!(
-            declared, DUMP_FLAG,
+            library_constant(LIBRARY, "pub const DUMP_FLAG: &str", '"', '"'),
+            DUMP_FLAG,
             "the CLI and the library disagree about the route-dump invocation"
+        );
+    }
+
+    #[test]
+    fn the_protocol_version_matches_the_librarys() {
+        // The same guard applied to the version. Without it the CLI could refuse every real
+        // application as speaking an unsupported protocol, which is the worst possible outcome of
+        // a version check.
+        let declared = library_constant(LIBRARY, "pub const ROUTE_DUMP_PROTOCOL: u32", '=', ';');
+        assert_eq!(
+            declared.trim().parse::<u32>().expect("a numeric literal"),
+            DUMP_PROTOCOL,
+            "the CLI and the library disagree about the route-dump protocol version"
         );
     }
 
@@ -332,7 +748,42 @@ seed_data = false
     #[test]
     fn a_directory_that_is_not_a_renvor_project_is_reported_as_such() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = run(&reporter(), dir.path()).expect_err("must be refused");
+        let error = run_with(&reporter(), dir.path(), &failing(dir.path()))
+            .expect_err("must be refused");
         assert_eq!(error.code, Code::ManifestInvalid);
+    }
+
+    #[test]
+    #[ignore = "builds and runs a real example binary; run with --ignored or in the full gate"]
+    fn the_relay_reads_what_the_real_library_actually_prints() {
+        // THE END-TO-END PROOF, and the reason the fixtures above are not the whole story.
+        //
+        // Every other test in this file feeds the relay a payload a HUMAN wrote. This one runs the
+        // real `renvor-http` example, which answers through the real
+        // `inspect::answer_dump_request`, and relays what it actually printed. If the library's
+        // envelope shape ever changes, this fails and the hand-written fixtures do not.
+        //
+        // `#[ignore]` because it compiles a second crate's example; the verification gate runs it
+        // explicitly.
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+
+        let real = DumpInvocation::new(
+            "cargo",
+            vec![
+                OsString::from("run"),
+                OsString::from("--quiet"),
+                OsString::from("-p"),
+                OsString::from("renvor-http"),
+                OsString::from("--example"),
+                OsString::from("route_dump"),
+                OsString::from("--"),
+                OsString::from(DUMP_FLAG),
+            ],
+            workspace_root(),
+        );
+
+        let exit = run_with(&reporter(), dir.path(), &real)
+            .expect("the real library's answer must be relayed");
+        assert_eq!(exit.code(), 0);
     }
 }

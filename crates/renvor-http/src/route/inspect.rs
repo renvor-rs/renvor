@@ -28,6 +28,21 @@ use super::RouteRegistry;
 /// spelling.
 pub const DUMP_FLAG: &str = "--renvor-dump-routes";
 
+/// The version of the route-dump payload shape.
+///
+/// # Why this is versioned separately from the envelope
+///
+/// The C-2 envelope's `schemaVersion` describes the **envelope**: the `status`/`command`/`result`
+/// shape and the error-code registry. This describes the **payload inside `result`**, which is a
+/// different thing changing for different reasons — adding a field to a route row is not a change
+/// to how failures are reported.
+///
+/// `renvor routes` checks this before reading the payload and refuses a version it does not
+/// understand **by name**. Without it, a newer application answering an older CLI would be parsed
+/// on a best-effort basis, and a route table that silently lost a column is exactly the kind of
+/// quietly-wrong output this command exists not to produce.
+pub const ROUTE_DUMP_PROTOCOL: u32 = 1;
+
 /// One row of the rendered route table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RouteRow {
@@ -42,6 +57,8 @@ pub struct RouteRow {
 /// The `result` payload of the structured form.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RouteReport {
+    /// The payload shape's version. Always [`ROUTE_DUMP_PROTOCOL`] when produced here.
+    pub protocol: u32,
     /// Every declared route, sorted.
     pub routes: Vec<RouteRow>,
 }
@@ -120,6 +137,7 @@ pub fn render_human(registry: &RouteRegistry) -> String {
 /// asked for JSON must not receive something that parses but says nothing.
 pub fn render_json(registry: &RouteRegistry) -> Result<String, serde_json::Error> {
     serde_json::to_string(&RouteReport {
+        protocol: ROUTE_DUMP_PROTOCOL,
         routes: rows(registry),
     })
 }
@@ -302,6 +320,19 @@ mod tests {
                 route.path()
             );
         }
+    }
+
+    #[test]
+    fn the_dump_declares_the_protocol_version_it_speaks() {
+        // The consumer refuses a version it does not understand, which it can only do if the
+        // producer states one.
+        let registry = registry();
+        let answered = answer_dump_request(["app", DUMP_FLAG], &registry).expect("answered");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&answered).expect("one JSON document");
+
+        assert_eq!(parsed["result"]["protocol"], super::ROUTE_DUMP_PROTOCOL);
+        assert_eq!(super::ROUTE_DUMP_PROTOCOL, 1, "the shipped protocol version");
     }
 
     #[test]
