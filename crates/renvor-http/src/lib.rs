@@ -57,20 +57,24 @@
 //! exercises the kernel surface. It does **not** satisfy the second, and **does not close the
 //! window**.
 
+pub mod admission;
 pub mod cors;
 pub mod host;
 pub mod identity;
 pub mod limits;
 pub mod request_id;
 pub mod route;
+pub mod server;
 
 mod context;
 mod error;
 
-pub use context::{ClientIdentity, RequestContext};
+pub use admission::{Admission, AdmissionGuard};
+pub use context::{ClientIdentity, RequestContext, RequestId};
 pub use cors::{CorsPolicy, CorsPolicyError};
 pub use error::{HttpError, HttpErrorKind};
 pub use host::HostPolicy;
 pub use identity::TrustedProxies;
 pub use limits::Limits;
 pub use route::{Method, Request, Response, Route, RouteError, RouteGroup, RouteRegistry};
+pub use server::Server;

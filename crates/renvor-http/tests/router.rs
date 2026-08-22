@@ -17,7 +17,7 @@ use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request as HttpRequest, StatusCode, header};
 use http_body_util::BodyExt;
-use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
+use renvor_core::{CancelScope, OsEntropy, RunIdentifier, WorkGate};
 use renvor_http::route::build::{RouterConfig, router};
 use renvor_http::{
     CorsPolicy, HostPolicy, Request, Response, RouteGroup, RouteRegistry, TrustedProxies,
@@ -34,6 +34,7 @@ fn config() -> RouterConfig {
         limits: renvor_http::Limits::new(),
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel: CancelScope::root(),
+        gate: WorkGate::new(),
     }
 }
 

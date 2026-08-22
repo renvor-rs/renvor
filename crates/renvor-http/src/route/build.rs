@@ -24,10 +24,11 @@ use axum::extract::{ConnectInfo, Request as AxumRequest};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response as AxumResponse;
 use axum::routing::{MethodFilter, on};
-use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
+use renvor_core::{CancelScope, OsEntropy, RunIdentifier, WorkGate};
 
 use super::{Method, Request, Response, RouteRegistry};
-use crate::context::RequestContext;
+use crate::admission::Admission;
+use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
 use crate::error::{HttpError, HttpErrorKind};
 use crate::host::{self, HostPolicy};
@@ -53,6 +54,8 @@ pub struct RouterConfig {
     pub run_id: RunIdentifier,
     /// The application-wide cancellation scope. Every request scope is a child of it.
     pub cancel: CancelScope,
+    /// The kernel work gate every request takes a permit from.
+    pub gate: WorkGate,
 }
 
 impl RouterConfig {
@@ -71,6 +74,7 @@ impl RouterConfig {
             limits: Limits::new(),
             run_id: RunIdentifier::generate(&OsEntropy)?,
             cancel,
+            gate: WorkGate::new(),
         })
     }
 
@@ -89,6 +93,7 @@ impl RouterConfig {
 /// Shared state every route handler closure captures.
 struct Shared {
     config: RouterConfig,
+    admission: Admission,
 }
 
 /// Builds a real `axum::Router` from `registry`.
@@ -104,7 +109,8 @@ pub fn router(registry: &RouteRegistry, config: RouterConfig) -> Result<Router, 
     // each path, so there is no second method list here to disagree with the registry. That the
     // header is actually emitted is asserted against the real router in `tests/router.rs` rather
     // than assumed from the library's documentation.
-    let shared = Arc::new(Shared { config });
+    let admission = Admission::new(config.gate.clone(), config.limits.max_concurrent_requests);
+    let shared = Arc::new(Shared { config, admission });
 
     let mut router = Router::new();
 
@@ -168,10 +174,13 @@ async fn dispatch(
 
     // 1. REQUEST ID — first, so every rejection below is correlatable.
     let Ok(request_id) = request_id::generate(&OsEntropy) else {
-        return refuse(&HttpError::new(
-            HttpErrorKind::HandlerFailed,
-            "entropy unavailable for request-identifier generation",
-        ));
+        return refuse(
+            &HttpError::new(
+                HttpErrorKind::HandlerFailed,
+                "entropy unavailable for request-identifier generation",
+            ),
+            None,
+        );
     };
 
     // 2. HOST — fail closed before any work.
@@ -183,26 +192,35 @@ async fn dispatch(
         .collect();
 
     let Some(single) = host::single_host(&host_values) else {
-        return refuse(&HttpError::new(
-            HttpErrorKind::HostRejected,
-            "absent, or more than one Host header",
-        ));
+        return refuse(
+            &HttpError::new(
+                HttpErrorKind::HostRejected,
+                "absent, or more than one Host header",
+            ),
+            Some(request_id),
+        );
     };
     let Some(validated_host) = shared.config.hosts.validate(Some(single)) else {
-        return refuse(&HttpError::new(
-            HttpErrorKind::HostRejected,
-            "host is not in the configured set",
-        ));
+        return refuse(
+            &HttpError::new(
+                HttpErrorKind::HostRejected,
+                "host is not in the configured set",
+            ),
+            Some(request_id),
+        );
     };
 
     // 3. CLIENT IDENTITY — the peer is the socket, never a header.
     let Some(peer) = peer_address(&parts.extensions) else {
         // Fail closed: without a peer there is no fact to fall back to, and inventing one would
         // make every downstream decision rest on a value nothing observed.
-        return refuse(&HttpError::new(
-            HttpErrorKind::StateUnavailable,
-            "no connection information; the router was not served with connect info",
-        ));
+        return refuse(
+            &HttpError::new(
+                HttpErrorKind::StateUnavailable,
+                "no connection information; the router was not served with connect info",
+            ),
+            Some(request_id),
+        );
     };
 
     let forwarded = header_values(&parts.headers, "forwarded");
@@ -226,28 +244,45 @@ async fn dispatch(
         .and_then(|value| value.to_str().ok())
         && !shared.config.cors.allows(origin)
     {
-        return refuse(&HttpError::new(
-            HttpErrorKind::OriginRejected,
-            "origin is not in the configured set",
-        ));
+        return refuse(
+            &HttpError::new(
+                HttpErrorKind::OriginRejected,
+                "origin is not in the configured set",
+            ),
+            Some(request_id),
+        );
     }
 
+    // 5 and 6. CONCURRENCY CEILING, then WORK GATE ADMISSION.
+    //
+    // The guard is bound to a name that lives until the end of this function, so it is released on
+    // EVERY exit below — including the timeout path and including a panic. Binding it to `_` would
+    // drop it here and admit an unbounded number of requests while reporting that it did not.
+    let _admitted = match shared.admission.admit() {
+        Ok(guard) => guard,
+        Err(error) => return refuse(&error, Some(request_id)),
+    };
+
+    let scope = shared.config.cancel.child(format!("request:{request_id}"));
     let context = RequestContext::new(
         shared.config.run_id,
         request_id,
         client,
         validated_host,
-        shared.config.cancel.child(format!("request:{request_id}")),
+        scope.clone(),
     );
 
     // 8. BODY LIMIT — innermost bound, applied to the bytes a handler will read.
     let collected = match axum::body::to_bytes(body, shared.config.limits.max_body_bytes).await {
         Ok(bytes) => bytes.to_vec(),
         Err(_) => {
-            return refuse(&HttpError::new(
-                HttpErrorKind::BodyTooLarge,
-                "request body exceeded the configured limit",
-            ));
+            return refuse(
+                &HttpError::new(
+                    HttpErrorKind::BodyTooLarge,
+                    "request body exceeded the configured limit",
+                ),
+                Some(request_id),
+            );
         }
     };
 
@@ -262,7 +297,24 @@ async fn dispatch(
         "dispatching"
     );
 
-    into_axum(handler.call(renvor_request).await, request_id)
+    // 7. TIMEOUT — inside admission, so a timed-out request still releases its permit, and the
+    // request's own scope is CANCELLED rather than the future merely being dropped. An application
+    // service watching for cancellation therefore observes a timeout through the same mechanism it
+    // observes a client disconnect, rather than through two.
+    let timeout = shared.config.limits.request_timeout;
+    match tokio::time::timeout(timeout, handler.call(renvor_request)).await {
+        Ok(response) => into_axum(response, request_id),
+        Err(_) => {
+            scope.cancel();
+            refuse(
+                &HttpError::new(
+                    HttpErrorKind::TimedOut,
+                    "request exceeded the configured timeout",
+                ),
+                Some(request_id),
+            )
+        }
+    }
 }
 
 /// Reads every value of a header by name.
@@ -283,7 +335,7 @@ fn peer_address(extensions: &axum::http::Extensions) -> Option<IpAddr> {
 }
 
 /// Renders a Renvor response, attaching the generated request identifier.
-fn into_axum(response: Response, request_id: crate::context::RequestId) -> AxumResponse {
+fn into_axum(response: Response, request_id: RequestId) -> AxumResponse {
     let mut builder = AxumResponse::builder().status(response.status_code());
 
     for (name, value) in response.headers() {
@@ -306,18 +358,40 @@ fn into_axum(response: Response, request_id: crate::context::RequestId) -> AxumR
 
 /// Renders a refusal, carrying only what a caller is allowed to know.
 ///
-/// `error.detail()` is deliberately **not** read here. It exists for telemetry, and a rendering
-/// function that never receives it cannot leak it.
-fn refuse(error: &HttpError) -> AxumResponse {
-    tracing::warn!(
-        code = error.kind().code(),
-        detail = error.detail(),
-        "request refused"
-    );
+/// `error.detail()` is deliberately **not** put in the body. It exists for telemetry, and the body
+/// is built from [`HttpError::public_message`], which never receives it.
+///
+/// # Why the identifier is attached here too
+///
+/// A rejection that cannot be correlated is an incident with no trail. The identifier layer is
+/// outermost precisely so that every refusal below it can carry one, and a refusal path that
+/// dropped it would make that ordering pointless for the responses that matter most.
+///
+/// `request_id` is `None` only when the failure was the identifier's own generation.
+fn refuse(error: &HttpError, request_id: Option<RequestId>) -> AxumResponse {
+    match request_id {
+        Some(id) => tracing::warn!(
+            code = error.kind().code(),
+            detail = error.detail(),
+            request_id = %id,
+            "request refused"
+        ),
+        None => tracing::warn!(
+            code = error.kind().code(),
+            detail = error.detail(),
+            "request refused before an identifier could be generated"
+        ),
+    }
 
-    AxumResponse::builder()
+    let mut builder = AxumResponse::builder()
         .status(error.status())
-        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .header(header::CONTENT_TYPE, "text/plain; charset=utf-8");
+
+    if let Some(id) = request_id {
+        builder = builder.header(request_id::REQUEST_ID_HEADER, id.encode());
+    }
+
+    builder
         .body(Body::from(error.public_message()))
         .unwrap_or_else(|_| {
             AxumResponse::builder()
