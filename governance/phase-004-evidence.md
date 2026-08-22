@@ -138,8 +138,8 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 
 | Toolchain | Result | Tests |
 |---|---|---|
-| 1.94.0 (pinned MSRV) | all 11 steps passed | 823 passed, 0 failed, 1 ignored, 53 suites |
-| 1.97.1 (current stable) | all 11 steps passed | 823 passed, 0 failed, 1 ignored, 53 suites |
+| 1.94.0 (pinned MSRV) | all 11 steps passed | **837 passed, 0 failed, 1 ignored, 54 suites** |
+| 1.97.1 (current stable) | all 11 steps passed | **837 passed, 0 failed, 1 ignored, 54 suites** |
 
 `cargo deny check` reported `advisories ok, bans ok, licenses ok, sources ok`.
 Working tree clean and HEAD unchanged after each run.
@@ -152,7 +152,7 @@ assumed. **The single ignored test is the end-to-end route relay**, and it is ru
 | Gate | Result |
 |---|---|
 | End-to-end route relay (`--ignored`) | **passed** — 1 passed, 0 failed |
-| Workspace tests **serial** (`--test-threads=1`, the CI platform job) | **passed** — 823 passed, 0 failed, identical to the parallel run, so no test depends on ordering |
+| Workspace tests **serial** (`--test-threads=1`, the CI platform job) | **passed** — 837 passed, 0 failed, identical to the parallel run, so no test depends on ordering |
 | Facade with `--no-default-features --all-targets` | **passed** |
 | Workspace default features, all targets | **passed** |
 | Workspace all features, all targets | **passed** |
@@ -380,6 +380,9 @@ described otherwise — here, in the pull request, in `GOVERNANCE.md`, or in any
 | Plan security review | **NOT PERFORMED** — same limit |
 | Implementation security review | **DELIVERED**, late — 13 findings, S1–S9 complete, with an explicit "checked and holding" section naming what it verified and found sound |
 | Implementation requirements review | **DELIVERED**, late — 16 findings, R1–R10 complete, including a full FR-001…FR-049 mapping |
+| Post-remediation validation run | **DELIVERED** — twelve findings judged independently: 6 `validated`, 6 `needs_fixes`. **All six were real**, and two were proven by mutation. See the [ledger](phase-004-finding-ledger.md) |
+| Post-remediation security review | **DELIVERED** — 9 findings, 0 BLOCKER, 2 MAJOR. Both MAJOR findings were fixed; one was a reachable security defect |
+| Post-remediation requirements review | **NOT PERFORMED** — commissioned against the same head and returned nothing across three explicit requests. Under this ledger's rule a review that returns nothing is recorded as NOT PERFORMED, never as passed. **This is a gap in Phase 004's evidence, not a pass** |
 
 Under this ledger's rule, *"a review that returns nothing is recorded as NOT PERFORMED, never as
 passed"* — the first three are recorded that way. **An earlier revision of this document said all
