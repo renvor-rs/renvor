@@ -447,6 +447,7 @@ impl Application {
                     guard.scope(),
                     &self.work,
                     &self.health,
+                    *self.cursor.run_id(),
                 );
                 match tokio::time::timeout(
                     self.provider_deadline,
