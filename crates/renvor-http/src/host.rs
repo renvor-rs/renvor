@@ -15,7 +15,35 @@
 //! says otherwise. A configuration mistake produces a refusal, which is loud; the alternative
 //! produces a working application with a latent redirect, which is silent.
 
+use core::fmt;
 use std::collections::BTreeSet;
+
+/// A host that could not be used in a policy.
+///
+/// # Why this is an error rather than a silent drop
+///
+/// `allow` used to ignore a host it could not normalise. The result was fail-closed and therefore
+/// safe — but an operator who typed `exampłe.com` with a Cyrillic character got a policy that
+/// refused **every** request, with nothing anywhere saying why. Safe and unexplained is still a
+/// support incident, and constitution principle IV prohibits absorbing a failure silently.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvalidHost {
+    /// The value that could not be used.
+    pub host: String,
+}
+
+impl fmt::Display for InvalidHost {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "`{}` cannot be used as an allowed host: it is empty, contains a control character, \
+             is not ASCII, or is an ambiguous address form",
+            self.host
+        )
+    }
+}
+
+impl core::error::Error for InvalidHost {}
 
 /// The set of hosts an application answers for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -35,12 +63,18 @@ impl HostPolicy {
     /// The value is normalised the same way an inbound header is, so `Example.COM` configured and
     /// `example.com` received are the same host. Normalising only one side is how a policy that
     /// looks correct rejects every real request.
-    #[must_use]
-    pub fn allow(mut self, host: impl AsRef<str>) -> Self {
-        if let Some(normalised) = normalise(host.as_ref()) {
-            self.allowed.insert(normalised);
-        }
-        self
+    ///
+    /// # Errors
+    ///
+    /// [`InvalidHost`] if the value cannot be normalised. It is **not** silently dropped: see that
+    /// type's documentation for why a safe-but-silent failure is still a failure.
+    pub fn allow(mut self, host: impl AsRef<str>) -> Result<Self, InvalidHost> {
+        let host = host.as_ref();
+        let normalised = normalise(host).ok_or_else(|| InvalidHost {
+            host: host.to_owned(),
+        })?;
+        self.allowed.insert(normalised);
+        Ok(self)
     }
 
     /// Whether any host is configured.
@@ -157,7 +191,9 @@ mod tests {
 
     #[test]
     fn a_configured_host_is_accepted_and_others_are_not() {
-        let policy = HostPolicy::deny_all().allow("example.com");
+        let policy = HostPolicy::deny_all()
+            .allow("example.com")
+            .expect("a valid host");
         assert_eq!(
             policy.validate(Some("example.com")),
             Some("example.com".to_owned())
@@ -169,7 +205,9 @@ mod tests {
     fn normalisation_is_applied_to_both_sides() {
         // Configured with mixed case and a port; received in another form. Both must land on the
         // same normalised value, or a policy that looks right rejects every real request.
-        let policy = HostPolicy::deny_all().allow("Example.COM");
+        let policy = HostPolicy::deny_all()
+            .allow("Example.COM")
+            .expect("a valid host");
         assert!(policy.validate(Some("example.com")).is_some());
         assert!(policy.validate(Some("EXAMPLE.com:8080")).is_some());
         assert!(policy.validate(Some("example.com.")).is_some());
@@ -177,7 +215,9 @@ mod tests {
 
     #[test]
     fn every_malformed_form_fails_closed() {
-        let policy = HostPolicy::deny_all().allow("example.com");
+        let policy = HostPolicy::deny_all()
+            .allow("example.com")
+            .expect("a valid host");
 
         for hostile in [
             "",                    // empty
@@ -204,7 +244,9 @@ mod tests {
 
     #[test]
     fn a_bracketed_ipv6_host_survives_normalisation() {
-        let policy = HostPolicy::deny_all().allow("[2001:db8::1]");
+        let policy = HostPolicy::deny_all()
+            .allow("[2001:db8::1]")
+            .expect("a valid host");
         assert!(policy.validate(Some("[2001:db8::1]")).is_some());
         assert!(policy.validate(Some("[2001:db8::1]:8443")).is_some());
         // The literal is not truncated at its first colon.
@@ -215,8 +257,45 @@ mod tests {
     }
 
     #[test]
+    fn an_unusable_configured_host_is_an_error_rather_than_a_silent_drop() {
+        // The defect this replaced: a typo'd allow-list entry was ignored, the policy then refused
+        // every request, and nothing said why.
+        for bad in [
+            "",
+            "   ",
+            "exampłe.com",
+            "example.com:80:443",
+            "2001:db8::1",
+            "[abc",
+        ] {
+            assert!(
+                HostPolicy::deny_all().allow(bad).is_err(),
+                "`{bad}` was accepted into the policy"
+            );
+        }
+
+        // POSITIVE CONTROL: a usable host is accepted, so the refusals are about the inputs.
+        assert!(HostPolicy::deny_all().allow("example.com").is_ok());
+
+        // AND A DELIBERATE NON-REFUSAL, recorded because the first draft of this test expected the
+        // opposite and was wrong. `normalise` TRIMS before it checks for control characters, so a
+        // configured value with trailing CRLF yields the clean host `example.com` rather than an
+        // error — there is no control character left in what gets stored.
+        //
+        // That is safe on both sides: the same normalisation runs on the inbound header, so the
+        // two cannot disagree. And a raw CR or LF cannot reach the inbound path at all — a header
+        // value carrying one is refused by the HTTP layer before this code sees it.
+        let trimmed = HostPolicy::deny_all()
+            .allow("example.com\r\n")
+            .expect("trailing whitespace is trimmed, not refused");
+        assert!(trimmed.validate(Some("example.com")).is_some());
+    }
+
+    #[test]
     fn a_missing_host_fails_closed() {
-        let policy = HostPolicy::deny_all().allow("example.com");
+        let policy = HostPolicy::deny_all()
+            .allow("example.com")
+            .expect("a valid host");
         assert_eq!(policy.validate(None), None);
     }
 

@@ -56,9 +56,24 @@ pub fn from_forwarded(value: &str) -> Option<IpAddr> {
         return None;
     }
 
-    let last_element = value.rsplit(',').next()?;
+    // QUOTE-AWARE SPLITTING, both times.
+    //
+    // RFC 7239 permits a quoted node value, and a quoted value may contain `,` and `;` — the very
+    // characters that separate elements and parameters. A naive `split(',')` on
+    // `for="1.2.3.4, for=9.9.9.9"` yields a second "element" from inside one quoted string, and the
+    // parser then reads an address the sender never offered as its own node.
+    //
+    // This is only reachable from a peer already inside the trusted set, so it is a correctness
+    // defect rather than a spoofing route. It is fixed rather than documented, because "only a
+    // trusted proxy can trigger it" is an argument that stops being true the moment somebody adds
+    // a proxy.
+    let elements = split_outside_quotes(value, ',');
+    let last_element = elements.last()?;
 
-    for parameter in last_element.split(';') {
+    for parameter in split_outside_quotes(last_element, ';') {
+        // A parameter with no `=` is not RFC 7239 syntax. Refusing the whole header rather than
+        // skipping the parameter is deliberate: a value we cannot fully parse is a value we do not
+        // understand, and guessing at the rest of it is how a parser disagrees with its upstream.
         let (name, raw) = parameter.split_once('=')?;
         if !name.trim().eq_ignore_ascii_case("for") {
             continue;
@@ -76,6 +91,32 @@ pub fn from_forwarded(value: &str) -> Option<IpAddr> {
     }
 
     None
+}
+
+/// Splits on `delimiter`, ignoring delimiters inside a double-quoted run.
+///
+/// Deliberately simple: RFC 7239 quoted strings permit `\"` escaping, and this treats a backslash
+/// as an ordinary character. The consequence is that a value using an escaped quote is split
+/// differently than a fully conformant parser would split it — which produces a value that fails to
+/// parse as an address, and therefore **fails closed**. A more permissive escape handler would be
+/// more correct and would have more ways to be wrong.
+fn split_outside_quotes(value: &str, delimiter: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut quoted = false;
+
+    for (index, character) in value.char_indices() {
+        match character {
+            '"' => quoted = !quoted,
+            c if c == delimiter && !quoted => {
+                parts.push(&value[start..index]);
+                start = index + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    parts.push(&value[start..]);
+    parts
 }
 
 /// Parses one node identifier into an address, refusing every ambiguous form.
@@ -230,6 +271,37 @@ mod tests {
             from_forwarded("for=198.51.100.7"),
             Some(v4(198, 51, 100, 7))
         );
+    }
+
+    #[test]
+    fn a_quoted_value_containing_a_separator_is_not_split_inside_the_quotes() {
+        // `for="1.2.3.4, for=9.9.9.9"` is ONE element whose node value happens to contain a comma.
+        // A naive split would read `for=9.9.9.9"` as a second element and return 9.9.9.9, which
+        // the sender never offered as its own node.
+        assert_ne!(
+            from_forwarded(r#"for="1.2.3.4, for=9.9.9.9""#),
+            Some(v4(9, 9, 9, 9)),
+            "a comma inside a quoted value produced a second element"
+        );
+
+        // Same for the parameter separator.
+        assert_ne!(
+            from_forwarded(r#"for="1.2.3.4;host=evil""#),
+            Some(v4(9, 9, 9, 9))
+        );
+
+        // POSITIVE CONTROL: an UNQUOTED comma still separates elements, so the quoting logic has
+        // not disabled element splitting altogether.
+        assert_eq!(
+            from_forwarded("for=1.2.3.4, for=9.9.9.9"),
+            Some(v4(9, 9, 9, 9))
+        );
+    }
+
+    #[test]
+    fn a_parameter_with_no_equals_fails_closed() {
+        // `secure` is not RFC 7239 syntax. Refusing the whole header is the fail-closed choice.
+        assert_eq!(from_forwarded("proto=https;secure;for=1.2.3.4"), None);
     }
 
     #[test]

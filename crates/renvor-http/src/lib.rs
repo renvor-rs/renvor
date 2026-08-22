@@ -73,7 +73,7 @@ pub use admission::{Admission, AdmissionGuard};
 pub use context::{ClientIdentity, RequestContext, RequestId};
 pub use cors::{CorsPolicy, CorsPolicyError};
 pub use error::{HttpError, HttpErrorKind};
-pub use host::HostPolicy;
+pub use host::{HostPolicy, InvalidHost};
 pub use identity::TrustedProxies;
 pub use limits::Limits;
 pub use route::{Method, Request, Response, Route, RouteError, RouteGroup, RouteRegistry};

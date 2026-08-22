@@ -28,7 +28,7 @@ const HOST: &str = "example.test";
 
 fn config() -> RouterConfig {
     RouterConfig {
-        hosts: HostPolicy::deny_all().allow(HOST),
+        hosts: HostPolicy::deny_all().allow(HOST).expect("a valid host"),
         trusted_proxies: TrustedProxies::none(),
         cors: CorsPolicy::deny_all(),
         limits: renvor_http::Limits::new(),
