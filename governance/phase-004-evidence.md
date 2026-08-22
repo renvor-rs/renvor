@@ -3,9 +3,15 @@
 **Base**: `10da854736598d99218d1627c3ad79866a2f7f89` · **Branch**: `feat/phase-004-rest-http-runtime`
 **Date**: 2026-08-22
 
-> **Phase 004 is NOT closed.** This is the evidence pack, not a completion record. The governance
-> gate that remains open is stated in [§Review status](#review-status--stated-plainly) and is the
-> reason nothing here should be read as a closure claim.
+> **Phase 004 is NOT closed, and the implementation is NOT complete.** This is the evidence pack,
+> not a completion record.
+>
+> **An independent-model review found 19 findings, 12 of them P1, against the implementation.**
+> Four were verified by executing them, three were fixed, and **twelve remain open**. Several
+> requirement rows below were **corrected downward** as a result: this document previously claimed
+> requirements met that the review disproved. The corrections are in
+> [§Findings against the implementation](#findings-against-the-implementation), and the
+> requirements table now reflects them.
 
 ## What the phase delivered
 
@@ -44,12 +50,12 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-005 publish metadata | `crates/renvor-http/Cargo.toml` | `cargo package -p renvor-http --list`; `xtask` publishable-dependencies check |
 | FR-006 single authoritative registry | `route/registry.rs` | `route::registry::tests::*` |
 | FR-007 router and inspection share it | `route/build.rs`, `route/inspect.rs` | `a_route_added_to_the_registry_appears_without_a_second_manifest_being_touched` |
-| FR-008 route groups | `route/mod.rs::RouteGroup` | `a_group_prefixes_every_route_it_holds`, `a_group_prefix_reaches_the_real_router` |
+| FR-008 route groups | **partial** — `route/mod.rs::RouteGroup` supplies the **prefix** only | `a_group_prefixes_every_route_it_holds`, `a_group_prefix_reaches_the_real_router`. **Group-scoped middleware is NOT implemented**, and nested groups cannot compose — `RouteGroup` stores a name, a prefix, and routes, and nothing else. `contracts/http-routing.md` promises both |
 | FR-009 duplicate is an error | `route/registry.rs::push` | `a_duplicate_is_refused_and_the_first_route_survives` |
 | FR-010 route ceiling | `limits::MAX_ROUTES` | `the_route_ceiling_is_enforced_at_its_exact_boundary` |
 | FR-011 404, and 405 with `Allow` | `route/build.rs` | `an_undeclared_path_is_404`, `an_undeclared_method_on_a_declared_path_is_405_and_names_the_allowed_methods` |
-| FR-012 state bridge | `renvor_core::TypedStateMap` via `RequestContext` | kernel's own suite |
-| FR-013 missing state is explicit | `error.rs::StateUnavailable` | `a_request_without_connection_information_fails_closed` |
+| FR-012 state bridge | **NOT IMPLEMENTED** | — · **corrected 2026-08-22.** This row claimed the bridge existed "via `RequestContext`". It does not: neither `RouterConfig`, `RequestContext`, nor `Request` carries a `TypedStateMap` or exposes a typed lookup, so a handler cannot reach registered application state at all |
+| FR-013 missing state is explicit | **partial** — `error.rs::StateUnavailable` exists and is used for absent connection info only | `a_request_without_connection_information_fails_closed`. **The state-lookup failure it was supposed to cover does not exist, because the lookup does not exist** |
 | FR-014 request id nested under run id | `context.rs`, `route/build.rs` | `every_response_carries_a_generated_request_identifier` |
 | FR-015 inbound id untrusted | `request_id.rs` | `a_caller_supplied_request_identifier_is_never_adopted` |
 | FR-016 id is opaque | `context.rs::RequestId` | `a_request_id_is_a_pure_function_of_its_bytes`, `generation_does_not_consult_any_inbound_value` |
@@ -57,18 +63,18 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-018 forwarding ignored unless trusted | `identity/mod.rs::resolve` | `under_the_default_configuration_hostile_headers_cannot_forge_identity`, `hostile_forwarding_headers_cannot_forge_client_identity_by_default` |
 | FR-019 parsing fails closed | `identity/forwarded.rs` | 8 tests incl. `every_hostile_x_forwarded_for_fails_closed`, `a_quoted_value_containing_a_separator_is_not_split_inside_the_quotes` |
 | FR-020 host validation fails closed | `host.rs` | 8 tests incl. `every_malformed_form_fails_closed` |
-| FR-021 CORS deny-by-default | `cors.rs` | `the_default_policy_allows_no_origin`, `cors_denies_by_default` |
+| FR-021 CORS deny-by-default | **partial** — `cors.rs` refuses disallowed origins | `the_default_policy_allows_no_origin`, `cors_denies_by_default`. **An ALLOWED origin receives no `Access-Control-Allow-Origin` header**, verified by execution: `status=200, acao=None`. `CorsLayer` is never applied, so a browser blocks every allowed response and preflights get ordinary routing |
 | FR-022 wildcard+credentials refused at config time | `cors.rs::validate`, `route/build.rs::router` | `a_wildcard_with_credentials_is_refused_when_the_policy_is_built`, `a_router_cannot_be_built_for_an_unsafe_cors_configuration` |
 | FR-023 body limit at exact boundary | `limits.rs`, `route/build.rs` | `a_body_at_the_limit_passes_and_one_byte_more_does_not` |
 | FR-024 concurrency limit | `admission.rs` | `the_concurrency_ceiling_is_enforced_at_its_exact_boundary` |
-| FR-025 timeout | `route/build.rs` | `a_timed_out_request_is_408_and_cancels_its_scope` |
+| FR-025 timeout | **partial** — `route/build.rs` | `a_timed_out_request_is_408_and_cancels_its_scope`. **The timeout starts AFTER the body is read**, so a stalled body holds a concurrency slot and a work permit indefinitely. The declared order places timeout **outside** the body limit; the code does the reverse |
 | FR-026 unexposed bounds NAMED | `limits.rs` module docs, `http-runtime.md` | prose; **no test, and none is possible** — see gaps below |
 | FR-027 middleware order in a versioned contract | `contracts/http-security.md` | — |
-| FR-028 order proven by behaviour | `route/build.rs::dispatch` | 4 adjacent-pair tests in `tests/lifecycle.rs` |
+| FR-028 order proven by behaviour | **partial** — `route/build.rs::dispatch` | 4 adjacent-pair tests in `tests/lifecycle.rs`. **The order applies only to MATCHED routes.** Axum's built-in 404 and 405 paths never call `dispatch`, so they bypass request-ID, host validation, identity, CORS, admission, and timeout — verified: `GET /missing` with a disallowed `Host` returns `404` with **no** `x-request-id`, instead of the host rejection |
 | FR-029 admission through the work gate | `admission.rs` | `a_served_request_holds_a_permit_and_releases_it` |
 | FR-030 drain refuses new requests | `admission.rs`, `route/build.rs` | `once_drain_begins_a_new_request_does_not_reach_a_handler` + control |
-| FR-031 cancellation reaches services | `context.rs`, `route/build.rs` | `application_shutdown_cancels_an_in_flight_request_without_any_transport_type` + control |
-| FR-032 bounded drain, truthful outcome | `server.rs` | `draining_waits_for_the_gate_to_close_and_then_bounds_the_wait`, zero-budget test, + control |
+| FR-031 cancellation reaches services | **partial** — `context.rs`, `route/build.rs` | `application_shutdown_cancels_an_in_flight_request_without_any_transport_type` + control. **Client disconnect does not cancel the request scope** — only the timeout branch cancels, and dropping a `CancelScope` does not cancel it. A service holding a clone never observes a disconnect |
+| FR-032 bounded drain, truthful outcome | **partial** — `server.rs` computes the outcome correctly | the drain tests exercise `drain_when_closed` **in isolation**. `Server::serve` uses `tokio::join!`, which waits for **both** the bounded drain **and** the unbounded shutdown future — so in exactly the over-budget case the bound exists for, `serve` still does not return. **No test drives `Server::serve` end to end**, which is why this passed review here and failed review there |
 | FR-033 provider shutdown ordering | inherited from C-L1/C-L3 | kernel's own suite; **not re-tested here** — see gaps |
 | FR-034 route inspection, both forms | `route/inspect.rs` | 6 tests |
 | FR-035 structured output follows C-2 | `route/inspect.rs`, `commands/routes.rs` | `the_dump_is_a_single_parseable_json_document` |
@@ -82,7 +88,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-043 no Phase 005 scope | — (absence) | grep over every `.rs` file the branch changes: **1** occurrence of `openapi`, in `commands/mod.rs`'s doc comment listing commands that are **not** implemented. **0** occurrences of RFC 9457, Problem Details, `application/problem`, or any validation boundary |
 | FR-044 no stability claim, no release | `renvor/src/lib.rs`, `contracts/api-stability.md` untouched | `xtask` step 7 instability-wording check; 0 tags measured |
 | FR-045 binary answers the dump | `route/inspect.rs::answer_dump_request` | `the_dump_request_is_answered_only_when_it_is_asked_for`, `the_dump_reports_the_same_routes_the_registry_holds` |
-| FR-046 `routes` relays or fails by name | `commands/routes.rs` | 5 tests incl. positive control |
+| FR-046 `routes` relays or fails by name | **partial** — the failure paths are implemented and tested | 5 tests incl. positive control. **The relay itself is not implemented**: a project that *does* declare the dependency still reaches an unconditional error, so the command has **no success path** |
 | FR-047 code added to registry AND test | `exit.rs`, `contracts/json-output.md` | `the_registry_matches_the_published_contract_exactly` |
 | FR-048 `--transport rest` accepted | `config/model.rs::Transport::parse` | `the_supported_transport_is_accepted_rather_than_reserved`, `an_unsupported_transport_is_an_unsupported_value_not_a_reservation` |
 | FR-049 no wizard question, value recorded | `config/prompts.rs` unchanged, `renvor.toml.j2` | measured: generated `renvor.toml` carries `transport = "rest"` |
@@ -101,15 +107,15 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 |---|---|
 | SC-001 real router, 0 imitations | **met** — every routing test drives `axum::Router` via `ServiceExt::oneshot`; 0 mock services exist |
 | SC-002 404/405, `Allow` in 100% | **met** |
-| SC-003 groups, state, middleware by behaviour | **met** |
+| SC-003 groups, state, middleware by behaviour | **NOT MET** — group *prefixes* and middleware *ordering on matched routes* are asserted; **group middleware and state access do not exist** |
 | SC-004 0 forged identities by default | **met** — asserted at the resolver and through the real router |
 | SC-005 0 adopted caller identifiers | **met** |
 | SC-006 fail-closed in 100% of malformed cases | **met** — 8 host cases, 11 forwarding cases |
-| SC-007 CORS denies in 100%; wildcard+credentials refused in 100% | **met** |
+| SC-007 CORS denies in 100%; wildcard+credentials refused in 100% | **partially met** — denial and the wildcard+credentials refusal hold. **Allowing does not**: no `Access-Control-Allow-Origin` is emitted, so an allowed origin is blocked by the browser |
 | SC-008 every limit at boundary and boundary+1 | **met** for body, concurrency, route ceiling. Timeout is asserted at the threshold only — a timeout has no "one unit under" that is meaningfully different |
-| SC-009 cancellation 100% / 0% | **met**, with the normal-completion control |
+| SC-009 cancellation 100% / 0% | **partially met** — application shutdown and timeout cancel; **client disconnect does not** |
 | SC-010 0 requests reach a handler after drain | **met** — the handler records whether it ran |
-| SC-011 over-budget reports outstanding 100%, clean 0% | **met** |
+| SC-011 over-budget reports outstanding 100%, clean 0% | **met for the drain computation, NOT met end to end** — `Server::serve` does not return in the over-budget case (`tokio::join!` waits on the unbounded future) |
 | SC-012 0 transport types in app interfaces | **met**, with a positive control |
 | SC-013 kernel resolves 0 HTTP crates, both directions | **met**, control exercised by hand (see dependency inventory) |
 | SC-014 one registry, by construction | **met** — `inspect` takes `&RouteRegistry` and has no other source |
@@ -158,6 +164,57 @@ gap is real and is recorded: the verification contract's fail-closed rule govern
 `xtask` runs, and this check is outside them.
 
 The remaining 14 checks passed on that head, including all six platform/toolchain contexts.
+
+## Findings against the implementation
+
+An **independent-model review** (OpenAI Codex, run against `main` on head `49859f7`) produced **19
+findings, 12 of them P1**. It is **advisory and NOT independent in the governance sense** — the
+`GOVERNANCE.md` definition requires a **person** — but it is a genuinely different model reading the
+same code, and it found real defects that this repository's own tests did not.
+
+**Four findings were verified by execution** before being accepted, because an agent's claim is not
+evidence:
+
+| Verified claim | Observed |
+|---|---|
+| 404 bypasses the middleware order | `GET /missing` + `Host: evil.example` → **404**, `x-request-id` **absent** |
+| CORS emits no allow-origin header | allowed origin → **200**, `access-control-allow-origin` **absent** |
+| Malformed `Forwarded` falls through to `X-Forwarded-For` | trusted peer → `ViaTrustedProxy{198.51.100.7}` instead of `DirectPeer` |
+| Unbalanced quote accepted | `for="198.51.100.7` → `Some(198.51.100.7)` instead of `None` |
+
+### Fixed on this branch
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | Malformed `Forwarded` fell through to `X-Forwarded-For` — **security** | Presence now selects the header; parsing decides the answer. A present-but-unparseable standard header fails closed instead of deferring |
+| 2 | An unbalanced quote in `Forwarded` was accepted — **security** | Quotes must balance before anything is split |
+| 3 | An unreadable (non-UTF-8) header value was silently dropped, collapsing a repeated header past the repeated-header refusal — **security** | An unreadable value is preserved as a placeholder no parser accepts, so the count stays truthful |
+
+### Open, and blocking
+
+**Twelve findings remain unfixed.** They are listed rather than deferred quietly, because the
+requirement rows above depend on them:
+
+| Severity | Finding |
+|---|---|
+| P1 | `renvor routes` has **no success path** — the relay to the project binary is not implemented |
+| P1 | `Server::serve` uses `tokio::join!`, so the bounded drain does not actually bound shutdown |
+| P1 | No `renvor_core::Provider` implementation — the server is not in the kernel lifecycle at all, so `Boot`/`Ready`/`Drain`/`Stop` ordering and readiness contribution are unwired |
+| P1 | `TypedStateMap` is not bridged into requests — **FR-012 and FR-013 are unimplemented** |
+| P1 | Group-scoped middleware does not exist |
+| P1 | CORS emits no headers for allowed origins; preflights are routed normally |
+| P1 | Router fallbacks (404/405) bypass every request control |
+| P1 | The request timeout starts **after** the body is read, so a stalled body holds admission |
+| P1 | Client disconnect does not cancel the request scope |
+| P2 | Handler panics are not contained — no `catch_unwind` boundary |
+| P2 | Path parameters are never populated; `path_param` always returns `None` |
+| P2 | Route-pattern validation is too weak — a malformed pattern registers and then panics at router construction |
+| P2 | Nested groups, the handler trace span, run IDs on refusal telemetry, and validation of response status/header metadata |
+
+**What this means for the phase.** The contracts published in this branch describe behaviour the
+implementation does not yet fully have. That is the defect class this project treats most seriously,
+and it is recorded here rather than left for a reader to discover. **Phase 004 is not ready to
+merge on requirements grounds, independently of the governance gate below.**
 
 ## Review status — stated plainly
 
