@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 2,
+  "status": "failure",
+  "command": "new",
+  "error": {
+    "code": "unsupported_value",
+    "message": "`grpc` is not a supported transport; the supported value is `rest`",
+    "details": {
+      "flag": "--transport",
+      "supported": "rest",
+      "value": "grpc"
+    }
+  }
+}

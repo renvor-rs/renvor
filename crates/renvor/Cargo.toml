@@ -48,6 +48,12 @@ include = [
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-config = { path = "../renvor-config", version = "0.0.0", optional = true }
 
+# The REST transport, OFF by default and behind `transport-rest`. Off rather than on because the
+# HTTP stack is the largest dependency set Renvor pulls, and a consumer using the kernel without a
+# transport must not resolve it. Asserted in `xtask` step 7 in BOTH directions — the absence
+# without the feature, and a positive control proving the same query finds the crates with it.
+renvor-http = { path = "../renvor-http", version = "0.0.0", optional = true }
+
 # Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
 # dependency EDGE and no new package — checked against the lockfile rather than assumed.
 [dev-dependencies]
@@ -73,6 +79,10 @@ required-features = ["config"]
 # reachable.
 default = ["config"]
 config = ["dep:renvor-config"]
+
+# The first real transport. Deliberately NOT in `default`: enabling a transport is a decision, and
+# a consumer who has not made it should not pay for it in build time, binary size, or audit surface.
+transport-rest = ["dep:renvor-http"]
 
 [lints]
 workspace = true

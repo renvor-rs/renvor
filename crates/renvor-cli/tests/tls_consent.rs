@@ -264,12 +264,33 @@ fn consent_granted_still_modifies_nothing_because_the_operation_is_unavailable()
         "{document}"
     );
     assert_eq!(document["error"]["details"]["trustStoreModifications"], "0");
+
+    // THIS ASSERTION USED TO REQUIRE THE STRING "Phase 004", AND THAT WAS THE DEFECT.
+    //
+    // The refusal promised the capability would arrive in Phase 004. Phase 004 shipped a
+    // transport, and this command still refuses — so the promise was false, and a test asserting
+    // the false promise was holding it in place.
+    //
+    // A `phase` detail is still required by contract C-2 for this code. What it may no longer do
+    // is name a phase that has already shipped without delivering it.
+    let phase = document["error"]["details"]["phase"]
+        .as_str()
+        .expect("a phase is named");
+
     assert!(
-        document["error"]["details"]["phase"]
+        !phase.is_empty(),
+        "the refusal must carry a phase: {document}"
+    );
+    assert!(
+        !phase.contains("Phase 004"),
+        "the refusal still promises Phase 004, which has shipped without delivering this: {document}"
+    );
+    assert!(
+        !document["error"]["message"]
             .as_str()
-            .expect("a phase is named")
-            .contains("Phase 004"),
-        "the refusal must name the phase that will support it: {document}"
+            .expect("a message")
+            .contains("becomes available in Phase 004"),
+        "the message still promises Phase 004: {document}"
     );
 }
 

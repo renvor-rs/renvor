@@ -53,14 +53,31 @@ env:
   #
   # `cargo publish --dry-run --workspace` DOES work: cargo stages the workspace members into a
   # temporary registry and verifies the whole chain. It requires every member in the chain to be
-  # publishable, which is why renvor-core, renvor-config, and renvor-testkit are `publish = true`.
+  # publishable, which is why renvor-core, renvor-config, renvor-http, and renvor-testkit are all
+  # `publish = true`.
   #
-  # `xtask` declares `publish = false` and is excluded automatically by the workspace commands —
-  # verified: the dry run uploads 4 crates, not 5.
+  # `xtask` declares `publish = false` and is excluded automatically by the workspace commands, and
+  # so does `renvor-cli` — verified: the dry run uploads the crates named below and no others.
   #
   # See the Phase 002 research record §D13 for the four-case experiment, and proposed ADR-0008:
   # https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md
-  CRATES: "renvor-core renvor-config renvor-testkit renvor"
+  #
+  # ── PHASE 004: FOUR CRATES BECAME FIVE ──────────────────────────────────────────────
+  #
+  # `renvor-http` was added, and the assertion below **failed on the first push** with:
+  #
+  #   expected: renvor renvor-config renvor-core renvor-testkit
+  #   actual:   renvor renvor-config renvor-core renvor-http renvor-testkit
+  #
+  # That is the guard working. It is a **pinned list precisely so that growing the publishable set
+  # is a decision somebody records**, rather than a consequence of adding a crate — and the fix it
+  # asks for is this line, not a weakening of the check.
+  #
+  # `renvor-http` is `publish = true` because ADR-0008 records, by experiment, that a publishable
+  # package cannot depend on an unpublishable one, and the facade depends on it behind the
+  # off-by-default `transport-rest` feature. **A default-OFF optional dependency still has to be
+  # publishable**: `--dry-run` resolves every optional dependency regardless of its feature.
+  CRATES: "renvor-core renvor-config renvor-http renvor-testkit renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor

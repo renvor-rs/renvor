@@ -35,6 +35,7 @@ use crate::cancel::CancelScope;
 use crate::error::{BoxedCause, KernelError};
 use crate::health::{HealthState, ReadinessContributor};
 use crate::lifecycle::drain::{WorkGate, WorkPermit};
+use crate::observe::RunIdentifier;
 use crate::provider::graph::{MAX_EDGES, MAX_PROVIDERS};
 use crate::state::TypedStateMap;
 
@@ -126,10 +127,24 @@ pub type ProviderFuture<'a> = Pin<Box<dyn Future<Output = Result<(), BoxedCause>
 
 /// What a provider receives while it initialises.
 ///
-/// Carries the two things a provider legitimately needs from the kernel during Boot — somewhere to
-/// register state, and a cancellation scope — and nothing else. It does **not** hand over the
-/// application, the registry, or the phase, because a provider that can reach those can reorder
-/// its own initialisation and defeat the guarantee the resolver just established.
+/// Carries what a provider legitimately needs from the kernel during Boot — somewhere to register
+/// state, a cancellation scope, the work gate, the health state, and this run's identity — and
+/// nothing else. It does **not** hand over the application, the registry, or the phase, because a
+/// provider that can reach those can reorder its own initialisation and defeat the guarantee the
+/// resolver just established.
+///
+/// # Why the run identifier is here
+///
+/// Contract C-O3 requires every emitted record to carry the run identifier, with narrower
+/// identifiers nested beneath it. A provider that emits telemetry — a transport with a
+/// per-request identifier is the obvious case — therefore needs the run's identity, and had no way
+/// to obtain it: it is generated during `build()`, which happens **after** providers are
+/// registered, so it cannot be supplied at construction either.
+///
+/// The alternative a provider was left with was to generate its own, which produces **two run
+/// identities in one process** and makes "nested beneath the run identifier" false for exactly the
+/// records that carry the most correlation value. Added when Phase 004's transport adapter became
+/// the first provider to need it — which is the kind of gap a real adapter exists to find.
 #[derive(Debug)]
 pub struct InitContext<'a> {
     provider: &'a ProviderId,
@@ -137,6 +152,7 @@ pub struct InitContext<'a> {
     cancel: &'a CancelScope,
     work: &'a WorkGate,
     health: &'a HealthState,
+    run_id: RunIdentifier,
 }
 
 impl<'a> InitContext<'a> {
@@ -148,6 +164,7 @@ impl<'a> InitContext<'a> {
         cancel: &'a CancelScope,
         work: &'a WorkGate,
         health: &'a HealthState,
+        run_id: RunIdentifier,
     ) -> Self {
         Self {
             provider,
@@ -155,7 +172,17 @@ impl<'a> InitContext<'a> {
             cancel,
             work,
             health,
+            run_id,
         }
+    }
+
+    /// This application run's identifier.
+    ///
+    /// Copied rather than borrowed: it is 16 bytes, and a borrow would tie a provider's telemetry
+    /// to this context's lifetime when the identity outlives it.
+    #[must_use]
+    pub const fn run_id(&self) -> RunIdentifier {
+        self.run_id
     }
 
     /// The provider this context belongs to.

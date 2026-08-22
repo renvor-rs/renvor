@@ -54,6 +54,56 @@ impl Target {
     }
 }
 
+/// Which delivery transport a generated project records.
+///
+/// # One value, and therefore defaulted rather than prompted
+///
+/// Constitution v3.0.0 principle VII, clause 2: *"A choice with only one supported value MAY be
+/// defaulted without prompting and MUST be recorded."* Phase 004 ships exactly one transport, so
+/// `transport` is **defaulted and recorded** — the same classification `target` already holds, for
+/// the same reason. Prompting for a choice with one value asks an operator to decide something
+/// already decided.
+///
+/// It is no longer a *reserved* input: the capability has shipped, so `--transport rest` is
+/// **accepted**, and any other value fails as an unsupported value rather than as a later-phase
+/// reservation. Reporting "reserved for Phase 004" from inside Phase 004 would be false.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Transport {
+    /// REST over HTTP. The only supported value.
+    Rest,
+}
+
+impl Transport {
+    /// The recorded spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rest => "rest",
+        }
+    }
+
+    /// Parses a `--transport` value.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] for any value other than `rest`. **Not**
+    /// `ReservedForLaterPhase`: the transport capability has shipped, and naming a future phase
+    /// would be a false statement about when support arrives.
+    pub fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "rest" => Ok(Self::Rest),
+            other => Err(CliError::new(
+                Code::UnsupportedValue,
+                format!("`{other}` is not a supported transport; the supported value is `rest`"),
+            )
+            .with("flag", "--transport")
+            .with("value", other.to_owned())
+            .with("supported", "rest")),
+        }
+    }
+}
+
 /// Whether local HTTPS was asked for.
 ///
 /// **Neither value causes a certificate to be issued or a trust store to be touched in this
@@ -88,6 +138,7 @@ pub struct ProjectConfiguration {
     destination: PathBuf,
     local_domain: String,
     target: Target,
+    transport: Transport,
     container: bool,
     local_https: LocalHttps,
     seed_data: bool,
@@ -109,6 +160,8 @@ pub struct Answers {
     pub local_domain: Option<String>,
     /// `--target` as typed, so an unsupported value can be reported verbatim.
     pub target: String,
+    /// `--transport` as typed, or `None` to take the single supported value.
+    pub transport: Option<String>,
     /// Generate container development controls.
     pub container: bool,
     /// Request local HTTPS. Records intent only.
@@ -200,6 +253,13 @@ impl ProjectConfiguration {
 
         let target = Target::parse(&answers.target)?;
 
+        // Defaulted rather than prompted, and RECORDED. See `Transport`'s documentation for the
+        // constitutional clause this implements.
+        let transport = match answers.transport.as_deref() {
+            Some(value) => Transport::parse(value)?,
+            None => Transport::Rest,
+        };
+
         let local_domain = match answers.local_domain {
             Some(domain) => domain,
             None => derive_local_domain(&name),
@@ -223,6 +283,7 @@ impl ProjectConfiguration {
             destination: destination.display_path(),
             local_domain,
             target,
+            transport,
             container: answers.container,
             local_https: if answers.local_https {
                 LocalHttps::Requested
@@ -254,6 +315,12 @@ impl ProjectConfiguration {
     #[must_use]
     pub fn local_domain(&self) -> &str {
         &self.local_domain
+    }
+
+    /// The recorded transport.
+    #[must_use]
+    pub const fn transport(&self) -> Transport {
+        self.transport
     }
 
     /// Whether container controls are generated.
@@ -425,6 +492,7 @@ mod tests {
             destination,
             local_domain: None,
             target: "api".to_owned(),
+            transport: None,
             container: false,
             local_https: false,
             seed_data: false,
@@ -532,6 +600,8 @@ mod tests {
             seed_data: _,
             example_domain: _,
             target: _,
+            // Phase 004. A single-variant enum has even less room for a credential than a `bool`.
+            transport: _,
 
             // ── CATEGORY 2: strings, and therefore checked ─────────────────────────────
             name,

@@ -1,0 +1,97 @@
+# The REST/HTTP delivery adapter (Phase 004). Renvor's FIRST real transport.
+#
+# # This crate depends INWARD, and nothing depends outward from it
+#
+# `renvor-http` depends on `renvor-core` and on the selected HTTP stack. It does NOT depend on
+# `renvor`, `renvor-config`, or `renvor-cli`. The kernel does not know this crate exists, which is
+# what keeps constitution principle VIII true rather than merely intended — asserted in `xtask`
+# step 7 with a positive control in both directions.
+#
+# # `publish = true` is forced, not chosen
+#
+# ADR-0008 records the rule by experiment: a publishable package cannot depend on an unpublishable
+# one. The facade `renvor` is publishable and depends on this crate behind the `transport-rest`
+# feature, so this crate must be publishable too. It is the FIFTH publishable crate, and
+# `RELEASING.md` carries it in the ordering.
+#
+# `renvor-cli` stays `publish = false` and is unaffected: nothing publishable depends on it.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-http"
+description = "REST and HTTP delivery adapter for the Renvor framework: declarative routing, middleware ordering, request correlation, trusted-proxy client identity, and graceful drain."
+documentation = "https://docs.rs/renvor-http"
+readme = "README.md"
+keywords = ["renvor", "framework", "http", "rest", "axum"]
+categories = ["web-programming::http-server"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel. `{ path, version }` — never path-only, which FR-040 forbids for a publishable package.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# The router and server. `axum::http` is used throughout, so no direct `http` dependency is
+# declared. `default-features = false` plus an explicit list keeps `multipart`, `ws`, `form`, and
+# `macros` out of the graph.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "query", "tokio", "original-uri"] }
+
+# Service composition, the concurrency limiter, and `ServiceExt::oneshot` for real-router tests.
+tower = { version = "0.5.3", default-features = false, features = ["util", "limit"] }
+
+# CORS, body limit, and timeout. NOTE: `request-id` is deliberately ABSENT — see `request_id.rs`
+# and ADR-0012 Finding 1: `SetRequestId` adopts a caller-supplied header and offers no overwrite.
+tower-http = { version = "0.7.0", default-features = false, features = ["cors", "limit", "timeout", "trace"] }
+
+# Runtime primitives. `net` IS required here — this crate is the transport, and binding a listener
+# is its job. That is exactly why it lives outside `renvor-core`, whose tokio features exclude it.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
+
+# Instrumentation only. This crate NEVER installs a process-global subscriber (contract C-O7).
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+
+# The handler panic boundary, and nothing else. `FutureExt::catch_unwind` is the maintained
+# implementation of "contain a panic in a future"; `std::panic::catch_unwind` cannot do it, because
+# a future panics across a `poll` rather than inside one call.
+#
+# This adds ZERO crates to the build: `futures-util` is already compiled as a transitive dependency
+# of both `axum` and `tower`, which `cargo tree -i futures-util` shows. Declaring it directly makes
+# a use that already exists in the graph visible in the manifest instead of implicit.
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+
+# Route-inspection payload only. Not used for request or response bodies.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# Collecting a real response body in-process. Dev-only: nothing in the public surface needs it.
+http-body-util = { version = "0.1.5", default-features = false }
+
+# A throwaway source tree for the transport-boundary scan's positive control, which must prove the
+# walk discovers a file that did not exist when the guard was written — without writing into `src/`.
+tempfile = { version = "3.27.0", default-features = false }
+
+# Deterministic time for timeout and drain tests. `test-util` must never reach a production graph.
+# `io-util` is dev-only: the shutdown tests drive a REAL socket, because the defect they exist for
+# lived in how `serve` combined its futures and is invisible to anything that does not.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "test-util", "io-util"] }
+
+[lints]
+workspace = true

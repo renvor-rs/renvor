@@ -85,10 +85,10 @@ $ renvor tls trust --i-understand-this-modifies-my-system-trust-store
 
   Consequence: any certificate that authority signs would be trusted by every program on this machine that uses the system trust store, until it is removed by hand.
 
-ERROR  consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no transport yet, so a certificate issued now would protect nothing. Nothing was changed. This becomes available in Phase 004 (the first real transport)
+ERROR  consent recorded, and the operation is NOT AVAILABLE: renvor does not issue certificates or modify trust stores. Nothing was changed. Phase 004 shipped a transport, which was the reason previously given here, and this capability is a separate one that is not yet scheduled to a phase
 
 flag ................................................................. tls trust
-phase ..................................... Phase 004 (the first real transport)
+phase ........................................................ not yet scheduled
 trustStoreModifications ...................................................... 0
 
 ```

@@ -78,6 +78,19 @@ Run from a clean checkout. Performs **zero** publish operations.
 > control in `release-dry-run.yml`. Evidence: [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D13
 > (four-case experiment); proposed **ADR-0008**.
 
+> **Amended 2026-08-22 (Phase 004).** The publishable set grew from **4 crates to 5** with the
+> addition of `renvor-http`, the REST transport. The workspace-wide commands introduced above need
+> no change — that is the point of having moved to them — but the release **ordering** does, and it
+> is updated in `RELEASING.md`.
+>
+> `renvor-http` carries the complete metadata set this contract requires: `description`,
+> `documentation`, `readme`, `keywords`, `categories`, an explicit `include`, and `publish = true`.
+> The facade depends on it as `{ path, version, optional = true }` — never path-only, which FR-040
+> forbids for a publishable package.
+>
+> **Still zero crates published, zero tags, and zero releases.** `publish = true` states that a
+> crate *may* be published; it is not a record that one was.
+
 Step 6 is the one people skip. Proving a negative requires looking; "we didn't run publish" is an assertion, while "the registry reports no versions" is evidence.
 
 ## Publication rules (documented now, executed later)

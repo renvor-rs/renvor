@@ -1,5 +1,6 @@
 ---
 source: crates/renvor-cli/tests/cli.rs
+assertion_line: 269
 expression: "Value::Object(shapes)"
 ---
 {
@@ -8,7 +9,8 @@ expression: "Value::Object(shapes)"
     "result": {
       "name": "<string>",
       "target": "<string>",
-      "templateVersion": "<string>"
+      "templateVersion": "<string>",
+      "transport": "<string>"
     },
     "schemaVersion": 2,
     "status": "success"

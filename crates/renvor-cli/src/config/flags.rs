@@ -123,6 +123,17 @@ pub enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Show the routes this project would serve.
+    ///
+    /// Asks the application binary for its own route registry — the same value that builds the
+    /// router — rather than parsing source or reading a second manifest. A project that declares
+    /// no Renvor dependency has no registry to report, and that is a failure with a name rather
+    /// than an empty table.
+    Routes {
+        /// The project directory. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Run the local development loop.
     Dev,
     /// Container development controls.
@@ -205,10 +216,15 @@ pub struct NewArgs {
     #[arg(long)]
     pub seed_data: bool,
 
-    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    // VISIBLE, unlike the reserved flags below. The transport capability has shipped, so this is
+    // a real choice an operator may state rather than a placeholder that will be refused. The
+    // rationale lives here rather than in the doc comment, because a doc comment becomes `--help`
+    // output and `--help` is not the place for a phase history.
+    /// Delivery transport. `rest` is the only supported value
+    #[arg(long)]
     pub transport: Option<String>,
+
+    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
     /// Reserved for a later phase.
     #[arg(long, hide = true)]
     pub orm: Option<String>,
@@ -237,8 +253,7 @@ pub struct NewArgs {
 /// A table rather than a chain of `if let`s, so that adding a flag to [`NewArgs`] and forgetting to
 /// reject it is visible as a missing row rather than invisible as a missing branch. The test below
 /// asserts the table covers the struct.
-const RESERVED: [(&str, &str); 8] = [
-    ("--transport", "Phase 004 (the first real transport)"),
+const RESERVED: [(&str, &str); 7] = [
     ("--orm", "Phase 009 (persistence)"),
     ("--database", "Phase 009 (persistence)"),
     ("--auth", "Phase 013 (authentication)"),
@@ -260,8 +275,7 @@ impl NewArgs {
     /// [`Code::ReservedForLaterPhase`] with `details.flag` and `details.phase`, or
     /// [`Code::Usage`] when neither a name nor a path was supplied.
     pub fn into_answers(self) -> Result<Answers, CliError> {
-        let supplied: [(&str, bool); 8] = [
-            ("--transport", self.transport.is_some()),
+        let supplied: [(&str, bool); 7] = [
             ("--orm", self.orm.is_some()),
             ("--database", self.database.is_some()),
             ("--auth", self.auth.is_some()),
@@ -309,6 +323,7 @@ impl NewArgs {
             destination,
             local_domain: self.local_domain,
             target: self.target,
+            transport: self.transport,
             container: self.container,
             local_https: self.local_https,
             seed_data: self.seed_data,
@@ -337,7 +352,9 @@ mod tests {
     fn a_reserved_flag_parses_and_then_fails_validation() {
         // The whole point of C-1's reserved-flag rule: NOT an unknown-argument usage error.
         for (flag, value) in [
-            ("--transport", Some("http")),
+            // `--transport` is NO LONGER HERE. Phase 004 ships the transport capability, so
+            // reporting "reserved for Phase 004" from inside Phase 004 would be a false statement.
+            // Its replacement behaviour is asserted in the two tests below.
             ("--orm", Some("diesel")),
             ("--database", Some("postgres")),
             ("--auth", Some("session")),
@@ -363,6 +380,47 @@ mod tests {
                 "{flag} must name the phase that will support it"
             );
         }
+    }
+
+    #[test]
+    fn the_supported_transport_is_accepted_rather_than_reserved() {
+        // Phase 004 ships it, so `--transport rest` is a real choice an operator may state.
+        let cli =
+            Cli::try_parse_from(["renvor", "new", "demo", "--transport", "rest"]).expect("parses");
+        let Command::New(args) = cli.command else {
+            panic!("expected new")
+        };
+        let answers = args
+            .into_answers()
+            .expect("`--transport rest` must not be refused");
+        assert_eq!(answers.transport.as_deref(), Some("rest"));
+    }
+
+    #[test]
+    fn an_unsupported_transport_is_an_unsupported_value_not_a_reservation() {
+        // The distinction matters: `reserved_for_later_phase` promises support arrives later.
+        // For a value no phase will support, that promise would be false.
+        let cli =
+            Cli::try_parse_from(["renvor", "new", "demo", "--transport", "grpc"]).expect("parses");
+        let Command::New(args) = cli.command else {
+            panic!("expected new")
+        };
+        // The flag parser lets it through; the configuration model refuses it, which is where the
+        // supported-value set lives.
+        let answers = args.into_answers().expect("the flag is not reserved");
+        let error =
+            crate::config::model::Transport::parse(answers.transport.as_deref().expect("supplied"))
+                .expect_err("`grpc` must be refused");
+
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert_ne!(error.code, Code::ReservedForLaterPhase);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "supported" && v == "rest"),
+            "the refusal must name the supported value"
+        );
     }
 
     #[test]
@@ -394,7 +452,16 @@ mod tests {
 
         let governed: [(&str, How); 11] = [
             ("target", Defaulted("--target")),
-            ("transport", Reserved("--transport")),
+            // PHASE 004 MOVED THIS ROW.
+            //
+            // The transport capability has shipped, so `transport` is no longer a governed choice
+            // this phase does not ship. It has exactly ONE supported value, which clause 2 of the
+            // amended principle VII permits to be defaulted without prompting provided it is
+            // RECORDED — and it is, in `renvor.toml`.
+            //
+            // `target` has held this classification since Phase 003 for the identical reason, and
+            // amendment 3.0.0 §4 records that as COMPLYING rather than as an exception.
+            ("transport", Defaulted("--transport")),
             ("persistence model", Reserved("--orm")),
             ("database", Reserved("--database")),
             ("auth starter", Reserved("--auth")),
