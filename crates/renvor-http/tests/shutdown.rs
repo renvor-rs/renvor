@@ -134,8 +134,13 @@ async fn a_handler_that_never_finishes_does_not_extend_shutdown_beyond_the_budge
         DrainOutcome::Incomplete { outstanding: 1 },
         "the outstanding request was not reported"
     );
+    // Asserted against a multiple of the BUDGET, not against FAILURE_DEADLINE. `elapsed` is timed
+    // from the shutdown trigger, so the contract predicts roughly one budget — steps 3 and 5 share
+    // it. Comparing against the 5-second failure deadline would let a shutdown over-run by three
+    // seconds and still report that the bound held, which is the assertion agreeing with its own
+    // failure message rather than with the contract. The headroom is for loaded CI runners.
     assert!(
-        elapsed < FAILURE_DEADLINE,
+        elapsed < BUDGET * 5,
         "shutdown took {elapsed:?}, which is not bounded by {BUDGET:?}"
     );
 }

@@ -11,8 +11,8 @@
 
 use core::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ConnectInfo;
@@ -767,5 +767,112 @@ async fn dropping_a_request_in_flight_cancels_its_scope() {
         gate.outstanding(),
         0,
         "the abandoned request did not release its work permit"
+    );
+}
+
+#[tokio::test]
+async fn a_request_that_produced_a_response_leaves_its_scope_uncancelled() {
+    // THE OTHER HALF of the guard, and the load-bearing one. `CancelOnDrop` cancels unless it is
+    // disarmed once a response exists; the test above proves it cancels, and nothing proved it
+    // disarms.
+    //
+    // Measured: deleting `cancel_on_drop.armed = false` from `route/build.rs` left the whole
+    // renvor-http suite green — 155 passed, 0 failed. Every successfully-completed request would
+    // have cancelled its own scope, and a service that clones the scope and outlives the response
+    // — a spawned task, a streaming writer, a cancellation-aware pool checkout — would read "the
+    // caller went away" on every single successful request. That inverts the mechanism C-10 exists
+    // to provide.
+    //
+    // The scope is handed OUT of the handler so it can be read AFTER the response is produced. The
+    // existing `is_cancelled()` tests read inside the handler, which runs before the guard drops,
+    // so they cannot observe this either way.
+    let escaped: Arc<Mutex<Option<CancelScope>>> = Arc::new(Mutex::new(None));
+    let handler_slot = Arc::clone(&escaped);
+
+    let mut registry = RouteRegistry::new();
+    registry
+        .get("/completes", move |request: Request| {
+            let handler_slot = Arc::clone(&handler_slot);
+            async move {
+                *handler_slot.lock().expect("not poisoned") =
+                    Some(request.context().cancel_scope().clone());
+                Response::text("ok")
+            }
+        })
+        .expect("route");
+
+    let app = router(&registry, config()).expect("valid");
+
+    let response = app
+        .oneshot(served(
+            request("GET", "/completes").header(header::HOST, HOST),
+        ))
+        .await
+        .expect("responds");
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Give any erroneous cancellation the same grace the drop test gives a correct one, so this is
+    // not passing merely by reading too early.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let scope = escaped
+        .lock()
+        .expect("not poisoned")
+        .clone()
+        .expect("the handler ran and handed its scope out");
+    assert!(
+        !scope.is_cancelled(),
+        "a request that produced a response cancelled its own scope"
+    );
+}
+
+#[tokio::test]
+async fn a_timed_out_request_cancels_the_scope_the_service_is_watching() {
+    // C-10: *"client disconnect and request timeout both cancel that scope, so an application
+    // service sees one mechanism rather than two."*
+    //
+    // `a_timed_out_request_is_408_and_cancels_its_scope` in `tests/lifecycle.rs` names the scope
+    // and never reads it — its body asserts the status and the released permit only. Measured:
+    // deleting `context.cancel_scope().cancel()` from the timeout branch of `route/build.rs` left
+    // the whole suite green.
+    //
+    // That line is load-bearing rather than redundant. On timeout the OUTER `CancelOnDrop` guard
+    // sees a response — the 408 — and disarms, so without the explicit cancel nothing cancels this
+    // scope at all, and a timeout would reach a service through a different mechanism from a
+    // disconnect. Which is the one thing this clause exists to prevent.
+    let escaped: Arc<Mutex<Option<CancelScope>>> = Arc::new(Mutex::new(None));
+    let handler_slot = Arc::clone(&escaped);
+
+    let mut registry = RouteRegistry::new();
+    registry
+        .get("/slow", move |request: Request| {
+            let handler_slot = Arc::clone(&handler_slot);
+            async move {
+                *handler_slot.lock().expect("not poisoned") =
+                    Some(request.context().cancel_scope().clone());
+                std::future::pending::<()>().await;
+                Response::text("unreachable")
+            }
+        })
+        .expect("route");
+
+    let mut configured = config();
+    configured.limits.request_timeout = Duration::from_millis(150);
+    let app = router(&registry, configured).expect("valid");
+
+    let response = app
+        .oneshot(served(request("GET", "/slow").header(header::HOST, HOST)))
+        .await
+        .expect("responds");
+    assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+
+    let scope = escaped
+        .lock()
+        .expect("not poisoned")
+        .clone()
+        .expect("the handler ran and handed its scope out");
+    assert!(
+        scope.is_cancelled(),
+        "a timed-out request left its scope uncancelled, so a service watching it never learned"
     );
 }
