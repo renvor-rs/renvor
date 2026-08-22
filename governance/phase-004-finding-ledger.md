@@ -222,18 +222,35 @@ sides; those are positive controls and are supposed to.
 
 | # | Severity | Batch | Task | Status after validation | Regression evidence |
 |---|---|---|---|---|---|
-| L-01 | P1 | G | #48 | `needs_fixes` → fixed → `coding_done` | 15 tests. Validation found the success test asserted **exit 0 only** — a relay that printed nothing would have passed it. Now asserts the parsed payload |
+| L-01 | P1 | G | #48 | `needs_fixes` → fixed → **`validated`** | 15 tests. Validation found the success test asserted **exit 0 only** — a relay that printed nothing would have passed it. Now asserts the parsed payload |
 | L-02 | P1 | F | #49 | **`validated`** | 4 tests over a real socket. Its bound assertion was additionally tightened from 5 s to `BUDGET * 5` |
 | L-03 | P1 | A | #50 | **`validated`** | 5 tests; ordering read from recorded events |
 | L-04 | P1 | A | #51 | **`validated`** | 3 tests |
 | L-05 | P1 | C | #52 | **`validated`** | 5 tests |
-| L-06 | P1 | B | #53 | `needs_fixes` → fixed → `coding_done` | Preflight asserted allow-**methods** but not allow-**headers**; the mirroring path was never exercised. Now asserted |
+| L-06 | P1 | B | #53 | `needs_fixes` → fixed → **`validated`** | Preflight asserted allow-**methods** but not allow-**headers**; the mirroring path was never exercised. Now asserted |
 | L-07 | P1 | D | #54 | **`validated`** | 4 tests |
-| L-08 | P1 | E | #55 | `needs_fixes` → fixed → `coding_done` | *"The timeout still cancels the scope"* was a **name-only match** — the test never read the scope. Proven by mutation: deleting the cancel left the suite green. Now two tests, one per bound |
-| L-09 | P1 | I | #56 | `needs_fixes` → fixed → `coding_done` | The **disarm** had no control. Proven by mutation: deleting `armed = false` left all 155 tests green, so every completed request would cancel its own scope. Now asserted after the response |
+| L-08 | P1 | E | #55 | `needs_fixes` → fixed → **`validated`** | *"The timeout still cancels the scope"* was a **name-only match** — the test never read the scope. Proven by mutation: deleting the cancel left the suite green. Now two tests, one per bound |
+| L-09 | P1 | I | #56 | `needs_fixes` → fixed → **`validated`** | The **disarm** had no control. Proven by mutation: deleting `armed = false` left all 155 tests green, so every completed request would cancel its own scope. Now asserted after the response |
 | L-10 | P2 | I | #57 | **`validated`** | 2 tests, one the control |
-| L-11 | P2 | I | #58 | `needs_fixes` → fixed → `coding_done` | No parameterless route was ever driven. Now an empty-map test and a traversal-as-data test |
-| L-12 | P2 | J | #59 | `needs_fixes` → fixed → `coding_done` | Parts (c), (d), (g) had **no test**. Now `tests/telemetry.rs` with a hand-written capturing subscriber, plus a `413` control |
+| L-11 | P2 | I | #58 | `needs_fixes` **twice** → fixed → `coding_done` | No parameterless route was ever driven. The first replacement observed a constant handler, not the map; the second drives the reporting handler and is mutation-proven |
+| L-12 | P2 | J | #59 | `needs_fixes` → fixed → **`validated`** | Parts (c), (d), (g) had **no test**. Now `tests/telemetry.rs` with a hand-written capturing subscriber, plus a `413` control |
+
+### Two validation rounds, and what the second one found
+
+| Round | Result |
+|---|---|
+| **1** | 6 `validated`, 6 `needs_fixes` — **every one of the six a real gap** |
+| **2** | 5 of those 6 `validated`; **L-11 returned `needs_fixes` again** |
+
+**L-11 came back because the fix was not a fix.** The replacement test drove a route whose handler
+binds the request to `_` and returns a constant, so it observed **nothing** about the parameter map
+— and its comment claimed a segment-injecting router would fail it, which was false. A control that
+cannot fail is worse than no control, because it is counted. It now drives the same reporting
+handler the parameterised route uses, on a static path, and asserts the sentinel.
+
+That correction is recorded rather than smoothed over: **the round-2 failure was in a test written
+to close a round-1 failure**, by the same hand, in the same defect class. It is the clearest
+argument in this ledger for why validation is a separate pass and not a self-check.
 
 **Six were `validated` on the first pass; six were returned `needs_fixes`, and every one of those six
 was a real gap.** They were not code defects — the behaviour was right — but tests whose names

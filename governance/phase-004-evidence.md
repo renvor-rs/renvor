@@ -380,9 +380,9 @@ described otherwise — here, in the pull request, in `GOVERNANCE.md`, or in any
 | Plan security review | **NOT PERFORMED** — same limit |
 | Implementation security review | **DELIVERED**, late — 13 findings, S1–S9 complete, with an explicit "checked and holding" section naming what it verified and found sound |
 | Implementation requirements review | **DELIVERED**, late — 16 findings, R1–R10 complete, including a full FR-001…FR-049 mapping |
-| Post-remediation validation run | **DELIVERED** — twelve findings judged independently: 6 `validated`, 6 `needs_fixes`. **All six were real**, and two were proven by mutation. See the [ledger](phase-004-finding-ledger.md) |
+| Post-remediation validation run | **DELIVERED**, two rounds — round 1: 6 `validated`, 6 `needs_fixes`, **all six real**, two proven by mutation. Round 2: 5 of the 6 `validated`; **L-11 failed again**, because the test written to close it observed a constant handler rather than the parameter map. See the [ledger](phase-004-finding-ledger.md) |
 | Post-remediation security review | **DELIVERED** — 9 findings, 0 BLOCKER, 2 MAJOR. Both MAJOR findings were fixed; one was a reachable security defect |
-| Post-remediation requirements review | **NOT PERFORMED** — commissioned against the same head and returned nothing across three explicit requests. Under this ledger's rule a review that returns nothing is recorded as NOT PERFORMED, never as passed. **This is a gap in Phase 004's evidence, not a pass** |
+| Post-remediation requirements review | **NOT PERFORMED** — commissioned against the same head and returned nothing across three explicit requests and five idle notifications. Under this ledger's rule a review that returns nothing is recorded as NOT PERFORMED, never as passed. **This is a gap in Phase 004's evidence, not a pass** |
 
 Under this ledger's rule, *"a review that returns nothing is recorded as NOT PERFORMED, never as
 passed"* — the first three are recorded that way. **An earlier revision of this document said all
