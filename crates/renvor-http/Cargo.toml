@@ -67,6 +67,15 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "net",
 # Instrumentation only. This crate NEVER installs a process-global subscriber (contract C-O7).
 tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
 
+# The handler panic boundary, and nothing else. `FutureExt::catch_unwind` is the maintained
+# implementation of "contain a panic in a future"; `std::panic::catch_unwind` cannot do it, because
+# a future panics across a `poll` rather than inside one call.
+#
+# This adds ZERO crates to the build: `futures-util` is already compiled as a transitive dependency
+# of both `axum` and `tower`, which `cargo tree -i futures-util` shows. Declaring it directly makes
+# a use that already exists in the graph visible in the manifest instead of implicit.
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+
 # Route-inspection payload only. Not used for request or response bodies.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
@@ -76,7 +85,9 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 http-body-util = { version = "0.1.5", default-features = false }
 
 # Deterministic time for timeout and drain tests. `test-util` must never reach a production graph.
-tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "test-util"] }
+# `io-util` is dev-only: the shutdown tests drive a REAL socket, because the defect they exist for
+# lived in how `serve` combined its futures and is invisible to anything that does not.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "net", "time", "sync", "macros", "test-util", "io-util"] }
 
 [lints]
 workspace = true
