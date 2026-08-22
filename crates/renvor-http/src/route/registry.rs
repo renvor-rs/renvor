@@ -56,6 +56,13 @@ pub enum RouteError {
         /// The offending header name.
         name: String,
     },
+    /// The method is answered by the transport itself and cannot carry an application route.
+    MethodReservedByTransport {
+        /// The method that cannot be registered.
+        method: Method,
+        /// Why the transport answers it.
+        reason: &'static str,
+    },
 }
 
 impl fmt::Display for RouteError {
@@ -78,6 +85,12 @@ impl fmt::Display for RouteError {
                 f,
                 "the header `{name}` could not be represented: a name or value containing a \
                  control character is refused, because it would allow a response to be split"
+            ),
+            Self::MethodReservedByTransport { method, reason } => write!(
+                f,
+                "`{method}` cannot be registered as an application route: {reason}. Registering \
+                 it would produce a route that appears in every listing and answers nothing, \
+                 which is the failure route validation exists to prevent"
             ),
         }
     }
@@ -172,6 +185,23 @@ impl RouteRegistry {
     }
 
     fn push(&mut self, route: Route) -> Result<(), RouteError> {
+        // METHOD FIRST, and this is a refusal rather than a shadow.
+        //
+        // The selected CORS middleware answers **every** `OPTIONS` request as a preflight — its
+        // dispatch is `if parts.method == Method::OPTIONS`, with no check for
+        // `Access-Control-Request-Method`. An application route on `OPTIONS` is therefore
+        // unreachable: verified, it returned an empty `200` while the handler never ran.
+        //
+        // Contract C-9 says a route that never matches is the worse failure, because *"it looks
+        // registered in every listing and answers nothing"*. So this is refused at registration,
+        // where an author sees it, rather than silently shadowed at run time.
+        if route.method == Method::Options {
+            return Err(RouteError::MethodReservedByTransport {
+                method: route.method,
+                reason: "the CORS layer answers every OPTIONS request as a preflight",
+            });
+        }
+
         // Ceiling first: a registry at its limit refuses regardless of what is being added, and
         // reporting "duplicate" for a route that would have been refused anyway would name the
         // wrong cause.
@@ -328,6 +358,42 @@ mod tests {
         let paths: Vec<&str> = registry.routes().iter().map(super::Route::path).collect();
         assert_eq!(paths, vec!["/api/v1/health", "/api/v1/items"]);
         assert_eq!(registry.routes()[0].group(), Some("api-v1"));
+    }
+
+    #[test]
+    fn an_options_route_is_refused_rather_than_silently_shadowed() {
+        // Verified before this refusal existed: registering `OPTIONS /thing` and then requesting
+        // it returned `200` with an EMPTY body — the CORS layer's preflight answer — while the
+        // handler never ran. A listing showed the route; nothing served it.
+        let mut registry = RouteRegistry::new();
+        let error = registry
+            .route(Method::Options, "/thing", ok)
+            .expect_err("an OPTIONS route must be refused");
+
+        assert!(matches!(
+            error,
+            RouteError::MethodReservedByTransport {
+                method: Method::Options,
+                ..
+            }
+        ));
+        assert_eq!(registry.len(), 0, "the refused route was stored anyway");
+
+        // POSITIVE CONTROL: every other method on the same path registers, so the refusal is about
+        // the method rather than about the path or about registration failing generally.
+        for method in [
+            Method::Get,
+            Method::Post,
+            Method::Put,
+            Method::Patch,
+            Method::Delete,
+            Method::Head,
+        ] {
+            registry
+                .route(method, "/thing", ok)
+                .unwrap_or_else(|error| panic!("`{method}` was refused: {error}"));
+        }
+        assert_eq!(registry.len(), 6);
     }
 
     #[test]

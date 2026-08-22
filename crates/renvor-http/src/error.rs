@@ -30,6 +30,18 @@ pub enum HttpErrorKind {
     StateUnavailable,
     /// A handler panicked and was contained.
     HandlerFailed,
+    /// No route declares the requested path.
+    ///
+    /// A `404` is a refusal like any other here, rather than a response the library produces on
+    /// its own — which is what lets it carry a request identifier and be refused during drain.
+    NotFound,
+    /// The request body could not be read to completion, for a reason other than its size.
+    ///
+    /// Separate from [`HttpErrorKind::BodyTooLarge`] because they are different events: one is a
+    /// caller sending more than the limit, the other is a connection failing part-way. Reporting
+    /// the second as `413` told operators their clients were oversending when the clients had in
+    /// fact gone away.
+    BodyUnreadable,
 }
 
 impl HttpErrorKind {
@@ -42,6 +54,10 @@ impl HttpErrorKind {
             Self::TimedOut => crate::limits::STATUS_REQUEST_TIMEOUT,
             Self::Unavailable => crate::limits::STATUS_UNAVAILABLE,
             Self::StateUnavailable | Self::HandlerFailed => 500,
+            Self::NotFound => 404,
+            // The request was not completed and the fault is the caller's connection, not the
+            // application's. 400 rather than 500 for the same reason a malformed request is.
+            Self::BodyUnreadable => 400,
         }
     }
 
@@ -56,6 +72,8 @@ impl HttpErrorKind {
             Self::OriginRejected => "origin_rejected",
             Self::StateUnavailable => "state_unavailable",
             Self::HandlerFailed => "handler_failed",
+            Self::NotFound => "not_found",
+            Self::BodyUnreadable => "body_unreadable",
         }
     }
 }
@@ -112,6 +130,8 @@ impl HttpError {
             HttpErrorKind::StateUnavailable | HttpErrorKind::HandlerFailed => {
                 "the request could not be completed"
             }
+            HttpErrorKind::NotFound => "no route is declared for this path",
+            HttpErrorKind::BodyUnreadable => "the request body could not be read",
         }
     }
 }
@@ -151,6 +171,15 @@ mod tests {
         assert_eq!(HttpErrorKind::TimedOut.status(), 408);
         assert_eq!(HttpErrorKind::Unavailable.status(), 503);
         assert_eq!(HttpErrorKind::HostRejected.status(), 400);
+        assert_eq!(HttpErrorKind::NotFound.status(), 404);
+
+        // An IO failure while reading a body is NOT reported as over-limit. Asserted because the
+        // two used to share `413`, and a status that names the wrong cause sends an operator to
+        // the wrong investigation.
+        assert_ne!(
+            HttpErrorKind::BodyUnreadable.status(),
+            HttpErrorKind::BodyTooLarge.status()
+        );
     }
 
     #[test]
