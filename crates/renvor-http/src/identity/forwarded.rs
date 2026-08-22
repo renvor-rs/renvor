@@ -62,7 +62,7 @@ pub fn from_forwarded(value: &str) -> Option<IpAddr> {
     // checked that quotes balanced, and `trim_matches('"')` then removed the lone quote and left a
     // parseable address. A value whose quoting we cannot resolve is a value we do not understand,
     // and the hop in front of us may resolve it differently. Found by review.
-    if value.matches('"').count() % 2 != 0 {
+    if !value.matches('"').count().is_multiple_of(2) {
         return None;
     }
 
