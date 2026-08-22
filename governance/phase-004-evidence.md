@@ -132,6 +132,33 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 `cargo deny check` reported `advisories ok, bans ok, licenses ok, sources ok`.
 Working tree clean and HEAD unchanged after each run.
 
+### One CI check failed on the first push, and this is what it was
+
+**`package and verify without publishing` failed** on head `cdd9d01`. It is recorded here rather
+than quietly fixed, because a phase evidence pack that lists only the runs that passed is not
+evidence.
+
+```text
+publishable set changed — update CRATES or the manifest that changed
+expected: renvor renvor-config renvor-core renvor-testkit
+actual:   renvor renvor-config renvor-core renvor-http renvor-testkit
+```
+
+**The guard was working.** `.github/workflows/release-dry-run.yml` pins the expected publishable set
+in a `CRATES` variable **precisely so that growing it is a decision somebody records**, rather than
+a silent consequence of adding a crate. Phase 004 added a fifth, and the assertion said so.
+
+The fix is the one the guard asks for — the pinned list now names `renvor-http` — and it is **not** a
+weakening: the assertion still compares an exact set and still fails if `xtask` or `renvor-cli` ever
+becomes publishable.
+
+**Why the local run did not catch it.** That assertion is a **step in the release-dry-run workflow**,
+not a step in `cargo xtask verify`, so a green local verification could never have covered it. That
+gap is real and is recorded: the verification contract's fail-closed rule governs the eleven steps
+`xtask` runs, and this check is outside them.
+
+The remaining 14 checks passed on that head, including all six platform/toolchain contexts.
+
 ## Review status — stated plainly
 
 **No independent human review of Phase 004 has occurred.**
