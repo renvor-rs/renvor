@@ -150,12 +150,23 @@ Current order:
 | 1 | `renvor-core` | *(nothing in the workspace)* | The kernel. Nothing else can publish before it |
 | 2 | `renvor-config` | `renvor-core` | The configuration adapter |
 | 2 | `renvor-testkit` | `renvor-core` | The test harness. Independent of `renvor-config`, so position 2 either way |
-| 3 | `renvor` | `renvor-core`, `renvor-config` | Facade. `renvor-config` is optional but default-on, so it must exist first |
+| 2 | `renvor-http` | `renvor-core` | The REST transport. Independent of the other two position-2 packages |
+| 3 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http` | Facade. `renvor-config` is optional-but-default-on and `renvor-http` is optional-and-default-**off**; **all three** must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
 
-Positions 2's two packages have no dependency on each other and may publish in either
-order, or concurrently. Position 3 waits for **both** of position 2's, not only for
+Position 2's three packages have no dependency on each other and may publish in any
+order, or concurrently. Position 3 waits for **all three**, not only for
 `renvor-core`: an optional dependency still has to be resolvable at publish time.
+
+> **Amended 2026-08-22 (Phase 004).** `renvor-http` was added at position 2 and the facade's
+> dependency list grew to three. **A default-OFF optional dependency still blocks the facade's
+> publication**, which is the non-obvious half: `cargo publish --dry-run` resolves every optional
+> dependency regardless of whether its feature is enabled, so `transport-rest` being off by default
+> buys a consumer a smaller graph and buys the release nothing.
+>
+> `renvor-http` is `publish = true` because ADR-0008 records, by experiment, that a publishable
+> package cannot depend on an unpublishable one. It is forced rather than chosen. `renvor-cli`
+> stays `publish = false` and is unaffected — nothing publishable depends on it.
 
 > **Corrected 2026-08-16 (T119).** This table previously listed `renvor` alone, at position 1,
 > "declares no dependencies at all", with a note that the workspace "contains exactly one
