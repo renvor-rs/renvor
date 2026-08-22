@@ -48,17 +48,17 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-001 crate separate, depends inward | `crates/renvor-http/Cargo.toml` | `xtask` step 7 CLAIM 3 + CONTROL 3 |
 | FR-002 kernel resolves no HTTP dep | — (absence) | `xtask` step 7 CLAIM 1 + CONTROL 1, `--all-features` |
 | FR-003 minimal builds carry no HTTP | `crates/renvor/Cargo.toml` feature | `xtask` step 7 CLAIM 2, 2b + CONTROL 2 |
-| FR-004 no transport type in app interfaces | `route/mod.rs` | `tests/boundary.rs` ×3, incl. positive control |
+| FR-004 no transport type in app interfaces | `route/mod.rs` | `tests/boundary.rs` ×3, incl. positive control. **Qualified 2026-08-22 (ledger L-12f)**: the scan reads a **four-file hand-list**, so the assertion covers those four files and not the crate. A newly added application-facing module is silently unscanned |
 | FR-005 publish metadata | `crates/renvor-http/Cargo.toml` | `cargo package -p renvor-http --list`; `xtask` publishable-dependencies check |
 | FR-006 single authoritative registry | `route/registry.rs` | `route::registry::tests::*` |
 | FR-007 router and inspection share it | `route/build.rs`, `route/inspect.rs` | `a_route_added_to_the_registry_appears_without_a_second_manifest_being_touched` |
 | FR-008 route groups | **partial** — `route/mod.rs::RouteGroup` supplies the **prefix** only | `a_group_prefixes_every_route_it_holds`, `a_group_prefix_reaches_the_real_router`. **Group-scoped middleware is NOT implemented**, and nested groups cannot compose — `RouteGroup` stores a name, a prefix, and routes, and nothing else. `contracts/http-routing.md` promises both |
 | FR-009 duplicate is an error | `route/registry.rs::push` | `a_duplicate_is_refused_and_the_first_route_survives` |
 | FR-010 route ceiling | `limits::MAX_ROUTES` | `the_route_ceiling_is_enforced_at_its_exact_boundary` |
-| FR-011 404, and 405 with `Allow` | `route/build.rs` | `an_undeclared_path_is_404`, `an_undeclared_method_on_a_declared_path_is_405_and_names_the_allowed_methods` |
+| FR-011 404, and 405 with `Allow` | **partial** — `route/build.rs` for matched routes; the 404 and 405 responses are axum's own fallbacks | `an_undeclared_path_is_404`, `an_undeclared_method_on_a_declared_path_is_405_and_names_the_allowed_methods`. **Corrected 2026-08-22 (ledger L-07)**: this row read as fully implemented. The status codes are right, but they are produced **without** host validation, identity, request-ID generation, CORS, limits, timeout, or admission — verified: `GET /missing` with `Host: evil.example` → `404`, `x-request-id` **absent** |
 | FR-012 state bridge | **NOT IMPLEMENTED** | — · **corrected 2026-08-22.** This row claimed the bridge existed "via `RequestContext`". It does not: neither `RouterConfig`, `RequestContext`, nor `Request` carries a `TypedStateMap` or exposes a typed lookup, so a handler cannot reach registered application state at all |
 | FR-013 missing state is explicit | **partial** — `error.rs::StateUnavailable` exists and is used for absent connection info only | `a_request_without_connection_information_fails_closed`. **The state-lookup failure it was supposed to cover does not exist, because the lookup does not exist** |
-| FR-014 request id nested under run id | `context.rs`, `route/build.rs` | `every_response_carries_a_generated_request_identifier` |
+| FR-014 request id nested under run id | **partial** — `context.rs`, `route/build.rs` | `every_response_carries_a_generated_request_identifier`. **Corrected 2026-08-22 (ledger L-07)**: the test's name overstates its reach — it drives **matched** routes only. A 404 or 405 carries **no** identifier, so "every request" is not yet true |
 | FR-015 inbound id untrusted | `request_id.rs` | `a_caller_supplied_request_identifier_is_never_adopted` |
 | FR-016 id is opaque | `context.rs::RequestId` | `a_request_id_is_a_pure_function_of_its_bytes`, `generation_does_not_consult_any_inbound_value` |
 | FR-017 trusted set empty by default | `identity/trusted.rs` | `the_default_trusts_nobody` |
@@ -77,9 +77,9 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-030 drain refuses new requests | `admission.rs`, `route/build.rs` | `once_drain_begins_a_new_request_does_not_reach_a_handler` + control |
 | FR-031 cancellation reaches services | **partial** — `context.rs`, `route/build.rs` | `application_shutdown_cancels_an_in_flight_request_without_any_transport_type` + control. **Client disconnect does not cancel the request scope** — only the timeout branch cancels, and dropping a `CancelScope` does not cancel it. A service holding a clone never observes a disconnect |
 | FR-032 bounded drain, truthful outcome | **partial** — `server.rs` computes the outcome correctly | the drain tests exercise `drain_when_closed` **in isolation**. `Server::serve` uses `tokio::join!`, which waits for **both** the bounded drain **and** the unbounded shutdown future — so in exactly the over-budget case the bound exists for, `serve` still does not return. **No test drives `Server::serve` end to end**, which is why this passed review here and failed review there |
-| FR-033 provider shutdown ordering | inherited from C-L1/C-L3 | kernel's own suite; **not re-tested here** — see gaps |
-| FR-034 route inspection, both forms | `route/inspect.rs` | 6 tests |
-| FR-035 structured output follows C-2 | `route/inspect.rs`, `commands/routes.rs` | `the_dump_is_a_single_parseable_json_document` |
+| FR-033 provider shutdown ordering | **NOT IMPLEMENTED** · **corrected 2026-08-22 (ledger L-03)** | This row read "inherited from C-L1/C-L3". Inheritance requires participation, and there is **no `impl renvor_core::Provider` anywhere in `renvor-http`** — the server binds and serves entirely outside `Boot`/`Ready`/`Drain`/`Stop`, contributes nothing to readiness, and a bind failure cannot roll back as a provider failure. C-10 opens with *"the server is a provider"*; it is not one |
+| FR-034 route inspection, both forms | **partial** — `route/inspect.rs` renders both forms | 6 tests. **Qualified 2026-08-22 (ledger L-01)**: the rendering is complete and tested, but `renvor routes` has **no success path**, so no operator can obtain either form through the documented command |
+| FR-035 structured output follows C-2 | **partial** — `route/inspect.rs` emits the envelope; `commands/routes.rs` emits only failure envelopes | `the_dump_is_a_single_parseable_json_document`. **Qualified 2026-08-22 (ledger L-01)**: the **success** envelope is asserted at the library, never through the command, because the command cannot succeed |
 | FR-036 truthful about its source | `contracts/command-surface.md`, `commands/routes.rs` docs | `a_project_without_a_renvor_dependency_is_refused_by_name` |
 | FR-037 `--transport` resolved and recorded | `config/flags.rs`, `config/model.rs`, `templates/renvor.toml.j2` | `every_governed_choice_of_principle_seven_is_classified` |
 | FR-038 generated project still builds | `templates/Cargo.toml.j2` unchanged | measured: `cargo build` + `cargo run` in a fresh generated project |
@@ -108,7 +108,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | SC | Result |
 |---|---|
 | SC-001 real router, 0 imitations | **met** — every routing test drives `axum::Router` via `ServiceExt::oneshot`; 0 mock services exist |
-| SC-002 404/405, `Allow` in 100% | **met** |
+| SC-002 404/405, `Allow` in 100% | **partially met** · **corrected 2026-08-22 (ledger L-07)** — the **status codes and `Allow` header** hold in 100% of asserted cases. The responses carrying them bypass every request control, so the criterion is met on its literal wording and not on what it exists to establish |
 | SC-003 groups, state, middleware by behaviour | **NOT MET** — group *prefixes* and middleware *ordering on matched routes* are asserted; **group middleware and state access do not exist** |
 | SC-004 0 forged identities by default | **met** — asserted at the resolver and through the real router |
 | SC-005 0 adopted caller identifiers | **met** |
@@ -125,7 +125,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | SC-016 0 tags, releases, publications, deployments | **met**, measured |
 | SC-017 every negative check has a positive control | **met** |
 | SC-018 generated project builds | **met** — `cargo build` and `cargo run` both succeed |
-| SC-019 0 empty-table-and-exit-0 | **met** |
+| SC-019 0 empty-table-and-exit-0 | **met, vacuously** · **qualified 2026-08-22 (ledger L-01)** — 0 such cases exist because the command has **no exit-0 path at all**. A criterion that a missing feature satisfies is recorded as satisfied-by-absence rather than as passed |
 | SC-020 workspace evidence labelled as such | **met** — stated here and in the dependency inventory |
 
 ## Verification
@@ -213,7 +213,14 @@ reader would otherwise reach.
 ### Open, and blocking
 
 **Twelve findings remain unfixed.** They are listed rather than deferred quietly, because the
-requirement rows above depend on them:
+requirement rows above depend on them.
+
+**They are frozen as a numbered ledger** in
+[`phase-004-finding-ledger.md`](phase-004-finding-ledger.md), recorded at head `dad8333` **before
+any remediation edit was made**, with a requirement, affected files, severity, reproduction,
+intended fix, and required regression test per row. The maintainer instruction of 2026-08-22
+absorbs all twelve into Phase 004: **none is transferred to a later phase and none is downgraded.**
+The table below is the summary; the ledger is the record.
 
 | Severity | Finding |
 |---|---|
