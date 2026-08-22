@@ -454,3 +454,36 @@ async fn a_request_without_connection_information_fails_closed() {
 
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
+
+#[tokio::test]
+async fn a_repeated_forwarding_header_with_one_unreadable_value_still_fails_closed() {
+    // The defect this guards: an unreadable value used to be dropped, so a repeated header
+    // collapsed to a single readable one and the repeated-header refusal never fired. The peer is
+    // TRUSTED here, so without the fix the surviving value would have been attributed.
+    let proxy = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+    let mut configuration = config();
+    configuration.trusted_proxies = TrustedProxies::none().trust(proxy);
+
+    let app = router(&registry(), configuration).expect("valid");
+
+    let mut request = request("GET", "/whoami")
+        .body(Body::empty())
+        .expect("a valid request");
+    request.headers_mut().append(
+        "x-forwarded-for",
+        axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).expect("bytes are a valid header value"),
+    );
+    request
+        .headers_mut()
+        .append("x-forwarded-for", "198.51.100.7".parse().expect("valid"));
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::new(proxy, 40000)));
+
+    let observed = body_string(app.oneshot(request).await.expect("responds")).await;
+
+    assert!(
+        observed.starts_with("10.0.0.1|false|"),
+        "a repeated header with one unreadable value was attributed: {observed}"
+    );
+}

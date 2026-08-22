@@ -56,6 +56,16 @@ pub fn from_forwarded(value: &str) -> Option<IpAddr> {
         return None;
     }
 
+    // AN UNBALANCED QUOTE IS REFUSED BEFORE ANYTHING IS SPLIT.
+    //
+    // `for="198.51.100.7` — no closing quote — used to be accepted: quote-aware splitting never
+    // checked that quotes balanced, and `trim_matches('"')` then removed the lone quote and left a
+    // parseable address. A value whose quoting we cannot resolve is a value we do not understand,
+    // and the hop in front of us may resolve it differently. Found by review.
+    if value.matches('"').count() % 2 != 0 {
+        return None;
+    }
+
     // QUOTE-AWARE SPLITTING, both times.
     //
     // RFC 7239 permits a quoted node value, and a quoted value may contain `,` and `;` — the very
@@ -295,6 +305,28 @@ mod tests {
         assert_eq!(
             from_forwarded("for=1.2.3.4, for=9.9.9.9"),
             Some(v4(9, 9, 9, 9))
+        );
+    }
+
+    #[test]
+    fn an_unbalanced_quote_fails_closed() {
+        // The defect this replaced: the lone quote was trimmed away and the address parsed.
+        for unbalanced in [
+            r#"for="198.51.100.7"#,
+            r#"for=198.51.100.7""#,
+            r#"for="1.2.3.4", for="9.9.9.9"#,
+        ] {
+            assert_eq!(
+                from_forwarded(unbalanced),
+                None,
+                "`{unbalanced}` was accepted despite unbalanced quoting"
+            );
+        }
+
+        // POSITIVE CONTROL: balanced quoting still parses.
+        assert_eq!(
+            from_forwarded(r#"for="198.51.100.7""#),
+            Some(v4(198, 51, 100, 7))
         );
     }
 

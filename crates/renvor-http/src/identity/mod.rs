@@ -56,12 +56,22 @@ pub fn resolve(
     // QUESTION 2. `Forwarded` is the standard header and wins where both are present; falling back
     // to the legacy one only when the standard one is absent avoids having to reconcile two
     // possibly-disagreeing sources.
-    let claimed = forwarded::single_value(headers.forwarded)
-        .and_then(forwarded::from_forwarded)
-        .or_else(|| {
-            forwarded::single_value(headers.x_forwarded_for)
-                .and_then(forwarded::from_x_forwarded_for)
-        });
+    // PRESENCE decides which header is consulted; PARSING decides the answer.
+    //
+    // The earlier form was `from_forwarded(...).or_else(|| from_x_forwarded_for(...))`, and that
+    // `or_else` fired on a parse **failure** as well as on absence — so a trusted proxy sending a
+    // malformed `Forwarded` alongside a valid `X-Forwarded-For` had the legacy value accepted. The
+    // contract requires any malformed forwarding value to resolve to the direct peer, and the
+    // comment right here claimed the fallback was for absence only. Found by review; the two now
+    // agree.
+    let claimed = match forwarded::single_value(headers.forwarded) {
+        // The standard header is PRESENT: it decides, and a value it cannot parse fails closed
+        // rather than deferring to the legacy header.
+        Some(value) => forwarded::from_forwarded(value),
+        // Absent: only then does the legacy header get a say.
+        None => forwarded::single_value(headers.x_forwarded_for)
+            .and_then(forwarded::from_x_forwarded_for),
+    };
 
     match claimed {
         Some(client) => ClientIdentity::ViaTrustedProxy {
@@ -191,6 +201,43 @@ mod tests {
         // Neither value is chosen. Choosing either would make Renvor's answer depend on a
         // header-ordering rule that the hop in front of it may resolve differently.
         assert_eq!(identity, ClientIdentity::DirectPeer(proxy));
+    }
+
+    #[test]
+    fn a_malformed_forwarded_does_not_fall_through_to_x_forwarded_for() {
+        // The defect this replaced: `or_else` fired on a parse failure, so a trusted proxy sending
+        // a broken standard header had its legacy header accepted instead of failing closed.
+        let proxy = v4(10, 0, 0, 1);
+        let trusted = TrustedProxies::none().trust(proxy);
+        let malformed = ["for=not-an-address"];
+        let valid_legacy = ["198.51.100.7"];
+
+        let identity = resolve(
+            proxy,
+            &trusted,
+            ForwardingHeaders {
+                forwarded: &malformed,
+                x_forwarded_for: &valid_legacy,
+            },
+        );
+
+        assert_eq!(
+            identity,
+            ClientIdentity::DirectPeer(proxy),
+            "a malformed `Forwarded` fell through to `X-Forwarded-For`"
+        );
+
+        // POSITIVE CONTROL: with the standard header ABSENT, the legacy one IS consulted — so the
+        // refusal above is about the parse failure rather than about the legacy header being dead.
+        let identity = resolve(
+            proxy,
+            &trusted,
+            ForwardingHeaders {
+                forwarded: &[],
+                x_forwarded_for: &valid_legacy,
+            },
+        );
+        assert_eq!(identity.address(), v4(198, 51, 100, 7));
     }
 
     #[test]

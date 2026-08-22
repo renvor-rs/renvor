@@ -317,13 +317,30 @@ async fn dispatch(
     }
 }
 
-/// Reads every value of a header by name.
+/// Reads every value of a header by name, **preserving unreadable ones as unusable**.
+///
+/// # Why a value that cannot be decoded is not simply skipped
+///
+/// The earlier form used `filter_map(|v| v.to_str().ok())`, which **silently dropped** a value with
+/// non-UTF-8 bytes. Two headers where one was malformed therefore collapsed into a single readable
+/// one — and the repeated-header refusal, which exists precisely so that two hops cannot resolve a
+/// repeated header differently, never fired.
+///
+/// A value that cannot be decoded is now kept as a placeholder that no parser accepts, so the
+/// **count** stays truthful and the repeated-header rule still applies. Found by review.
 fn header_values(headers: &HeaderMap, name: &str) -> Vec<String> {
     headers
         .get_all(name)
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .map(str::to_owned)
+        .map(|value| {
+            value.to_str().map_or_else(
+                // A NUL can never appear in a legitimate forwarding value, and every parser in
+                // this crate refuses a control character — so this placeholder is unusable by
+                // construction rather than by a rule someone has to remember.
+                |_| "\0unreadable".to_owned(),
+                str::to_owned,
+            )
+        })
         .collect()
 }
 
