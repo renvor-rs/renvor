@@ -155,11 +155,7 @@ impl HttpServerProvider {
     /// The registry is taken by value, which is what makes "one authoritative registry" hold
     /// through the lifecycle as well as at construction: there is no second copy to diverge.
     #[must_use]
-    pub fn new(
-        id: impl Into<String>,
-        config: HttpServerConfig,
-        registry: RouteRegistry,
-    ) -> Self {
+    pub fn new(id: impl Into<String>, config: HttpServerConfig, registry: RouteRegistry) -> Self {
         Self {
             id: ProviderId::new(id),
             provides: Vec::new(),
@@ -195,10 +191,7 @@ impl HttpServerProvider {
     /// caller that assumed it knew the port would be talking to a different server.
     #[must_use]
     pub fn bound_address(&self) -> Option<SocketAddr> {
-        *self
-            .bound
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+        *self.bound.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Whether the server is bound and serving.
@@ -254,7 +247,9 @@ impl Provider for HttpServerProvider {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take()
-                .ok_or_else(|| boxed("this server provider's route registry was already consumed"))?;
+                .ok_or_else(|| {
+                    boxed("this server provider's route registry was already consumed")
+                })?;
 
             let drain_budget = config.limits.drain_budget;
 
@@ -282,9 +277,9 @@ impl Provider for HttpServerProvider {
                     boxed(format!("the server could not bind: {error}"))
                 })?;
 
-            let bound = server.local_addr().map_err(|error| {
-                boxed(format!("the bound address could not be read: {error}"))
-            })?;
+            let bound = server
+                .local_addr()
+                .map_err(|error| boxed(format!("the bound address could not be read: {error}")))?;
             *self.bound.lock().unwrap_or_else(PoisonError::into_inner) = Some(bound);
 
             let (shutdown, wait) = tokio::sync::oneshot::channel::<()>();
@@ -352,8 +347,12 @@ impl Provider for HttpServerProvider {
                         Err(boxed(outcome.to_string()))
                     }
                 }
-                Ok(Err(error)) => Err(boxed(format!("the http server failed while serving: {error}"))),
-                Err(joined) => Err(boxed(format!("the http serving task ended abnormally: {joined}"))),
+                Ok(Err(error)) => Err(boxed(format!(
+                    "the http server failed while serving: {error}"
+                ))),
+                Err(joined) => Err(boxed(format!(
+                    "the http serving task ended abnormally: {joined}"
+                ))),
             }
         })
     }

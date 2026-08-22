@@ -435,7 +435,10 @@ impl Next {
 impl fmt::Debug for Next {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Next")
-            .field("remaining", &(self.chain.len().saturating_sub(self.position)))
+            .field(
+                "remaining",
+                &(self.chain.len().saturating_sub(self.position)),
+            )
             .finish_non_exhaustive()
     }
 }

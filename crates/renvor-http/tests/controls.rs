@@ -144,7 +144,11 @@ async fn an_unknown_path_with_an_allowed_host_is_404_and_carries_the_request_ide
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
     let id = header_of(&response, REQUEST_ID).expect("a 404 must be correlatable");
-    assert_eq!(id.len(), 16, "the identifier is not the generated form: {id}");
+    assert_eq!(
+        id.len(),
+        16,
+        "the identifier is not the generated form: {id}"
+    );
 }
 
 #[tokio::test]
@@ -419,7 +423,10 @@ async fn credentials_are_advertised_only_when_the_policy_permits_them() {
         ))
         .await
         .expect("responds");
-    assert_eq!(header_of(&response, "access-control-allow-credentials"), None);
+    assert_eq!(
+        header_of(&response, "access-control-allow-credentials"),
+        None
+    );
 }
 
 #[tokio::test]
@@ -444,7 +451,10 @@ async fn a_wildcard_policy_never_reflects_credentials() {
         Some("*"),
         "a wildcard policy must answer with the wildcard, not with the caller's origin"
     );
-    assert_eq!(header_of(&response, "access-control-allow-credentials"), None);
+    assert_eq!(
+        header_of(&response, "access-control-allow-credentials"),
+        None
+    );
 }
 
 #[tokio::test]
@@ -507,9 +517,7 @@ async fn a_panicking_handler_is_contained_and_reported_without_its_payload() {
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
     let response = app
-        .oneshot(served(
-            request("GET", "/panics").header(header::HOST, HOST),
-        ))
+        .oneshot(served(request("GET", "/panics").header(header::HOST, HOST)))
         .await
         .expect("the router responds rather than aborting");
     std::panic::set_hook(previous);

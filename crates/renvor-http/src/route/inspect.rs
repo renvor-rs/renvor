@@ -328,11 +328,14 @@ mod tests {
         // producer states one.
         let registry = registry();
         let answered = answer_dump_request(["app", DUMP_FLAG], &registry).expect("answered");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&answered).expect("one JSON document");
+        let parsed: serde_json::Value = serde_json::from_str(&answered).expect("one JSON document");
 
         assert_eq!(parsed["result"]["protocol"], super::ROUTE_DUMP_PROTOCOL);
-        assert_eq!(super::ROUTE_DUMP_PROTOCOL, 1, "the shipped protocol version");
+        assert_eq!(
+            super::ROUTE_DUMP_PROTOCOL,
+            1,
+            "the shipped protocol version"
+        );
     }
 
     #[test]

@@ -493,7 +493,8 @@ seed_data = false
         // THE SUCCESS PATH. Every route through this command used to return `Err`, so the command
         // could not succeed against any input whatsoever — the relay was not written.
         let dir = project(MANIFEST, WITH_DEPENDENCY);
-        let payload = r#"{"protocol":1,"routes":[{"method":"GET","path":"/health","group":"api"}]}"#;
+        let payload =
+            r#"{"protocol":1,"routes":[{"method":"GET","path":"/health","group":"api"}]}"#;
 
         let exit = run_with(
             &reporter(),
@@ -635,8 +636,8 @@ seed_data = false
         // Checked BEFORE the binary is invoked: a project with no framework dependency has no
         // registry, and running it would be running an unrelated program.
         let dir = project(MANIFEST, NO_DEPENDENCY);
-        let error = run_with(&reporter(), dir.path(), &failing(dir.path()))
-            .expect_err("must be refused");
+        let error =
+            run_with(&reporter(), dir.path(), &failing(dir.path())).expect_err("must be refused");
 
         assert_eq!(error.code, Code::TransportNotWired);
         assert_eq!(error.code.exit().code(), 3);
@@ -753,8 +754,8 @@ seed_data = false
     #[test]
     fn a_directory_that_is_not_a_renvor_project_is_reported_as_such() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let error = run_with(&reporter(), dir.path(), &failing(dir.path()))
-            .expect_err("must be refused");
+        let error =
+            run_with(&reporter(), dir.path(), &failing(dir.path())).expect_err("must be refused");
         assert_eq!(error.code, Code::ManifestInvalid);
     }
 

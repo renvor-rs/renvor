@@ -10,9 +10,7 @@ use core::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdListener};
 use std::sync::{Arc, Mutex};
 
-use renvor_core::{
-    ApplicationBuilder, CapabilityId, InitContext, Provider, ProviderId, Readiness,
-};
+use renvor_core::{ApplicationBuilder, CapabilityId, InitContext, Provider, ProviderId, Readiness};
 use renvor_http::route::{Request, Response, RouteRegistry};
 use renvor_http::{HostPolicy, HttpServerConfig, HttpServerProvider};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -124,14 +122,16 @@ async fn the_server_boots_inside_a_real_application_and_then_serves() {
         .expect("the application builds");
 
     // Before Boot: nothing is bound, and readiness says so.
-    assert_eq!(provider.bound_address(), None, "a socket existed before Boot");
+    assert_eq!(
+        provider.bound_address(),
+        None,
+        "a socket existed before Boot"
+    );
     assert!(!provider.is_serving());
 
     let mut application = application.boot().await.expect("boot succeeds");
 
-    let address = provider
-        .bound_address()
-        .expect("Boot bound the listener");
+    let address = provider.bound_address().expect("Boot bound the listener");
     assert_ne!(address.port(), 0, "the assigned port was not recorded");
     assert!(provider.is_serving());
 

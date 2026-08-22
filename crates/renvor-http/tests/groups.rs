@@ -148,9 +148,7 @@ async fn nested_groups_apply_both_layers_with_the_outer_one_outermost() {
     let inner = RouteGroup::new("inner", "/v1")
         .expect("prefix")
         .layer(recorder(&log, "inner"))
-        .get("/thing", |_: Request| async {
-            Response::text("handled")
-        })
+        .get("/thing", |_: Request| async { Response::text("handled") })
         .expect("route");
 
     let outer = RouteGroup::new("outer", "/api")

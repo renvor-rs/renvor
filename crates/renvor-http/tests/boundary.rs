@@ -148,7 +148,11 @@ fn the_scan_finds_a_transport_type_in_a_newly_added_file() {
     .expect("write");
 
     let files = rust_files(root);
-    assert_eq!(files.len(), 2, "the walk did not find both files: {files:?}");
+    assert_eq!(
+        files.len(),
+        2,
+        "the walk did not find both files: {files:?}"
+    );
 
     let offending: Vec<&String> = files
         .iter()

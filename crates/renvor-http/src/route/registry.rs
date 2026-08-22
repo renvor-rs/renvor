@@ -379,7 +379,16 @@ mod tests {
         // each used to register cleanly here and abort the process later.
         let mut registry = RouteRegistry::new();
 
-        for malformed in ["/{", "/}", "/{}", "/*", "/:old", "/{a}x", "/{a}{b}", "/{*rest}/more"] {
+        for malformed in [
+            "/{",
+            "/}",
+            "/{}",
+            "/*",
+            "/:old",
+            "/{a}x",
+            "/{a}{b}",
+            "/{*rest}/more",
+        ] {
             assert!(
                 registry.get(malformed, ok).is_err(),
                 "`{malformed}` registered cleanly and would panic at router construction"
@@ -389,7 +398,9 @@ mod tests {
 
         // POSITIVE CONTROLS: every shape the router DOES accept still registers, so the refusals
         // above are about those patterns rather than about parameters being rejected wholesale.
-        for valid in ["/plain", "/{id}", "/x{a}", "/{*rest}", "/a/{b}/c", "/a:b", "/a*b"] {
+        for valid in [
+            "/plain", "/{id}", "/x{a}", "/{*rest}", "/a/{b}/c", "/a:b", "/a*b",
+        ] {
             assert!(
                 registry.get(valid, ok).is_ok(),
                 "`{valid}` was refused, but the router accepts it"

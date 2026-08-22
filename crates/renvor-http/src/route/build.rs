@@ -472,10 +472,7 @@ async fn resolve_and_run(
     // here is what makes contract C-10's *"client disconnect and request timeout both cancel that
     // scope"* true: previously only the timeout branch cancelled, so a service holding a clone of
     // the scope never learned that the caller had gone.
-    let mut cancel_on_drop = CancelOnDrop {
-        scope,
-        armed: true,
-    };
+    let mut cancel_on_drop = CancelOnDrop { scope, armed: true };
 
     request.extensions_mut().insert(context);
     let response = next.run(request).await;
