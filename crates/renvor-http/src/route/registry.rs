@@ -139,6 +139,8 @@ impl RouteRegistry {
             path,
             group: None,
             handler: std::sync::Arc::new(handler),
+            // A route registered outside a group has no group middleware, by definition.
+            middleware: std::sync::Arc::from(Vec::new()),
         })?;
         Ok(self)
     }

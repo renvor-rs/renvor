@@ -78,5 +78,7 @@ pub use host::{HostPolicy, InvalidHost};
 pub use identity::TrustedProxies;
 pub use limits::Limits;
 pub use provider::{HttpServerConfig, HttpServerProvider};
-pub use route::{Method, Request, Response, Route, RouteError, RouteGroup, RouteRegistry};
+pub use route::{
+    Method, Middleware, Next, Request, Response, Route, RouteError, RouteGroup, RouteRegistry,
+};
 pub use server::Server;

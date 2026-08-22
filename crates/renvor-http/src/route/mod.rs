@@ -338,6 +338,90 @@ where
     }
 }
 
+/// A transport-neutral middleware.
+///
+/// # This is a Renvor seam, not the transport's
+///
+/// A middleware here receives a [`Request`] and a [`Next`], both declared in this module, and
+/// returns a [`Response`]. None of them names `axum`, `tower`, or `http`. That is deliberate: a
+/// group's middleware is application logic — an authorisation check, a tenant lookup — and
+/// application logic that named a transport type would make the group unusable under any other.
+///
+/// The transport's own concerns — request identity, host validation, CORS, admission, timeout —
+/// are **not** expressed through this trait. They are layers around the whole router, because they
+/// must run for requests that match no route at all, which a per-route chain by definition cannot.
+///
+/// Implemented for any `Fn(Request, Next) -> impl Future<Output = Response>`, so an author writes
+/// an async closure and never names this trait.
+pub trait Middleware: Send + Sync + 'static {
+    /// Handles one request, with the rest of the chain available as `next`.
+    ///
+    /// Calling [`Next::run`] continues inward. **Not** calling it answers instead of the handler,
+    /// which is how an authorisation check refuses.
+    fn call(&self, request: Request, next: Next) -> HandlerFuture;
+}
+
+impl<F, Fut> Middleware for F
+where
+    F: Fn(Request, Next) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Response> + Send + 'static,
+{
+    fn call(&self, request: Request, next: Next) -> HandlerFuture {
+        Box::pin(self(request, next))
+    }
+}
+
+/// The remainder of a middleware chain, ending at the route's handler.
+///
+/// # An onion, and the shape matters
+///
+/// Each middleware wraps the ones after it, so a chain `[outer, inner]` runs
+/// `outer` → `inner` → handler on the way in and unwinds in the reverse order on the way out. A
+/// design that ran them as a flat sequence would give the same entry order and the wrong exit
+/// order, and a middleware that measures a duration or releases a resource on the way out would be
+/// silently wrong.
+pub struct Next {
+    chain: Arc<[Arc<dyn Middleware>]>,
+    position: usize,
+    handler: Arc<dyn Handler>,
+}
+
+impl Next {
+    /// Builds the chain for one route.
+    pub(crate) fn new(chain: Arc<[Arc<dyn Middleware>]>, handler: Arc<dyn Handler>) -> Self {
+        Self {
+            chain,
+            position: 0,
+            handler,
+        }
+    }
+
+    /// Continues inward — to the next middleware, or to the handler when there is none left.
+    #[must_use]
+    pub fn run(self, request: Request) -> HandlerFuture {
+        match self.chain.get(self.position) {
+            Some(middleware) => {
+                let middleware = Arc::clone(middleware);
+                let next = Self {
+                    chain: Arc::clone(&self.chain),
+                    position: self.position + 1,
+                    handler: Arc::clone(&self.handler),
+                };
+                middleware.call(request, next)
+            }
+            None => self.handler.call(request),
+        }
+    }
+}
+
+impl fmt::Debug for Next {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Next")
+            .field("remaining", &(self.chain.len().saturating_sub(self.position)))
+            .finish_non_exhaustive()
+    }
+}
+
 /// One registered route.
 #[derive(Clone)]
 pub struct Route {
@@ -346,6 +430,11 @@ pub struct Route {
     pub(crate) path: String,
     pub(crate) group: Option<String>,
     pub(crate) handler: Arc<dyn Handler>,
+    /// The group middleware wrapping this route, **outermost first**.
+    ///
+    /// An `Arc<[_]>` rather than a `Vec`: every request builds a [`Next`] over it, and a shared
+    /// slice is cloned by reference count rather than by copying the chain per request.
+    pub(crate) middleware: Arc<[Arc<dyn Middleware>]>,
 }
 
 impl Route {
@@ -366,6 +455,15 @@ impl Route {
     pub fn group(&self) -> Option<&str> {
         self.group.as_deref()
     }
+
+    /// How many group middleware wrap this route.
+    ///
+    /// A count rather than the chain itself: a middleware is author code, and handing it out would
+    /// let a caller run it outside the request that gave it its context.
+    #[must_use]
+    pub fn middleware_count(&self) -> usize {
+        self.middleware.len()
+    }
 }
 
 impl fmt::Debug for Route {
@@ -383,6 +481,7 @@ pub struct RouteGroup {
     name: String,
     prefix: String,
     routes: Vec<Route>,
+    middleware: Vec<Arc<dyn Middleware>>,
 }
 
 impl RouteGroup {
@@ -399,7 +498,64 @@ impl RouteGroup {
             name,
             prefix,
             routes: Vec::new(),
+            middleware: Vec::new(),
         })
+    }
+
+    /// Adds a middleware that wraps **every** route in this group, and no route outside it.
+    ///
+    /// Declaration order is outermost-first: the first `layer` call is entered first and exited
+    /// last.
+    ///
+    /// # Why this is applied when a route is added rather than when the group is registered
+    ///
+    /// Each route captures the chain as it stood when the route was declared. That makes the
+    /// group's contents readable top to bottom — a route sees the layers written above it — rather
+    /// than depending on what happens to be added afterwards.
+    #[must_use]
+    pub fn layer(mut self, middleware: impl Middleware) -> Self {
+        self.middleware.push(Arc::new(middleware));
+        self
+    }
+
+    /// Nests `child` inside this group.
+    ///
+    /// Prefixes compose **left to right** and middleware composes **outermost first**, so a route
+    /// in the child runs this group's layers before the child's own, and answers on this group's
+    /// prefix followed by the child's.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RouteError::InvalidPath`] if a composed path is not a valid route path.
+    pub fn group(mut self, child: Self) -> Result<Self, RouteError> {
+        let Self {
+            name: child_name,
+            prefix: child_prefix,
+            routes: child_routes,
+            middleware: child_middleware,
+        } = child;
+        let _ = child_name;
+        let _ = child_prefix;
+        let _ = child_middleware;
+
+        for route in child_routes {
+            let composed = join_paths(&self.prefix, &route.path);
+            validate_path(&composed)?;
+
+            // This group's layers go OUTSIDE the child's, which the child already baked into each
+            // of its routes. Prepending rather than appending is what makes "outer first" true.
+            let mut chain: Vec<Arc<dyn Middleware>> = self.middleware.clone();
+            chain.extend(route.middleware.iter().map(Arc::clone));
+
+            self.routes.push(Route {
+                method: route.method,
+                path: composed,
+                group: route.group,
+                handler: route.handler,
+                middleware: chain.into(),
+            });
+        }
+        Ok(self)
     }
 
     /// Adds a route to this group.
@@ -422,6 +578,7 @@ impl RouteGroup {
             path: full,
             group: Some(self.name.clone()),
             handler: Arc::new(handler),
+            middleware: self.middleware.clone().into(),
         });
         Ok(self)
     }

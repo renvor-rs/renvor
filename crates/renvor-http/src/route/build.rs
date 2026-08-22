@@ -53,14 +53,16 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Request as AxumRequest, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::middleware::{Next, from_fn_with_state};
+// Aliased: this crate declares its OWN `Next` for the transport-neutral group middleware
+// seam, and the two are different things — one carries `axum` types, the other cannot.
+use axum::middleware::{Next as AxumNext, from_fn_with_state};
 use axum::response::Response as AxumResponse;
 use axum::routing::{MethodFilter, on};
 use futures_util::FutureExt;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
-use super::{Method, Request, Response, RouteRegistry};
+use super::{Method, Next, Request, Response, RouteRegistry};
 use crate::admission::Admission;
 use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
@@ -165,14 +167,18 @@ pub fn router(registry: &RouteRegistry, config: RouterConfig) -> Result<Router, 
 
         for route in routes {
             let handler = Arc::clone(&route.handler);
+            // The group middleware this route captured at declaration. Cloning an `Arc<[_]>` is a
+            // reference-count bump, so the chain is not copied per request.
+            let middleware = Arc::clone(&route.middleware);
             let shared = Arc::clone(&shared);
             let path_owned = path.to_owned();
 
             let endpoint = move |request: AxumRequest| {
                 let handler = Arc::clone(&handler);
+                let middleware = Arc::clone(&middleware);
                 let shared = Arc::clone(&shared);
                 let path_owned = path_owned.clone();
-                async move { dispatch(handler, shared, path_owned, request).await }
+                async move { dispatch(handler, middleware, shared, path_owned, request).await }
             };
 
             let filter = method_filter(route.method);
@@ -272,7 +278,7 @@ async fn not_found() -> AxumResponse {
 async fn establish_context(
     State(shared): State<Arc<Shared>>,
     request: AxumRequest,
-    next: Next,
+    next: AxumNext,
 ) -> AxumResponse {
     // 1. REQUEST ID — first, so every rejection below is correlatable.
     let Ok(request_id) = request_id::generate(&OsEntropy) else {
@@ -318,7 +324,7 @@ async fn resolve_and_run(
     shared: &Arc<Shared>,
     request_id: RequestId,
     mut request: AxumRequest,
-    next: Next,
+    next: AxumNext,
 ) -> AxumResponse {
     let run_id = shared.config.run_id;
 
@@ -455,7 +461,7 @@ async fn resolve_and_run(
 async fn admit_and_bound(
     State(shared): State<Arc<Shared>>,
     request: AxumRequest,
-    next: Next,
+    next: AxumNext,
 ) -> AxumResponse {
     let Some(context) = request.extensions().get::<RequestContext>().cloned() else {
         return internal_error();
@@ -495,6 +501,7 @@ async fn admit_and_bound(
 /// **Layers 8 and 9.** The body limit, the span, and the handler inside a panic boundary.
 async fn dispatch(
     handler: Arc<dyn super::Handler>,
+    middleware: Arc<[Arc<dyn super::Middleware>]>,
     shared: Arc<Shared>,
     path: String,
     request: AxumRequest,
@@ -561,7 +568,15 @@ async fn dispatch(
     // because nothing observable is shared across the boundary: the response is discarded on a
     // panic, and the admission guard releases through unwinding exactly as it does through a
     // return.
-    match AssertUnwindSafe(handler.call(renvor_request))
+    // THE GROUP MIDDLEWARE CHAIN, inside the panic boundary and inside the span.
+    //
+    // Inside, because a middleware is author code exactly as a handler is: one that panics must be
+    // contained on the same terms, and one that does work worth tracing must appear under the same
+    // span. A chain built outside the boundary would leave a panicking middleware uncontained,
+    // which is the failure the boundary exists to prevent.
+    let chain = Next::new(middleware, handler);
+
+    match AssertUnwindSafe(chain.run(renvor_request))
         .catch_unwind()
         .await
     {
@@ -573,7 +588,8 @@ async fn dispatch(
                 route = %path,
                 request_id = %request_id,
                 run_id = %run_id,
-                "a handler panicked; the request was failed and the payload discarded"
+                "a handler or group middleware panicked; the request was failed and the payload \
+                 discarded"
             );
             refuse(
                 &HttpError::new(
