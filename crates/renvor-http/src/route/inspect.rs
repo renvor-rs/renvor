@@ -18,6 +18,16 @@ use serde::Serialize;
 
 use super::RouteRegistry;
 
+/// The documented invocation an application binary answers with its route registry.
+///
+/// A long, prefixed name on purpose: it must not collide with a flag an application defines for
+/// itself, and it must be obvious in a process list that Renvor asked for it.
+///
+/// This constant is the **contract**. `renvor routes` passes it; [`answer_dump_request`] responds
+/// to it. Both read this one value, so the CLI and the application cannot disagree about the
+/// spelling.
+pub const DUMP_FLAG: &str = "--renvor-dump-routes";
+
 /// One row of the rendered route table.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct RouteRow {
@@ -114,9 +124,65 @@ pub fn render_json(registry: &RouteRegistry) -> Result<String, serde_json::Error
     })
 }
 
+/// Answers the route-dump invocation, if that is what this process was asked for.
+///
+/// An application calls this at the top of `main` and exits when it returns `Some`:
+///
+/// ```
+/// # use renvor_http::route::{RouteRegistry, inspect};
+/// # fn build_registry() -> RouteRegistry { RouteRegistry::new() }
+/// let registry = build_registry();
+/// if let Some(document) = inspect::answer_dump_request(std::env::args(), &registry) {
+///     println!("{document}");
+///     return;
+/// }
+/// # ()
+/// ```
+///
+/// # Why this exists rather than leaving applications to implement the convention
+///
+/// A convention every application re-implements is a convention every application implements
+/// slightly differently, and `renvor routes` would then be parsing a shape that varies by project.
+/// This is the one implementation, so the envelope, the sorting, and the flag spelling are the
+/// same everywhere.
+///
+/// Returns `None` when the invocation was not a dump request, so an ordinary run is unaffected.
+///
+/// # Errors
+///
+/// A serialisation failure is rendered as the C-2 **failure** envelope rather than propagated:
+/// this function's caller is a `main` that is about to print and exit, and giving it a `Result`
+/// would invite it to print nothing at all. A consumer that asked for JSON receives JSON either
+/// way, which is what contract C-2 requires.
+#[must_use]
+pub fn answer_dump_request<I, S>(arguments: I, registry: &RouteRegistry) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    if !arguments
+        .into_iter()
+        .any(|argument| argument.as_ref() == DUMP_FLAG)
+    {
+        return None;
+    }
+
+    Some(match render_json(registry) {
+        Ok(result) => format!(
+            r#"{{"schemaVersion":2,"status":"success","command":"routes","result":{result}}}"#
+        ),
+        Err(_) => concat!(
+            r#"{"schemaVersion":2,"status":"failure","command":"routes","#,
+            r#""error":{"code":"internal","message":"the route registry could not be serialised","#,
+            r#""details":{}}}"#
+        )
+        .to_owned(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{render_human, render_json, rows};
+    use super::{DUMP_FLAG, answer_dump_request, render_human, render_json, rows};
     use crate::route::{Request, Response, RouteGroup, RouteRegistry};
 
     async fn ok(_: Request) -> Response {
@@ -199,6 +265,61 @@ mod tests {
         let rendered = render_human(&registry);
         assert!(rendered.contains("no routes"), "{rendered}");
         assert!(!rendered.contains("METHOD"), "{rendered}");
+    }
+
+    #[test]
+    fn the_dump_request_is_answered_only_when_it_is_asked_for() {
+        let registry = registry();
+
+        // An ordinary invocation is unaffected.
+        assert!(answer_dump_request(["my-app", "--port", "8080"], &registry).is_none());
+        assert!(answer_dump_request(Vec::<String>::new(), &registry).is_none());
+
+        // POSITIVE CONTROL: the documented flag IS answered.
+        let answered = answer_dump_request(["my-app", DUMP_FLAG], &registry)
+            .expect("the documented invocation must be answered");
+        assert!(answered.contains(r#""command":"routes""#), "{answered}");
+        assert!(answered.contains(r#""schemaVersion":2"#), "{answered}");
+        assert!(answered.contains(r#""status":"success""#), "{answered}");
+    }
+
+    #[test]
+    fn the_dump_reports_the_same_routes_the_registry_holds() {
+        // FR-045 and SC-014. The dump is not a second source: it renders the SAME value.
+        let registry = registry();
+        let answered = answer_dump_request(["app", DUMP_FLAG], &registry).expect("answered");
+        let payload = render_json(&registry).expect("serialises");
+
+        assert!(
+            answered.contains(&payload),
+            "the dump payload is not the registry's own rendering"
+        );
+
+        for route in registry.routes() {
+            assert!(
+                answered.contains(route.path()),
+                "`{}` is in the registry but not in the dump",
+                route.path()
+            );
+        }
+    }
+
+    #[test]
+    fn the_dump_is_a_single_parseable_json_document() {
+        // Contract C-2: exactly one JSON document, for success and failure alike.
+        let registry = registry();
+        let answered = answer_dump_request(["app", DUMP_FLAG], &registry).expect("answered");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&answered).expect("the dump must be one JSON document");
+        assert_eq!(parsed["schemaVersion"], 2);
+        assert_eq!(parsed["status"], "success");
+        assert_eq!(
+            parsed["result"]["routes"]
+                .as_array()
+                .expect("routes is an array")
+                .len(),
+            registry.len()
+        );
     }
 
     #[test]

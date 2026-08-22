@@ -31,8 +31,10 @@ use crate::output::Reporter;
 
 /// The documented invocation an application binary answers with its route registry.
 ///
-/// A long, prefixed name on purpose: it must not collide with a flag an application defines for
-/// itself, and it must be obvious in a process list that Renvor asked for it.
+/// **Stated here as a literal on purpose.** `renvor-cli` is `publish = false` and must not depend
+/// on `renvor-http`, so it cannot import the library's constant — and the two would then be able to
+/// drift. The guard against that is `the_dump_flag_matches_the_librarys_constant` below, which
+/// reads the library's source and fails if the two spellings differ.
 pub const DUMP_FLAG: &str = "--renvor-dump-routes";
 
 /// The bound on a manifest read, matching `check`'s.
@@ -289,6 +291,28 @@ seed_data = false
         )
         .expect("write");
         assert!(declares_renvor_dependency(dir.path()));
+    }
+
+    #[test]
+    fn the_dump_flag_matches_the_librarys_constant() {
+        // TWO DECLARATIONS, ONE VALUE. The CLI cannot import from `renvor-http` — it is
+        // `publish = false` and depending on the transport would put the transport in the CLI's
+        // graph — so the constant is stated twice. This reads the library's source at compile time
+        // and fails if they ever differ, which is the whole reason a second declaration is
+        // tolerable at all.
+        const LIBRARY: &str = include_str!("../../../renvor-http/src/route/inspect.rs");
+
+        let declared = LIBRARY
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("pub const DUMP_FLAG: &str = "))
+            .expect("the library still declares DUMP_FLAG")
+            .trim_end_matches(';')
+            .trim_matches('"');
+
+        assert_eq!(
+            declared, DUMP_FLAG,
+            "the CLI and the library disagree about the route-dump invocation"
+        );
     }
 
     #[test]
