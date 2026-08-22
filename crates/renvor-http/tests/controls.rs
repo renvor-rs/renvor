@@ -241,6 +241,107 @@ async fn a_body_that_never_arrives_times_out_rather_than_holding_admission_for_e
     drop(sender);
 }
 
+#[tokio::test]
+async fn a_body_that_fails_mid_stream_is_reported_as_unreadable_not_as_too_large() {
+    // Every body error reported 413, including a connection that dropped mid-body. That told the
+    // caller its request was too large — which is false, and unactionable: the caller would shrink
+    // a body that was never the problem, and the retry would fail identically.
+    let app = build(config());
+
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, String>>(1);
+    sender
+        .send(Err("connection reset by peer".to_owned()))
+        .await
+        .expect("queued");
+    drop(sender);
+
+    let mut failing = request("POST", "/declared")
+        .header(header::HOST, HOST)
+        .body(Body::from_stream(tokio_stream_of(receiver)))
+        .expect("valid");
+    failing.extensions_mut().insert(peer());
+
+    let response = app.oneshot(failing).await.expect("responds");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "a stream failure was reported as a size problem"
+    );
+    let body = body_string(response).await;
+    assert_eq!(
+        body, "the request body could not be read",
+        "a stream failure was described as something other than an unreadable body"
+    );
+
+    // POSITIVE CONTROL: the over-limit case must still be its own answer, or "distinguished" would
+    // just mean the 413 had been renamed rather than separated.
+    let app = build(config());
+    let over_limit = app
+        .oneshot({
+            let mut request = request("POST", "/declared")
+                .header(header::HOST, HOST)
+                .body(Body::from(vec![b'x'; Limits::new().max_body_bytes + 1]))
+                .expect("valid");
+            request.extensions_mut().insert(peer());
+            request
+        })
+        .await
+        .expect("responds");
+    assert_eq!(over_limit.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_ne!(
+        body_string(over_limit).await,
+        "the request body could not be read",
+        "an over-limit body and an unreadable one give the same answer"
+    );
+}
+
+#[tokio::test]
+async fn a_timed_out_request_releases_its_concurrency_slot_as_well_as_its_permit() {
+    // The work permit and the concurrency slot are two separate bounds held by one guard. The test
+    // above asserts `gate.outstanding() == 0`, which proves the PERMIT came back and says nothing
+    // about the SLOT — and a leaked slot is invisible until the ceiling is reached, at which point
+    // every request is 503 for a reason nothing reports.
+    //
+    // The ceiling is set to ONE so a single leaked slot is immediately observable, and the slot is
+    // asserted by BEHAVIOUR — a later request being served — rather than by reading a counter,
+    // because the counter is what would have to be trusted otherwise.
+    let mut configured = config();
+    configured.limits.request_timeout = Duration::from_millis(200);
+    configured.limits.max_concurrent_requests = 1;
+    let app = build(configured);
+
+    let (sender, receiver) = tokio::sync::mpsc::channel::<Result<axum::body::Bytes, String>>(1);
+    let stalled = Body::from_stream(tokio_stream_of(receiver));
+    let mut stalled_request = request("POST", "/declared")
+        .header(header::HOST, HOST)
+        .body(stalled)
+        .expect("valid");
+    stalled_request.extensions_mut().insert(peer());
+
+    let timed_out = app
+        .clone()
+        .oneshot(stalled_request)
+        .await
+        .expect("responds");
+    assert_eq!(timed_out.status(), StatusCode::REQUEST_TIMEOUT);
+
+    // POSITIVE CONTROL for the ceiling itself: with only one slot, this request can only be served
+    // if the timed-out one gave its slot back.
+    let after = app
+        .oneshot(served(
+            request("GET", "/declared").header(header::HOST, HOST),
+        ))
+        .await
+        .expect("responds");
+    assert_eq!(
+        after.status(),
+        StatusCode::OK,
+        "the timed-out request kept its concurrency slot, so the next request was refused"
+    );
+    drop(sender);
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_body_that_arrives_inside_the_bound_still_succeeds() {
     // POSITIVE CONTROL: the timeout does not simply reject every request with a streamed body.
@@ -348,7 +449,8 @@ async fn a_preflight_is_answered_rather_than_routed() {
             request("OPTIONS", "/declared")
                 .header(header::HOST, HOST)
                 .header(header::ORIGIN, "https://app.example")
-                .header("access-control-request-method", "POST"),
+                .header("access-control-request-method", "POST")
+                .header("access-control-request-headers", "x-tenant"),
         ))
         .await
         .expect("responds");
@@ -364,6 +466,15 @@ async fn a_preflight_is_answered_rather_than_routed() {
     let methods =
         header_of(&response, "access-control-allow-methods").expect("preflight names the methods");
     assert!(methods.contains("POST"), "{methods}");
+
+    // A preflight that names the methods but not the headers still fails in a browser: the request
+    // it was clearing carries `x-tenant`, and a preflight silent about headers denies it.
+    let headers =
+        header_of(&response, "access-control-allow-headers").expect("preflight names the headers");
+    assert!(
+        headers.to_ascii_lowercase().contains("x-tenant"),
+        "the preflight did not clear the header the request asked about: {headers}"
+    );
 }
 
 #[tokio::test]
@@ -494,6 +605,59 @@ async fn a_path_parameter_reaches_the_handler() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_string(response).await, "42");
+}
+
+#[tokio::test]
+async fn a_route_declaring_no_parameters_receives_an_empty_map() {
+    // The CONTROL for the test above. `path_param` returning a value proves the map is populated;
+    // it does not prove the map is populated CORRECTLY. A router that put every path segment under
+    // every name would pass that test and fail this one.
+    let app = build(config());
+
+    let response = app
+        .oneshot(served(
+            request("GET", "/declared").header(header::HOST, HOST),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_string(response).await,
+        "ok",
+        "a route with no parameters was given one"
+    );
+}
+
+#[tokio::test]
+async fn a_path_parameter_carrying_a_traversal_sequence_is_delivered_as_data() {
+    // The captured value is caller-controlled, and Renvor's promise is that it arrives as an
+    // opaque STRING for the application to validate — not that Renvor sanitises it.
+    //
+    // What is asserted here is the part Renvor owns: a traversal sequence does not change WHICH
+    // route runs, and the value is handed over verbatim rather than normalised behind the
+    // application's back. Silently rewriting it would be worse than passing it through, because an
+    // application that validated the value it was given would be validating a different string
+    // from the one the caller sent.
+    let app = build(config());
+
+    let response = app
+        .oneshot(served(
+            request("GET", "/items/..%2f..%2fetc%2fpasswd").header(header::HOST, HOST),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a traversal sequence escaped the route it was sent to"
+    );
+    assert_eq!(
+        body_string(response).await,
+        "../../etc/passwd",
+        "the parameter was rewritten between the wire and the handler"
+    );
 }
 
 #[tokio::test]

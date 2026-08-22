@@ -417,7 +417,9 @@ fn declares_renvor_dependency(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DUMP_FLAG, DUMP_PROTOCOL, DumpInvocation, declares_renvor_dependency, run_with};
+    use super::{
+        DUMP_FLAG, DUMP_PROTOCOL, DumpInvocation, declares_renvor_dependency, obtain_dump, run_with,
+    };
     use crate::exit::Code;
     use crate::output::{Format, Reporter};
     use std::ffi::OsString;
@@ -542,6 +544,25 @@ seed_data = false
         .expect("a binary that answers the protocol must be relayed");
 
         assert_eq!(exit.code(), 0, "the relayed answer did not exit 0");
+    }
+
+    #[test]
+    fn the_relayed_answer_carries_the_routes_the_binary_declared() {
+        // The test above asserts exit 0 — which a relay that printed NOTHING would also satisfy.
+        // An empty table and a successful exit is precisely the outcome C-9 forbids, so exit code
+        // alone is not evidence that the relay relayed anything. This asserts the payload.
+        let dir = project(MANIFEST, WITH_DEPENDENCY);
+        let payload =
+            r#"{"protocol":1,"routes":[{"method":"GET","path":"/health","group":"api"}]}"#;
+
+        let report = obtain_dump(&answering(dir.path(), &envelope(payload)), "rest")
+            .expect("a binary that answers the protocol must be relayed");
+
+        assert_eq!(report.protocol, DUMP_PROTOCOL);
+        assert_eq!(report.routes.len(), 1, "the declared route was dropped");
+        assert_eq!(report.routes[0].method, "GET");
+        assert_eq!(report.routes[0].path, "/health");
+        assert_eq!(report.routes[0].group.as_deref(), Some("api"));
     }
 
     #[test]
