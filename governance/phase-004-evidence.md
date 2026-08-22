@@ -17,8 +17,10 @@
 > re-measured rather than re-asserted. The dispositions are in
 > [§The twelve](#the-twelve--every-one-closed-on-this-branch).
 >
-> **Every one of the twelve is `coding_done`, which is not `validated`.** Only an independent
-> validation run may advance them, and none may be marked `complete`.
+> **All twelve are `validated`, and none is `complete`.** Three independent validation rounds moved
+> them there; the third closed L-11. `complete` is a human decision that has not been taken.
+> *(Corrected 2026-08-23 — this line previously read "every one of the twelve is `coding_done`",
+> which was true when written and stale by three rounds.)*
 
 ## What the phase delivered
 
@@ -53,7 +55,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-001 crate separate, depends inward | `crates/renvor-http/Cargo.toml` | `xtask` step 7 CLAIM 3 + CONTROL 3 |
 | FR-002 kernel resolves no HTTP dep | — (absence) | `xtask` step 7 CLAIM 1 + CONTROL 1, `--all-features` |
 | FR-003 minimal builds carry no HTTP | `crates/renvor/Cargo.toml` feature | `xtask` step 7 CLAIM 2, 2b + CONTROL 2 |
-| FR-004 no transport type in app interfaces | `route/mod.rs` | `tests/boundary.rs` ×3, incl. positive control. **Qualified 2026-08-22 (ledger L-12f)**: the scan reads a **four-file hand-list**, so the assertion covers those four files and not the crate. A newly added application-facing module is silently unscanned |
+| FR-004 no transport type in app interfaces | `route/mod.rs` | `tests/boundary.rs` ×3, incl. positive control. **Re-qualified 2026-08-23**: the four-file hand-list is gone — `tests/boundary.rs:44` now walks `src/` recursively with a tempfile control proving it discovers a newly created nested file. The real limit is narrower and sharper: the scan exempts `server.rs`, and `Server::serve` takes `axum::Router` in a **public** signature re-exported at the facade root. See finding R-6 |
 | FR-005 publish metadata | `crates/renvor-http/Cargo.toml` | `cargo package -p renvor-http --list`; `xtask` publishable-dependencies check |
 | FR-006 single authoritative registry | `route/registry.rs` | `route::registry::tests::*` |
 | FR-007 router and inspection share it | `route/build.rs`, `route/inspect.rs` | `a_route_added_to_the_registry_appears_without_a_second_manifest_being_touched` |
@@ -85,7 +87,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | FR-033 provider shutdown ordering | `provider.rs::HttpServerProvider` implements `renvor_core::Provider` and contributes `ServerReadiness` | 5 tests in `tests/provider.rs`, incl. `the_server_drains_before_the_provider_it_depends_on_stops` and `a_bind_failure_aborts_boot_and_rolls_the_other_providers_back`, with `boot_succeeds_on_a_free_port_which_is_why_the_failure_above_is_about_the_port` as the control. **Reconciled 2026-08-22 (ledger L-03)** |
 | FR-034 route inspection, both forms | `route/inspect.rs` renders both forms; `commands/routes.rs` relays them through the project binary | 6 rendering tests plus 14 relay tests, incl. the end-to-end `the_relay_reads_what_the_real_library_actually_prints`. **Reconciled 2026-08-22 (ledger L-01)** |
 | FR-035 structured output follows C-2 | `route/inspect.rs` emits the envelope; `commands/routes.rs` relays it and emits failure envelopes | `the_dump_is_a_single_parseable_json_document`, plus the success envelope asserted **through the command**. **Reconciled 2026-08-22 (ledger L-01)** |
-| FR-036 truthful about its source | `contracts/command-surface.md`, `commands/routes.rs` docs | `a_project_without_a_renvor_dependency_is_refused_by_name` |
+| FR-036 truthful about its source | `contracts/command-surface.md`, `commands/routes.rs` docs | `a_project_without_a_renvor_dependency_is_refused_before_anything_is_run` |
 | FR-037 `--transport` resolved and recorded | `config/flags.rs`, `config/model.rs`, `templates/renvor.toml.j2` | `every_governed_choice_of_principle_seven_is_classified` |
 | FR-038 generated project still builds | `templates/Cargo.toml.j2` unchanged | measured: `cargo build` + `cargo run` in a fresh generated project |
 | FR-039 evidence separation | this document, dependency inventory | prose; the distinction is stated wherever workspace evidence appears |
@@ -123,7 +125,7 @@ Every row names the code and the test. A row with no test is a gap, and is marke
 | SC-010 0 requests reach a handler after drain | **met** — the handler records whether it ran |
 | SC-011 over-budget reports outstanding 100%, clean 0% | **met end to end** — `tests/shutdown.rs` drives `Server::serve` over a real socket in both the clean and the over-budget case. **Reconciled 2026-08-22 (ledger L-02)** |
 | SC-012 0 transport types in app interfaces | **met**, with a positive control |
-| SC-013 kernel resolves 0 HTTP crates, both directions | **met**, control exercised by hand (see dependency inventory) |
+| SC-013 kernel resolves 0 HTTP crates, both directions | **met**, and the control is **automated**, not manual: `xtask/src/main.rs:783` runs CONTROL 2 inside verify step 7 on every run. Independently re-measured by the requirements review: kernel 0, lean facade 0, default facade 0, `transport-rest` 6. *(Corrected 2026-08-23 — this row said "control exercised by hand", understating it.)* |
 | SC-014 one registry, by construction | **met** — `inspect` takes `&RouteRegistry` and has no other source |
 | SC-015 full verification on both toolchains | **met** — 11/11 on 1.94.0 and on 1.97.1 |
 | SC-016 0 tags, releases, publications, deployments | **met**, measured |
@@ -322,9 +324,11 @@ positive controls and are supposed to.
 | L-11 | path parameters are never populated | **fixed** | `a_path_parameter_reaches_the_handler` |
 | L-12 | contract-surface hygiene (7 parts) | **fixed** | pattern validation (8 malformed + 7 valid), status validation, whole-tree boundary scan with an injected-file control, handler span, nested groups, `body_unreadable` distinct from `413` |
 
-**Every row is `coding_done`, and `coding_done` is not `validated`.** Under the five-status rule an
-implementation agent's furthest reach is `coding_done`; only an independent validation run may move
-a row to `validated` or `needs_fixes`, and nothing here may be marked `complete`.
+**Every row is `validated`, and none is `complete`.** Under the five-status rule an implementation
+agent's furthest reach is `coding_done`; three independent validation rounds moved every row to
+`validated`; `complete` is a human decision that has not been taken. *(Corrected 2026-08-23 — this
+paragraph previously asserted every row was still `coding_done`, contradicting the review-status
+table in the same document.)*
 
 ### Three defects this remediation exposed, recorded because they were not in the twelve
 
@@ -382,7 +386,7 @@ described otherwise — here, in the pull request, in `GOVERNANCE.md`, or in any
 | Implementation requirements review | **DELIVERED**, late — 16 findings, R1–R10 complete, including a full FR-001…FR-049 mapping |
 | Post-remediation validation run | **DELIVERED**, two rounds — round 1: 6 `validated`, 6 `needs_fixes`, **all six real**, two proven by mutation. Round 2: 5 of the 6 `validated`; **L-11 failed again**, because the test written to close it observed a constant handler rather than the parameter map. Round 3: L-11 `validated`. **Final: 12 `validated`, 0 `needs_fixes`, 0 `complete`.** See the [ledger](phase-004-finding-ledger.md) |
 | Post-remediation security review | **DELIVERED** — 9 findings, 0 BLOCKER, 2 MAJOR. Both MAJOR findings were fixed; one was a reachable security defect |
-| Post-remediation requirements review | **NOT PERFORMED** — commissioned against the same head and returned nothing across three explicit requests and five idle notifications. Under this ledger's rule a review that returns nothing is recorded as NOT PERFORMED, never as passed. **This is a gap in Phase 004's evidence, not a pass** |
+| Post-remediation requirements review | **DELIVERED 2026-08-23**, against head `c078385`, after returning nothing across three explicit requests and six idle notifications. Full 69-item sweep: FR-001…FR-049 and SC-001…SC-020, with `cargo xtask verify` re-run on 1.94.0 (11/11, 837 passed), the `#[ignore]`d relay test executed, and crate isolation independently re-measured. **41 SATISFIED · 5 IMPLEMENTED_UNTESTED · 3 PARTIAL · 0 NOT_MET** across the FRs; **15 · 1 · 4 · 0** across the SCs. Ten findings; see §The post-remediation requirements review below |
 
 Under this ledger's rule, *"a review that returns nothing is recorded as NOT PERFORMED, never as
 passed"* — the first three are recorded that way. **An earlier revision of this document said all
@@ -420,3 +424,53 @@ Until an independent review or an explicit authorisation exists:
 - ADR-0012 is **not** accepted;
 - the Phase 004 pull request does **not** merge;
 - Phase 005 does **not** start.
+
+## The post-remediation requirements review — recorded 2026-08-23
+
+Commissioned once, against head `c078385` exactly, read-only. It executed rather than only read:
+`cargo xtask verify` on pinned 1.94.0 (11/11 steps, 837 passed / 0 failed / 1 ignored), the
+`#[ignore]`d relay test run explicitly, and crate isolation re-measured in both directions
+(kernel 0, lean facade 0, default facade 0, `transport-rest` 6).
+
+**FR-001…FR-049** — 41 SATISFIED · 5 IMPLEMENTED_UNTESTED · 3 PARTIAL · **0 NOT_MET**.
+**SC-001…SC-020** — 15 SATISFIED · 1 IMPLEMENTED_UNTESTED · 4 PARTIAL · **0 NOT_MET**.
+
+Every finding below was independently re-verified before being recorded here. Three were settled by
+mutation, one by direct execution, the rest by reading the cited line. Nothing is recorded on the
+review's assertion alone.
+
+| # | Finding | Verified how | Disposition |
+|---|---|---|---|
+| R-1 | The evidence pack and the ledger each asserted **both** that all twelve were `coding_done` **and** that all twelve were `validated`. A reader could not tell which was current | Read: pack lines 20 and 325, ledger lines 262 and 279 | **Fixed 2026-08-23.** Both documents now state `validated`, with the stale wording quoted so the correction is auditable |
+| R-2 | FR-004's row was stale in the **under**-claiming direction — it described a four-file hand-list the scan no longer uses | Read `tests/boundary.rs:44` — a recursive walk with a tempfile control | **Fixed.** The row now names the real, narrower limit: the `server.rs` exemption |
+| R-3 | SC-013's row said its control was "exercised by hand". It is automated in verify step 7 | Read `xtask/src/main.rs:783`; re-measured | **Fixed** |
+| R-4 | FR-036's evidence cited `a_project_without_a_renvor_dependency_is_refused_by_name` — **no test of that name exists** | Grep: the real test is `..._refused_before_anything_is_run` | **Fixed.** A citation that does not resolve is not evidence |
+| R-5 | `a_served_request_holds_a_permit_and_releases_it` **cannot fail** for the property its name states. It asserts `outstanding() == 0` before and after and never observes the permit held | **Mutation**: deleting `shared.admission.admit()` left it green. Six other tests did catch that mutation, so FR-029/FR-030 stand | **Fixed** — see below |
+| R-6 | `Request::query()` is read by **no test in the repository**. A router that always handed handlers an empty query string would pass the entire suite | Grep: the sole occurrence workspace-wide is the producer at `route/build.rs:611` | **Fixed** — see below |
+| R-7 | The `Defaulted` arm of `every_governed_choice_of_principle_seven_is_classified` hard-codes `target` while its failure messages interpolate `{choice}`. For the `transport` row it proves only that `--transport` is absent from the reserved table | Read `config/flags.rs:103` | **Fixed** — see below. Same failure class as L-11, surviving in the CLI crate |
+| R-8 | `docs/docs/cli.mdx` — the **published** site — lists `routes` among commands "later phases will add — absent, not stubbed", under a heading reading "Everything below is implemented and tested". Phase 004 shipped it. The same file republishes the C-2 registry with 19 codes, omitting `transport_not_wired` | Read `cli.mdx:42`; grep: 0 occurrences in `cli.mdx`, 2 in `contracts/json-output.md` | **Fixed** |
+| R-9 | `tests/router.rs:356` carries a comment stating "the CORS protocol is not implemented: the policy denies, and never grants". L-06 closed that; `an_allowed_origin_receives_the_allow_origin_header` passes | Read, and the cited test passes | **Fixed** |
+| R-10 | `Server::serve` takes **`axum::Router`** in a public signature, and `Server` is re-exported at the facade root — while `server.rs` sits inside the boundary scan's own exemption list. The facade documents that re-exporting a third-party type "would make every upstream major version a Renvor breaking change"; this signature does exactly that | Read `server.rs:144`, `renvor/src/lib.rs:184`, `boundary.rs:32` | **RECORDED, NOT FIXED.** Changing a public signature is an ADR decision, not a validation edit. Raised for Ahmed |
+
+### Recorded and deliberately not fixed
+
+Three more are real and are **not** closed here, because closing them would expand scope past
+Phase 004 validation:
+
+1. **FR-005 / C-package-metadata.** `contracts/package-metadata.md:12` states *"A missing field
+   fails metadata validation (FR-040)."* **That sentence is false.** Proven by mutation: deleting
+   `keywords`, `categories`, `documentation` and `homepage` from `renvor-http`'s manifest and running
+   `cargo package --workspace` exits **0** with **0** error lines — a warning only. Nothing validates
+   them: not `cargo package`, not `cargo publish --dry-run`, not `xtask verify`, not any test.
+   FR-040 belongs to an earlier phase and building a new gate mid-validation is precisely the
+   undocumented change this sequence forbids. **Ahmed's call**: build the gate, or correct the
+   contract sentence.
+2. **C-11's stated method of proof.** The contract says *"For each adjacent pair there is a case
+   whose result differs depending on which ran first."* Pairs **3↔4** (client identity ↔ CORS) and
+   **8↔9** (body limit ↔ trace) have no such case. The implemented order is correct — `build.rs:196`
+   nests it structurally — but the document claims a proof it does not fully carry. Its preflight row
+   likewise asserts an empty `200` and no permit spent; the test asserts neither clause.
+3. **The route-dump protocol's only end-to-end proof runs in no gate.** It is `#[ignore]`d;
+   `xtask verify` does not pass `--ignored` and CI does not either. Every other relay test uses a
+   hand-written fixture, so a change to the envelope shape would break the real protocol and leave
+   the suite green. It was run manually at this head and passes.
