@@ -20,8 +20,13 @@
 //!    into it. Not "modifies the trust store".
 //! 2. **Requires explicit consent**: a confirmation on a terminal, or [`CONSENT_FLAG`] without one.
 //!    A non-interactive run with no flag is refused and told the flag's name.
-//! 3. **Refuses to do it anyway**, because Phase 003 ships no transport and a certificate issued now
-//!    would protect nothing (FR-036).
+//! 3. **Refuses to do it anyway.** Until Phase 004 the stated reason was that renvor shipped no
+//!    transport, so a certificate would protect nothing. **Phase 004 shipped a transport, and this
+//!    command still refuses** — so that reason has been corrected rather than left standing.
+//!
+//!    The current reason is narrower and is the real one: issuing a certificate and modifying a
+//!    system trust store is a **separate capability** from serving HTTP, and Renvor has not built
+//!    it. `PLAN.md` assigns it to no phase.
 //!
 //! Step 3 after step 2 looks redundant and is not: it is what makes steps 1 and 2 **executable
 //! code with tests** rather than a design note that a later phase has to build from scratch. The
@@ -186,11 +191,12 @@ pub fn trust(
     // caller would record that the certificate was installed.
     Err(CliError::new(
         Code::ReservedForLaterPhase,
-        "consent recorded, and the operation is NOT AVAILABLE in this phase: renvor ships no \
-         transport yet, so a certificate issued now would protect nothing. Nothing was changed. \
-         This becomes available in Phase 004 (the first real transport)",
+        "consent recorded, and the operation is NOT AVAILABLE: renvor does not issue certificates \
+         or modify trust stores. Nothing was changed. Phase 004 shipped a transport, which was the \
+         reason previously given here, and this capability is a separate one that is not yet \
+         scheduled to a phase",
     )
     .with("flag", "tls trust")
-    .with("phase", "Phase 004 (the first real transport)")
+    .with("phase", "not yet scheduled")
     .with("trustStoreModifications", "0"))
 }

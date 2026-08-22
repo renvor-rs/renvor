@@ -177,6 +177,25 @@ order, or concurrently. Position 3 waits for **all three**, not only for
 > reads like a network problem rather than an ordering mistake — the exact failure the paragraph
 > above warns about.
 
+> **Run the rehearsal on a clean `target/package`.** Recorded 2026-08-22, after it cost an hour.
+>
+> A prior **single-crate** `cargo package -p <crate> --list` leaves a partial staging area behind,
+> and a later `cargo publish --dry-run --workspace` can then fail while verifying the facade with:
+>
+> ```text
+> error: failed to verify package tarball
+> Caused by: no hash listed for renvor-config v0.0.0
+> note: this is an unexpected cargo internal error
+> ```
+>
+> The message names a crate that has nothing to do with the cause, and `cargo` itself labels it an
+> internal error — so it reads like a defect in whichever crate was added most recently. It is not.
+> `rm -rf target/package` and re-run.
+>
+> **CI is unaffected**, because it always starts from a clean checkout. This is recorded anyway:
+> the rehearsal is run locally before a release, and a maintainer who hit this without knowing
+> would reasonably conclude the new crate had broken publication.
+
 **Between each package**: wait for the index, then verify.
 
 ```sh

@@ -15,7 +15,8 @@ It changes only through the process described at the end of this document.
 ## Current status
 
 **Renvor is pre-release and unpublished.** **Nothing is published** — neither `renvor` nor
-`renvor-cli` exists on crates.io, and there is no way to install Renvor.
+`renvor-cli` exists on crates.io, and there is no way to install Renvor. That remains true
+after Phase 004: adding a transport crate does not publish anything.
 
 The repository contains a working **transport-independent kernel** as of Phase 002:
 application lifecycle, provider resolution, layered configuration, health, and a failure

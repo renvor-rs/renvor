@@ -1,10 +1,14 @@
 //! `renvor dev` — the local development loop.
 //!
-//! # What this does in Phase 003, stated rather than implied
+//! # What this does today, stated rather than implied
 //!
-//! There is no transport until Phase 004, so there is no server to reload. `dev` therefore runs the
-//! generated project's own build-and-test loop and reports it. That is genuinely useful and it is
-//! **not** what `dev` will eventually mean.
+//! **Phase 004 shipped a transport**, so the reason previously given here — "there is no transport
+//! until Phase 004" — is no longer the reason. The current one is narrower: a **generated project**
+//! does not depend on the framework, because nothing is published, so it has no server for `dev` to
+//! reload.
+//!
+//! `dev` therefore runs the generated project's own build-and-test loop and reports it. That is
+//! genuinely useful and it is **not** what `dev` will eventually mean.
 //!
 //! It is documented here rather than quietly under-delivered, because a command whose behaviour
 //! changes shape between phases is a compatibility question, and pretending Phase 003 shipped a
@@ -46,7 +50,10 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
         ));
     }
 
-    reporter.note("running `cargo test` in the project (Phase 003 has no transport to reload)");
+    reporter.note(
+        "running `cargo test` in the project (a generated project declares no renvor dependency \
+         yet, so there is no server to reload)",
+    );
 
     let status = std::process::Command::new("cargo")
         .arg("test")
