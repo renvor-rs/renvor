@@ -59,6 +59,9 @@ fn registry() -> RouteRegistry {
     registry.get("/declared", ok).expect("route");
     registry.post("/declared", created).expect("route");
     registry.get("/items/{id}", echo_param).expect("route");
+    // The SAME reporting handler on a path that declares no parameter, so a test can observe what
+    // the map contains for such a route. A handler that ignores the request cannot observe it.
+    registry.get("/noparams", echo_param).expect("route");
     registry
 }
 
@@ -612,11 +615,16 @@ async fn a_route_declaring_no_parameters_receives_an_empty_map() {
     // The CONTROL for the test above. `path_param` returning a value proves the map is populated;
     // it does not prove the map is populated CORRECTLY. A router that put every path segment under
     // every name would pass that test and fail this one.
+    //
+    // The route is `/noparams`, served by `echo_param` — the SAME handler the parameterised route
+    // uses, which reports what `path_param("id")` returned. An earlier version of this test drove
+    // `/declared`, whose handler binds the request to `_` and returns a constant: it could not
+    // observe the map at all, and the sentence above was false of it. Found by validation.
     let app = build(config());
 
     let response = app
         .oneshot(served(
-            request("GET", "/declared").header(header::HOST, HOST),
+            request("GET", "/noparams").header(header::HOST, HOST),
         ))
         .await
         .expect("responds");
@@ -624,8 +632,8 @@ async fn a_route_declaring_no_parameters_receives_an_empty_map() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         body_string(response).await,
-        "ok",
-        "a route with no parameters was given one"
+        "<absent>",
+        "a route declaring no parameters was given one"
     );
 }
 
