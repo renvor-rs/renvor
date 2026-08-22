@@ -72,11 +72,29 @@ pub const DUMP_PROTOCOL: u32 = 1;
 /// The bound on a manifest read, matching `check`'s.
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 
-/// The bound on what the project binary may print.
+/// The bound on what the project binary may print, **measured after the read, not during it**.
 ///
-/// A project that emitted an unbounded stream would otherwise be able to exhaust this process's
-/// memory. `MAX_ROUTES` is 4096 and a generous row is well under 256 bytes, so this is roughly an
-/// order of magnitude above any legitimate answer.
+/// `MAX_ROUTES` is 4096 and a generous row is well under 256 bytes, so this is roughly an order of
+/// magnitude above any legitimate answer, and an over-sized answer is refused by name.
+///
+/// # The limitation, stated rather than implied
+///
+/// `Command::output()` reads the child's stdout to EOF into memory *before* this comparison can
+/// run, so the bound **rejects** an over-sized answer without **preventing** the allocation. An
+/// earlier version of this comment claimed it stopped a project "exhausting this process's
+/// memory". It does not, and the claim is withdrawn rather than left standing — a constant whose
+/// documentation promises more than its code delivers is the same error `server.rs` records under
+/// *"the bound has to be applied, not merely computed"*, one register lower.
+///
+/// The realistic trigger is a **bug, not an attack**: a project binary that does not recognise the
+/// dump flag, ignores it, boots normally, and streams logs forever. By the time stdout is read,
+/// `cargo run` has already compiled and executed that project's build script and binary, so a
+/// hostile project has far more direct capabilities than memory pressure.
+///
+/// Fixing it properly means spawning with a piped stdout, reading at most `MAX_DUMP_BYTES + 1`,
+/// and **killing the child** on overflow — without the kill, a full pipe blocks the child and the
+/// hang replaces the allocation. That is a behavioural change with a cross-platform subprocess
+/// test behind it, and it is recorded here rather than attempted late. Found by review.
 const MAX_DUMP_BYTES: usize = 4 * 1024 * 1024;
 
 /// Just enough of `renvor.toml` to answer "is this a Renvor project, and what transport?".

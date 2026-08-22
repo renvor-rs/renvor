@@ -87,6 +87,13 @@ host is absent, empty, contains a control character, or is not in the configured
 There is **no** "allow any host" default. An application that has not said which hosts are its own
 has not been configured, and guessing on its behalf is how a host-header attack succeeds.
 
+**More than one `Host` header is refused, and the count is the count that arrived.** A value that
+cannot be decoded is kept as a placeholder no parser accepts rather than dropped, so two headers
+where only one decodes are still two. Dropping it first would let such a request look like a single
+`Host` — Renvor validating one name while a fronting hop resolves the repeated header to another,
+each believing it validated. The rule and its reasoning are the same ones the forwarding headers
+use.
+
 ## CORS
 
 | Property | Default |
@@ -149,6 +156,21 @@ source-error chain, a configuration value, or a panic payload. Redaction applies
 as well as log fields (C-O6) — spans are the path most easily forgotten, because they are not
 "logs".
 
+### What Renvor does NOT keep out of the process's stderr — named, not implied
+
+A handler panic is contained, and **neither the response nor any record Renvor emits carries the
+payload**. That is asserted.
+
+**Rust's default panic hook still runs first.** `catch_unwind` catches an unwind *after* the hook
+has printed `thread '...' panicked at src/...:42: <payload>` — an internal path and the payload —
+to stderr. Renvor does **not** install a hook of its own: the hook is process-global, and replacing
+it would swallow or reformat panics raised by threads Renvor does not own, which is a worse defect
+than the one it would fix.
+
+So the guarantee is exact and narrower than a careless reading: **Renvor's response and Renvor's
+records** are clean. The process's stderr is the operator's to route. Constitution principle XII
+requires the limitation to be visible rather than discovered.
+
 ## Fail-open / fail-closed summary
 
 Stated explicitly so a reader does not have to derive it.
@@ -159,6 +181,8 @@ Stated explicitly so a reader does not have to derive it.
 | Trusted-proxy resolution | **closed** — direct peer used, supplied value discarded |
 | Forwarding-header parsing | **closed** — direct peer used |
 | CORS origin matching | **closed** — not allowed |
+| `Origin` that cannot be decoded | **closed** — refused, never skipped |
+| Repeated `Host` where only one value decodes | **closed** — counted as repeated, request refused |
 | CORS configuration validation | **closed** — configuration refused, process does not start |
 | Request-ID generation | **closed** — a request with no identifier is refused rather than served uncorrelated |
 | Admission (work gate) | **closed** — refused with 503 |

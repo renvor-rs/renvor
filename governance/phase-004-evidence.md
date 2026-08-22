@@ -182,6 +182,48 @@ release rehearsal locally: the crate version is permanently `0.0.0`, so nothing 
 artifact ever looks stale. CI runs on a fresh runner and cannot hit it, which is precisely why it
 would otherwise go unnoticed until someone trusted a local failure — or, worse, a local pass.
 
+### CI caught a defect that no local run could
+
+**Both Windows platform jobs failed** on head `07804ff` — `platform (windows-latest, 1.94.0)` and
+`platform (windows-latest, stable)` — with 6 of the 14 route-relay tests reporting `os error 3`,
+"the system cannot find the path specified".
+
+**The cause was mine.** The test helpers that stand in for a project binary hard-coded `/bin/sh`,
+which Windows has no equivalent for. Every local run in this session is macOS, so no amount of local
+verification could have found it; the Windows job is the only thing that could, and did.
+
+The fix (`56cb86c`) splits the helpers per platform and routes the payload through a **file** rather
+than interpolating it into a shell command. That also removes a latent quoting bug: these tests
+exist to feed the relay malformed input, and a payload containing a quote would have broken the
+command it was embedded in rather than testing what it claimed to test. Windows CI passes on the
+fixed head.
+
+> This is recorded rather than quietly fixed because it is the second time in this session that a
+> gate found something local verification structurally could not. The first was the formatting gate;
+> this one is stronger evidence, because it shows a *platform* the developer does not run is doing
+> real work rather than duplicating the Linux job.
+
+### One test is sensitive to the developer's machine, and that is worth naming
+
+`no_command_in_this_phase_modifies_the_trust_store` (`crates/renvor-cli/tests/tls_consent.rs`)
+failed once on Rust 1.94.0 at head `07804ff`, and passed on stable at the same head, in the serial
+run, in the 1.94.0 re-run, and in three earlier full runs of identical code.
+
+**It was not the code.** The test snapshots the **real system trust store** around every command.
+On macOS that set includes the developer's live `~/Library/Keychains/login.keychain-db`, which the
+operating system rewrites whenever any process performs a keychain operation — including TLS
+certificate validation by unrelated tools. The failure reported an **unchanged file size** with a
+changed content hash, from a `docker down --dry-run` that has no trust-store code path at all,
+while this session was concurrently running `gh` over TLS.
+
+On Linux the same function snapshots `/etc/ssl/certs/ca-certificates.crt` and two directories —
+static files nothing rewrites mid-run. **That asymmetry is why CI cannot see this and a macOS
+developer can.**
+
+The test is **not weakened, skipped, or marked flaky.** It measures a globally mutable system
+resource, so it cannot distinguish "renvor modified it" from "anything else on this machine did".
+Recorded so that a future macOS failure is diagnosed rather than either dismissed or believed.
+
 ### One CI check failed on the first push, and this is what it was
 
 **`package and verify without publishing` failed** on head `cdd9d01`. It is recorded here rather
@@ -292,6 +334,36 @@ a row to `validated` or `needs_fixes`, and nothing here may be marked `complete`
 | An application `OPTIONS` route was **silently shadowed** | Verified: the CORS layer answered every `OPTIONS` as a preflight — empty `200`, handler never ran. A route that appears in every listing and never runs is the failure C-9 names as worse than refusal, so registration is now a reported error |
 | Preflight returns **200**, not `204` | The first assertion was written against `204`. The selected library returns `200`, and ADR-0012 records that Renvor writes none of the CORS protocol — so the **test** was corrected, not the code |
 
+
+### The security review of the remediated head, and what it found
+
+One security review was run against head `07804ff` and re-verified at `4be9758`. It is **advisory
+and NOT independent in the governance sense** — the definition requires a person — but it read
+vendored `hyper`, `axum`, and `tower-http` source to check what the upstream layers actually do
+rather than what they are assumed to do, and it found two real defects this repository's own tests
+did not.
+
+**No BLOCKER.** The headline promises hold: the trusted-proxy set is empty by default and the trust
+decision is taken from the socket before any header is read; host validation has no allow-any path;
+wildcard-plus-credentials is refused before a listener exists.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | MAJOR | **Repeated `Host` defeated by an undecodable second value.** The Host read filtered undecodable values out and *then* counted, so two headers with one decodable value looked like one | **Fixed.** Demonstrated first: with two `Host` headers, one undecodable, the request was served **200**. Routed through `header_values`, which keeps an unusable placeholder so the count stays truthful. Test asserts `400` |
+| 2 | MAJOR | **`span.enter()` held across `.await`.** On a multi-thread runtime another request polled on the same worker inherits the span and the wrong `request_id` | **Fixed.** Replaced with `.instrument(span)`. Guarded by a source scan with a positive control, because reproducing the interleaving is a race rather than a test — weaker evidence than an observation, and recorded as such |
+| 3 | MINOR | **A non-ASCII `Origin` failed open**, contradicting C-11's own fail-closed table | **Fixed.** Now refused. Proven red against the previous form |
+| 4 | MINOR | **`MAX_DUMP_BYTES` measured after the read it claims to bound** — `Command::output()` collects all of stdout first | **Documented, not fixed.** The doc comment claimed it prevented memory exhaustion; that claim is **withdrawn**. The correct fix needs a piped read plus a child `kill()`, and a cross-platform subprocess test — recorded rather than attempted late. See the constant's own documentation |
+| 5 | MINOR | The same-origin carve-out ignores scheme and port, so a co-hosted origin on another port is treated as same-origin | **Accepted, and it is what C-11 says.** Passing the carve-out only skips Renvor's supplementary `400`; `Access-Control-Allow-Origin` is still withheld, so the page cannot read the response. The boundary is unpinned in either direction — a named test gap |
+| 6 | MINOR | CORS methods and request headers are unconditionally mirrored, with no configuration surface | **Accepted.** C-11 promises nothing here, and the reason for `mirror_request` was verified against upstream source. It is the one place the posture is permit-by-default, and it is now said out loud |
+| 7 | MINOR | **Latent:** HTTP/2 would refuse every request, because `hyper`'s h2 path never synthesises `Host` from `:authority` | **Not reachable, recorded.** `h2` is absent from `Cargo.lock` and the facade pins `http1` only. The hazard is feature unification enabling it silently. Fail-closed, but it would present as a host misconfiguration — the worst possible diagnostic |
+| 8 | MINOR | The panic payload still reaches **stderr** via Rust's default hook | **Documented.** Installing a process-global hook would swallow panics from threads Renvor does not own — a worse defect. Now a named limitation in C-11 |
+| 9 | INFO | `renvor routes` runs `cargo run`, which is arbitrary code execution against an untrusted project directory by design; its stderr bypasses the redaction pipeline | **Accepted and named.** True of every Rust build tool; recorded so the "no binary discovery" bullet is not quoted as a stronger security claim than it is |
+
+**Two of the nine were fixed by first reproducing the failure.** Finding 1's test was rewritten
+twice before it was trustworthy: the first version passed because the host it used was not the
+allowed one, and the second passed because the test helper already set a `Host`, giving two
+decodable values. Only the third — one decodable value, and it the allowed host — actually put the
+defect under the assertion. **A passing test is not evidence until you know why it passes.**
 
 ## Review status — stated plainly
 
