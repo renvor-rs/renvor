@@ -56,6 +56,11 @@ pub enum RouteError {
         /// The offending header name.
         name: String,
     },
+    /// A response status was outside the range HTTP defines.
+    StatusNotRepresentable {
+        /// The offending status.
+        status: u16,
+    },
     /// The method is answered by the transport itself and cannot carry an application route.
     MethodReservedByTransport {
         /// The method that cannot be registered.
@@ -85,6 +90,12 @@ impl fmt::Display for RouteError {
                 f,
                 "the header `{name}` could not be represented: a name or value containing a \
                  control character is refused, because it would allow a response to be split"
+            ),
+            Self::StatusNotRepresentable { status } => write!(
+                f,
+                "`{status}` is not a status HTTP defines; it must be between 100 and 599. Refused \
+                 where the response is built, because a status refused while the response is being \
+                 rendered can only become a bare 500 and loses what the handler meant"
             ),
             Self::MethodReservedByTransport { method, reason } => write!(
                 f,
@@ -204,6 +215,26 @@ impl RouteRegistry {
             });
         }
 
+        // THE PATTERN THE ROUTER WILL ACTUALLY RECEIVE, checked against the router itself.
+        //
+        // `validate_path` already refused the empty, the unrooted, and the control-bearing. What
+        // it could not refuse is a pattern that is well-formed as a string and malformed as a
+        // route — `/{a}x`, `/{}`, `/*`, `/:old`. Each of those used to REGISTER cleanly and then
+        // panic when the router was built, so a typo in a path became a process abort at a point
+        // where the route already appeared in every listing.
+        //
+        // This is the composed path, after any group prefix, because that is the value the router
+        // is handed. Checking the un-prefixed fragment would miss a prefix that makes an otherwise
+        // valid fragment invalid.
+        if !crate::route::build::accepts_pattern(&route.path) {
+            return Err(RouteError::InvalidPath {
+                path: route.path,
+                reason: "the router will not accept this pattern; a parameter must be `{name}` \
+                         occupying the end of its segment, a catch-all `{*name}` must be last, and \
+                         `:name` is the pre-0.8 spelling",
+            });
+        }
+
         // Ceiling first: a registry at its limit refuses regardless of what is being added, and
         // reporting "duplicate" for a route that would have been refused anyway would name the
         // wrong cause.
@@ -240,26 +271,6 @@ impl RouteRegistry {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.routes.is_empty()
-    }
-
-    /// The methods declared for `path`, sorted canonically.
-    ///
-    /// This is what produces the `Allow` header on a `405`, and it reads the same routes dispatch
-    /// reads. An `Allow` header derived from a second list could name a method that does not
-    /// answer.
-    #[must_use]
-    pub fn methods_for(&self, path: &str) -> Vec<Method> {
-        let declared: BTreeSet<Method> = self
-            .routes
-            .iter()
-            .filter(|route| route.path == path)
-            .map(|route| route.method)
-            .collect();
-
-        Method::all()
-            .into_iter()
-            .filter(|method| declared.contains(method))
-            .collect()
     }
 
     /// Routes grouped by path, for router construction.
@@ -363,6 +374,31 @@ mod tests {
     }
 
     #[test]
+    fn a_pattern_the_router_would_panic_on_is_refused_at_registration() {
+        // MEASURED, not assumed: each of these was confirmed to panic `axum::Router::route`, and
+        // each used to register cleanly here and abort the process later.
+        let mut registry = RouteRegistry::new();
+
+        for malformed in ["/{", "/}", "/{}", "/*", "/:old", "/{a}x", "/{a}{b}", "/{*rest}/more"] {
+            assert!(
+                registry.get(malformed, ok).is_err(),
+                "`{malformed}` registered cleanly and would panic at router construction"
+            );
+        }
+        assert_eq!(registry.len(), 0, "a refused pattern was stored anyway");
+
+        // POSITIVE CONTROLS: every shape the router DOES accept still registers, so the refusals
+        // above are about those patterns rather than about parameters being rejected wholesale.
+        for valid in ["/plain", "/{id}", "/x{a}", "/{*rest}", "/a/{b}/c", "/a:b", "/a*b"] {
+            assert!(
+                registry.get(valid, ok).is_ok(),
+                "`{valid}` was refused, but the router accepts it"
+            );
+        }
+        assert_eq!(registry.len(), 7);
+    }
+
+    #[test]
     fn an_options_route_is_refused_rather_than_silently_shadowed() {
         // Verified before this refusal existed: registering `OPTIONS /thing` and then requesting
         // it returned `200` with an EMPTY body — the CORS layer's preflight answer — while the
@@ -399,20 +435,27 @@ mod tests {
     }
 
     #[test]
-    fn methods_for_reads_the_routes_dispatch_reads() {
-        let mut registry = RouteRegistry::new();
-        registry.post("/items", ok).expect("registers");
-        registry.get("/items", other).expect("registers");
-        registry.get("/elsewhere", ok).expect("registers");
+    fn a_status_outside_the_http_range_is_refused_where_the_response_is_built() {
+        use crate::route::Response;
 
-        // Canonical order, not registration order — so the `Allow` header is deterministic.
-        assert_eq!(
-            registry.methods_for("/items"),
-            vec![Method::Get, Method::Post]
-        );
+        for outside in [0_u16, 1, 99, 600, 999] {
+            assert!(
+                matches!(
+                    Response::status(outside),
+                    Err(RouteError::StatusNotRepresentable { .. })
+                ),
+                "`{outside}` was accepted as a status"
+            );
+        }
 
-        // POSITIVE CONTROL: a path with no routes yields none, so the list above is a fact about
-        // the registry rather than about the function always returning something.
-        assert!(registry.methods_for("/absent").is_empty());
+        // POSITIVE CONTROLS: the whole defined range is accepted, including codes this framework
+        // has never heard of. Refusing those would be enforcing Renvor's vocabulary rather than
+        // the protocol's.
+        for inside in [100_u16, 200, 204, 302, 418, 451, 503, 599] {
+            assert!(
+                Response::status(inside).is_ok(),
+                "`{inside}` was refused, but HTTP defines it"
+            );
+        }
     }
 }

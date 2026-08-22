@@ -44,7 +44,7 @@ async fn hello(_: Request) -> Response {
 }
 
 async fn created(_: Request) -> Response {
-    Response::status(201)
+    Response::status(201).expect("a status HTTP defines")
 }
 
 /// Echoes what the security layers resolved, so a test can assert on it from the outside.

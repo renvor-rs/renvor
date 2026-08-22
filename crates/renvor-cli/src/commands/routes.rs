@@ -143,6 +143,11 @@ impl DumpInvocation {
     }
 
     /// Builds an invocation that runs `program` with `arguments` in `directory`.
+    ///
+    /// `#[cfg(test)]` because production has exactly one invocation — the documented one above.
+    /// Leaving it compiled into the shipped binary would offer a way to point route inspection at
+    /// an arbitrary program, which is a capability nothing asked for.
+    #[cfg(test)]
     #[must_use]
     pub fn new(
         program: impl Into<OsString>,

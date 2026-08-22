@@ -197,7 +197,7 @@ async fn a_middleware_that_answers_short_circuits_before_the_handler() {
             let log = Arc::clone(&log);
             async move {
                 note(&log, "refused");
-                Response::status(403)
+                Response::status(403).expect("a status HTTP defines")
             }
         }
     };

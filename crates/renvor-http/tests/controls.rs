@@ -46,7 +46,7 @@ async fn ok(_: Request) -> Response {
 }
 
 async fn created(_: Request) -> Response {
-    Response::status(201)
+    Response::status(201).expect("a status HTTP defines")
 }
 
 /// Reports the path parameter it was given, so a test can assert it from outside.

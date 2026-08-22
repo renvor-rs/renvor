@@ -219,16 +219,34 @@ pub struct Response {
 
 impl Response {
     /// A response with a status and an empty body.
-    #[must_use]
-    pub const fn status(status: u16) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RouteError::StatusNotRepresentable`] for a value outside `100..=599`.
+    ///
+    /// Validated **here**, at the only place a status is chosen, for the same reason
+    /// [`Response::with_header`] validates a header name at the only place one is added. A status
+    /// of `0` or `1000` used to construct cleanly and then fail while the response was being
+    /// rendered — at which point the handler had already returned, the failure could only be a
+    /// bare `500`, and the status the author actually meant was lost.
+    pub fn status(status: u16) -> Result<Self, RouteError> {
+        // The range HTTP defines. Narrower checks (a closed list of known codes) were rejected:
+        // an application legitimately serves a status the framework has not heard of, and a
+        // framework refusing `418` would be enforcing its own vocabulary rather than the protocol.
+        if !(100..=599).contains(&status) {
+            return Err(RouteError::StatusNotRepresentable { status });
+        }
+        Ok(Self {
             status,
             headers: Vec::new(),
             body: Vec::new(),
-        }
+        })
     }
 
     /// A `200` carrying `body` as `text/plain`.
+    ///
+    /// Infallible, unlike [`Response::status`]: `200` is a constant this function chose, not a
+    /// value a caller supplied, so there is nothing here that could fail.
     #[must_use]
     pub fn text(body: impl Into<String>) -> Self {
         Self {

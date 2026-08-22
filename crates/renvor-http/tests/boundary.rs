@@ -1,4 +1,4 @@
-//! The transport boundary, asserted mechanically.
+//! The transport boundary, asserted mechanically **over the whole crate**.
 //!
 //! # What this test is for
 //!
@@ -12,27 +12,63 @@
 //! is a list that goes stale. Reading the source catches the case the type system cannot: a
 //! `pub` item added to an application-facing module that happens to name a transport type.
 //!
-//! The facade's own `the_facade_declares_no_implementation_of_its_own` test uses the same
-//! technique for the same reason, and this follows its shape deliberately — including its positive
-//! control, without which a scan that found nothing would be indistinguishable from a scan that
-//! did not work.
+//! # Why it walks the directory rather than listing files
+//!
+//! The earlier version held a **four-file hand-list**. Every module outside that list was
+//! unscanned, and a new application-facing module was unscanned **silently** — the test kept
+//! passing and its coverage kept shrinking, which is the worst combination a guard can have.
+//!
+//! It now walks `src/` and scans everything it finds, with a short list of modules that are
+//! *permitted* to name the transport because they **are** the transport. That list is asserted to
+//! match real files, so deleting or renaming one of them fails here rather than quietly widening
+//! the exemption.
 
-/// Modules whose public surface an application author touches.
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+
+/// Modules that are allowed to name transport types, because they are where the transport lives.
 ///
-/// `route/build.rs` and `server.rs` are deliberately **absent**: they are where the transport
-/// lives, and requiring them to be transport-free would be requiring them not to exist.
-const APPLICATION_FACING: [(&str, &str); 4] = [
-    ("route/mod.rs", include_str!("../src/route/mod.rs")),
-    ("context.rs", include_str!("../src/context.rs")),
-    ("error.rs", include_str!("../src/error.rs")),
-    (
-        "route/registry.rs",
-        include_str!("../src/route/registry.rs"),
-    ),
-];
+/// Requiring these to be transport-free would be requiring them not to exist.
+const TRANSPORT_MODULES: [&str; 3] = ["route/build.rs", "server.rs", "provider.rs"];
 
 /// The transport crate names that must not appear.
 const TRANSPORT_IDENTIFIERS: [&str; 4] = ["axum", "tower_http", "tower::", "hyper"];
+
+fn source_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+/// Every `.rs` file under `root`, as (path-relative-to-root, contents).
+///
+/// Recursive and total: there is no place in the tree a module can hide.
+fn rust_files(root: &Path) -> Vec<(String, String)> {
+    fn walk(directory: &Path, base: &Path, found: &mut Vec<(String, String)>) {
+        let entries = std::fs::read_dir(directory)
+            .unwrap_or_else(|error| panic!("`{}` is readable: {error}", directory.display()));
+
+        for entry in entries {
+            let entry = entry.expect("a directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, base, found);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                let relative = path
+                    .strip_prefix(base)
+                    .expect("every path is under the base")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let contents = std::fs::read_to_string(&path)
+                    .unwrap_or_else(|error| panic!("`{relative}` is readable: {error}"));
+                found.push((relative, contents));
+            }
+        }
+    }
+
+    let mut found = Vec::new();
+    walk(root, root, &mut found);
+    found.sort();
+    found
+}
 
 /// Finds transport identifiers in real code, ignoring documentation.
 ///
@@ -54,35 +90,88 @@ fn transport_identifiers_in_code(source: &str) -> Vec<String> {
 }
 
 #[test]
-fn no_transport_type_appears_in_an_application_facing_module() {
-    for (name, source) in APPLICATION_FACING {
-        let found = transport_identifiers_in_code(source);
+fn no_transport_type_appears_outside_the_transport_modules() {
+    let permitted: BTreeSet<&str> = TRANSPORT_MODULES.into_iter().collect();
+    let mut scanned = 0_usize;
+
+    for (name, source) in rust_files(&source_root()) {
+        if permitted.contains(name.as_str()) {
+            continue;
+        }
+        scanned += 1;
+
+        let found = transport_identifiers_in_code(&source);
         assert!(
             found.is_empty(),
             "{name} names a transport type in code, which would put it in an \
              application-facing signature: {found:?}"
         );
     }
+
+    // A scan that found no files would report every module clean.
+    assert!(
+        scanned >= 8,
+        "only {scanned} modules were scanned, which is fewer than this crate has — the walk is \
+         not finding the source tree"
+    );
 }
 
 #[test]
-fn the_scan_finds_a_transport_type_when_one_is_present() {
-    // POSITIVE CONTROL. Without this, a scan with a broken filter would report every module clean
-    // and the boundary would be unproven rather than proven.
-    //
-    // `route/build.rs` is where the transport DOES live, so it is the honest control: real code in
-    // this workspace that the scan must flag.
-    let build = include_str!("../src/route/build.rs");
-    let found = transport_identifiers_in_code(build);
-    assert!(
-        !found.is_empty(),
-        "the scan found no transport identifier in route/build.rs, where the transport lives — \
-         so its silence on the other modules means nothing"
-    );
+fn every_exempted_module_exists() {
+    // An exemption for a file that is no longer there is an exemption that silently covers
+    // nothing — and, worse, hides that the code it covered moved somewhere unexempted.
+    for module in TRANSPORT_MODULES {
+        let path = source_root().join(module);
+        assert!(
+            path.is_file(),
+            "`{module}` is exempted from the transport-boundary scan but does not exist"
+        );
+    }
+}
 
-    // And a synthetic line, so the control does not depend on `build.rs` keeping its current shape.
-    let synthetic = "pub fn handler(request: axum::extract::Request) -> Response { todo!() }";
-    assert_eq!(transport_identifiers_in_code(synthetic).len(), 1);
+#[test]
+fn the_scan_finds_a_transport_type_in_a_newly_added_file() {
+    // POSITIVE CONTROL, and specifically for the failure the hand-list had: a module that did not
+    // exist when the guard was written must still be scanned.
+    //
+    // A temporary tree is used rather than writing into `src/`, so the control proves the WALK
+    // discovers new files without leaving anything behind if it fails.
+    let temporary = tempfile::tempdir().expect("tempdir");
+    let root = temporary.path();
+
+    std::fs::create_dir_all(root.join("nested")).expect("mkdir");
+    std::fs::write(root.join("clean.rs"), "pub fn f(x: u8) -> u8 { x }\n").expect("write");
+    std::fs::write(
+        root.join("nested").join("brand_new_module.rs"),
+        "pub fn handler(request: axum::extract::Request) -> Response { todo!() }\n",
+    )
+    .expect("write");
+
+    let files = rust_files(root);
+    assert_eq!(files.len(), 2, "the walk did not find both files: {files:?}");
+
+    let offending: Vec<&String> = files
+        .iter()
+        .filter(|(_, source)| !transport_identifiers_in_code(source).is_empty())
+        .map(|(name, _)| name)
+        .collect();
+
+    assert_eq!(
+        offending,
+        vec!["nested/brand_new_module.rs"],
+        "the scan did not flag a transport type in a newly added nested file"
+    );
+}
+
+#[test]
+fn the_scan_finds_a_transport_type_where_the_transport_actually_lives() {
+    // The second half of the control: real code in this workspace that the scan must flag. If it
+    // reported `route/build.rs` clean, its silence about every other module would mean nothing.
+    let build = std::fs::read_to_string(source_root().join("route/build.rs")).expect("readable");
+    assert!(
+        !transport_identifiers_in_code(&build).is_empty(),
+        "the scan found no transport identifier in route/build.rs, where the transport lives"
+    );
 }
 
 #[test]

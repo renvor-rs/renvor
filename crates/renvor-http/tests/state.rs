@@ -63,7 +63,7 @@ fn state_with_database() -> Arc<TypedStateMap> {
 async fn reads_state(request: Request) -> Response {
     match request.state::<Database>() {
         Ok(database) => Response::text(format!("found:{}", database.dsn)),
-        Err(error) => Response::status(500).with_body(format!("missing:{error}")),
+        Err(error) => Response::status(500).expect("a status HTTP defines").with_body(format!("missing:{error}")),
     }
 }
 
@@ -71,7 +71,7 @@ async fn reads_state(request: Request) -> Response {
 async fn reads_absent_state(request: Request) -> Response {
     match request.state::<NeverRegistered>() {
         Ok(_) => Response::text("found"),
-        Err(error) => Response::status(503).with_body(format!("reported:{error}")),
+        Err(error) => Response::status(503).expect("a status HTTP defines").with_body(format!("reported:{error}")),
     }
 }
 

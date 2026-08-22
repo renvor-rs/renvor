@@ -84,6 +84,10 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 # Collecting a real response body in-process. Dev-only: nothing in the public surface needs it.
 http-body-util = { version = "0.1.5", default-features = false }
 
+# A throwaway source tree for the transport-boundary scan's positive control, which must prove the
+# walk discovers a file that did not exist when the guard was written — without writing into `src/`.
+tempfile = { version = "3.27.0", default-features = false }
+
 # Deterministic time for timeout and drain tests. `test-util` must never reach a production graph.
 # `io-util` is dev-only: the shutdown tests drive a REAL socket, because the defect they exist for
 # lived in how `serve` combined its futures and is invisible to anything that does not.

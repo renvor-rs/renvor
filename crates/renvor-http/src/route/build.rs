@@ -246,6 +246,45 @@ fn cors_layer(policy: &CorsPolicy) -> CorsLayer {
         .allow_credentials(policy.credentials_allowed())
 }
 
+/// Whether the router will accept `path` as a route pattern.
+///
+/// # This asks the router rather than re-implementing its grammar
+///
+/// `validate_path` catches what can be stated in a sentence — empty, unrooted, control characters.
+/// It cannot catch the rest, and the rest is not obvious. Measured against the shipped router:
+///
+/// ```text
+///   /x{a}      accepted            /{a}x        REJECTED
+///   /{{a}}     accepted            /{}          REJECTED
+///   /{*rest}   accepted            /{*rest}/x   REJECTED  (a catch-all must be last)
+///   /a*b       accepted            /*           REJECTED
+///   /a:b       accepted            /:old        REJECTED  (the pre-0.8 spelling)
+/// ```
+///
+/// A hand-written grammar matching that would be a second implementation of the router's matcher,
+/// able to drift from it in both directions: accepting a pattern the router then panics on, or
+/// refusing one the router would have taken. ADR-0012's whole argument is that Renvor writes a
+/// primitive only where the maintained one is unfit — the matcher is fit, so the question is put
+/// to it directly.
+///
+/// # The panic is contained here so it is not a panic later
+///
+/// The router signals a bad pattern by panicking during construction. Left alone, that turns an
+/// author's typo into a process abort with a backtrace, at a point where the route already looked
+/// registered. Catching it at **registration** converts it into the reported error contract C-9
+/// requires.
+///
+/// The panic hook is deliberately **not** suppressed: swapping it is process-global and would race
+/// with any other thread's genuine panic. The library's own message is printed alongside Renvor's
+/// error, which is more information rather than less.
+pub(crate) fn accepts_pattern(path: &str) -> bool {
+    let path = path.to_owned();
+    std::panic::catch_unwind(move || {
+        let _: Router = Router::new().route(&path, axum::routing::get(|| async {}));
+    })
+    .is_ok()
+}
+
 /// Maps a Renvor method onto the router's filter. Total by construction.
 const fn method_filter(method: Method) -> MethodFilter {
     match method {
