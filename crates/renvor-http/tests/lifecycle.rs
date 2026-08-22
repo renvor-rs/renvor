@@ -8,7 +8,7 @@
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -105,15 +105,41 @@ async fn before_drain_the_same_request_is_served() {
 
 #[tokio::test]
 async fn a_served_request_holds_a_permit_and_releases_it() {
-    let mut registry = RouteRegistry::new();
-    registry.get("/health", quick).expect("registers");
-
+    // The HELD half must be OBSERVED, not inferred from the released half.
+    //
+    // Corrected 2026-08-23. This test previously asserted `outstanding() == 0` before and after and
+    // never looked DURING, so it was a leak test wearing a "holds" name. Proven by mutation:
+    // deleting the `shared.admission.admit()` call in `route/build.rs` left it green. The handler
+    // below now reads the counter from inside the request, which is the only point at which the
+    // permit exists.
     let gate = WorkGate::new();
+    let during = Arc::new(AtomicU32::new(u32::MAX));
+    let observed = Arc::clone(&during);
+    let inside = gate.clone();
+
+    let mut registry = RouteRegistry::new();
+    registry
+        .get("/health", move |_: Request| {
+            let observed = Arc::clone(&observed);
+            let inside = inside.clone();
+            async move {
+                observed.store(inside.outstanding(), Ordering::SeqCst);
+                Response::text("ok")
+            }
+        })
+        .expect("registers");
+
     let app = router(&registry, config(gate.clone(), CancelScope::root())).expect("valid");
 
     assert_eq!(gate.outstanding(), 0);
     let response = app.oneshot(get("/health")).await.expect("responds");
     assert_eq!(response.status(), StatusCode::OK);
+
+    assert_eq!(
+        during.load(Ordering::SeqCst),
+        1,
+        "the handler ran while the gate reported no outstanding work: the permit was never taken"
+    );
 
     // Released on the way out, so a completed request is not counted against a later drain.
     assert_eq!(gate.outstanding(), 0, "the permit leaked");

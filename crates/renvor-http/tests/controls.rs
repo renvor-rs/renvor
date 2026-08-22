@@ -54,8 +54,15 @@ async fn echo_param(request: Request) -> Response {
     Response::text(request.path_param("id").unwrap_or("<absent>").to_owned())
 }
 
+/// Reports the raw query string, so a test can assert it from outside. Without a handler that
+/// actually READS `query()`, a router handing every handler an empty string would pass the suite.
+async fn echo_query(request: Request) -> Response {
+    Response::text(format!("[{}]", request.query()))
+}
+
 fn registry() -> RouteRegistry {
     let mut registry = RouteRegistry::new();
+    registry.get("/query", echo_query).expect("route");
     registry.get("/declared", ok).expect("route");
     registry.post("/declared", created).expect("route");
     registry.get("/items/{id}", echo_param).expect("route");
@@ -883,4 +890,47 @@ async fn a_timed_out_request_cancels_the_scope_the_service_is_watching() {
         scope.is_cancelled(),
         "a timed-out request left its scope uncancelled, so a service watching it never learned"
     );
+}
+
+// ── the query string ─────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_raw_query_string_reaches_the_handler_verbatim() {
+    // R-6, 2026-08-23. `Request::query()` was read by NO test in the repository — the only
+    // occurrence workspace-wide was the producer in `route/build.rs`. A router that handed every
+    // handler an empty query string would have passed the entire suite.
+    //
+    // Verbatim is the promise, exactly as it is for path parameters: Renvor delivers what arrived
+    // and the application decides what it means. So this asserts the string is neither decoded nor
+    // parsed nor reordered.
+    let app = build(config());
+
+    let response = app
+        .oneshot(served(
+            request("GET", "/query?b=2&a=1&raw=%2Fetc%2Fpasswd&flag").header(header::HOST, HOST),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        body_string(response).await,
+        "[b=2&a=1&raw=%2Fetc%2Fpasswd&flag]",
+        "the query string was altered on its way to the handler"
+    );
+}
+
+#[tokio::test]
+async fn a_request_with_no_query_string_receives_an_empty_one() {
+    // POSITIVE CONTROL for the test above. Without it, a handler that always reported some fixed
+    // string would satisfy the assertion, and "verbatim" would mean nothing.
+    let app = build(config());
+
+    let response = app
+        .oneshot(served(request("GET", "/query").header(header::HOST, HOST)))
+        .await
+        .expect("responds");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_string(response).await, "[]");
 }

@@ -531,29 +531,56 @@ mod tests {
                         !RESERVED.iter().any(|(reserved, _)| *reserved == flag),
                         "`{flag}` is defaulted, not reserved"
                     );
-                    // Defaulted without prompting: parsing with no `--target` yields the value.
+
+                    // Defaulted without prompting: parsing with no flag at all still yields a
+                    // usable value.
                     let cli = Cli::try_parse_from(["renvor", "new", "demo"]).expect("parses");
                     let Command::New(args) = cli.command else {
                         panic!("expected new")
                     };
-                    assert_eq!(
-                        args.target, "api",
-                        "`{choice}` must be defaulted without prompting"
-                    );
-                    // And RECORDED. `renvor.toml` carries `target = "api"`; the manifest text is
-                    // asserted by `commands::new::tests` and the round trip by
-                    // `config::model::tests`. What matters here is that the single supported value
-                    // is the one that gets defaulted — a default outside the supported set would
-                    // record a choice the generator cannot honour.
-                    assert!(
-                        crate::config::model::Target::parse("api").is_ok(),
-                        "the defaulted value must be a supported one"
-                    );
-                    assert!(
-                        crate::config::model::Target::parse("nope").is_err(),
-                        "if every value parsed, `{choice}` would not be single-valued and could \
-                         not be defaulted without prompting"
-                    );
+
+                    // CORRECTED 2026-08-23 (requirements review R-7). This arm previously asserted
+                    // `args.target == "api"` and `Target::parse` for EVERY defaulted row while its
+                    // failure messages interpolated `{choice}` — so for the `transport` row it
+                    // proved only that `--transport` is absent from the reserved table, and read as
+                    // though it had proved far more. Same failure class as ledger L-11: a name
+                    // promising what the body never observes. Each row now asserts its own type.
+                    match choice {
+                        "target" => {
+                            assert_eq!(
+                                args.target, "api",
+                                "`{choice}` must be defaulted without prompting"
+                            );
+                            assert!(
+                                crate::config::model::Target::parse("api").is_ok(),
+                                "the defaulted value must be a supported one"
+                            );
+                            assert!(
+                                crate::config::model::Target::parse("nope").is_err(),
+                                "if every value parsed, `{choice}` would not be single-valued and \
+                                 could not be defaulted without prompting"
+                            );
+                        }
+                        "transport" => {
+                            assert!(
+                                args.transport.is_none(),
+                                "`{choice}` must not be required on the command line"
+                            );
+                            assert!(
+                                crate::config::model::Transport::parse("rest").is_ok(),
+                                "the defaulted value must be a supported one"
+                            );
+                            assert!(
+                                crate::config::model::Transport::parse("nope").is_err(),
+                                "if every value parsed, `{choice}` would not be single-valued and \
+                                 could not be defaulted without prompting"
+                            );
+                        }
+                        other => panic!(
+                            "`{other}` is classified Defaulted but this arm asserts nothing about \
+                             it; add its case rather than letting it pass unobserved"
+                        ),
+                    }
                 }
             }
         }
