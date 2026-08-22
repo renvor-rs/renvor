@@ -26,9 +26,12 @@ impl TrustedProxies {
     }
 
     /// Trusts one peer address.
+    ///
+    /// The address is canonicalised, so an IPv4-mapped IPv6 form and its plain IPv4 form are the
+    /// same peer. See [`TrustedProxies::is_trusted`] for why that matters.
     #[must_use]
     pub fn trust(mut self, peer: IpAddr) -> Self {
-        self.peers.insert(peer);
+        self.peers.insert(peer.to_canonical());
         self
     }
 
@@ -37,9 +40,20 @@ impl TrustedProxies {
     /// The trust decision is made about the **direct peer** — the socket Renvor is actually talking
     /// to — and never about an address named inside a header. An address that claims to be a proxy
     /// is claiming it in the very data whose trustworthiness is in question.
+    /// # Why both sides are canonicalised
+    ///
+    /// A listener bound to `[::]` accepts IPv4 connections and reports their peers as
+    /// **IPv4-mapped IPv6** — `::ffff:10.0.0.1`. A set built from `trust(10.0.0.1)` is a set of
+    /// `IpAddr::V4`, and `BTreeSet::contains` is variant-sensitive, so the lookup returned `false`
+    /// and **the trusted-proxy feature was silently inoperative in a standard dual-stack
+    /// deployment** — with nothing anywhere saying why.
+    ///
+    /// It failed closed, which is the safe direction. But the natural operator response to "my
+    /// proxy is not being trusted" is to paste in whatever form the logs show, and that is how a
+    /// silent misconfiguration becomes a deliberate one.
     #[must_use]
     pub fn is_trusted(&self, peer: IpAddr) -> bool {
-        self.peers.contains(&peer)
+        self.peers.contains(&peer.to_canonical())
     }
 
     /// Whether the set is empty.
@@ -62,6 +76,32 @@ mod tests {
         // Not even a private range, which a "sensible default" would have included.
         assert!(!trusted.is_trusted(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
         assert!(!trusted.is_trusted(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+    }
+
+    #[test]
+    fn an_ipv4_mapped_peer_matches_its_plain_ipv4_configuration() {
+        // The defect this guards: on a `[::]` listener an IPv4 peer arrives as `::ffff:10.0.0.1`,
+        // and a set built from `trust(10.0.0.1)` never matched it.
+        let configured: IpAddr = "10.0.0.1".parse().expect("v4");
+        let observed: IpAddr = "::ffff:10.0.0.1".parse().expect("mapped");
+        assert_ne!(
+            configured, observed,
+            "the two forms are genuinely different values"
+        );
+
+        let trusted = TrustedProxies::none().trust(configured);
+        assert!(
+            trusted.is_trusted(observed),
+            "an IPv4-mapped peer did not match its plain IPv4 configuration"
+        );
+
+        // And the reverse, so neither direction depends on which form was configured.
+        let trusted = TrustedProxies::none().trust(observed);
+        assert!(trusted.is_trusted(configured));
+
+        // POSITIVE CONTROL: a DIFFERENT address still does not match in either form.
+        assert!(!trusted.is_trusted("10.0.0.2".parse().expect("v4")));
+        assert!(!trusted.is_trusted("::ffff:10.0.0.2".parse().expect("mapped")));
     }
 
     #[test]

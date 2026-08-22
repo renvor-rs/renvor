@@ -346,8 +346,15 @@ async fn a_disallowed_origin_is_refused_and_an_allowed_one_is_not() {
         .expect("responds");
     assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
 
-    // POSITIVE CONTROL: the configured origin is admitted, so the refusal is about the origin
-    // rather than about every cross-origin request being refused.
+    // POSITIVE CONTROL — AND A NAMED WEAKNESS.
+    //
+    // This asserts only that the configured origin is ADMITTED, which is also what you get with no
+    // CORS implementation at all. It controls for over-refusal, not for the feature.
+    //
+    // The assertion that would control for the feature — `Access-Control-Allow-Origin` on the
+    // response — cannot be written yet, because the CORS protocol is not implemented: the policy
+    // denies, and never grants. Recorded here rather than left for a reader to assume otherwise.
+    // See `governance/phase-004-evidence.md` §Findings against the implementation.
     let allowed = app
         .oneshot(with_peer(
             request("GET", "/api/v1/health").header(header::ORIGIN, "https://allowed.example"),
@@ -486,4 +493,78 @@ async fn a_repeated_forwarding_header_with_one_unreadable_value_still_fails_clos
         observed.starts_with("10.0.0.1|false|"),
         "a repeated header with one unreadable value was attributed: {observed}"
     );
+}
+
+#[tokio::test]
+async fn a_same_origin_write_is_not_refused_by_the_default_cors_policy() {
+    // The defect this guards: browsers send `Origin` on same-origin POST/PUT/PATCH/DELETE, so a
+    // default-configured application answered 400 to a form post from its own page.
+    let mut registry = registry();
+    registry
+        .route(renvor_http::Method::Post, "/submit", created)
+        .expect("registers");
+
+    let app = router(&registry, config()).expect("valid");
+
+    let response = app
+        .oneshot(with_peer(
+            request("POST", "/submit").header(header::ORIGIN, format!("https://{HOST}")),
+            localhost(),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::CREATED,
+        "a same-origin write was refused by the CORS policy"
+    );
+}
+
+#[tokio::test]
+async fn a_cross_origin_request_is_still_refused_by_the_default_policy() {
+    // POSITIVE CONTROL for the test above. Without it, a carve-out that matched everything would
+    // pass and CORS would be inert.
+    let app = router(&registry(), config()).expect("valid");
+
+    let response = app
+        .oneshot(with_peer(
+            request("GET", "/api/v1/health").header(header::ORIGIN, "https://evil.example"),
+            localhost(),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_handler_cannot_add_a_second_request_identifier() {
+    // `Builder::header` appends, so a handler setting this header used to produce TWO values with
+    // its own first — while the contract says the GENERATED identifier is what appears.
+    async fn forges(_: Request) -> Response {
+        Response::text("ok")
+            .with_header("x-request-id", "handler-chosen")
+            .expect("a representable header")
+    }
+
+    let mut registry = RouteRegistry::new();
+    registry.get("/forge", forges).expect("registers");
+
+    let app = router(&registry, config()).expect("valid");
+    let response = app
+        .oneshot(with_peer(request("GET", "/forge"), localhost()))
+        .await
+        .expect("responds");
+
+    let values: Vec<&str> = response
+        .headers()
+        .get_all("x-request-id")
+        .iter()
+        .map(|value| value.to_str().expect("ascii"))
+        .collect();
+
+    assert_eq!(values.len(), 1, "a second identifier survived: {values:?}");
+    assert_ne!(values[0], "handler-chosen");
+    assert_eq!(values[0].len(), 16);
 }

@@ -302,12 +302,20 @@ seed_data = false
         // tolerable at all.
         const LIBRARY: &str = include_str!("../../../renvor-http/src/route/inspect.rs");
 
-        let declared = LIBRARY
-            .lines()
-            .find_map(|line| line.trim().strip_prefix("pub const DUMP_FLAG: &str = "))
+        // Located by the declaration's NAME and then by the next quoted string, rather than by
+        // assuming the whole declaration sits on one line. A `rustfmt` wrap used to make this
+        // panic with "the library still declares DUMP_FLAG", which reads as deletion rather than
+        // as reformatting — a guard whose failure message misidentifies the cause is worse than a
+        // brittle guard.
+        let after_name = LIBRARY
+            .split_once("pub const DUMP_FLAG: &str")
             .expect("the library still declares DUMP_FLAG")
-            .trim_end_matches(';')
-            .trim_matches('"');
+            .1;
+        let opening = after_name
+            .find('"')
+            .expect("the declaration assigns a string literal");
+        let rest = &after_name[opening + 1..];
+        let declared = &rest[..rest.find('"').expect("the string literal is closed")];
 
         assert_eq!(
             declared, DUMP_FLAG,

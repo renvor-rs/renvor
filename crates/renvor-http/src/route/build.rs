@@ -237,11 +237,25 @@ async fn dispatch(
         },
     );
 
-    // 4. CORS — an Origin that is present and not permitted is refused.
+    // 4. CORS — an Origin that is present, CROSS-origin, and not permitted is refused.
+    //
+    // THE SAME-ORIGIN CARVE-OUT IS NOT A LOOSENING.
+    //
+    // Browsers send `Origin` on same-origin `POST`, `PUT`, `PATCH`, and `DELETE` as well as on
+    // cross-origin requests. Without this check a default-configured application answered **400**
+    // to a form post from its own page — the CORS policy denies by default, and every same-origin
+    // write carried an Origin it had not been told to allow.
+    //
+    // A request whose Origin matches the host it was addressed to is by definition not
+    // cross-origin, and CORS governs cross-origin access only. Comparing against `validated_host`
+    // — the value host validation already accepted — rather than against the raw header is what
+    // keeps this from becoming a bypass: an attacker cannot satisfy it without also satisfying
+    // host validation.
     if let Some(origin) = parts
         .headers
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
+        && !is_same_origin(origin, &validated_host)
         && !shared.config.cors.allows(origin)
     {
         return refuse(
@@ -359,18 +373,56 @@ fn into_axum(response: Response, request_id: RequestId) -> AxumResponse {
         builder = builder.header(name.as_str(), value.as_str());
     }
 
-    // The GENERATED identifier is published. An inbound value never reaches here — there is no
-    // path that carries one this far.
-    builder = builder.header(request_id::REQUEST_ID_HEADER, request_id.encode());
-
-    builder
-        .body(Body::from(response.body().to_vec()))
-        .unwrap_or_else(|_| {
-            AxumResponse::builder()
+    let mut rendered = match builder.body(Body::from(response.body().to_vec())) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            // Recorded rather than silent. This used to substitute a bare 500 with NO log line, so
+            // a handler returning an unrepresentable header name lost its entire response — status,
+            // body, and identifier — with nothing to diagnose it by.
+            tracing::error!(
+                request_id = %request_id,
+                reason = %error,
+                "a handler response could not be rendered"
+            );
+            return AxumResponse::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .header(request_id::REQUEST_ID_HEADER, request_id.encode())
                 .body(Body::empty())
-                .expect("an empty 500 always builds")
+                .expect("an empty 500 with one ASCII header always builds");
+        }
+    };
+
+    // INSERT, NOT APPEND. `Builder::header` appends, so a handler that set this header of its own
+    // produced TWO values with its own first — and the contract says the GENERATED identifier is
+    // what appears in the response. `insert` replaces every existing value, which makes that a
+    // property rather than a convention a handler could break.
+    if let Ok(value) = request_id.encode().parse() {
+        rendered
+            .headers_mut()
+            .insert(request_id::REQUEST_ID_HEADER, value);
+    }
+
+    rendered
+}
+
+/// Whether `origin` addresses the same host the request was addressed to.
+///
+/// Compared against the **validated** host, so this cannot be satisfied without first satisfying
+/// host validation. Scheme and port are part of an origin and are deliberately ignored here: a
+/// request that reached this application on this host is same-origin for the purpose of deciding
+/// whether CORS governs it at all.
+fn is_same_origin(origin: &str, validated_host: &str) -> bool {
+    origin
+        .split_once("://")
+        .map(|(_, authority)| authority)
+        .and_then(|authority| {
+            // Strip a port, leaving a bracketed IPv6 literal intact.
+            authority.strip_prefix('[').map_or_else(
+                || authority.split(':').next(),
+                |rest| rest.find(']').map(|close| &authority[..=close + 1]),
+            )
         })
+        .is_some_and(|host| host.eq_ignore_ascii_case(validated_host))
 }
 
 /// Renders a refusal, carrying only what a caller is allowed to know.

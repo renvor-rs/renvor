@@ -70,6 +70,26 @@ impl HostPolicy {
     /// type's documentation for why a safe-but-silent failure is still a failure.
     pub fn allow(mut self, host: impl AsRef<str>) -> Result<Self, InvalidHost> {
         let host = host.as_ref();
+
+        // A URL IS NOT A HOST, AND ACCEPTING ONE IS WORSE THAN REFUSING IT.
+        //
+        // `allow("https://example.com")` used to NORMALISE — the value is unbracketed and contains
+        // exactly one colon, so the part before it was taken and the policy allowed the host
+        // `https`, while refusing `example.com`. An attacker sending `Host: https` was served, and
+        // the value handed to the application for absolute-URL construction was `https`.
+        //
+        // Pasting a URL into a host allow-list is the likeliest operator mistake here, and it
+        // produced an accepted arbitrary host rather than an error. These three checks run in
+        // `allow` rather than in `normalise` because they are about what an operator CONFIGURED,
+        // not about what a caller sent — an inbound `Host` cannot contain them anyway.
+        for offending in ["://", "@", "/"] {
+            if host.contains(offending) {
+                return Err(InvalidHost {
+                    host: host.to_owned(),
+                });
+            }
+        }
+
         let normalised = normalise(host).ok_or_else(|| InvalidHost {
             host: host.to_owned(),
         })?;
