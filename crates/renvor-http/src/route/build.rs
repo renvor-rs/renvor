@@ -61,6 +61,7 @@ use axum::routing::{MethodFilter, on};
 use futures_util::FutureExt;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
+use tracing::Instrument as _;
 
 use super::{Method, Next, Request, Response, RouteRegistry};
 use crate::admission::Admission;
@@ -368,12 +369,19 @@ async fn resolve_and_run(
     let run_id = shared.config.run_id;
 
     // 2. HOST — fail closed before any work.
-    let host_values: Vec<&str> = request
-        .headers()
-        .get_all(header::HOST)
-        .iter()
-        .filter_map(|value| value.to_str().ok())
-        .collect();
+    //
+    // Read through `header_values`, which KEEPS an undecodable value as a placeholder no parser
+    // accepts instead of dropping it. This path previously used `filter_map(|v| v.to_str().ok())`
+    // and so counted what survived the filter rather than what arrived: two Host headers, exactly
+    // one of them decodable, collapsed to one and the repeated-header refusal never fired.
+    //
+    // That is the same defect this crate already found and fixed for forwarding headers one
+    // function away; the Host path did not get the fix. Renvor would have validated and authorised
+    // on the decodable name while a fronting hop resolving the repeated header to the last value
+    // used a different one — each hop picking a different value and both believing they validated,
+    // which is precisely what the rule exists to prevent. Found by review.
+    let host_values = header_values(request.headers(), "host");
+    let host_values: Vec<&str> = host_values.iter().map(String::as_str).collect();
 
     let Some(single) = host::single_host(&host_values) else {
         return refuse(
@@ -446,10 +454,28 @@ async fn resolve_and_run(
     // — the value host validation already accepted — rather than against the raw header is what
     // keeps this from becoming a bypass: an attacker cannot satisfy it without also satisfying
     // host validation.
-    if let Some(origin) = request
-        .headers()
-        .get(header::ORIGIN)
-        .and_then(|value| value.to_str().ok())
+    // An `Origin` that is PRESENT but undecodable is refused rather than skipped. The earlier form
+    // used `.and_then(|value| value.to_str().ok())`, so a value carrying non-ASCII bytes made the
+    // binding fail and the whole check was passed over — a fail-OPEN, in a table (C-11) that says
+    // this control fails closed. Found by review.
+    let origin = match request.headers().get(header::ORIGIN) {
+        None => None,
+        Some(value) => match value.to_str() {
+            Ok(origin) => Some(origin),
+            Err(_) => {
+                return refuse(
+                    &HttpError::new(
+                        HttpErrorKind::OriginRejected,
+                        "origin is not a readable value",
+                    ),
+                    Some(request_id),
+                    run_id,
+                );
+            }
+        },
+    };
+
+    if let Some(origin) = origin
         && !is_same_origin(origin, &validated_host)
         && !shared.config.cors.allows(origin)
     {
@@ -594,7 +620,6 @@ async fn dispatch(
         request_id = %request_id,
         run_id = %run_id,
     );
-    let _entered = span.enter();
 
     // THE PANIC BOUNDARY. Contract C-10: *"a handler panic is caught, contained, and reported as a
     // failure. It is never a hang, and its payload never reaches a response."*
@@ -612,8 +637,20 @@ async fn dispatch(
     // which is the failure the boundary exists to prevent.
     let chain = Next::new(middleware, handler);
 
+    // `.instrument(span)` rather than `span.enter()`.
+    //
+    // `Span::enter` returns a thread-local RAII guard, and holding one across an `.await` is the
+    // hazard `Instrument` exists to prevent: the future yields with the span still on that worker
+    // thread's stack, the executor polls a DIFFERENT request on the same thread, and that
+    // request's events are parented to this one — carrying the wrong `request_id`. When this
+    // future resumes on another worker the guard exits a span that thread never entered.
+    //
+    // Contract C-11 says *"the generated identifier is what appears in the response and in
+    // telemetry"*. Mis-parenting breaks that for everything the application handler logs, which is
+    // the only reason this span exists. Found by review.
     match AssertUnwindSafe(chain.run(renvor_request))
         .catch_unwind()
+        .instrument(span)
         .await
     {
         Ok(response) => into_axum(response, request_id, run_id),

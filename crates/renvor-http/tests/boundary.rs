@@ -185,3 +185,65 @@ fn documentation_may_discuss_the_transport_without_failing_the_scan() {
     let documented = "//! This module never names axum, and here is why.\n/// Not tower::Service.";
     assert!(transport_identifiers_in_code(documented).is_empty());
 }
+
+/// `Span::enter` must not be used in this crate's async request path; `Instrument` is the form.
+///
+/// # Why this is a source scan rather than a behavioural test
+///
+/// The defect it guards is real and was shipped: `let _entered = span.enter();` held a thread-local
+/// guard across the handler `.await`. On a multi-thread runtime the future yields with the span
+/// still on that worker's stack, the executor polls a DIFFERENT request on the same thread, and
+/// that request's events are parented to the wrong span — carrying the wrong `request_id`.
+///
+/// Reproducing that needs two requests interleaved on one worker at a chosen yield point, which is
+/// a race rather than a test. What CAN be checked deterministically is that the construct is not
+/// present. That is weaker evidence than an observation and is recorded as such — but it is
+/// stronger than the nothing that guarded it before, and it fails loudly on reintroduction.
+#[test]
+fn the_async_request_path_never_holds_a_span_guard_across_an_await() {
+    let files = rust_files(&source_root());
+    let offending: Vec<&String> = files
+        .iter()
+        .filter(|(_, contents)| holds_a_span_guard(contents))
+        .map(|(path, _)| path)
+        .collect();
+
+    assert!(
+        offending.is_empty(),
+        "`Span::enter` returns a thread-local guard and must not be held across an await;          use `Instrument` instead. Found in: {offending:?}"
+    );
+}
+
+#[test]
+fn the_span_guard_scan_would_notice_the_construct_coming_back() {
+    // POSITIVE CONTROL: the scan above passes trivially if it cannot recognise what it forbids.
+    let root = tempfile::tempdir().expect("a temporary directory");
+    std::fs::write(
+        root.path().join("reintroduced.rs"),
+        "async fn handler() {\n    let _entered = span.enter();\n    work().await;\n}\n",
+    )
+    .expect("write");
+
+    let files = rust_files(root.path());
+    let found = files
+        .iter()
+        .filter(|(_, contents)| holds_a_span_guard(contents))
+        .count();
+
+    assert_eq!(
+        found, 1,
+        "the scan cannot recognise the construct it forbids"
+    );
+}
+
+/// Whether `source` ENTERS a span outside a comment.
+///
+/// Comment lines are skipped for the same reason the transport scan skips them: the fix for this
+/// defect has to be able to explain itself in prose without tripping the check that guards it.
+fn holds_a_span_guard(source: &str) -> bool {
+    source
+        .lines()
+        .map(str::trim_start)
+        .filter(|line| !line.starts_with("//"))
+        .any(|line| line.contains(".enter()"))
+}

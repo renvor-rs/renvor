@@ -367,6 +367,34 @@ async fn a_disallowed_origin_is_refused_and_an_allowed_one_is_not() {
 }
 
 #[tokio::test]
+async fn an_undecodable_origin_is_refused_rather_than_skipped() {
+    // C-11's fail-open/fail-closed table says CORS origin matching fails CLOSED. The earlier form
+    // read the header with `.to_str().ok()`, so a value carrying non-ASCII bytes made the binding
+    // fail and the refusal was passed over entirely — the one control in that table that did not
+    // do what the table said.
+    let app = router(&registry(), config()).expect("valid");
+
+    let mut request = request("GET", "/whoami")
+        .body(Body::empty())
+        .expect("a valid request");
+    request.headers_mut().insert(
+        axum::http::header::ORIGIN,
+        axum::http::HeaderValue::from_bytes(&[0xff, 0xfe]).expect("bytes are a valid header value"),
+    );
+    request
+        .extensions_mut()
+        .insert(ConnectInfo(SocketAddr::new(localhost(), 44321)));
+
+    let response = app.oneshot(request).await.expect("responds");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "an unreadable Origin was passed over instead of refused"
+    );
+}
+
+#[tokio::test]
 async fn cors_denies_by_default() {
     let app = router(&registry(), config()).expect("valid");
 
@@ -493,6 +521,49 @@ async fn a_repeated_forwarding_header_with_one_unreadable_value_still_fails_clos
     assert!(
         observed.starts_with("10.0.0.1|false|"),
         "a repeated header with one unreadable value was attributed: {observed}"
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_host_header_with_one_unreadable_value_is_still_refused() {
+    // The SAME defect as the test above, on the Host path, which never received the fix. The
+    // forwarding reader keeps an undecodable value as an unusable placeholder so the COUNT stays
+    // truthful; the Host reader filtered undecodable values out and then counted what survived.
+    //
+    // Two Host headers where exactly one decodes therefore looked like one Host header. Renvor
+    // would validate and authorise on `api.example` while a fronting hop resolving the repeated
+    // header to the last value uses a different name — which is precisely the disagreement the
+    // repeated-header rule exists to prevent: each hop picks a different one, and both believe
+    // they validated.
+    let app = router(&registry(), config()).expect("valid");
+
+    // Built WITHOUT the `request` helper, which sets a Host of its own — that would give two
+    // decodable values and the rule would fire for an uninteresting reason.
+    //
+    // The single decodable value is the ALLOWED host, so a refusal here can only come from the
+    // repeated-header rule. Any other name would let the test pass because the host was unknown,
+    // which is a different refusal and would prove nothing.
+    let mut request = HttpRequest::builder()
+        .method("GET")
+        .uri("/whoami")
+        .header(header::HOST, HOST)
+        .body(Body::empty())
+        .expect("a valid request");
+    request.headers_mut().append(
+        axum::http::header::HOST,
+        axum::http::HeaderValue::from_bytes(&[0xff, 0xff]).expect("bytes are a valid header value"),
+    );
+    request.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 9)),
+        44321,
+    )));
+
+    let response = app.oneshot(request).await.expect("responds");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "a repeated Host header with one unreadable value was accepted as a single host"
     );
 }
 
