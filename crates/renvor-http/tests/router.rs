@@ -352,10 +352,11 @@ async fn a_disallowed_origin_is_refused_and_an_allowed_one_is_not() {
     // This asserts only that the configured origin is ADMITTED, which is also what you get with no
     // CORS implementation at all. It controls for over-refusal, not for the feature.
     //
-    // The assertion that would control for the feature — `Access-Control-Allow-Origin` on the
-    // response — cannot be written yet, because the CORS protocol is not implemented: the policy
-    // denies, and never grants. Recorded here rather than left for a reader to assume otherwise.
-    // See `governance/phase-004-evidence.md` §Findings against the implementation.
+    // The assertion that controls for the feature — `Access-Control-Allow-Origin` on the response —
+    // lives in `tests/controls.rs::an_allowed_origin_receives_the_allow_origin_header`, which also
+    // asserts `Vary: Origin`. This comment previously said that assertion "cannot be written yet,
+    // because the CORS protocol is not implemented". That was defect L-06 and it is closed; the
+    // wording outlived it and is corrected here.
     let allowed = app
         .oneshot(with_peer(
             request("GET", "/api/v1/health").header(header::ORIGIN, "https://allowed.example"),
