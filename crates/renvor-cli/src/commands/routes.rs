@@ -463,23 +463,61 @@ seed_data = false
             .expect("the workspace root resolves")
     }
 
+    /// Writes `payload` where [`answering`] reads it back, and returns the **bare** file name.
+    ///
+    /// The payload goes through a file rather than being interpolated into a shell command. A
+    /// payload containing a quote would otherwise break the command it was embedded in — and these
+    /// tests exist precisely to feed the relay malformed input. The name is bare, and the
+    /// invocation already runs in `directory`, so no temporary path is ever re-parsed by a shell.
+    fn stage_payload(directory: &Path, payload: &str) -> &'static str {
+        const FILE: &str = "dump.json";
+        std::fs::write(directory.join(FILE), payload).expect("the payload is written");
+        FILE
+    }
+
+    // These helpers are split per platform because **`/bin/sh` does not exist on Windows**, and an
+    // earlier revision hard-coded it. Six tests passed on macOS and failed on Windows CI with
+    // `os error 3`. The split is here rather than hidden behind a shell abstraction so that the
+    // next person to add a helper sees the constraint instead of rediscovering it.
+
     /// An invocation that answers with `payload` and exits zero.
+    #[cfg(not(windows))]
     fn answering(directory: &Path, payload: &str) -> DumpInvocation {
+        let file = stage_payload(directory, payload);
+        DumpInvocation::new("/bin/cat", vec![OsString::from(file)], directory)
+    }
+
+    /// An invocation that answers with `payload` and exits zero.
+    #[cfg(windows)]
+    fn answering(directory: &Path, payload: &str) -> DumpInvocation {
+        let file = stage_payload(directory, payload);
         DumpInvocation::new(
-            "/bin/sh",
+            "cmd",
             vec![
-                OsString::from("-c"),
-                OsString::from(format!("printf '%s' '{payload}'")),
+                OsString::from("/C"),
+                OsString::from("type"),
+                OsString::from(file),
             ],
             directory,
         )
     }
 
     /// An invocation that exits non-zero without answering.
+    #[cfg(not(windows))]
     fn failing(directory: &Path) -> DumpInvocation {
         DumpInvocation::new(
             "/bin/sh",
             vec![OsString::from("-c"), OsString::from("exit 7")],
+            directory,
+        )
+    }
+
+    /// An invocation that exits non-zero without answering.
+    #[cfg(windows)]
+    fn failing(directory: &Path) -> DumpInvocation {
+        DumpInvocation::new(
+            "cmd",
+            vec![OsString::from("/C"), OsString::from("exit 7")],
             directory,
         )
     }
