@@ -27,6 +27,8 @@ use core::pin::Pin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use renvor_core::{KernelError, TypedStateMap};
+
 use crate::context::RequestContext;
 
 pub use registry::{RouteError, RouteRegistry};
@@ -101,10 +103,19 @@ pub struct Request {
     body: Vec<u8>,
     query: String,
     path_params: BTreeMap<String, String>,
+    state: Arc<TypedStateMap>,
 }
 
 impl Request {
-    /// Builds a request. Used by the router adapter and by tests.
+    /// Builds a request carrying **no** application state.
+    ///
+    /// The empty map is not a silent default that could mask a failure: every
+    /// [`Request::state`] call against it reports [`KernelError::StateMissing`] **naming the type
+    /// asked for**, which is exactly what FR-013 requires. What it avoids is forcing a test that
+    /// does not use state to construct a map it will never read.
+    ///
+    /// The router always calls [`Request::with_state`], so a served request carries the
+    /// application's real state.
     #[must_use]
     pub fn new(
         context: RequestContext,
@@ -117,7 +128,19 @@ impl Request {
             body,
             query,
             path_params,
+            state: Arc::new(TypedStateMap::new()),
         }
+    }
+
+    /// Attaches the application's typed state.
+    ///
+    /// Shared rather than cloned: a `TypedStateMap` holds an application's live resources — a
+    /// connection pool, a cache handle — and cloning one per request would either be impossible or
+    /// be wrong.
+    #[must_use]
+    pub fn with_state(mut self, state: Arc<TypedStateMap>) -> Self {
+        self.state = state;
+        self
     }
 
     /// The resolved request context: run id, request id, client identity, host, cancellation.
@@ -139,9 +162,32 @@ impl Request {
     }
 
     /// A path parameter captured by the route pattern.
+    ///
+    /// The value is **an untrusted string**. It came from the request line, and nothing has
+    /// interpreted it. A handler that needs a number parses it and handles the failure.
     #[must_use]
     pub fn path_param(&self, name: &str) -> Option<&str> {
         self.path_params.get(name).map(String::as_str)
+    }
+
+    /// Reads a value the application registered in the kernel's typed state (FR-012).
+    ///
+    /// # This is the whole state bridge, and it deliberately carries no transport type
+    ///
+    /// The value crossing into a handler is the kernel's own [`TypedStateMap`] entry. `axum` is
+    /// not named here, cannot be named here — this module imports none of it — and does not appear
+    /// in the returned type or in the error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`KernelError::StateMissing`], **naming the type**, when nothing of type `T` is
+    /// registered. FR-013 requires this to be an explicit reported failure: it is never a panic,
+    /// and never a substituted default. A type-incompatible entry is indistinguishable from an
+    /// absent one by construction — [`TypedStateMap`] is keyed by [`core::any::TypeId`], so a
+    /// value registered under a different type is simply not found under this one, and reports the
+    /// same error rather than being reinterpreted.
+    pub fn state<T: core::any::Any + Send + Sync>(&self) -> Result<&T, KernelError> {
+        self.state.get::<T>()
     }
 }
 
@@ -156,6 +202,9 @@ impl fmt::Debug for Request {
             .field("context", &self.context)
             .field("body_len", &self.body.len())
             .field("path_params", &self.path_params.len())
+            // Type NAMES only, never values — `TypedStateMap`'s own `Debug` enforces that, and
+            // this reuses it rather than reaching past it.
+            .field("state", &self.state)
             .finish_non_exhaustive()
     }
 }

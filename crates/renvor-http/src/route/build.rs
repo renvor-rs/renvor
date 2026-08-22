@@ -24,7 +24,7 @@ use axum::extract::{ConnectInfo, Request as AxumRequest};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::Response as AxumResponse;
 use axum::routing::{MethodFilter, on};
-use renvor_core::{CancelScope, OsEntropy, RunIdentifier, WorkGate};
+use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate};
 
 use super::{Method, Request, Response, RouteRegistry};
 use crate::admission::Admission;
@@ -56,6 +56,11 @@ pub struct RouterConfig {
     pub cancel: CancelScope,
     /// The kernel work gate every request takes a permit from.
     pub gate: WorkGate,
+    /// The application's typed state, reachable from a handler through [`super::Request::state`].
+    ///
+    /// Shared rather than owned: this is the **same** map the kernel's providers registered into,
+    /// so a handler reads what a provider wrote rather than a copy that could diverge from it.
+    pub state: Arc<TypedStateMap>,
 }
 
 impl RouterConfig {
@@ -75,6 +80,10 @@ impl RouterConfig {
             run_id: RunIdentifier::generate(&OsEntropy)?,
             cancel,
             gate: WorkGate::new(),
+            // Empty rather than absent. A lookup against it reports the type it could not find,
+            // which is FR-013's requirement; an `Option` here would put a "was state configured
+            // at all?" branch in front of every handler that reads it.
+            state: Arc::new(TypedStateMap::new()),
         })
     }
 
@@ -301,7 +310,8 @@ async fn dispatch(
     };
 
     let query = parts.uri.query().unwrap_or_default().to_owned();
-    let renvor_request = Request::new(context, collected, query, BTreeMap::new());
+    let renvor_request = Request::new(context, collected, query, BTreeMap::new())
+        .with_state(Arc::clone(&shared.config.state));
 
     // The path is captured for telemetry; structured fields only, never an interpolated sentence.
     tracing::debug!(

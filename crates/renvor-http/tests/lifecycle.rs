@@ -34,6 +34,7 @@ fn config(gate: WorkGate, cancel: CancelScope) -> RouterConfig {
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel,
         gate,
+        state: std::sync::Arc::new(renvor_core::TypedStateMap::new()),
     }
 }
 
