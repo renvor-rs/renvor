@@ -123,6 +123,17 @@ pub enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Show the routes this project would serve.
+    ///
+    /// Asks the application binary for its own route registry — the same value that builds the
+    /// router — rather than parsing source or reading a second manifest. A project that declares
+    /// no Renvor dependency has no registry to report, and that is a failure with a name rather
+    /// than an empty table.
+    Routes {
+        /// The project directory. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Run the local development loop.
     Dev,
     /// Container development controls.
