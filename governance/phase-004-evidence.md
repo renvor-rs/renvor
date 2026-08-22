@@ -6,12 +6,14 @@
 > **Phase 004 is NOT closed, and the implementation is NOT complete.** This is the evidence pack,
 > not a completion record.
 >
-> **An independent-model review found 19 findings, 12 of them P1, against the implementation.**
-> Four were verified by executing them, three were fixed, and **twelve remain open**. Several
-> requirement rows below were **corrected downward** as a result: this document previously claimed
-> requirements met that the review disproved. The corrections are in
-> [§Findings against the implementation](#findings-against-the-implementation), and the
-> requirements table now reflects them.
+> **Three advisory reviews found defects against the implementation** — an independent-model review
+> (Codex) and two agent reviews that eventually delivered. Between them: **19 + 13 + 16 findings**,
+> heavily overlapping. **Eight were verified by executing them**, **eight were fixed**, and
+> **twelve substantive findings remain open**.
+>
+> Several requirement rows below were **corrected downward** as a result: this document previously
+> claimed requirements met that the reviews disproved. The corrections are in
+> [§Findings against the implementation](#findings-against-the-implementation).
 
 ## What the phase delivered
 
@@ -182,6 +184,19 @@ evidence:
 | Malformed `Forwarded` falls through to `X-Forwarded-For` | trusted peer → `ViaTrustedProxy{198.51.100.7}` instead of `DirectPeer` |
 | Unbalanced quote accepted | `for="198.51.100.7` → `Some(198.51.100.7)` instead of `None` |
 
+### Corroboration across reviewers
+
+The Codex review and the agent security review were run **independently and against the same head**,
+and they converged on the same top four: fallback routing bypassing every control, the body read
+sitting outside the timeout, `tokio::join!` not bounding the drain, and CORS never emitting a header.
+Two reviewers reaching the same four findings by different routes is stronger evidence than either
+alone, and it is why those four are treated as settled rather than as claims.
+
+The agent reviews additionally found **five defects Codex did not**, four of which were verified by
+execution and fixed. That is the argument for running more than one reviewer, recorded here because
+the opposite conclusion — "the second review found nothing new, so skip it next time" — is the one a
+reader would otherwise reach.
+
 ### Fixed on this branch
 
 | # | Finding | Fix |
@@ -189,6 +204,11 @@ evidence:
 | 1 | Malformed `Forwarded` fell through to `X-Forwarded-For` — **security** | Presence now selects the header; parsing decides the answer. A present-but-unparseable standard header fails closed instead of deferring |
 | 2 | An unbalanced quote in `Forwarded` was accepted — **security** | Quotes must balance before anything is split |
 | 3 | An unreadable (non-UTF-8) header value was silently dropped, collapsing a repeated header past the repeated-header refusal — **security** | An unreadable value is preserved as a placeholder no parser accepts, so the count stays truthful |
+| 4 | **A URL pasted into the host allow-list configured the host `https`** — verified: `allow("https://example.com")` allowed `Host: https` and **refused `example.com`** — **security** | `allow` refuses any value containing `://`, `@`, or `/`. The likeliest operator mistake now errors instead of admitting an arbitrary host |
+| 5 | **Trusted proxies were silently inoperative on a dual-stack listener** — verified: `trust(10.0.0.1)` did not match a peer arriving as `::ffff:10.0.0.1` | Both sides canonicalise. Failed closed, but the natural operator response to "my proxy is not trusted" is to widen the configuration, which is how a silent misconfiguration becomes a deliberate one |
+| 6 | **A default-configured application answered 400 to its own frontend's writes** — verified: browsers send `Origin` on same-origin `POST`, and deny-by-default refused every one | A same-origin request is not a cross-origin request. Compared against the **validated** host, so it cannot be satisfied without also satisfying host validation |
+| 7 | A handler could emit a **second** `x-request-id`, its own first — verified: 2 values returned | `insert` rather than append, so "the generated identifier is what appears" is a property rather than a convention |
+| 8 | **`renvor check` rejected every Phase 003 project** — verified: `missing field \`transport\``, no migration path. A framework that invalidates the projects it generated one phase earlier has broken its own output | `transport` is optional and validated only when present. Absent means "written before the transport was recorded" |
 
 ### Open, and blocking
 
@@ -210,6 +230,9 @@ requirement rows above depend on them:
 | P2 | Path parameters are never populated; `path_param` always returns `None` |
 | P2 | Route-pattern validation is too weak — a malformed pattern registers and then panics at router construction |
 | P2 | Nested groups, the handler trace span, run IDs on refusal telemetry, and validation of response status/header metadata |
+| P2 | The boundary scan in `tests/boundary.rs` is a four-file hand-list, so a new application-facing module is silently unscanned |
+| P2 | `registry::methods_for` is documented as producing the `Allow` header and **has no caller** — the router produces it |
+| LOW | Every body error reports `413`, including IO errors and client disconnects |
 
 **What this means for the phase.** The contracts published in this branch describe behaviour the
 implementation does not yet fully have. That is the defect class this project treats most seriously,
@@ -222,11 +245,26 @@ merge on requirements grounds, independently of the governance gate below.**
 
 Automated and agent reviews are **advisory and explicitly NON-INDEPENDENT**, and must never be
 described otherwise — here, in the pull request, in `GOVERNANCE.md`, or in any public document.
+**Five advisory agent runs were commissioned. Three returned nothing; two delivered late.**
 
-**Three advisory agent runs commissioned during this phase returned nothing** — one research run and
-two plan reviews — after hitting an account usage limit. Under this ledger's own rule, *"a review
-that returns nothing is recorded as NOT PERFORMED, never as passed."* They are recorded as **not
-performed**. The package research they were to produce was instead carried out directly against
+| Run | Outcome |
+|---|---|
+| Package research | **NOT PERFORMED** — hit an account usage limit and reported nothing. The research was carried out directly against vendored crate source instead; that evidence is in the plan and in ADR-0012 |
+| Plan requirements review | **NOT PERFORMED** — same limit |
+| Plan security review | **NOT PERFORMED** — same limit |
+| Implementation security review | **DELIVERED**, late — 13 findings, S1–S9 complete, with an explicit "checked and holding" section naming what it verified and found sound |
+| Implementation requirements review | **DELIVERED**, late — 16 findings, R1–R10 complete, including a full FR-001…FR-049 mapping |
+
+Under this ledger's rule, *"a review that returns nothing is recorded as NOT PERFORMED, never as
+passed"* — the first three are recorded that way. **An earlier revision of this document said all
+five had returned nothing. Two had simply not yet been given time to reply, and that statement was
+corrected as soon as they did.**
+
+**The mechanism of the three failures is worth recording.** A subagent's final text does not reach
+the caller unless the subagent explicitly sends it. Three runs ended with their findings sitting in
+their own transcripts and nothing delivered — which is indistinguishable, from the caller's side,
+from having found nothing. That is the exact failure mode this ledger's "empty result" rule exists
+to catch, arriving by a route nobody had anticipated.
 vendored crate source, and that evidence is in the plan and in ADR-0012.
 
 ### The open governance gate
