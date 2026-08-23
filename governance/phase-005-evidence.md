@@ -58,6 +58,40 @@ inventory §9.
 
 **Suite**: `crates/renvor-openapi/tests/openapi_3_2_gate.rs` — 12 tests.
 
+### Proven end to end, not only in unit tests
+
+A throwaway project was built that **genuinely depends on the framework** by path, declares two
+operations with real constraints, and answers the metadata protocol. The **real `renvor openapi`
+binary** was then run against it:
+
+```
+$ renvor openapi --output json
+envelope status  : success
+envelope command : openapi
+schemaVersion    : 2
+openapi          : 3.2.0
+info.title       : Orders 2.1.0
+paths            : ['/orders']
+operationIds     : ['listOrders', 'createOrder']
+error codes      : 12
+```
+
+That relayed document — the one a real operator would receive, having travelled through the CLI,
+`cargo run`, the protocol envelope, and back — was validated against the vendored official schemas:
+
+```
+vs official 3.2: VALID
+vs official 3.1: REJECTED  (version pattern neutralised)
+    first error: "description" is a required property @ /paths/~1orders/get/responses/200
+```
+
+and carries four distinct 3.2-only constructs: `response.summary`, `tag.kind`, `tag.summary`, and a
+`200` response with **no** `description` — required in 3.1, optional in 3.2.
+
+This is the whole chain end to end: **a real project, the real command, the real protocol, judged by
+the official schema.** The tests in §2 assert the same properties in isolation; this shows they hold
+when everything is connected.
+
 ---
 
 ## 3. Runtime validation and the published schema are one value
@@ -270,7 +304,7 @@ decoder was not — a gap this phase closes for the decoder and leaves open else
 | L-6 | `format` is published and **not enforced**. This is JSON Schema 2020-12's own default — the format-annotation vocabulary — and is stated rather than left to inference | — | standard behaviour |
 | L-7 | Pagination and filtering define **validated public contracts and ports only**. Nothing queries a database; FR-042 forbids it and it is asserted | framework | 006 |
 | L-8 | Idempotency keys, conditional requests, and ETags are named in PLAN.md §11.1 for REST 1.0 and require storage | framework | 006+ |
-| L-9 | **`renvor openapi` succeeds against no generated project**, because no Renvor crate is published and no generated project depends on the framework. The relay **is** implemented and **is** asserted end to end against a real binary answering through the real library. Its reach across *generated* projects is what is zero. Carried forward from Phase 004 in the same words, because it is the same limitation | framework | first publication |
+| L-9 | **`renvor openapi` succeeds against no *generated* project**, because no Renvor crate is published and no generated project depends on the framework. The command itself works: §2 records it run end to end against a real project that depends on the framework by path, returning a document the official 3.2 schema accepts. What is zero is its reach across projects the **generator** produces, and it is zero because nothing is published for them to depend on. Carried forward from Phase 004, because it is the same limitation | framework | first publication |
 | L-10 | The API snapshot mechanism is implemented and no snapshot is committed, because the framework declares no public API of its own — the gate compares an **application's** description | framework | 012 |
 | L-11 | **The relay's deadline bounds this process's wait, not the project's binary.** The direct child is `cargo`, and `cargo run` spawns the binary as a grandchild; killing `cargo` orphans it. Fixing it means a process group, which `std` exposes only through `unsafe` `pre_exec` — and the workspace declares `unsafe_code = "forbid"`. A process-group crate is a dependency decision, not a late edit | framework | 012 |
 | L-12 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
