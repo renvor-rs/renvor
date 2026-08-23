@@ -166,14 +166,19 @@ compared against the committed baseline and the break is caught.
 
 | Gate | Result |
 |---|---|
-| Workspace tests, `--all-features` | **1024 passed, 0 failed, 1 ignored** |
+| Workspace tests, `--all-features` | **1029 passed, 0 failed, 1 ignored** |
 | `cargo fmt --all --check` | pass |
 | `cargo clippy --all-targets --all-features -- -D warnings` | pass |
-| `renvor-http` suite | 205 passed |
-| `renvor-cli` suite | 236 passed |
-| `renvor-validation` suite | 45 passed |
-| `renvor-openapi` suite | 39 passed |
-| `renvor-error` suite | 21 passed |
+| `renvor-error` | 21 passed |
+| `renvor-validation` | 47 passed |
+| `renvor-openapi` | 39 passed |
+| `renvor-http` | 213 passed |
+| `renvor-cli` | 344 passed |
+| `renvor-core` | 208 passed |
+| `renvor-config` | 108 passed |
+| `renvor-testkit` | 13 passed |
+| `renvor` | 12 passed |
+| `xtask` | 24 passed |
 
 The full `cargo xtask verify` sequence on both toolchains is recorded in the pull request.
 
@@ -192,6 +197,64 @@ the project binary safely" would be two things that can drift.
 
 Asserted by `a_binary_that_never_answers_is_stopped_at_the_deadline` and
 `a_binary_that_streams_forever_is_stopped_rather_than_filling_memory`.
+
+---
+
+## 7a. Defects found in this phase's own work, and fixed
+
+Recorded rather than quietly folded into the feature commits. Each was found by adversarial
+self-review **after** the feature suites were green, which is the point worth stating: 1024 passing
+tests did not find any of them.
+
+### D-1 — a crafted query string panicked the request path
+
+`crates/renvor-http/src/route/spec.rs`. `percent_decode` read its two hex digits as
+`&text[index + 1..index + 3]`. Slicing a `&str` by byte index **panics** when either end is not a
+character boundary:
+
+```
+byte index 3 is not a char boundary; it is inside 'é' (bytes 2..4) of `%aé`
+```
+
+A query string is attacker-controlled, so `?a=%aé` was a caller-triggerable abort on **every**
+operation declaring a query parameter. Phase 004's panic boundary contained it as a `500` rather
+than taking the process down — which is exactly the containment that makes this class easy to miss.
+
+**Fixed** by decoding over bytes and never slicing the `&str`. Regression tests cover the failing
+input directly, plus every byte reachable in the escape branch.
+
+**It also uncovered a second, quieter bug**: the bound was `index + 2 < len`, off by one, so a
+trailing `%41` decoded to the literal text `%41` instead of `A`. Silent, and wrong.
+
+### D-2 — `uniqueItems` was an algorithmic-complexity denial of service
+
+`crates/renvor-validation/src/schema.rs`. The check was an O(n²) pairwise scan, with a comment
+claiming `maxItems` bounded it. **It did not.** `uniqueItems` is reachable without `maxItems` —
+`schemars` emits exactly that for a set-typed field — leaving only the 2 MiB body limit. An array of
+~500 000 small integers fits inside it, and 500 000² is 2.5 × 10¹¹ comparisons of a caller's
+choosing.
+
+**Fixed** to O(n log n) via a set keyed on each item's rendering, which is exact rather than
+approximate because `serde_json::Map` is ordered. A timing regression test fails on the quadratic
+shape, with a positive control proving repeats are still detected.
+
+### D-3 — declaration-time schema walking was unbounded
+
+`crates/renvor-validation/src/schema.rs`. `check_subset` recursed with no depth bound. The runtime
+walker was already bounded; this one was not.
+
+**Fixed** with the same bound. Writing the test also established a fact worth recording:
+`serde_json::Value`'s `Drop` is itself recursive, so a 2000-deep value overflows the stack while
+being **freed**, before any Renvor code sees it — and `serde_json::from_str` enforces its own
+recursion limit, so a *parsed* schema never reaches that depth. The guard is for a schema built
+programmatically, where nothing else would stop it.
+
+### What this says about the test suite
+
+All three passed every existing test. D-1 and D-2 were found by reading the code adversarially and
+asking "what input has this author not imagined"; D-3 by asking "where else does this recurse".
+Property testing found neither D-1 nor D-2, because the cursor was property-tested and the query
+decoder was not — a gap this phase closes for the decoder and leaves open elsewhere.
 
 ---
 
