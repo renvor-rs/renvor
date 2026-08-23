@@ -2032,6 +2032,7 @@ dependencies = [
 name = "renvor-sqlx"
 version = "0.0.0"
 dependencies = [
+ "renvor-core",
  "renvor-database",
  "renvor-validation",
  "sqlx",

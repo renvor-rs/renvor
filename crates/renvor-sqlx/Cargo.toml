@@ -29,6 +29,11 @@ include = [
 ]
 
 [dependencies]
+# The lifecycle kernel. `renvor-sqlx` implements `Provider` and `ReadinessContributor` so that a
+# database that cannot be reached fails BOOT rather than the first request, and so that readiness
+# cannot report ready before the database has answered. `renvor-database` deliberately does not
+# depend on this: the ports describe a shape, and only the adapter joins it to a lifecycle.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
 

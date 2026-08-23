@@ -26,6 +26,9 @@
 
 pub mod error;
 pub mod migrate;
+pub mod page;
+pub mod provider;
+pub mod seed;
 
 use core::time::Duration;
 

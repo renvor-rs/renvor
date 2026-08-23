@@ -49,3 +49,27 @@ pub fn settings() -> PoolSettings {
 /// The same construction Phase 005 used for its redaction proofs: assert the **absence** of a
 /// string chosen to be unmistakable, rather than the presence of a redaction marker.
 pub const CREDENTIAL_CANARY: &str = "hunter2CanaryDoNotLeak";
+
+/// Drives one provider's `initialise` with a throwaway kernel context.
+///
+/// A helper rather than six copies: building an `InitContext` needs five kernel values that have
+/// nothing to do with what these tests assert, and repeating that in every test would bury the one
+/// line that matters.
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+pub async fn initialise<P: renvor_core::provider::registry::Provider>(
+    provider: &P,
+) -> Result<(), renvor_core::error::BoxedCause> {
+    use renvor_core::provider::registry::{InitContext, ProviderId};
+
+    let id = ProviderId::new("test");
+    let mut state = renvor_core::state::TypedStateMap::new();
+    let cancel = renvor_core::cancel::CancelScope::root();
+    let work = renvor_core::lifecycle::WorkGate::new();
+    let health = renvor_core::HealthState::new();
+    let run_id = renvor_core::observe::RunIdentifier::generate(
+        &renvor_core::observe::OsEntropy::new(),
+    )
+    .expect("the OS CSPRNG is available");
+    let mut context = InitContext::new(&id, &mut state, &cancel, &work, &health, run_id);
+    provider.initialise(&mut context).await
+}
