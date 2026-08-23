@@ -111,10 +111,17 @@ pub fn render(
     let correlation =
         request_id.map_or_else(|| CORRELATION_UNAVAILABLE.to_owned(), |id| id.encode());
 
-    let problem =
-        ProblemDetails::new(code, status, correlation).with_invalid_params(invalid_params);
-
+    // CONVERT FIRST, then derive the document from the converted value.
+    //
+    // The earlier order built the document with the caller's `status` and converted afterwards, so
+    // an out-of-range value produced a `500` response carrying a document that said something
+    // else — contradicting this function's own header. Unreachable today, because every source of
+    // `status` returns a valid code; ordered correctly anyway, because "unreachable" is not a
+    // guarantee. Found by security review.
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+
+    let problem =
+        ProblemDetails::new(code, status.as_u16(), correlation).with_invalid_params(invalid_params);
 
     // A serialisation failure here would be a defect in this crate, not a caller's doing. It
     // becomes a bare 500 with no body rather than a partial document: a truncated problem document

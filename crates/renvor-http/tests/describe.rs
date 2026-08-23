@@ -379,3 +379,44 @@ fn the_generated_document_declares_openapi_3_2_0() {
         .to_value();
     assert_eq!(value.get("openapi").and_then(|v| v.as_str()), Some("3.2.0"));
 }
+
+#[test]
+fn an_optional_path_parameter_is_refused_rather_than_silently_corrected() {
+    // OpenAPI requires a path parameter to be required. An earlier version published
+    // `required: true` while `OperationSpec::validate` kept the author's `false` and skipped the
+    // presence check — so the description promised a check the runtime never ran, inside the one
+    // place this phase claims description and enforcement are an IDENTITY. Found by security
+    // review.
+    let mut registry = RouteRegistry::new();
+    registry
+        .route(Method::Get, "/items/{id}", ok)
+        .expect("a valid route")
+        .describe(OperationSpec::new().id("getItem").parameter(
+            Location::Path,
+            "id",
+            false, // the contradiction
+            Declaration::new(json!({"type": "integer"})).expect("a valid declaration"),
+        ))
+        .expect("describes");
+
+    assert!(
+        matches!(
+            describe::document(&registry, info()),
+            Err(describe::DescribeError::OptionalPathParameter { .. })
+        ),
+        "an optional path parameter was silently corrected in the description"
+    );
+
+    // POSITIVE CONTROL: declared required, it generates.
+    let mut fine = RouteRegistry::new();
+    fine.route(Method::Get, "/items/{id}", ok)
+        .expect("a valid route")
+        .describe(OperationSpec::new().id("getItem").parameter(
+            Location::Path,
+            "id",
+            true,
+            Declaration::new(json!({"type": "integer"})).expect("a valid declaration"),
+        ))
+        .expect("describes");
+    assert!(describe::document(&fine, info()).is_ok());
+}

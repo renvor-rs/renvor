@@ -57,6 +57,17 @@ pub enum DescribeError {
         /// Where.
         at: String,
     },
+    /// A path parameter was declared optional.
+    ///
+    /// OpenAPI requires `required: true` for a path parameter. Publishing the correction while the
+    /// runtime kept the author's `false` would make the description promise a check nothing runs —
+    /// inside the one place this phase claims description and enforcement are an IDENTITY.
+    OptionalPathParameter {
+        /// The operation.
+        operation_id: String,
+        /// The parameter.
+        name: String,
+    },
     /// A method that OpenAPI does not name as a Path Item member was registered.
     UnsupportedMethod {
         /// The method.
@@ -83,6 +94,14 @@ impl core::fmt::Display for DescribeError {
                 f,
                 "the example at `{at}` does not satisfy its own schema. An example that \
                  contradicts its schema is worse than no example, because it is copied"
+            ),
+            Self::OptionalPathParameter { operation_id, name } => write!(
+                f,
+                "`{operation_id}` declares the path parameter `{name}` as optional. OpenAPI \
+                 requires a path parameter to be required, and an earlier version silently \
+                 published `required: true` while validation kept the author's `false` — so the \
+                 description promised a check the runtime never ran. Refused here, where the \
+                 author can fix it, rather than corrected where only a consumer would notice"
             ),
             Self::UnsupportedMethod { method } => write!(
                 f,
@@ -215,13 +234,21 @@ fn operation_for(route: &Route) -> Result<Operation, DescribeError> {
                 return Err(DescribeError::BodyDeclaredAsParameter { operation_id });
             }
         };
+        // NOT silently corrected. See `OptionalPathParameter` — a correction here would publish
+        // `required: true` while `OperationSpec::validate` kept the author's `false` and skipped
+        // the presence check entirely.
+        if location == ParameterLocation::Path && !parameter.required {
+            return Err(DescribeError::OptionalPathParameter {
+                operation_id,
+                name: parameter.name.clone(),
+            });
+        }
+
         parameters.push(Parameter {
             name: parameter.name.clone(),
             location,
             description: parameter.description.clone(),
-            // OpenAPI requires a path parameter to be required. A specification saying otherwise
-            // is corrected here rather than emitting an invalid document.
-            required: parameter.required || location == ParameterLocation::Path,
+            required: parameter.required,
             // THE SAME VALUE the runtime enforces.
             schema: parameter.schema.schema().clone(),
         });

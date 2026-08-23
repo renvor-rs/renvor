@@ -28,9 +28,15 @@
 //! `wasm-bindgen` among others.
 //!
 //! It is a **dev-dependency** instead, and `tests/differential.rs` asserts that Renvor's verdict
-//! equals the reference implementation's over generated schema/instance pairs. A bounded subset
-//! that silently disagrees with the standard it publishes is the failure mode that matters, and
-//! that test is what catches it.
+//! equals the reference implementation's over a **hand-written corpus** covering every enforced
+//! keyword. A bounded subset that silently disagrees with the standard it publishes is the failure
+//! mode that matters, and that corpus is what catches it.
+//!
+//! **The corpus is curated, not generated**, and the distinction matters. An earlier version of
+//! this note said "generated schema/instance pairs", which overstated the assurance: every case is
+//! written by hand, and every one must pass `Declaration::new`, so the corpus structurally cannot
+//! cover schemas this crate REFUSES. A test enforces that no enforced keyword lacks a case, which
+//! is the guarantee actually on offer. Corrected after security review pointed at the gap.
 
 use renvor_error::{InvalidParam, Location, Pointer};
 use serde_json::{Map, Value};
@@ -438,6 +444,34 @@ impl Walker<'_> {
         number: &serde_json::Number,
         pointer: &str,
     ) {
+        // INTEGERS ARE COMPARED AS INTEGERS when both sides are exact.
+        //
+        // Comparing through `f64` rounds above 2^53, so `maximum: 9007199254740992` accepted
+        // 9007199254740993 — they are the same `f64`. For a query or path parameter that is a
+        // genuine parser differential: validation checks the ROUNDED value while the handler
+        // re-parses the ORIGINAL text, so a handler can observe a value validation never saw.
+        // Found by security review.
+        if let Some(exact) = number.as_i64() {
+            let bound = |key: &str| schema.get(key).and_then(serde_json::Value::as_i64);
+            let mut violated = false;
+            if let Some(minimum) = bound("minimum") {
+                violated |= i128::from(exact) < i128::from(minimum);
+            }
+            if let Some(maximum) = bound("maximum") {
+                violated |= i128::from(exact) > i128::from(maximum);
+            }
+            if let Some(minimum) = bound("exclusiveMinimum") {
+                violated |= i128::from(exact) <= i128::from(minimum);
+            }
+            if let Some(maximum) = bound("exclusiveMaximum") {
+                violated |= i128::from(exact) >= i128::from(maximum);
+            }
+            if violated {
+                self.push(pointer, Reason::OutOfRange);
+                return;
+            }
+        }
+
         let Some(value) = number.as_f64() else {
             return;
         };
@@ -503,6 +537,13 @@ impl Walker<'_> {
             // Serialising each item is exact rather than approximate: `serde_json::Map` is ordered,
             // so two values are equal if and only if their renderings are. `Value` implements
             // neither `Hash` nor `Ord`, which is why the set is keyed by the rendering.
+            //
+            // Equality-by-rendering is exact ONLY while `serde_json`'s `preserve_order` is off.
+            // With it on, `Map` becomes an `IndexMap`, two EQUAL objects with differently-ordered
+            // members render differently, and this check silently stops detecting duplicates — a
+            // fail-open. Every manifest in this workspace pins `default-features = false`, and
+            // `a_reordered_object_is_still_a_duplicate` asserts the property directly rather than
+            // trusting that to stay true.
             let mut seen = std::collections::BTreeSet::new();
             let repeated = items.iter().any(|item| !seen.insert(item.to_string()));
             if repeated {

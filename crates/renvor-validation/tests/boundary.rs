@@ -518,3 +518,58 @@ fn additional_properties_false_with_no_properties_permits_nothing() {
     // than about the schema rejecting everything.
     assert!(declaration.validate(Location::Body, &json!({})).is_empty());
 }
+
+#[test]
+fn an_integer_bound_beyond_f64_precision_still_holds() {
+    // Comparing through f64 rounds above 2^53, so these two are the SAME f64 and the bound was
+    // silently satisfied. For a query or path parameter that is a real parser differential: the
+    // validator sees the rounded value while the handler re-parses the ORIGINAL text, so a handler
+    // can observe a value validation never saw. Found by security review.
+    let declaration =
+        Declaration::new(json!({"type": "integer", "maximum": 9_007_199_254_740_992_i64}))
+            .expect("a valid declaration");
+
+    let over = serde_json::from_str::<serde_json::Value>("9007199254740993").expect("parses");
+    let issues = declaration.validate(Location::Body, &over);
+    assert_eq!(
+        issues.len(),
+        1,
+        "a value one above the maximum was accepted: {issues:?}"
+    );
+    assert_eq!(issues[0].reason, Reason::OutOfRange);
+
+    // POSITIVE CONTROL: the boundary itself is still accepted, so the check is a bound rather than
+    // a blanket refusal of large integers.
+    let at = serde_json::from_str::<serde_json::Value>("9007199254740992").expect("parses");
+    assert!(
+        declaration.validate(Location::Body, &at).is_empty(),
+        "the value AT the maximum was refused"
+    );
+}
+
+#[test]
+fn a_reordered_object_is_still_a_duplicate() {
+    // `uniqueItems` compares items by their RENDERING, which is exact only while `serde_json`'s
+    // `preserve_order` is off. With it on, `Map` becomes an `IndexMap`, two EQUAL objects whose
+    // members arrived in different orders render differently, and duplicate detection silently
+    // stops working — a fail-open nothing else would catch.
+    //
+    // Asserted here rather than trusted to the manifests, because a transitive dependency can
+    // enable that feature without this crate's manifest changing. Raised by security review.
+    let declaration = Declaration::new(json!({"type": "array", "uniqueItems": true}))
+        .expect("a valid declaration");
+
+    // The SAME object, members supplied in opposite orders. Parsed from text so the ordering is
+    // the input's, not a literal's.
+    let instance: serde_json::Value =
+        serde_json::from_str(r#"[{"a":1,"b":2},{"b":2,"a":1}]"#).expect("parses");
+
+    let issues = declaration.validate(Location::Body, &instance);
+    assert_eq!(
+        issues.len(),
+        1,
+        "two renderings of the same object were treated as distinct — `preserve_order` is on \
+         somewhere in the graph, and uniqueItems has silently stopped working: {issues:?}"
+    );
+    assert_eq!(issues[0].reason, Reason::NotUnique);
+}

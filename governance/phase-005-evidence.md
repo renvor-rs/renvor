@@ -211,7 +211,7 @@ compared against the committed baseline and the break is caught.
 
 | Gate | Result |
 |---|---|
-| Workspace tests, `--all-features` | **1029 passed, 0 failed, 1 ignored** |
+| Workspace tests, `--all-features` | **1038 passed, 0 failed, 1 ignored** |
 | `cargo fmt --all --check` | pass |
 | `cargo clippy --all-targets --all-features -- -D warnings` | pass |
 | `renvor-error` | 21 passed |
@@ -331,12 +331,96 @@ locally in exactly the same way. Recorded in
 cargo-deny's graph omits that subgraph is not. A fix built on a guessed cause stops working when the
 guess turns out wrong.
 
+### D-5 — a bounded request bought an unbounded response *(security review, HIGH)*
+
+`crates/renvor-validation/src/schema.rs`. Every bound in this phase was real except the one on the
+**number of issues**. `validate` produced one issue per violating element, uncapped.
+
+Measured by the reviewer against the **real** 2 MiB body limit, schema
+`{"type":"array","items":{"type":"string"}}`, body `[1,1,1,…]`:
+
+```
+request 2,097,001 B  ->  1,048,500 invalidParams  ->  response 68,090,221 B   (32x)
+parse 11 ms · validate 62 ms · serialise 342 ms  =  416 ms CPU · peak RSS 210 MB
+```
+
+Two facts compounded it. The concurrency ceiling is **1024**. And the 30-second request timeout
+**could not cancel it** — validation and serialisation are synchronous with no `.await`, so there
+is no yield point and the work blocks a worker thread outright.
+
+**Fixed** by capping in the **walker**, not at render: capping at render would still allocate a
+million pointers first. A truncated list ends with `too_many_issues`, so a caller can tell "these
+are all your mistakes" from "these are the first hundred". Regression test asserts the cap, the
+short-circuit, the truncation marker, and — as a positive control — that an ordinary three-error
+body is still reported in full.
+
+### D-6 — the relay's timeout path hung forever against the shape `cargo run` has *(security review, HIGH)*
+
+`crates/renvor-cli/src/commands/relay.rs`. This is the one that matters most, because **I had just
+"fixed" it and made it worse.**
+
+D-4's fix documented that killing `cargo` orphans the grandchild. What that documentation missed is
+that the orphan holds an **inherited copy of the stdout write end** — so the pipe never closes, the
+reader never returns, and `reader.join()` on the timeout path blocks **for as long as the orphan
+runs**. I documented the leak and kept the hang, then wrote that the deadline "reliably bounds this
+process's wait". It did not.
+
+The reviewer proved it by replicating `Invocation::run` verbatim under a watchdog:
+
+```
+sh -c 'yes renvor'          sh EXECs -> ONE process    -> Err(Timeout) after 640 ms
+sh -c 'yes renvor & wait'   sh FORKS -> grandchild     -> still blocked after 20 s
+```
+
+**Every timeout test in the suite used the first shape.** `sh -c 'sleep 60'` and
+`sh -c 'yes renvor'` both cause `sh` to exec, collapsing to a single process — so the tests passed
+without ever reaching the hazard. Both `renvor openapi` and `renvor routes` use `cargo run`, which
+forks. The C-L7 "no unbounded wait" property was not met by either.
+
+**Fixed** by detaching the reader instead of joining it. Confirmed independently before fixing: a
+`sh -c '… & wait'` child leaves a grandchild that survives `kill -9` of its parent.
+`a_forking_child_does_not_hold_the_relay` uses the forking shape the suite structurally could not
+reach.
+
+### D-7 — five fail-open paths, each contradicting a claim the code makes *(security review, MEDIUM)*
+
+| # | Fail-open | Fixed |
+|---|---|---|
+| M-1 | A malformed keyword **value** was silently skipped while still being published. `{"maxLength":"5"}`, `{"required":"name"}`, `{"type":42}`, `{"uniqueItems":"true"}` — nine probes, all accepted and all unenforced. The direct counterexample to the module's own claim that "an unenforceable constraint never ships", which held for keyword *names* and failed for every *value* | ✅ every keyword's value is type-checked at declaration time |
+| M-2 | A `$ref` resolving to a **non-schema** accepted everything beneath it. An *unresolvable* ref already failed closed; one resolving to a string failed **open** | ✅ refused at declaration time, and the runtime branch now fails closed too |
+| M-3 | An **unknown query parameter was ignored**. `?filtr[status]=admin` returned the *unscoped* collection to a caller who believed it had scoped the request — while that module's own header names "an IGNORED PARAMETER" as one of the silent choices principle IV prohibits | ✅ refused, without echoing the caller's key |
+| M-4 | `additionalProperties: false` with **no** `properties` — which permits no members at all — accepted everything. Deny-by-default, inverted | ✅ an absent `properties` is the empty declared set |
+| M-5 | Integer bounds above 2^53 were bypassable through `f64`. A genuine **parser differential**: validation saw the rounded value while the handler re-parses the original text | ✅ compared as integers when both sides are exact |
+
+### D-8 — a silent correction inside the identity claim *(security review, MEDIUM)*
+
+`describe.rs` published `required: true` for a path parameter an author declared optional, while
+`OperationSpec::validate` kept the author's `false` and skipped the presence check. The description
+promised a check the runtime never ran — **inside the one place this phase claims description and
+enforcement are an identity.**
+
+**Fixed**: it is now `DescribeError::OptionalPathParameter`. An author can fix a declaration; a
+consumer cannot fix a false description.
+
+Two smaller corrections landed with it: the Problem Details status is now converted **before** the
+document is built from it (they could otherwise disagree for an out-of-range value), and the
+`uniqueItems` rendering-equality assumption is now asserted by a test rather than trusted to
+manifests — with `preserve_order` enabled anywhere in the graph it would silently stop detecting
+duplicates.
+
 ### What this says about the test suite
 
-All three passed every existing test. D-1 and D-2 were found by reading the code adversarially and
-asking "what input has this author not imagined"; D-3 by asking "where else does this recurse".
-Property testing found neither D-1 nor D-2, because the cursor was property-tested and the query
-decoder was not — a gap this phase closes for the decoder and leaves open elsewhere.
+**All eight passed every existing test.** D-1 to D-3 were found by reading the code adversarially;
+D-5 to D-8 by a security review that measured rather than argued.
+
+The sharpest lesson is D-6. It was found **because a previous fix was wrong**: D-4 correctly
+identified that the grandchild survives, documented it, and then asserted a bound that the very same
+fact destroys. A fix that half-understands a problem can leave the system worse than before, and
+its accompanying documentation then makes the remaining half harder to see.
+
+The second lesson is about the tests. D-6 was unreachable by the suite **by construction** —
+`sh -c '…'` execs, and the hazard needs a fork. A test that cannot reach a hazard reports a pass it
+has not earned, and no amount of running it more often helps.
 
 ---
 
@@ -355,7 +439,10 @@ decoder was not — a gap this phase closes for the decoder and leaves open else
 | L-9 | **`renvor openapi` succeeds against no *generated* project**, because no Renvor crate is published and no generated project depends on the framework. The command itself works: §2 records it run end to end against a real project that depends on the framework by path, returning a document the official 3.2 schema accepts. What is zero is its reach across projects the **generator** produces, and it is zero because nothing is published for them to depend on. Carried forward from Phase 004, because it is the same limitation | framework | first publication |
 | L-10 | The API snapshot mechanism is implemented and no snapshot is committed, because the framework declares no public API of its own — the gate compares an **application's** description | framework | 012 |
 | L-11 | **The relay's deadline bounds this process's wait, not the project's binary.** The direct child is `cargo`, and `cargo run` spawns the binary as a grandchild; killing `cargo` orphans it. Fixing it means a process group, which `std` exposes only through `unsafe` `pre_exec` — and the workspace declares `unsafe_code = "forbid"`. A process-group crate is a dependency decision, not a late edit | framework | 012 |
-| L-12 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
+| L-12 | **A `$ref`-typed parameter is never coerced.** `coerce` reads only the top-level `type`, so a path or query parameter declared `{"$ref": "#/$defs/Quantity"}` stays text and always fails the type check. It **fails closed** — a legitimate request is refused, never wrongly accepted — but it refuses requests it should serve. Security review, LOW | framework | 012 |
+| L-13 | **`uniqueItems` holds one rendering per item.** Now O(n log n) rather than O(n²), but it stores each item's rendering in a set: roughly 15–30× the array's bytes in transient memory. Hashing instead of storing would keep the complexity and drop the memory. Bounded by the 2 MiB body limit. Security review, LOW | framework | 012 |
+| L-14 | **The security review did not examine everything.** Out of scope for it: `renvor-openapi`'s serialiser and compatibility layer beyond the surface `describe.rs` consumes, the vendored schema artifacts, `route/registry.rs` and the Phase-004 middleware layers, `routes.rs` beyond its relay call sites, `xtask`, and the example. No fuzzing beyond the existing proptest suites, and no concurrent load testing of the D-5 path against a live server — its numbers are single-request measurements extrapolated by the concurrency ceiling | Ahmed | before merge |
+| L-15 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
 
 ---
 
