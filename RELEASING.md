@@ -154,8 +154,16 @@ Current order:
 | 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
 | 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
-| 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http` | Facade. `renvor-config` is optional-but-default-on and `renvor-http` is optional-and-default-**off**; **all three** must exist first |
+| 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http`, `renvor-error`, `renvor-validation`, `renvor-openapi` | Facade. `renvor-config` is optional-but-default-on; the other four are optional-and-default-**off**, and `transport-rest` enables `renvor-http`, `renvor-error`, `renvor-validation` and `renvor-openapi` together. **All six** must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
+
+> **Corrected 2026-08-23.** The facade row previously listed three dependencies and said "all
+> three". `renvor` declares **six** workspace dependencies: the `transport-rest` feature enables
+> `renvor-error`, `renvor-validation` and `renvor-openapi` alongside `renvor-http`. **The ordering
+> was and remains valid** — all three omitted packages sit at positions 1–3, ahead of position 5 —
+> so nothing about publication order changes. What was wrong was the description of it, and a
+> release table that under-describes its own constraints is the same defect class as one that gets
+> the order wrong. Found by maintainer self-review during the Phase 005 closing audit.
 
 Packages sharing a position have no dependency on each other and may publish in any
 order, or concurrently. Each later position waits for **every** package at every

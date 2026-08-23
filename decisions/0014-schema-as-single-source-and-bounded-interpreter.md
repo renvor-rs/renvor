@@ -66,9 +66,14 @@ names *"optional features increase compile/dependency cost"* as a tracked progra
 `schemars` produces the schema from a Rust type, including the constraints declared with its own
 derive attributes. Renvor interprets a **bounded, declared subset** of that schema at runtime.
 
-Net new runtime packages, measured against the existing lockfile: **seven** — `schemars`,
-`schemars_derive`, `serde_derive_internals`, `dyn-clone`, `ref-cast`, `ref-cast-impl`, `zmij`.
-Against 103.
+Net new runtime packages, measured against the existing lockfile: **seven** — `base64`,
+`dyn-clone`, `ref-cast`, `ref-cast-impl`, `schemars`, `schemars_derive`, `serde_derive_internals`.
+Against 103. Six of the seven are `schemars`' own subtree; `base64` is a separate selection, for
+cursor encoding.
+
+> **Corrected 2026-08-23.** This list previously named `zmij` and omitted `base64`. `zmij` is a
+> pre-existing transitive of `serde_json` — same version and checksum in the pre-phase lockfile —
+> so it is not new. The count of seven is unchanged and the comparison against 103 is unaffected.
 
 ### The enforced subset
 
@@ -121,7 +126,7 @@ Schema 2020-12 for the keywords it claims, and the differential corpus is what h
 
 **Deletion trigger.** If a maintained crate appears that both validates **and** emits JSON Schema
 from one declaration, or if `jsonschema`'s dependency graph falls to a size comparable with the
-seven packages `schemars` adds, Renvor's interpreter is replaced and this record is superseded.
+six packages `schemars` adds, Renvor's interpreter is replaced and this record is superseded.
 
 The differential test is the acceptance harness for any replacement, so the comparison costs a
 dependency swap and a test run.

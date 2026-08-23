@@ -21,11 +21,21 @@ on it; **no exception is requested**.
 | `base64` | 0.23.1 | 2026-08-04 | MIT OR Apache-2.0 | 1.71.0 | URL-safe unpadded cursor encoding. Nothing else in the graph provides it |
 | `wait-timeout` | 0.2.1 | 2025-02-03 | MIT/Apache-2.0 | — | **Already present** since Phase 003 for the container probe. Phase 005 adds a second use: the bounded project-binary relay. One bounded-wait mechanism in the program rather than two |
 
-**Net new runtime packages, measured against the pre-Phase-005 lockfile: seven** — `schemars`,
-`schemars_derive`, `serde_derive_internals`, `dyn-clone`, `ref-cast`, `ref-cast-impl`, `zmij`.
+**Net new runtime packages, measured against the pre-Phase-005 lockfile: seven** — `base64`,
+`dyn-clone`, `ref-cast`, `ref-cast-impl`, `schemars`, `schemars_derive`, `serde_derive_internals`.
 
 `serde`, `serde_json`, `proc-macro2`, `quote`, `syn`, `unicode-ident`, `itoa`, and `memchr` were
 already resolved; the new crates add **edges**, not packages.
+
+> **Corrected 2026-08-23.** This enumeration previously ended `..., ref-cast-impl, zmij` and
+> omitted `base64`. **`zmij` is not new.** It is a pre-existing transitive of `serde_json`, present
+> in the base lockfile at `731d28dc` with the identical checksum
+> `29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b`; `base64` is absent from that
+> lockfile entirely. **The count of seven was and is correct — one name in it was wrong**, and the
+> document contradicted its own §1 table two paragraphs above, which lists `base64` as a selected
+> runtime package. Measured by differencing `git show 731d28dc:Cargo.lock` against the runtime
+> closure (`cargo tree -e normal,build`) of every publishable crate. Found by maintainer
+> self-review during the Phase 005 closing audit.
 
 ## 2. Selected — development only
 

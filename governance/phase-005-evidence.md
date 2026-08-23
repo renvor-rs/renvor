@@ -408,10 +408,77 @@ document is built from it (they could otherwise disagree for an out-of-range val
 manifests — with `preserve_order` enabled anywhere in the graph it would silently stop detecting
 duplicates.
 
+### D-9 — `multipleOf: 0` published a constraint and enforced nothing *(L-14 completion audit, MEDIUM)*
+
+The sixth fail-open path, and the one the fix for the other five did not reach.
+
+`check_keyword_values` refused a keyword whose value it **could not read**. `multipleOf: 0` reads
+perfectly well as a number — it is simply not a usable constraint, because JSON Schema 2020-12
+§6.2.1 requires the step to be strictly greater than zero. The walker then guarded its own division
+with `step > 0.0` and **skipped the check**, while `schema()` handed the same `multipleOf: 0` to
+OpenAPI, so the published description promised a rule nothing applied.
+
+The asymmetry that hid it: `minLength`, `maxLength`, `minItems` and `maxItems` are read with
+`as_u64`, which rejects negatives on its own — which is why `maxLength: -1` was already refused.
+`multipleOf` is a float read with `as_f64`, which accepts `0` and `-2` happily.
+
+**Measured**, not argued. With `multipleOf: 2` as the control the walker correctly rejects `5` and
+accepts `4`; with `multipleOf` set to `0`, `0.0` or `-2` it accepted **every** value offered —
+`5`, `7`, `0`, `0.3`, and `4`.
+
+**Fixed**: a step that is not strictly positive is refused at declaration time, where the refusal
+is visible, rather than guarded at the point of use, where the skip is silent. The
+`MalformedKeyword` message now reads *"cannot apply"* rather than *"cannot read"*, because a value
+can be perfectly readable and still unusable — which is exactly what this defect was.
+
+The regression test was **mutation-proven**: it passes with the fix, **fails with the fix reverted**,
+and passes again when it is restored.
+
+### D-10 — the compatibility gate had no committed side *(L-14 completion audit, HIGH)*
+
+`contracts/openapi.md` stated, as normative present-tense fact:
+
+> *"The comparison reads one side from **committed history**."*
+
+**It did not.** No snapshot was committed anywhere in the repository. `baseline()` is a function in
+`tests/compatibility.rs` that builds a `Document` in memory, and **both** sides of every comparison
+came from it. The test asserting FR-048 even called that in-memory value *"the COMMITTED
+baseline"*.
+
+The mechanism was real and correctly tested; what was missing was the thing it was supposed to
+compare against. So **FR-043** — *"MUST record a committed snapshot of the public description, and
+MUST state who owns it and how it is updated"* — was **not met**: no snapshot, no stated owner, no
+stated update procedure. **FR-044**, which requires verification to compare the generated
+description **against the committed snapshot**, was met only in the sense that the comparison
+function existed.
+
+This is the most serious kind of defect this project recognises, and not because of its blast
+radius: a gate that cannot fail is indistinguishable from a gate that passes, and a contract
+asserting the gate is anchored when it is not is how that goes unnoticed.
+
+**Fixed by making the claim true rather than by softening it.**
+`crates/renvor-openapi/tests/snapshots/public-description.json` is now committed and read with
+`include_str!`, so the baseline resolves at compile time against the file. Three tests guard it: a
+**semantic** comparison that fails on a breaking difference, a **byte-for-byte** comparison so the
+file cannot go stale while the semantic gate keeps passing, and the FR-048 self-approval test,
+which now compares against the real file instead of an in-memory twin. The refresh procedure is
+`#[ignore]`d and **only prints** — it cannot write the file it would be approving.
+
+**Mutation-proven**: injecting a route into the committed snapshot makes the gate fail with
+`OperationRemoved at "GET /items/{id}/history"`; restoring it makes the gate pass.
+
+The snapshot is a test fixture and is **not** in the crate's `include` list, which is `src/**/*.rs`
+only — so it ships to nobody.
+
 ### What this says about the test suite
 
-**All eight passed every existing test.** D-1 to D-3 were found by reading the code adversarially;
-D-5 to D-8 by a security review that measured rather than argued.
+**All ten passed every existing test.** D-1 to D-3 were found by reading the code adversarially;
+D-5 to D-8 by a security review that measured rather than argued; **D-9 and D-10 by the maintainer's
+own L-14 completion audit, after the security review had already reported and been acted on.**
+
+D-10 is the one worth sitting with. It was not found by attacking the code — it was found by
+checking whether a sentence in a contract was true. It was not, and nothing in a 1039-test suite
+could have told anyone, because the tests and the contract shared the same wrong assumption.
 
 The sharpest lesson is D-6. It was found **because a previous fix was wrong**: D-4 correctly
 identified that the grandchild survives, documented it, and then asserted a bound that the very same
@@ -437,12 +504,15 @@ has not earned, and no amount of running it more often helps.
 | L-7 | Pagination and filtering define **validated public contracts and ports only**. Nothing queries a database; FR-042 forbids it and it is asserted | framework | 006 |
 | L-8 | Idempotency keys, conditional requests, and ETags are named in PLAN.md §11.1 for REST 1.0 and require storage | framework | 006+ |
 | L-9 | **`renvor openapi` succeeds against no *generated* project**, because no Renvor crate is published and no generated project depends on the framework. The command itself works: §2 records it run end to end against a real project that depends on the framework by path, returning a document the official 3.2 schema accepts. What is zero is its reach across projects the **generator** produces, and it is zero because nothing is published for them to depend on. Carried forward from Phase 004, because it is the same limitation | framework | first publication |
-| L-10 | The API snapshot mechanism is implemented and no snapshot is committed, because the framework declares no public API of its own — the gate compares an **application's** description | framework | 012 |
+| L-10 | ~~The API snapshot mechanism is implemented and no snapshot is committed~~ — **CLOSED 2026-08-23.** This was not a limitation, it was D-10: a gate with no committed side, while the contract said otherwise. A snapshot is now committed at `crates/renvor-openapi/tests/snapshots/public-description.json`, with its owner and refresh procedure stated in C-14 | — | closed |
 | L-11 | **The relay's deadline bounds this process's wait, not the project's binary.** The direct child is `cargo`, and `cargo run` spawns the binary as a grandchild; killing `cargo` orphans it. Fixing it means a process group, which `std` exposes only through `unsafe` `pre_exec` — and the workspace declares `unsafe_code = "forbid"`. A process-group crate is a dependency decision, not a late edit | framework | 012 |
 | L-12 | **A `$ref`-typed parameter is never coerced.** `coerce` reads only the top-level `type`, so a path or query parameter declared `{"$ref": "#/$defs/Quantity"}` stays text and always fails the type check. It **fails closed** — a legitimate request is refused, never wrongly accepted — but it refuses requests it should serve. Security review, LOW | framework | 012 |
 | L-13 | **`uniqueItems` holds one rendering per item.** Now O(n log n) rather than O(n²), but it stores each item's rendering in a set: roughly 15–30× the array's bytes in transient memory. Hashing instead of storing would keep the complexity and drop the memory. Bounded by the 2 MiB body limit. Security review, LOW | framework | 012 |
-| L-14 | **The security review did not examine everything.** Out of scope for it: `renvor-openapi`'s serialiser and compatibility layer beyond the surface `describe.rs` consumes, the vendored schema artifacts, `route/registry.rs` and the Phase-004 middleware layers, `routes.rs` beyond its relay call sites, `xtask`, and the example. No fuzzing beyond the existing proptest suites, and no concurrent load testing of the D-5 path against a live server — its numbers are single-request measurements extrapolated by the concurrency ceiling | Ahmed | before merge |
+| L-14 | ~~The security review did not examine everything~~ — **CLOSED 2026-08-23** by the L-14 completion audit in §9b, which covered all ten named areas and found D-9 and D-10. **That audit is maintainer self-review, not independent review**, and §9b says so in its own first sentence | — | closed |
 | L-15 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
+| L-16 | **`compat::compare` recurses without a depth bound.** `compare_schema` and `compare_properties` are mutually recursive with no `MAX_DEPTH` and no depth test. Reachable by the application developer only — both documents are developer-supplied — and bounded in practice by `serde_json`'s parse limit, **measured** refusing a 200-deep document, and by `MAX_DEPTH = 64` on Renvor-generated schemas. L-14 audit, LOW | framework | 012 |
+| L-17 | **Property testing covers the cursor decoder and nothing else.** No property test over schema keyword *values* — the gap D-9 came through, so this is evidence and not conjecture — none for `compat::compare`, and none over arbitrary route registries for the serialiser. L-14 audit, informational | framework | 012 |
+| L-18 | **No live concurrent load test of the bounded-relay path.** §9b area 9 clears it structurally — no shared mutable state, one invocation per process — but structure is an argument, not a measurement. Stated rather than counted as covered | framework | 012 |
 
 ---
 
@@ -496,10 +566,66 @@ A correction to this record's headline claim, now applied — see §2.
 The **validation review** and the **requirements review** produced nothing. That is recorded as a
 tooling failure and **not** as a pass. No conclusion is drawn from their silence.
 
+### The three closing reviews — 2026-08-23, all NOT PERFORMED
+
+Three reviews were commissioned to close this phase: a validation review over the 42 tasks and the
+66 FR / 22 SC set, a requirements-and-governance review, and a security completion review scoped to
+the L-14 areas. All three targeted `d0f92cf4de82183aade5d6d8ac8e08271da796c2`.
+
+**None delivered a report.**
+
+| Review | Outcome |
+|---|---|
+| Security completion | Ran, went idle without a report, received **one** recovery request, went idle again without a report. Its recovery allowance is spent |
+| Validation | Stopped on a session limit. One recovery request sent after the limit reset. No report |
+| Requirements and governance | Stopped on a session limit. One recovery request sent after the limit reset. No report |
+
+The scratchpad was checked for artifacts rather than silence being taken at face value, per the
+closing procedure. Working files exist; **no findings and no reports were returned by any of the
+three.**
+
+**They are recorded as NOT PERFORMED, not as passes.** The work they were commissioned to do was
+then done by the maintainer directly, and is labelled as such wherever it appears: §9b for the
+L-14 areas, and `governance/phase-005-requirements-conformance.md` for the requirements mapping.
+**That is maintainer self-review. It is not agent validation and it is not independent review.**
+
+What it cost to find out: the two defects the maintainer's own audit turned up — D-9 and D-10 —
+were both in territory the commissioned reviews were meant to cover. **D-10 in particular is a gate
+that could not fail, described by a contract that said it could.** Neither the phase's own
+1039-test suite nor three commissioned reviews surfaced it.
+
 The consequence is uneven coverage, and it is worth naming: the security dimension received a
 genuine adversarial review and found real defects; the FR/SC conformance and governance-truthfulness
 dimensions received **only self-review**. The first found six defects the test suite missed. There
 is no reason to believe the other two dimensions are cleaner — only that nobody looked.
+
+## 9b. The L-14 completion audit — maintainer self-review, 2026-08-23
+
+L-14 recorded the areas the security review did **not** examine. This audit covers exactly those,
+and nothing about it is independent: the three closing reviews commissioned for it are recorded
+below at their true status, and **this audit was performed by the maintainer**, who also wrote the
+code it examines. It is **not** agent validation and it is **not** independent human review.
+
+**Bound to head `d0f92cf4de82183aade5d6d8ac8e08271da796c2`, tree `80dbdf4d`.**
+
+| # | L-14 area | Verdict |
+|---|---|---|
+| 1 | `renvor-openapi` serialiser | **No finding.** Every open-ended map is a `BTreeMap`, so sorted output is structural rather than incidental. Every byte of JSON is produced by `serde_json` (`to_string_pretty` / `to_value`) — **no hand-built JSON exists anywhere in the crate**, so injection through an operation id, path, tag, description or example is impossible by construction rather than by escaping. `to_value`'s `expect` is unreachable: all map keys are `String` and `serde_json` cannot hold a NaN |
+| 2 | Compatibility / snapshot layer | **Finding, LOW — transferred to Phase 012 as L-16.** `compare_schema` and `compare_properties` are mutually recursive with **no depth bound and no depth test**. Reachable by the application developer only: both documents are developer-supplied. Bounded in practice — `serde_json` **refused** a 200-deep document at parse time (measured), so no snapshot loaded from disk can drive it deep, and Renvor's own documents are bounded by `MAX_DEPTH = 64` at declaration time. Snapshot self-approval is already asserted to fail |
+| 3 | Vendored official schemas | **No finding, and a hypothesis disproved.** Both files are **byte-identical to upstream** — `sha256` compared against a live fetch of `spec.openapis.org`. I then hypothesised that, with no checksum pinned, a tampered schema would make the gate vacuous undetected, and **tested it**: replacing all 28 occurrences of `"unevaluatedProperties": false` with `true` in the 3.2 schema made **proof 5 fail**, reporting *"the official 3.2 schema accepted a malformed document, so every other proof in this file is vacuous"*. The negative controls detect schema weakening. **The finding was disproved on reproduction and is therefore not filed.** Residual, recorded rather than claimed as covered: a narrowly targeted edit to a sub-object no control exercises would still not be caught |
+| 4 | `route/registry.rs` | **No finding.** `describe()` takes `last_mut()` and returns `NoRouteToDescribe` on an empty registry, which is tested; duplicate operation ids are refused with a positive control. **Observation, not a finding**: calling `describe()` twice on one route silently overwrites the first spec. That is conventional last-write-wins builder semantics, developer-reachable only, and fail-closed — but no test pins it either way |
+| 5 | `routes.rs` beyond its relay call sites | **No finding.** `MAX_MANIFEST_BYTES` bounds `renvor.toml` at 64 KiB; the dump bound is delegated to `relay::MAX_ANSWER_BYTES`; the stale `MAX_DUMP_BYTES` note was removed and its removal documented |
+| 6 | `xtask` | **No finding.** The entire Phase 005 diff to `xtask` is **6 insertions and 2 deletions** — a test count of five raised to eight, and the comment explaining why. Nothing shells out with unsanitised input; no gate is weakened |
+| 7 | Examples | **No finding.** Every `expect` is on developer setup — route registration and declaration construction — not on request data, which is what an example should do: fail loudly at start-up rather than mid-request. `configuration.rs` prints a `Secret` **deliberately**, to demonstrate that it redacts |
+| 8 | Malformed and adversarial schemas | **Finding, MEDIUM — D-9, fixed and mutation-proven.** Twelve hostile declarations were run: self-referential `$ref`, `$ref` to a non-schema, exponent and 2⁵³ bounds, negative zero, control characters in property names, a 2 MB string against `maxLength: 10`, a 1 MB property name, a 50 000-element `uniqueItems` array, and malformed `maxLength` / `required` values. **Eleven behaved correctly and nothing panicked.** The twelfth was `multipleOf: 0` — see D-9 |
+| 9 | Concurrent bounded-request behaviour, D-5 path | **No finding, structurally.** `Invocation` holds no statics and no shared mutable state; each invocation owns its child process and its pipe, and the reader is a per-invocation `thread::spawn`. Realistic exposure is nil — `renvor openapi` and `renvor routes` are one-shot commands, one invocation per process. **Stated rather than glossed: I did not run a live concurrent load test.** That remains a blind spot, not a cleared area |
+| 10 | Fuzz and property-test blind spots | **Finding, informational — transferred to Phase 012 as L-17.** `proptest` covers the **cursor decoder only**. There is no property test over schema keyword *values* — which is precisely the gap D-9 came through, so this is evidence rather than speculation — no property or depth test for `compat::compare`, and no property test over arbitrary route registries for the serialiser |
+
+**What the audit changes about this record's own claims.** It found one MEDIUM fail-open defect
+(D-9) in an area the security review never reached, in a crate whose central claim is that
+description and enforcement are one value. That is the second time in this phase that the areas
+nobody looked at turned out not to be clean — and it is the whole argument for why L-14 was recorded
+as an open limitation instead of being allowed to read as coverage.
 
 ## 10. Automated review is not independent review
 
