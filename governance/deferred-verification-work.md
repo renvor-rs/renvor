@@ -124,3 +124,61 @@ than relying on a branch surviving.
 - It does **not** claim the reference gap is closed. It is open, named, and unguarded.
 - It does **not** claim the seven mishandled constructs are the complete set. They are the seven
   that were tested.
+
+---
+
+## The local licence gate is narrower than the CI licence gate
+
+**Recorded**: 2026-08-23 (Phase 005) · **Owner**: Ahmed · **Target**: Phase 012
+
+### What happened
+
+`borrow-or-share` 0.2.4 entered the lockfile as a transitive **dev-only** dependency:
+
+```
+jsonschema (dev) -> referencing -> fluent-uri -> borrow-or-share   [MIT-0]
+```
+
+`MIT-0` was not on the allow-list. **`cargo deny check` passed. GitHub's dependency-review action
+failed the pull request.**
+
+### The gap
+
+The two gates inspect different graphs. Measured on this workspace:
+
+| Package | In `cargo deny list`? |
+|---|---|
+| `schemars` (runtime) | present |
+| `jsonschema` (dev) | **absent** |
+| `proptest` (dev) | **absent** |
+| `fluent-uri`, `referencing`, `borrow-or-share` (dev, transitive) | **absent** |
+
+Setting `exclude-dev = false` in `[graph]` did not change the result.
+
+[`contracts/verification-sequence.md`](../contracts/verification-sequence.md) describes step 6 as
+*"Dependency and licence policy — `cargo deny check`"*, and a reader would reasonably take that to
+mean the whole dependency graph. For dev-dependencies it does not.
+
+**A local gate narrower than the CI gate it is supposed to pre-empt is a gate that reports a pass it
+has not earned.** The contributor sees green, pushes, and CI fails on something the local run
+claimed to have checked.
+
+### Why it is recorded rather than fixed here
+
+The mechanism is not yet established. It could be cargo-deny's default graph construction, the
+`[graph]` configuration, or something about how a virtual workspace's dev-dependencies resolve. The
+honest position is that the **observation** is confirmed and the **cause** is not, and a fix built
+on a guessed cause is a fix that stops working when the guess turns out wrong.
+
+### What would close it
+
+1. Establish why the dev-only subgraph is absent, from cargo-deny's own documentation or source.
+2. Make step 6 cover the same graph the CI action covers — or, if that is genuinely not possible,
+   **say so in the contract** rather than leaving the wider reading standing.
+3. A test that fails if the two gates' package sets diverge, so this cannot silently return.
+
+### Interim state
+
+`MIT-0` is allowed in **both** gates, with the reasoning recorded in `deny.toml`. That resolves the
+immediate finding. It does **not** resolve the gap: the next dev-only licence that is not on the
+list will be invisible locally in exactly the same way.

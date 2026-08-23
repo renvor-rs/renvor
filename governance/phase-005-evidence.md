@@ -283,6 +283,43 @@ being **freed**, before any Renvor code sees it — and `serde_json::from_str` e
 recursion limit, so a *parsed* schema never reaches that depth. The guard is for a schema built
 programmatically, where nothing else would stop it.
 
+### D-4 — CI's licence gate caught what the local one could not see
+
+Not a defect in Phase 005's code, but a defect this phase's dependencies **exposed**, and it belongs
+here because it changes what "step 6 passed" is worth.
+
+`borrow-or-share` 0.2.4 entered the lockfile transitively:
+
+```
+jsonschema (dev) -> referencing -> fluent-uri -> borrow-or-share   [MIT-0]
+```
+
+`MIT-0` was not on the allow-list. **`cargo deny check` passed. GitHub's dependency-review action
+failed the pull request.**
+
+The two gates inspect different graphs. Measured: `cargo deny list` reports `schemars` (runtime) and
+reports **neither** `jsonschema`, `proptest`, `fluent-uri`, `referencing`, nor `borrow-or-share` —
+all dev-only. Setting `exclude-dev = false` changed nothing.
+
+**Resolved**: `MIT-0` is now allowed in **both** gates. It is MIT *without* the attribution
+requirement — strictly more permissive than the already-allowed `MIT`, OSI-approved — and it reaches
+no published crate, existing only in the build environment. The reasoning is recorded in
+`deny.toml` beside the allowance rather than left to be re-litigated.
+
+> **This is a licence-policy addition.** `deny.toml` states that adding to the allow-list *"is a
+> policy change and goes through pull request review"*, which is where it now is. It is flagged
+> explicitly for the maintainer rather than folded in as a routine fix.
+
+**Not resolved**: the gap itself. The next dev-only licence outside the list will be invisible
+locally in exactly the same way. Recorded in
+[`deferred-verification-work.md`](deferred-verification-work.md), and
+[`contracts/verification-sequence.md`](../contracts/verification-sequence.md) 1.1.2 now states step
+6's actual scope rather than leaving the wider reading standing.
+
+**The cause is not established, and is not guessed at.** The observation is confirmed; why
+cargo-deny's graph omits that subgraph is not. A fix built on a guessed cause stops working when the
+guess turns out wrong.
+
 ### What this says about the test suite
 
 All three passed every existing test. D-1 and D-2 were found by reading the code adversarially and
