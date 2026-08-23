@@ -568,3 +568,48 @@ Unchanged and still true: the panic payload reaching process stderr; the header 
 not set; no crate published, so `renvor routes` reaches zero generated projects; registry names
 verified rather than reserved; the macOS trust-store test's machine sensitivity. Each is permitted by
 its governing requirement and none is waived.
+
+## A gate that was not a gate — found and fixed 2026-08-23
+
+The complete exact-head sequence returned **`FINAL_FAIL=1`**: `cargo xtask verify` **passed** on
+1.94.0 and **failed** on stable, at step 8, over an **unchanged tree**. HEAD and tree were identical
+before and after; the worktree held 0 entries.
+
+**Root cause.** The working-tree secret scan (`gitleaks dir .`) reads **generated build output**.
+`target/` is ignored by tracked `.gitignore` line 10 and appears in 0 commits, but `gitleaks dir`
+does not honour that, so the scan's verdict depended on what had been compiled:
+
+| Scanned | Result |
+|---|---|
+| 190 MB | clean |
+| 301 MB | clean |
+| 376 MB | clean |
+| **531 MB** | **`square-access-token` in `target/doc/search.index/<hash>.js`** |
+| **7.07 MB** *(after the fix)* | clean, and now matching the repository's actual content |
+
+The finding is `cargo doc`'s compressed search index: one chunk begins `EAAA`, the literal prefix the
+Square rule keys on. It is regenerated with different bytes — and a different file name, which is a
+content hash — on every documentation build. It only appeared once a **second** toolchain's
+`cargo doc` had run, which is precisely why the first `verify` passed and the second did not.
+
+**This was fixed, not re-run.** A gate whose verdict depends on build state is not a gate, and the
+sequence that produced it — run `verify` twice over one tree — is the sequence this project uses.
+Re-running until it passed would have buried a non-deterministic control.
+
+**The fix is narrower than the failure and was verified in three parts**, because this repository's
+own gitleaks policy records an incident where a `paths` allowlist caused `scanned ~0 bytes` and let
+an injected canary through:
+
+1. the false positive is gone and the scan now reads 7.07 MB rather than 531 MB;
+2. a canary AWS key and secret planted in an untracked `canary_check.rs` at the repository root **is
+   still reported** (`aws-access-token`) with the entry active;
+3. the same canary placed **under `target/`** is not reported — the entry doing exactly its job and
+   nothing wider.
+
+Recorded because it produced a false reading first time: **`AKIAIOSFODNN7EXAMPLE` is not a usable
+canary.** It is AWS's own documentation example and gitleaks allowlists it by default, so the first
+canary run reported "not detected" and would have been read as a broken scanner rather than a bad
+test input.
+
+The committed-history scanner (`gitleaks git`) in the same step is untouched and still reads all
+335 commits.
