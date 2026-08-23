@@ -510,3 +510,9 @@ specification, constitution, compatibility matrix, and security checklist.
 **That review has not occurred, and this record does not claim it has.** The phase remains **open**
 until it does, or until a waiver is recorded with an owner, an expiry, and a removal plan — which is
 Ahmed's decision and not this record's.
+
+**This includes the security review in §9a.** It was thorough, it measured rather than argued, and
+it found six defects a 1038-test suite had missed — and it is still an **automated** review. Its
+value is not in question; its *category* is. A good automated review is exactly the thing most
+likely to be quietly promoted into satisfying a requirement it does not satisfy, so it is named
+here rather than left to be inferred from the section title.
