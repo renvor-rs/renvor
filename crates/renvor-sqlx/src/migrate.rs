@@ -32,7 +32,7 @@ use renvor_database::{DatabaseError, DatabaseErrorKind, MigrationSettings, Rever
 use renvor_database::{MigrationOutcome, MigrationReport, MigrationStep};
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use sqlx::Connection as _;
-use sqlx::migrate::{MigrationType, Migrator};
+use sqlx::migrate::Migrator;
 
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use crate::error;
@@ -96,7 +96,29 @@ impl Migrations {
     /// ordering is caught before a schema is.
     #[must_use]
     pub fn versions(&self) -> Vec<i64> {
-        self.migrator.iter().map(|m| m.version).collect()
+        self.forward().map(|m| m.version).collect()
+    }
+
+    /// The migrations that are applied moving **forward**.
+    ///
+    /// # A reversible migration appears twice, and that is not a version appearing twice
+    ///
+    /// `Migrator::iter()` yields a `ReversibleUp` **and** a `ReversibleDown` entry for each
+    /// reversible migration, both carrying the same version. Counting the raw iterator therefore
+    /// reports every reversible migration twice — which is exactly what an early version of this
+    /// code did, and what `versions_are_strictly_increasing_and_independent_of_directory_order`
+    /// caught before it reached a report an operator would have trusted.
+    fn forward(&self) -> impl Iterator<Item = &sqlx::migrate::Migration> {
+        self.migrator
+            .iter()
+            .filter(|m| m.migration_type.is_up_migration())
+    }
+
+    /// Whether a rollback file exists for `version`.
+    fn has_down(&self, version: i64) -> bool {
+        self.migrator
+            .iter()
+            .any(|m| m.version == version && m.migration_type.is_down_migration())
     }
 
     /// Whether the set is strictly ordered.
@@ -111,15 +133,13 @@ impl Migrations {
     /// Whether every migration declares a rollback.
     #[must_use]
     pub fn reversibility_of(&self, version: i64) -> Option<Reversibility> {
-        self.migrator.iter().find(|m| m.version == version).map(|m| {
-            if matches!(
-                m.migration_type,
-                MigrationType::ReversibleUp | MigrationType::ReversibleDown
-            ) {
-                Reversibility::Reversible
-            } else {
-                Reversibility::Irreversible
-            }
+        if !self.forward().any(|m| m.version == version) {
+            return None;
+        }
+        Some(if self.has_down(version) {
+            Reversibility::Reversible
+        } else {
+            Reversibility::Irreversible
         })
     }
 
@@ -199,7 +219,7 @@ macro_rules! runner {
                 let mut connection = pool
                     .acquire()
                     .await
-                    .map_err(|inner| error::translate(&inner))?;
+                    .map_err(|inner| error::classify_error(&inner))?;
 
                 let outcome = tokio::time::timeout(
                     self.settings.run_timeout(),
@@ -221,7 +241,7 @@ macro_rules! runner {
                         // never handed to another caller, and closing ends the session, which
                         // releases a session-level advisory lock whether or not `unlock()` ran.
                         let _ = connection.detach().close().await;
-                        Err(error::translate(&sqlx::Error::Migrate(Box::new(inner))))
+                        Err(error::classify_error(&sqlx::Error::Migrate(Box::new(inner))))
                     }
                     Err(_) => {
                         let _ = connection.detach().close().await;
@@ -247,16 +267,13 @@ impl Migrations {
         // a measurement claim this code cannot support.
         let each = elapsed / u32::try_from(newly).unwrap_or(1);
 
-        for migration in self.migrator.iter() {
+        for migration in self.forward() {
             let outcome = if before.contains(&migration.version) {
                 MigrationOutcome::AlreadyApplied
             } else {
                 MigrationOutcome::Applied
             };
-            let reversibility = if matches!(
-                migration.migration_type,
-                MigrationType::ReversibleUp | MigrationType::ReversibleDown
-            ) {
+            let reversibility = if self.has_down(migration.version) {
                 Reversibility::Reversible
             } else {
                 Reversibility::Irreversible

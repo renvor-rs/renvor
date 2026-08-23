@@ -24,7 +24,7 @@
 //! offline cache, and a framework compiling against two backends would need two caches kept in
 //! step.
 
-mod error;
+pub mod error;
 pub mod migrate;
 
 use core::time::Duration;
@@ -35,6 +35,7 @@ use renvor_database::{
 };
 use sqlx::pool::PoolOptions;
 
+pub use error::classify_error;
 pub use migrate::Migrations;
 
 /// A bounded SQLx pool implementing [`renvor_database::Database`].
@@ -75,12 +76,12 @@ impl<DB: sqlx::Database> SqlxDatabase<DB> {
             .max_lifetime(Some(settings.max_lifetime()))
             .connect(dsn.expose())
             .await
-            .map_err(|error| error::translate(&error))?;
+            .map_err(|error| error::classify_error(&error))?;
 
         Ok(Self {
             pool,
             kind,
-            close_timeout: settings.acquire_timeout(),
+            close_timeout: settings.drain_timeout(),
         })
     }
 
@@ -173,14 +174,14 @@ impl<'c, DB: sqlx::Database> SqlxUnitOfWork<'c, DB> {
 impl<DB: sqlx::Database> UnitOfWork for SqlxUnitOfWork<'_, DB> {
     async fn commit(self) -> Result<(), DatabaseError> {
         self.inner.commit().await.map_err(|error| {
-            let _ = error::translate(&error);
+            let _ = error::classify_error(&error);
             DatabaseError::new(DatabaseErrorKind::CommitFailed)
         })
     }
 
     async fn rollback(self) -> Result<(), DatabaseError> {
         self.inner.rollback().await.map_err(|error| {
-            let _ = error::translate(&error);
+            let _ = error::classify_error(&error);
             DatabaseError::new(DatabaseErrorKind::RollbackFailed)
         })
     }
@@ -212,7 +213,7 @@ where
             .pool
             .begin()
             .await
-            .map_err(|error| error::translate(&error))?;
+            .map_err(|error| error::classify_error(&error))?;
         Ok(SqlxUnitOfWork { inner })
     }
 
@@ -225,13 +226,13 @@ where
             .pool
             .acquire()
             .await
-            .map_err(|error| error::translate(&error))?;
+            .map_err(|error| error::classify_error(&error))?;
 
         sqlx::query(READINESS_PROBE)
             .execute(&self.pool)
             .await
             .map_err(|error| {
-                let _ = error::translate(&error);
+                let _ = error::classify_error(&error);
                 DatabaseError::new(DatabaseErrorKind::NotReady)
             })?;
         Ok(())

@@ -16,12 +16,19 @@ use sqlx::error::ErrorKind;
 
 /// Translates a driver error, recording the original for operators only.
 ///
-/// # Why the original is logged here rather than returned
+/// # Why this is public
+///
+/// A repository implementation in an application's adapter layer receives a `sqlx::Error` and owes
+/// its caller a [`DatabaseError`]. Without this function every application would write its own
+/// mapping, and each one would be a fresh opportunity to put the driver's text — and therefore a
+/// value, a table name, or a host — into something a caller receives.
+///
+/// # Why the original is logged rather than returned
 ///
 /// A caller that received the driver's text would be receiving a string this crate cannot bound,
 /// cannot redact, and does not control the shape of. An operator reading a span is a different
 /// consumer with different rights.
-pub(crate) fn translate(error: &sqlx::Error) -> DatabaseError {
+pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
     // The driver's text goes to telemetry. It never reaches the returned value.
     tracing::debug!(driver_error = %error, "database operation failed");
     DatabaseError::new(classify(error))

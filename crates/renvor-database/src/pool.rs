@@ -78,6 +78,7 @@ pub struct PoolSettings {
     connect_timeout: Duration,
     idle_timeout: Duration,
     max_lifetime: Duration,
+    drain_timeout: Duration,
 }
 
 /// The largest pool this crate will construct.
@@ -103,6 +104,7 @@ impl Default for PoolSettings {
             connect_timeout: Duration::from_secs(10),
             idle_timeout: Duration::from_secs(600),
             max_lifetime: Duration::from_secs(1800),
+            drain_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -142,6 +144,22 @@ impl PoolSettings {
     #[must_use]
     pub const fn max_lifetime(&self) -> Duration {
         self.max_lifetime
+    }
+
+    /// How long shutdown waits for checked-out connections to come back.
+    ///
+    /// # This is not `acquire_timeout`, and conflating them is a real mistake
+    ///
+    /// `acquire_timeout` bounds how long a **caller** waits to be given a connection.
+    /// `drain_timeout` bounds how long **shutdown** waits for connections to be given back. They
+    /// answer different questions and a deployment routinely wants different numbers: a short
+    /// acquire deadline keeps request latency bounded, while a longer drain deadline lets
+    /// in-flight work finish.
+    ///
+    /// Exceeding it is an **error**, not a successful shutdown — constitution principle IV.
+    #[must_use]
+    pub const fn drain_timeout(&self) -> Duration {
+        self.drain_timeout
     }
 
     /// Sets the maximum connection count.
@@ -216,6 +234,17 @@ impl PoolSettings {
         self.max_lifetime = checked(value)?;
         Ok(self)
     }
+
+    /// Sets the shutdown drain deadline.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::Unclassified`] for zero or for a value above [`MAX_TIMEOUT`]. An
+    /// unbounded drain would turn a stuck connection into a process that never exits.
+    pub fn with_drain_timeout(mut self, value: Duration) -> Result<Self, DatabaseError> {
+        self.drain_timeout = checked(value)?;
+        Ok(self)
+    }
 }
 
 /// Refuses a zero or over-long duration.
@@ -251,7 +280,28 @@ mod tests {
         let settings = PoolSettings::default();
         assert!(!settings.acquire_timeout().is_zero());
         assert!(!settings.connect_timeout().is_zero());
+        assert!(!settings.drain_timeout().is_zero());
         assert!(settings.max_connections() > 0);
+    }
+
+    #[test]
+    fn the_drain_bound_is_independent_of_the_acquire_bound() {
+        let settings = PoolSettings::default()
+            .with_acquire_timeout(Duration::from_secs(2))
+            .expect("ok")
+            .with_drain_timeout(Duration::from_secs(30))
+            .expect("ok");
+        assert_eq!(settings.acquire_timeout(), Duration::from_secs(2));
+        assert_eq!(settings.drain_timeout(), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn an_unbounded_drain_cannot_be_expressed() {
+        assert!(
+            PoolSettings::default()
+                .with_drain_timeout(Duration::ZERO)
+                .is_err()
+        );
     }
 
     #[test]

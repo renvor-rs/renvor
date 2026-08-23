@@ -1,0 +1,1 @@
+ALTER TABLE rv_widget ADD COLUMN rank_value BIGINT NOT NULL DEFAULT 0;

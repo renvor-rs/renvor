@@ -155,11 +155,27 @@ fn bounded(value: Duration) -> Result<Duration, crate::DatabaseError> {
 }
 
 /// What happened to one migration.
+///
+/// # These describe an observation, not an attribution
+///
+/// The distinction matters under concurrent startup and is stated rather than left to be
+/// discovered. A runner reads the applied set before it starts and after it finishes; the lock is
+/// taken and released **inside** that window, so which process performed a given apply is not
+/// recoverable through the driver's public API.
+///
+/// Consequently, when several processes start at once, **more than one may report the same
+/// migration as [`MigrationOutcome::Applied`]** — each is truthfully saying "this was not recorded
+/// as applied when I began". The database still applied it exactly once, which is the property that
+/// matters and the one the contract suite asserts against the bookkeeping table rather than against
+/// the sum of the reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MigrationOutcome {
-    /// It was applied in this run.
+    /// It was **not recorded as applied when this run began**.
+    ///
+    /// For a single starter this means "this run applied it". See the type documentation for why
+    /// that reading is not safe when several processes start together.
     Applied,
-    /// It was already recorded as applied, and its checksum matched.
+    /// It was already recorded as applied when this run began, and its checksum matched.
     AlreadyApplied,
 }
 
