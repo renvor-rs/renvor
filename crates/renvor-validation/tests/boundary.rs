@@ -333,3 +333,41 @@ fn unique_items_does_not_degrade_quadratically() {
     assert_eq!(found.len(), 1, "a repeat was not detected");
     assert_eq!(found[0].reason, Reason::NotUnique);
 }
+
+#[test]
+fn a_pathologically_nested_schema_is_refused_rather_than_overflowing_the_stack() {
+    // The runtime walker was already depth-bounded because a `$ref` cycle would otherwise abort on
+    // a caller's request. This walk follows no `$ref`, so a cycle cannot reach it — but literal
+    // nesting can, and a schema arrives as a parsed `Value` that an author may have read from a
+    // file. An abort at declaration time is a worse diagnostic than a refusal.
+    // 200 deep: comfortably past the 64-frame bound, and comfortably inside what a
+    // `serde_json::Value` survives.
+    //
+    // NOT deeper, and the reason is worth recording: `Value`'s `Drop` is itself recursive, so a
+    // 2000-deep value overflows the stack while being FREED — before any Renvor code sees it. A
+    // test at that depth measures serde_json, not this guard.
+    //
+    // Production is bounded before either: `serde_json::from_str` enforces its own recursion limit
+    // and returns an error, so a parsed schema never becomes a value this deep. The guard below is
+    // for a schema built programmatically, where nothing else would stop it.
+    let mut schema = json!({"type": "string"});
+    for _ in 0..200 {
+        schema = json!({"type": "object", "properties": {"next": schema}});
+    }
+
+    // The assertion is that this RETURNS a refusal. A stack overflow aborts, and nothing below
+    // would run.
+    let result = Declaration::new(schema);
+    assert!(result.is_err(), "a 200-deep schema was accepted");
+
+    // POSITIVE CONTROL: ordinary nesting still works, so the refusal is about depth rather than
+    // about nesting being rejected wholesale.
+    let mut shallow = json!({"type": "string"});
+    for _ in 0..10 {
+        shallow = json!({"type": "object", "properties": {"next": shallow}});
+    }
+    assert!(
+        Declaration::new(shallow).is_ok(),
+        "a 10-deep schema was refused"
+    );
+}

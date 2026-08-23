@@ -170,7 +170,7 @@ impl Declaration {
     /// [`DeclarationError::UnsupportedKeyword`] naming the first keyword outside the subset, and
     /// where it appeared. [`DeclarationError::NotASchema`] for a non-schema in a schema position.
     pub fn new(schema: Value) -> Result<Self, DeclarationError> {
-        check_subset(&schema, "")?;
+        check_subset(&schema, "", 0)?;
         Ok(Self { root: schema })
     }
 
@@ -530,7 +530,18 @@ fn resolve<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
 }
 
 /// Walks a schema and refuses the first keyword outside the supported sets.
-fn check_subset(schema: &Value, at: &str) -> Result<(), DeclarationError> {
+///
+/// # Depth-bounded, like the validator
+///
+/// [`Walker::check`] bounds its recursion because a `$ref` cycle would otherwise abort the process
+/// on a caller's request. This walk follows no `$ref`, so a cycle cannot reach it — but literal
+/// nesting can, and a schema arrives as a `serde_json::Value` that an author may have parsed from
+/// a file. An abort at declaration time is a worse diagnostic than a refusal, and "an author would
+/// not do that" is not a bound.
+fn check_subset(schema: &Value, at: &str, depth: usize) -> Result<(), DeclarationError> {
+    if depth > MAX_DEPTH {
+        return Err(DeclarationError::NotASchema { at: at.to_owned() });
+    }
     if schema.is_boolean() {
         return Ok(());
     }
@@ -566,17 +577,21 @@ fn check_subset(schema: &Value, at: &str) -> Result<(), DeclarationError> {
             let mut names: Vec<&String> = map.keys().collect();
             names.sort();
             for name in names {
-                check_subset(&map[name], &format!("{at}/{container}/{}", escape(name)))?;
+                check_subset(
+                    &map[name],
+                    &format!("{at}/{container}/{}", escape(name)),
+                    depth + 1,
+                )?;
             }
         }
     }
     if let Some(items) = object.get("items") {
-        check_subset(items, &format!("{at}/items"))?;
+        check_subset(items, &format!("{at}/items"), depth + 1)?;
     }
     if let Some(additional) = object.get("additionalProperties")
         && !additional.is_boolean()
     {
-        check_subset(additional, &format!("{at}/additionalProperties"))?;
+        check_subset(additional, &format!("{at}/additionalProperties"), depth + 1)?;
     }
 
     Ok(())
