@@ -15,3 +15,33 @@ cargo run
 Local HTTPS was **recorded as wanted**. Nothing has been issued and no trust store has been
 modified — that is a later phase's work, and doing it silently is exactly what renvor will not do.
 {% endif %}
+
+## Serving HTTP
+
+This project records `transport = "{{ transport }}"` in `renvor.toml`, and **does not yet depend on
+the Renvor framework**.
+
+That is deliberate, and it is stated rather than hidden: **no Renvor crate is published to
+crates.io yet**. A generated `Cargo.toml` naming `renvor` as a dependency would not resolve, so this
+project would not build — and a generator that emits a project which cannot be built has not
+generated a project.
+
+So `[dependencies]` is empty and `cargo build` works today. When the crates are published, add:
+
+```toml
+[dependencies]
+renvor = { version = "<the published version>", features = ["transport-rest"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+```
+
+and declare your routes against one registry, which is also what `renvor routes` inspects:
+
+```rust
+use renvor::{Method, RouteRegistry, Response};
+
+let mut routes = RouteRegistry::new();
+routes.get("/health", |_| async { Response::text("ok") })?;
+```
+
+Until then this file is the only place that describes the wiring, because describing it in code
+that cannot compile would be worse.

@@ -16,16 +16,25 @@
 > lifecycle, a single-pass provider dependency resolver with a counted work budget, layered
 > configuration with per-key attribution and total secret redaction, bounded deadlines on
 > every call into your code, liveness and readiness as independent answers, and a failure
-> injection harness. It runs, and it is tested.
+> injection harness. Phase 003 added the **`renvor` command** and its transactional project
+> generator. Phase 004 adds the **first real transport**: a REST and HTTP delivery adapter with
+> declarative routing, a versioned middleware order, trusted-proxy client identity, fail-closed
+> host validation, deny-by-default CORS, documented limits, and a drain bounded by the kernel's
+> own work gate. It runs, and it is tested.
 >
-> It is also **transport-independent**, which is the honest limit: there is no HTTP server,
-> no database adapter, no CLI, and no way to receive a request. You can start and stop an
-> application; you cannot yet serve anything with one.
+> **The honest limits, which are several.** There is still no database adapter, no
+> authentication, and no validation boundary. The transport lives behind an **off-by-default**
+> feature, so a default build resolves none of it. And because **nothing is published**, a project
+> the generator produces cannot yet depend on the framework — it records its transport choice and
+> documents the dependency to add later, rather than emitting one that would not resolve.
 >
-> **Every API is explicitly unstable (FR-036)** and will change once the first real transport
-> adapter exercises it. **Do not adopt Renvor for anything yet.**
+> **Every API is explicitly unstable**, and Phase 004 does **not** change that. The instability
+> window has two closure conditions in [`contracts/api-stability.md`](contracts/api-stability.md);
+> a real transport exercising the surface satisfies the **first**. The second requires an accepted
+> decision record that supersedes ADR-0002, and none exists. **The window is open.**
+> **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework, currently in Phase 002 of its development programme.
+Renvor is a Rust framework, currently in Phase 004 of its development programme.
 
 ## The command is `renvor`
 

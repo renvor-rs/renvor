@@ -86,6 +86,22 @@ pub enum Code {
     ToolMissing,
     /// The container runtime is not installed, or is installed and not running.
     ContainerRuntimeUnavailable,
+    /// The project does not declare Renvor transport wiring, so its routes cannot be obtained.
+    ///
+    /// # Why this is a distinct code rather than a silent empty list
+    ///
+    /// Route inspection asks the **application binary** for its own route registry — that is the
+    /// only source that cannot drift from the router. A project that does not depend on the
+    /// framework has no such registry to report.
+    ///
+    /// Printing an empty route table and exiting `0` would be indistinguishable, to a consumer,
+    /// from an application that genuinely declares no routes, and the two mean entirely different
+    /// things. So this is a failure with a name.
+    ///
+    /// **Added in Phase 004.** Adding a code to the closed registry is **not** a `schemaVersion`
+    /// bump: C-2 defines breaking as renaming, reusing, or **removing** a code. The `1 → 2` bump
+    /// was caused by a removal, not by the four additions that accompanied it.
+    TransportNotWired,
     /// The project has no container controls to drive.
     ///
     /// # Why three codes were added in schemaVersion 2 rather than reusing existing ones
@@ -135,6 +151,7 @@ impl Code {
             Self::Cancelled => "cancelled",
             Self::ToolMissing => "tool_missing",
             Self::ContainerRuntimeUnavailable => "container_runtime_unavailable",
+            Self::TransportNotWired => "transport_not_wired",
             Self::ContainerControlsMissing => "container_controls_missing",
             Self::RenderFailed => "render_failed",
             Self::BoundExceeded => "bound_exceeded",
@@ -162,6 +179,7 @@ impl Code {
             | Self::ManifestInvalid
             | Self::ProjectVerificationFailed
             | Self::ContainerControlsMissing
+            | Self::TransportNotWired
             | Self::RenderFailed
             | Self::BoundExceeded
             | Self::StagingFailed
@@ -177,7 +195,7 @@ impl Code {
     /// `#[cfg(test)]` because nothing at runtime iterates the registry; a shipped constant that no
     /// shipped code reads is dead weight that reads like an API.
     #[cfg(test)]
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 20] = [
         Self::Usage,
         Self::UnsupportedValue,
         Self::UnsupportedCombination,
@@ -192,6 +210,7 @@ impl Code {
         Self::ToolMissing,
         Self::ContainerRuntimeUnavailable,
         Self::ContainerControlsMissing,
+        Self::TransportNotWired,
         Self::RenderFailed,
         Self::BoundExceeded,
         Self::StagingFailed,
@@ -275,7 +294,11 @@ mod tests {
     fn the_registry_is_complete() {
         // Guards against adding a variant and forgetting `ALL`, which would let a code exist that
         // no test enumerates.
-        assert_eq!(Code::ALL.len(), 19);
+        //
+        // 19 -> 20 in Phase 004: `transport_not_wired`. The literal is updated deliberately rather
+        // than derived, because deriving it from `ALL` would make this assertion vacuous — it
+        // exists precisely so that growing the registry is a decision somebody records.
+        assert_eq!(Code::ALL.len(), 20);
     }
 
     /// The published registry, parsed out of the contract document itself.

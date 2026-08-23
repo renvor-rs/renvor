@@ -258,4 +258,64 @@ mod tests {
         assert!(error.message.contains("nothing was written"));
         assert!(error.message.contains("equivalent"));
     }
+
+    #[test]
+    fn the_wizard_asks_no_transport_question() {
+        // FR-049: "The wizard MUST NOT gain a transport question, and `transport` MUST be recorded
+        // in the generated manifest."
+        //
+        // The recorded half was pinned by `tests/legacy_compatibility.rs`. The MUST NOT half was
+        // pinned by nothing: `fill` asks six questions and none is about transport, but no test
+        // enumerated them, so adding a seventh would have failed nothing.
+        //
+        // Enumerating the questions from the source is deliberate. The alternative — driving the
+        // wizard — needs a terminal, which is exactly what `require_drawable` refuses in a test.
+        let source = include_str!("prompts.rs");
+
+        let body = source
+            .split_once("pub fn fill(mut answers: Answers)")
+            .expect("the wizard entry point exists")
+            .1
+            .split_once("prompt::outro(")
+            .expect("the wizard ends with its outro")
+            .0;
+
+        let asked: Vec<&str> = body
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(line))
+            .filter(|code| code.contains("prompt::text(") || code.contains("prompt::confirm("))
+            .collect();
+
+        assert_eq!(
+            asked.len(),
+            6,
+            "the wizard asks {} question(s), not the six FR-049 was reviewed against. A new \
+             question must be checked against FR-049 before this count is updated: {asked:#?}",
+            asked.len()
+        );
+
+        for line in &asked {
+            let lowered = line.to_ascii_lowercase();
+            assert!(
+                !lowered.contains("transport"),
+                "the wizard gained a transport question, which FR-049 forbids: {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wizard_question_scan_would_notice_one_being_added() {
+        // POSITIVE CONTROL. Without it, a scan whose matching had drifted would report zero
+        // questions, find no transport among them, and pass.
+        let sample = "    answers.transport = prompt::confirm(\"Which transport?\", true)?;";
+        let code = sample.split("//").next().unwrap_or(sample);
+        assert!(
+            code.contains("prompt::confirm("),
+            "the scan does not recognise the construct it counts"
+        );
+        assert!(
+            code.to_ascii_lowercase().contains("transport"),
+            "the scan would not recognise a transport question"
+        );
+    }
 }

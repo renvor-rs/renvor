@@ -79,6 +79,7 @@ drift apart silently.
 | `tool_missing` | 5 | A required tool is absent. `details.tool`, `details.required`, `details.found` |
 | `container_runtime_unavailable` | 5 | `details.reason` distinguishes *not installed* from *not running* |
 | `container_controls_missing` | 3 | The project has no container controls to drive. `details.expected`, `details.remedy` |
+| `transport_not_wired` | 3 | Route inspection could not obtain the project's route registry, because the project declares no Renvor transport wiring. `details.transport` names the recorded transport; `details.reason` says why the registry is unreachable. **Never an empty route list and exit `0`** — an empty success is indistinguishable from an application with no routes, and the two mean different things |
 | `render_failed` | 3 | Template rendering failed. Destination untouched |
 | `bound_exceeded` | 3 | A documented bound was exceeded. `details.bound`, `details.limit` |
 | `staging_failed` | 3 | The staging directory could not be created. **Nothing was staged**, so nothing can have been left behind |
@@ -86,6 +87,17 @@ drift apart silently.
 | `internal` | 1 | **Unclassified. A defect** |
 
 **There is no row for exit `0`**, and that is not an omission: this is the registry of *failures*, and success carries no error code. `0` is defined in [`command-surface.md`](command-surface.md).
+
+### Added in Phase 004, without a version bump
+
+`transport_not_wired` was **added** to the closed registry. That is **not** a breaking change and
+therefore **not** a `schemaVersion` bump.
+
+The rule above is precise about which operations break a consumer: *"Renaming one, reusing one for
+a different meaning, or removing one is a breaking change."* A consumer pinned to `2` that meets an
+unrecognised code has met a failure it does not have a specific handler for; a consumer that meets a
+**removed** code has silently stopped recognising a failure it used to handle. The `1 → 2` bump was
+caused by the **removal** of `destination_not_empty`, not by the four codes added alongside it.
 
 ## Schema history
 

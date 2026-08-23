@@ -8,8 +8,12 @@
 //! runtime code existed, and this crate was empty of capability by design. **Phase 002 changes
 //! that**: the transport-independent kernel is here, and this facade re-exports it.
 //!
-//! What is *not* here is equally deliberate. There is no HTTP, no persistence, and no CLI — by
-//! requirement rather than omission (spec FR-033). The first real transport arrives in Phase 004.
+//! **Phase 004 adds the first real transport**: a REST and HTTP delivery adapter, behind the
+//! **off-by-default** `transport-rest` feature. A build that does not enable it resolves no HTTP
+//! server, routing, or middleware crate at all — the kernel still carries none, by requirement
+//! rather than omission (spec FR-033).
+//!
+//! There is still no persistence and no CLI in this crate.
 //!
 //! Assembly is synchronous and runs `Load`, `Validate`, and `Register`. `boot()` is `async`,
 //! because bringing a provider up is; this example stops at the seam so it needs no runtime.
@@ -50,8 +54,12 @@
 //! [Renvor repository](https://github.com/renvor-rs/renvor).
 //! No phase number forms part of either condition.
 //!
-//! *(Roadmap, not part of the condition: the current roadmap places the first real transport
-//! adapter after the interactive CLI, so the window is expected to stay open for now.)*
+//! **The window is still open.** Phase 004 satisfies the **first** of the two conditions — a real
+//! transport adapter now exercises this surface — and satisfies **neither the second nor both**.
+//! Closing it additionally requires an accepted decision record that supersedes ADR-0002, and no
+//! such record exists. Shipping a transport is not the same event as closing the window, and this
+//! paragraph says so because the first condition being met is exactly when that confusion becomes
+//! available.
 //!
 //! ## The command is `renvor`
 //!
@@ -153,6 +161,43 @@ pub use renvor_core::config_port::{ConfigSource, SourceLayer};
 /// with a positive control in both directions rather than merely intended.
 #[cfg(feature = "config")]
 pub use renvor_config as config;
+
+/// The REST and HTTP delivery adapter.
+///
+/// Behind the **off-by-default** `transport-rest` feature. A build without it resolves no HTTP
+/// server, routing, or middleware crate — asserted in both directions, because an absence with no
+/// positive control proves only that the query returned nothing.
+///
+/// # A deliberately narrow re-export
+///
+/// The names below are the ones an author declaring routes and starting a server needs. **No
+/// third-party type appears in any of their public signatures** — re-exporting one would put it in
+/// Renvor's public API and make every upstream major version a Renvor breaking change. That is
+/// asserted mechanically by `tests/facade_boundary.rs`, not merely promised here.
+///
+/// The consequence is a boundary, not a slogan. The **normal** way to run an HTTP server is the
+/// lifecycle-managed [`HttpServerProvider`] with [`HttpServerConfig`] and [`RouteRegistry`]: the
+/// application hands Renvor its routes and Renvor owns the bind, the readiness report, the drain
+/// budget, and the shutdown ordering. Every type in that path is Renvor's.
+///
+/// The low-level `Server` is **not** at this root. Its `serve` takes the underlying router by
+/// parameter, so promoting it here would place a third-party type in Renvor's public API through
+/// the front door. It remains available as [`transport::Server`] — deliberately one level down,
+/// under the module that **is** the transport, where naming transport types is the point rather
+/// than a leak. Reach for it, and for [`transport::route::build`], when you genuinely need to
+/// drive the router yourself and accept the upstream-version coupling that comes with it.
+#[cfg(feature = "transport-rest")]
+pub use renvor_http as transport;
+
+// The route-declaration and lifecycle surface, promoted to the facade root so that the common case
+// reads as `renvor::{RouteRegistry, HttpServerProvider}` rather than `renvor::transport::…`.
+//
+// `Server` is deliberately ABSENT — see the note above and `tests/facade_boundary.rs`.
+#[cfg(feature = "transport-rest")]
+pub use renvor_http::{
+    Admission, ClientIdentity, CorsPolicy, HostPolicy, HttpServerConfig, HttpServerProvider,
+    Limits, Method, RequestContext, Response, Route, RouteGroup, RouteRegistry, TrustedProxies,
+};
 
 #[cfg(test)]
 mod tests {

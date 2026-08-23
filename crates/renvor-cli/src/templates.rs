@@ -20,7 +20,11 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 ///
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
-pub const VERSION: &str = "1";
+///
+/// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
+/// describing the dependency to add once the framework crates are published. `Cargo.toml` is
+/// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
+pub const VERSION: &str = "2";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[

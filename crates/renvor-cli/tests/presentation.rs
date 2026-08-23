@@ -56,10 +56,18 @@ const RECORDED: &[(&str, &[&str], &str)] = &[
         &["--output", "json", "new", "demo", "--database", "postgres"],
         include_str!("json/reserved-database.json"),
     ),
+    // PHASE 004 REPLACED THIS ROW.
+    //
+    // It recorded `--transport rest` producing `reserved_for_later_phase`. That document is no
+    // longer producible: the transport capability has shipped, so `--transport rest` succeeds.
+    // Deleting the row would have lost the coverage, so it is repointed at the shape that took its
+    // place — an unsupported VALUE, which is a different code with a different meaning.
+    //
+    // The `reserved_for_later_phase` shape itself is still covered, by `reserved-database.json`.
     (
-        "reserved-transport.json",
-        &["--output", "json", "new", "demo", "--transport", "rest"],
-        include_str!("json/reserved-transport.json"),
+        "unsupported-transport.json",
+        &["--output", "json", "new", "demo", "--transport", "grpc"],
+        include_str!("json/unsupported-transport.json"),
     ),
     (
         "container-controls-missing.json",

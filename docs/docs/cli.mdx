@@ -38,8 +38,9 @@ is changed.
 | `renvor dev` | Run the local development loop. |
 | `renvor docker up\|down\|status\|logs` | Container development controls. |
 | `renvor tls trust` | The consent boundary for a trust-store change. **Issues nothing.** |
+| `renvor routes [PATH]` | Show the routes a project would serve, by asking the project's own binary. |
 
-Commands that later phases will add — `generate`, `migrate`, `seed`, `routes`, `openapi` — are
+Commands that later phases will add — `generate`, `migrate`, `seed`, `openapi` — are
 **absent**, not stubbed. A command that exits zero without doing the work reports success for
 something that did not happen.
 
@@ -130,6 +131,7 @@ Styling never changes any of this, and never appears in a JSON document. See
 | `destination_parent_missing` | 3 | The destination's parent does not exist or does not resolve. |
 | `manifest_invalid` | 3 | `renvor.toml` failed validation. The field and the constraint are named. |
 | `project_verification_failed` | 3 | A project's own checks failed, or could not be run. `details.check` names the check. |
+| `transport_not_wired` | 3 | Route inspection could not obtain the project's route registry, because the project declares no Renvor transport wiring. |
 | `container_controls_missing` | 3 | The project has no `compose.yaml`; generate it with `--container`. |
 | `render_failed` | 3 | Template rendering failed. The destination is untouched. |
 | `bound_exceeded` | 3 | A documented bound was exceeded. `details.bound` and `details.limit` say which and what. |

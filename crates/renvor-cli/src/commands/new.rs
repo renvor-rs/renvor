@@ -38,6 +38,7 @@ use crate::templates;
 struct Context {
     name: String,
     target: String,
+    transport: String,
     local_domain: String,
     local_https: String,
     container: bool,
@@ -142,6 +143,7 @@ pub fn run(
             crate::config::model::Target::Api => "api".to_owned(),
         },
         local_domain: configuration.local_domain().to_owned(),
+        transport: configuration.transport().as_str().to_owned(),
         local_https: match configuration.local_https() {
             crate::config::model::LocalHttps::Off => "off".to_owned(),
             crate::config::model::LocalHttps::Requested => "requested".to_owned(),
@@ -325,6 +327,7 @@ mod tests {
             destination,
             local_domain: None,
             target: "api".to_owned(),
+            transport: None,
             container: false,
             local_https: false,
             seed_data: false,
@@ -413,6 +416,7 @@ mod tests {
             name: configuration.name().to_owned(),
             target: "api".to_owned(),
             local_domain: configuration.local_domain().to_owned(),
+            transport: configuration.transport().as_str().to_owned(),
             local_https: "off".to_owned(),
             container: configuration.container(),
             example_domain: configuration.example_domain(),

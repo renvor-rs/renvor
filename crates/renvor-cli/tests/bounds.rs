@@ -69,7 +69,7 @@ fn a_file_just_under_the_bound_is_still_read() {
     // Valid TOML, comfortably under 64 KiB, padded with a long comment.
     let padding = "#".repeat(60 * 1024);
     let manifest = format!(
-        "{padding}\n[renvor]\ngenerator_version = \"0\"\ntemplate_version = \"1\"\n\n[project]\nname = \"padded\"\ntarget = \"api\"\nlocal_domain = \"padded.test\"\ncontainer = false\nlocal_https = \"off\"\nexample_domain = false\nseed_data = false\n"
+        "{padding}\n[renvor]\ngenerator_version = \"0\"\ntemplate_version = \"1\"\n\n[project]\nname = \"padded\"\ntarget = \"api\"\ntransport = \"rest\"\nlocal_domain = \"padded.test\"\ncontainer = false\nlocal_https = \"off\"\nexample_domain = false\nseed_data = false\n"
     );
     assert!(
         manifest.len() < 65_536,

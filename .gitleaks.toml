@@ -47,3 +47,55 @@ useDefault = true
 description = "FP-001: prose 'secrets, CORS/proxies/rate ...' in superseded, untracked RENVOR_MASTER_IMPLEMENTATION_PLAN.md line 679"
 regexes = ['''secrets, CORS/proxies/rate''']
 regexTarget = "match"
+
+# ---------------------------------------------------------------------------
+# FP-002 — rustdoc's generated search index
+# ---------------------------------------------------------------------------
+# Rule        : square-access-token
+# Location    : target/doc/search.index/<content-hash>.js line 1
+# Match       : EAAAar4AAADzDSAAAPPwHjDQAA
+#
+# `cargo doc` writes a compressed, base64-encoded search index. One chunk of it begins
+# `EAAA`, which is the literal prefix the Square access-token rule keys on, followed by
+# enough base64 to satisfy the rest of the pattern. No credential exists: the bytes are a
+# serialised search table, regenerated with different contents on every `cargo doc` run.
+#
+# WHY THIS ONE IS SCOPED BY PATH WHEN FP-001 REFUSED TO BE
+#
+# FP-001 deliberately uses a CONTENT regex and explicitly rejects a `paths` entry, because
+# a path allowlist over a real file makes gitleaks skip it before scanning and would hide a
+# genuine secret added to that file later. That reasoning is correct, and it does not carry
+# over here — for reasons that are properties of `target/`, not preferences:
+#
+#   * `target/` is ignored by tracked `.gitignore` line 10 and appears in 0 commits, so no
+#     secret can persist there as repository content;
+#   * a content regex is impossible — the blob's bytes AND its file name (a content hash)
+#     both change on every build, so any literal would stop matching and the entry would
+#     silently expire into uselessness, which is worse than no entry;
+#   * committed history is covered by a DIFFERENT scanner in the same step
+#     (`gitleaks git`), which this entry does not touch.
+#
+# WHY THIS WAS FIXED RATHER THAN RE-RUN
+#
+# The working-tree scan reads build output, so its verdict depended on what had been
+# compiled. `cargo xtask verify` PASSED this step and then FAILED it on a second
+# consecutive run over the same unchanged tree, once a second toolchain's `cargo doc` had
+# populated `target/doc`. Measured: 190 MB, 301 MB and 376 MB scanned all clean; 531 MB
+# scanned reports this finding. A gate whose verdict depends on build state is not a gate,
+# and re-running until it passed would have buried that.
+#
+# Verification, performed 2026-08-23, to be repeated after any edit to this file:
+#   1. a canary AWS key and secret in an untracked `canary_check.rs` at the repository root
+#      IS still reported (`aws-access-token`) with this entry active;
+#   2. the same canary placed under `target/` is NOT reported — the entry doing exactly its
+#      job and nothing wider;
+#   3. `AKIAIOSFODNN7EXAMPLE` is NOT a usable canary: it is AWS's own documentation example
+#      and gitleaks allowlists it by default. Recorded because it produced a false
+#      "detection works" reading on the first attempt here.
+#
+# Removable when: the working-tree scan stops reading generated build output — either
+# gitleaks honours `.gitignore` in `dir` mode, or the step scans an explicit file list from
+# git rather than a directory.
+[[allowlists]]
+description = "FP-002: rustdoc's generated search index under target/, which is gitignored build output and is never committed"
+paths = ['''^target/''']
