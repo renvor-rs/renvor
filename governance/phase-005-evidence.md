@@ -239,7 +239,10 @@ until something is published.
 > by arithmetic.
 
 The full `cargo xtask verify` sequence on both toolchains is recorded in the pull request: **11/11
-on 1.94.0 and 11/11 on stable**, at head `673cf15`.
+on 1.94.0 and 11/11 on stable**, at the verified implementation-and-evidence head `b2bcd06` that
+W-012 binds, and re-run on both toolchains at each governance-only commit after it. This paragraph
+deliberately names the **bound** head rather than the current one: a document that quotes its own
+commit is wrong the moment anything is added after it.
 
 ### The Phase 004 gap this phase closed
 
