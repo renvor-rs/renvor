@@ -38,11 +38,12 @@ use harness::{Terminal, renvor};
 /// This list is **asserted against a real transcript** by `the_wizard_asks_exactly_these_prompts`,
 /// so it cannot silently fall out of date — which is what makes the parameterised cancellation
 /// coverage below actually cover every prompt rather than every prompt somebody remembered.
-const PROMPTS: [&str; 7] = [
+const PROMPTS: [&str; 8] = [
     "Project name",
     "Local development domain",
     "Generate the example domain module?",
     "Generate seed data for it?",
+    "Generate database persistence?",
     "Generate container development controls?",
     "Record that local HTTPS is wanted? (nothing is issued and no trust store is touched)",
     "Create this project?",

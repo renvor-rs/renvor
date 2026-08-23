@@ -235,13 +235,17 @@ pub struct NewArgs {
     #[arg(long)]
     pub transport: Option<String>,
 
-    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    // VISIBLE since Phase 006. Persistence has shipped, so these are real choices rather than
+    // placeholders that will be refused. Selecting a database is what makes the generated project
+    // carry persistence sources and migrations.
+    /// Persistence layer. `sqlx` is the only supported value
+    #[arg(long)]
     pub orm: Option<String>,
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    /// Database to generate for. `postgres` or `mysql`
+    #[arg(long)]
     pub database: Option<String>,
+
+    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
     /// Reserved for a later phase.
     #[arg(long, hide = true)]
     pub auth: Option<String>,
@@ -264,10 +268,13 @@ pub struct NewArgs {
 /// A table rather than a chain of `if let`s, so that adding a flag to [`NewArgs`] and forgetting to
 /// reject it is visible as a missing row rather than invisible as a missing branch. The test below
 /// asserts the table covers the struct.
-const RESERVED: [(&str, &str); 7] = [
-    ("--orm", "Phase 009 (persistence)"),
-    ("--database", "Phase 009 (persistence)"),
-    ("--auth", "Phase 013 (authentication)"),
+const RESERVED: [(&str, &str); 5] = [
+    // `--orm` and `--database` left this table in Phase 006, which is when persistence shipped.
+    // `--auth` names Phase 009, which is the phase PLAN.md actually assigns authentication — it
+    // said Phase 013 until Phase 006 checked it against the roadmap. A reserved flag that names
+    // the wrong phase is a false statement about when support arrives, which is why the phase
+    // column is read from the roadmap rather than remembered.
+    ("--auth", "Phase 009 (authentication, sessions, tokens, and policies)"),
     ("--frontend", "Phase 019 (full-stack architecture)"),
     ("--styling", "Phase 019 (full-stack architecture)"),
     ("--render-mode", "Phase 019 (full-stack architecture)"),
@@ -286,9 +293,7 @@ impl NewArgs {
     /// [`Code::ReservedForLaterPhase`] with `details.flag` and `details.phase`, or
     /// [`Code::Usage`] when neither a name nor a path was supplied.
     pub fn into_answers(self) -> Result<Answers, CliError> {
-        let supplied: [(&str, bool); 7] = [
-            ("--orm", self.orm.is_some()),
-            ("--database", self.database.is_some()),
+        let supplied: [(&str, bool); 5] = [
             ("--auth", self.auth.is_some()),
             ("--frontend", self.frontend.is_some()),
             ("--styling", self.styling.is_some()),
@@ -339,6 +344,8 @@ impl NewArgs {
             local_https: self.local_https,
             seed_data: self.seed_data,
             example_domain: self.example_domain,
+            orm: self.orm,
+            database: self.database,
         })
     }
 }
@@ -366,8 +373,11 @@ mod tests {
             // `--transport` is NO LONGER HERE. Phase 004 ships the transport capability, so
             // reporting "reserved for Phase 004" from inside Phase 004 would be a false statement.
             // Its replacement behaviour is asserted in the two tests below.
-            ("--orm", Some("diesel")),
-            ("--database", Some("postgres")),
+            // `--orm` and `--database` are NO LONGER HERE. Phase 006 ships persistence, so
+            // reporting "reserved for a later phase" from inside Phase 006 would be a false
+            // statement of the same kind `--transport` stopped making in Phase 004. Their
+            // replacement behaviour — an unsupported VALUE refused with the supported ones named,
+            // and `--orm` without `--database` refused as a combination — is asserted below.
             ("--auth", Some("session")),
             ("--frontend", Some("react")),
             ("--styling", Some("tailwind")),
@@ -473,8 +483,15 @@ mod tests {
             // `target` has held this classification since Phase 003 for the identical reason, and
             // amendment 3.0.0 §4 records that as COMPLYING rather than as an exception.
             ("transport", Defaulted("--transport")),
-            ("persistence model", Reserved("--orm")),
-            ("database", Reserved("--database")),
+            // PHASE 006 MOVED BOTH OF THESE ROWS.
+            //
+            // `persistence model` has exactly ONE supported value (`sqlx`), which clause 2 permits
+            // to be defaulted without prompting provided it is RECORDED — and it is, in
+            // `renvor.toml`, whenever a database was chosen.
+            ("persistence model", Defaulted("--orm")),
+            // `database` has TWO supported values, so clause 2 does not apply: it is a real flag
+            // the generator acts on, and the wizard therefore asks about it (FR-046).
+            ("database", Honoured(&["--database"])),
             ("auth starter", Reserved("--auth")),
             ("frontend", Reserved("--frontend")),
             ("compatible render mode", Reserved("--render-mode")),
@@ -517,6 +534,9 @@ mod tests {
                         let mut argv = vec!["renvor", "new", "demo", flag];
                         if *flag == "--local-domain" {
                             argv.push("demo.test");
+                        }
+                        if *flag == "--database" {
+                            argv.push("postgres");
                         }
                         let cli = Cli::try_parse_from(&argv)
                             .unwrap_or_else(|error| panic!("`{flag}` must parse: {error}"));
@@ -583,6 +603,21 @@ mod tests {
                             );
                             assert!(
                                 crate::config::model::Transport::parse("nope").is_err(),
+                                "if every value parsed, `{choice}` would not be single-valued and \
+                                 could not be defaulted without prompting"
+                            );
+                        }
+                        "persistence model" => {
+                            assert!(
+                                args.orm.is_none(),
+                                "`{choice}` must not be required on the command line"
+                            );
+                            assert!(
+                                crate::config::model::Orm::parse("sqlx").is_ok(),
+                                "the defaulted value must be a supported one"
+                            );
+                            assert!(
+                                crate::config::model::Orm::parse("nope").is_err(),
                                 "if every value parsed, `{choice}` would not be single-valued and \
                                  could not be defaulted without prompting"
                             );

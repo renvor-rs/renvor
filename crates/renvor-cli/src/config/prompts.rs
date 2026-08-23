@@ -125,6 +125,19 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
         answers.seed_data = prompt::confirm("Generate seed data for it?", false)?;
     }
 
+    // FR-046. `--database` has two supported values, so it is asked rather than defaulted. The
+    // gate question comes first because persistence is optional: an operator who wants none should
+    // not have to name a database to decline one.
+    if answers.database.is_none()
+        && prompt::confirm("Generate database persistence?", false)?
+    {
+        answers.database = Some(prompt::text(
+            "Database",
+            "postgres",
+            Some("`postgres` or `mysql`; the choice selects exactly one driver"),
+        )?);
+    }
+
     if !answers.container {
         answers.container = prompt::confirm("Generate container development controls?", false)?;
     }
@@ -286,11 +299,15 @@ mod tests {
             .filter(|code| code.contains("prompt::text(") || code.contains("prompt::confirm("))
             .collect();
 
+        // SIX in Phase 004, EIGHT since Phase 006: FR-046 requires the database to be asked,
+        // which needs a gate question and the value itself. The count is asserted rather than
+        // inferred so that a ninth question is reviewed against FR-049 before it ships.
         assert_eq!(
             asked.len(),
-            6,
-            "the wizard asks {} question(s), not the six FR-049 was reviewed against. A new \
-             question must be checked against FR-049 before this count is updated: {asked:#?}",
+            8,
+            "the wizard asks {} question(s), not the eight FR-046 and FR-049 were reviewed \
+             against. A new question must be checked against FR-049 before this count is \
+             updated: {asked:#?}",
             asked.len()
         );
 

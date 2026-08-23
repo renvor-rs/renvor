@@ -16,3 +16,10 @@ container = {{ container | toml_bool }}
 local_https = "{{ local_https }}"
 example_domain = {{ example_domain | toml_bool }}
 seed_data = {{ seed_data | toml_bool }}
+{% if database %}
+[persistence]
+# Recorded because generation ACTED on it: `src/persistence.rs` and `migrations/` exist.
+database = "{{ database }}"
+orm = "{{ orm }}"
+driver_feature = "{{ driver_feature }}"
+{% endif %}

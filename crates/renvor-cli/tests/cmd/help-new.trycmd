@@ -57,6 +57,12 @@ Options:
       --transport <TRANSPORT>
           Delivery transport. `rest` is the only supported value
 
+      --orm <ORM>
+          Persistence layer. `sqlx` is the only supported value
+
+      --database <DATABASE>
+          Database to generate for. `postgres` or `mysql`
+
   -h, --help
           Print help (see a summary with '-h')
 

@@ -144,12 +144,35 @@ struct ProjectTable {
     seed_data: bool,
 }
 
+/// The `[persistence]` table — present only when a database was chosen.
+///
+/// Added in Phase 006, when persistence shipped and `--database` moved from a reserved input to an
+/// honoured choice.
+///
+/// # Why the whole table is optional rather than its fields
+///
+/// Because "no persistence" is a real and common answer, and it is recorded by the table's
+/// **absence** rather than by three empty strings. A project generated without `--database` has no
+/// `src/persistence.rs` and no `migrations/`, so a manifest claiming a database would describe a
+/// project that was not generated — the same rule `[project]`'s comment states for every other
+/// honoured choice.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PersistenceTable {
+    database: String,
+    orm: String,
+    driver_feature: String,
+}
+
 /// A generated `renvor.toml`.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     renvor: RenvorTable,
     project: ProjectTable,
+    /// `None` means the project was generated without persistence, which is not an error.
+    #[serde(default)]
+    persistence: Option<PersistenceTable>,
 }
 
 /// Runs the command against a project directory.

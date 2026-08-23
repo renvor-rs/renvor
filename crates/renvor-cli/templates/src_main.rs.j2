@@ -3,4 +3,5 @@
 fn main() {
     println!("{{ name }} is running");
 {% if example_domain %}    println!("{} items", domain::all().len());
+{% endif %}{% if database %}    println!("{}", persistence::summary());
 {% endif %}}

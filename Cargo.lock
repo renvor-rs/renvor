@@ -1942,6 +1942,7 @@ dependencies = [
  "portable-pty",
  "renvor-config",
  "renvor-core",
+ "renvor-database",
  "semver",
  "serde",
  "serde_json",

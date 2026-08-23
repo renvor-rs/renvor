@@ -44,6 +44,25 @@ struct Context {
     container: bool,
     example_domain: bool,
     seed_data: bool,
+    /// The selected database's name, or empty when the project has no persistence.
+    ///
+    /// A string rather than an `Option` because the template engine's `{% if %}` treats an empty
+    /// string as false, and a two-shaped value would need two template branches to say one thing.
+    database: String,
+    /// The selected persistence layer's name, or empty.
+    orm: String,
+    /// The bound-parameter placeholder the selected database uses, or empty.
+    ///
+    /// Pre-rendered for the reason `modules` gives: `src/persistence.rs` is whitespace-sensitive
+    /// Rust, and a conditional around a `const` is the difference between a clean
+    /// `cargo fmt --check` and the pre-placement verification refusing to write anything. Taken
+    /// from `DatabaseKind::placeholder` so there is one placeholder rule in the workspace.
+    placeholder: String,
+    /// The `renvor-sqlx` feature that resolves the selected driver, or empty.
+    ///
+    /// Pre-computed so the template never joins `"db-"` to a value — a template that builds a
+    /// feature name can build one that does not exist.
+    driver_feature: String,
     generator_version: String,
     template_version: String,
     /// The `mod` block for `src/main.rs`, **pre-rendered**.
@@ -82,10 +101,13 @@ fn warnings_for(configuration: &ProjectConfiguration) -> Vec<String> {
 }
 
 /// Builds the `mod` block. See [`Context::modules`].
-fn module_block(example_domain: bool, seed_data: bool) -> String {
+fn module_block(example_domain: bool, seed_data: bool, persistence: bool) -> String {
     let mut modules = Vec::new();
     if example_domain {
         modules.push("mod domain;");
+    }
+    if persistence {
+        modules.push("mod persistence;");
     }
     if seed_data {
         modules.push("mod seed;");
@@ -95,6 +117,26 @@ fn module_block(example_domain: bool, seed_data: bool) -> String {
     } else {
         format!("\n{}\n", modules.join("\n"))
     }
+}
+
+/// The `renvor-sqlx` feature that resolves a database's driver.
+///
+/// # Why a match rather than `format!("db-{}", kind.as_str())`
+///
+/// Because the two happen to agree today and there is no reason they must. A generated manifest
+/// naming a feature that does not exist fails at the operator's `cargo build`, long after the
+/// generator reported success — and an interpolation would keep producing plausible names for
+/// every database added later, each of them wrong in the same invisible way.
+fn driver_feature(kind: renvor_database::DatabaseKind) -> String {
+    match kind {
+        renvor_database::DatabaseKind::Postgres => "db-postgres",
+        renvor_database::DatabaseKind::MySql => "db-mysql",
+        // `DatabaseKind` is `#[non_exhaustive]`, so this arm is required by the language rather
+        // than chosen. It is not a silent fallback: `every_database_has_a_driver_feature` below
+        // enumerates `DatabaseKind::ALL` and fails the moment a kind reaches it.
+        _ => "",
+    }
+    .to_owned()
 }
 
 /// How much this run may ask.
@@ -151,9 +193,29 @@ pub fn run(
         container: configuration.container(),
         example_domain: configuration.example_domain(),
         seed_data: configuration.seed_data(),
+        database: configuration
+            .database()
+            .map(|kind| kind.as_str().to_owned())
+            .unwrap_or_default(),
+        orm: configuration
+            .orm()
+            .map(|orm| orm.as_str().to_owned())
+            .unwrap_or_default(),
+        placeholder: configuration
+            .database()
+            .map(|kind| kind.placeholder(1))
+            .unwrap_or_default(),
+        driver_feature: configuration
+            .database()
+            .map(driver_feature)
+            .unwrap_or_default(),
         generator_version: env!("CARGO_PKG_VERSION").to_owned(),
         template_version: templates::VERSION.to_owned(),
-        modules: module_block(configuration.example_domain(), configuration.seed_data()),
+        modules: module_block(
+            configuration.example_domain(),
+            configuration.seed_data(),
+            configuration.database().is_some(),
+        ),
     };
 
     let renderer = Renderer::new(templates::select(&configuration))?;
@@ -321,6 +383,36 @@ mod tests {
     use crate::output::Format;
     use std::path::PathBuf;
 
+    /// Every database resolves a driver feature — the guard the `_` arm above depends on.
+    #[test]
+    fn every_database_has_a_driver_feature() {
+        for kind in renvor_database::DatabaseKind::ALL {
+            let feature = driver_feature(kind);
+            assert!(
+                !feature.is_empty(),
+                "`{}` reached the catch-all arm, so a generated manifest would name no driver",
+                kind.as_str()
+            );
+            assert!(
+                feature.starts_with("db-"),
+                "`{feature}` is not a `renvor-sqlx` driver feature"
+            );
+        }
+    }
+
+    /// The persistence module is declared when, and only when, a database was chosen.
+    #[test]
+    fn the_persistence_module_follows_the_database_choice() {
+        assert!(!module_block(false, false, false).contains("mod persistence;"));
+        assert!(module_block(false, false, true).contains("mod persistence;"));
+        // Ordering matters for `cargo fmt --check`, which the pre-placement verification runs.
+        let all = module_block(true, true, true);
+        let domain = all.find("mod domain;").expect("domain");
+        let persistence = all.find("mod persistence;").expect("persistence");
+        let seed = all.find("mod seed;").expect("seed");
+        assert!(domain < persistence && persistence < seed, "modules must stay ordered: {all:?}");
+    }
+
     fn answers(destination: PathBuf) -> Answers {
         Answers {
             name: None,
@@ -332,6 +424,8 @@ mod tests {
             local_https: false,
             seed_data: false,
             example_domain: false,
+            orm: None,
+            database: None,
         }
     }
 
@@ -353,9 +447,9 @@ mod tests {
         // The exact strings, because one extra newline here is a `cargo fmt --check` failure in
         // every generated project — which is the acceptance criterion "the generated skeleton
         // formats". Found by running rustfmt over the output, not by inspection.
-        assert_eq!(module_block(false, false), "");
-        assert_eq!(module_block(true, false), "\nmod domain;\n");
-        assert_eq!(module_block(true, true), "\nmod domain;\nmod seed;\n");
+        assert_eq!(module_block(false, false, false), "");
+        assert_eq!(module_block(true, false, false), "\nmod domain;\n");
+        assert_eq!(module_block(true, true, false), "\nmod domain;\nmod seed;\n");
     }
 
     #[test]
@@ -421,9 +515,29 @@ mod tests {
             container: configuration.container(),
             example_domain: configuration.example_domain(),
             seed_data: configuration.seed_data(),
+            database: configuration
+                .database()
+                .map(|kind| kind.as_str().to_owned())
+                .unwrap_or_default(),
+            orm: configuration
+                .orm()
+                .map(|orm| orm.as_str().to_owned())
+                .unwrap_or_default(),
+            placeholder: configuration
+                .database()
+                .map(|kind| kind.placeholder(1))
+                .unwrap_or_default(),
+            driver_feature: configuration
+                .database()
+                .map(driver_feature)
+                .unwrap_or_default(),
             generator_version: "0".to_owned(),
             template_version: templates::VERSION.to_owned(),
-            modules: module_block(configuration.example_domain(), configuration.seed_data()),
+            modules: module_block(
+                configuration.example_domain(),
+                configuration.seed_data(),
+                configuration.database().is_some(),
+            ),
         };
         let renderer = Renderer::new(templates::select(&configuration)).expect("builds");
         let staging = Staging::create(&destination).expect("stages");

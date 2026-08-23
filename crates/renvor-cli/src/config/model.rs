@@ -12,6 +12,7 @@
 
 use std::path::PathBuf;
 
+use renvor_database::DatabaseKind;
 use serde::Serialize;
 
 use crate::exit::{CliError, Code};
@@ -104,6 +105,76 @@ impl Transport {
     }
 }
 
+/// The persistence layer a generated project is built around.
+///
+/// # One value, and why it is still an enum
+///
+/// Phase 006 ships direct SQLx. A later phase adds an ORM, and when it does, this enum gains a
+/// variant rather than a `bool` gaining a meaning. The parse below refuses anything else by name,
+/// so a project generated against a future value fails at generation rather than at build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Orm {
+    /// Direct SQLx. Queries are written by hand; no object mapper is generated.
+    Sqlx,
+}
+
+impl Orm {
+    /// The recorded spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sqlx => "sqlx",
+        }
+    }
+
+    /// Parses an `--orm` value.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] for any value other than `sqlx`.
+    pub fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "sqlx" => Ok(Self::Sqlx),
+            other => Err(CliError::new(
+                Code::UnsupportedValue,
+                format!("`{other}` is not a supported persistence layer; the supported value is `sqlx`"),
+            )
+            .with("flag", "--orm")
+            .with("value", other.to_owned())
+            .with("supported", "sqlx")),
+        }
+    }
+}
+
+/// Parses a `--database` value into the runtime's own vocabulary.
+///
+/// # Why this returns `renvor_database::DatabaseKind` rather than a CLI enum
+///
+/// So there is exactly one list of database names in the workspace. Two enums that agree by
+/// coincidence drift the first time one of them gains a member, and the drift would show up as a
+/// generated project naming a database the runtime cannot parse.
+///
+/// # Errors
+///
+/// [`Code::UnsupportedValue`], naming both supported values, for anything else.
+pub fn parse_database(value: &str) -> Result<DatabaseKind, CliError> {
+    DatabaseKind::parse(value).ok_or_else(|| {
+        let supported = DatabaseKind::ALL
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        CliError::new(
+            Code::UnsupportedValue,
+            format!("`{value}` is not a supported database; the supported values are {supported}"),
+        )
+        .with("flag", "--database")
+        .with("value", value.to_owned())
+        .with("supported", supported)
+    })
+}
+
 /// Whether local HTTPS was asked for.
 ///
 /// **Neither value causes a certificate to be issued or a trust store to be touched in this
@@ -143,6 +214,11 @@ pub struct ProjectConfiguration {
     local_https: LocalHttps,
     seed_data: bool,
     example_domain: bool,
+    /// `None` when the project was generated without persistence.
+    orm: Option<Orm>,
+    /// `None` when the project was generated without persistence.
+    #[serde(serialize_with = "serialize_database")]
+    database: Option<DatabaseKind>,
 }
 
 /// The unvalidated answers, from either interface.
@@ -170,6 +246,27 @@ pub struct Answers {
     pub seed_data: bool,
     /// Generate the example domain module.
     pub example_domain: bool,
+    /// `--orm` as typed, so an unsupported value can be reported verbatim.
+    pub orm: Option<String>,
+    /// `--database` as typed. `None` means "generate without persistence".
+    pub database: Option<String>,
+}
+
+/// Serialises a database as its stable name.
+///
+/// # Why a helper rather than `#[derive(Serialize)]` on `DatabaseKind`
+///
+/// Because that would put `serde` into `renvor-database`, and the whole point of that crate is
+/// that it carries nothing an application does not need. The name written here is the same
+/// `as_str()` the runtime parses back, so there is still exactly one spelling.
+fn serialize_database<S>(value: &Option<DatabaseKind>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(kind) => serializer.serialize_some(kind.as_str()),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// The project name a destination implies, when the operator did not give one.
@@ -278,6 +375,33 @@ impl ProjectConfiguration {
             .with("flags", "--seed-data, --example-domain"));
         }
 
+        // Persistence is a PAIR. `--orm` without `--database` names a layer with nothing to talk
+        // to, and `--database` without `--orm` leaves the query style undeclared. Rather than
+        // default the missing half — which is the silent fallback principle IV prohibits — both
+        // directions are refused with the flag that would complete the pair.
+        let (orm, database) = match (answers.orm.as_deref(), answers.database.as_deref()) {
+            (None, None) => (None, None),
+            (Some(orm), Some(database)) => {
+                (Some(Orm::parse(orm)?), Some(parse_database(database)?))
+            }
+            // A database alone takes the one supported layer. This is not a silent default: `sqlx`
+            // is the only value `--orm` accepts in this phase, so there is nothing to choose
+            // between and nothing an operator could have meant instead.
+            (None, Some(database)) => (Some(Orm::Sqlx), Some(parse_database(database)?)),
+            (Some(orm), None) => {
+                // Parsed first, so an operator who typed both a bad layer AND omitted the database
+                // hears about the value they got wrong rather than the flag they omitted.
+                Orm::parse(orm)?;
+                return Err(CliError::new(
+                    Code::UnsupportedCombination,
+                    "`--orm` needs `--database`: a persistence layer with no database selected \
+                     has nothing to generate against",
+                )
+                .with("flags", "--orm, --database")
+                .with("supported", "postgres, mysql"));
+            }
+        };
+
         let configuration = Self {
             name,
             destination: destination.display_path(),
@@ -292,6 +416,8 @@ impl ProjectConfiguration {
             },
             seed_data: answers.seed_data,
             example_domain: answers.example_domain,
+            orm,
+            database,
         };
         Ok((configuration, destination))
     }
@@ -300,6 +426,21 @@ impl ProjectConfiguration {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The persistence layer, or `None` when the project was generated without one.
+    #[must_use]
+    pub const fn orm(&self) -> Option<Orm> {
+        self.orm
+    }
+
+    /// The selected database, or `None` when the project was generated without persistence.
+    ///
+    /// This is what template selection reads, so a project carries persistence sources only when a
+    /// database was actually chosen — data-model invariant I-12.
+    #[must_use]
+    pub const fn database(&self) -> Option<DatabaseKind> {
+        self.database
     }
 
     /// The destination as it will be reported, **for display only**. Not a capability.
@@ -497,7 +638,74 @@ mod tests {
             local_https: false,
             seed_data: false,
             example_domain: false,
+            orm: None,
+            database: None,
         }
+    }
+
+    // ── Phase 006 persistence selection (FR-032, FR-045, FR-047) ───────────────────────
+
+    #[test]
+    fn an_unsupported_persistence_layer_is_refused_by_name() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.orm = Some("diesel".to_owned());
+        answers.database = Some("postgres".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert!(
+            error.message.contains("sqlx"),
+            "the refusal must name the supported value: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn an_unsupported_database_is_refused_with_both_supported_values() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.database = Some("sqlite".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        // SQLite is the one an operator is most likely to try, and Phase 006 does not ship it.
+        // Naming both supported values is what makes the refusal actionable rather than a wall.
+        for supported in ["postgres", "mysql"] {
+            assert!(
+                error.message.contains(supported),
+                "the refusal must name `{supported}`: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn a_persistence_layer_without_a_database_is_refused_rather_than_defaulted() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.orm = Some("sqlx".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedCombination);
+        assert!(error.details.iter().any(|(k, v)| k == "flags" && v.contains("--database")));
+    }
+
+    #[test]
+    fn a_database_alone_takes_the_single_supported_layer() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.database = Some("mysql".to_owned());
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers).expect("resolves");
+        assert_eq!(configuration.database(), Some(DatabaseKind::MySql));
+        assert_eq!(configuration.orm(), Some(Orm::Sqlx));
+    }
+
+    #[test]
+    fn no_persistence_is_recorded_as_no_persistence() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers(base.path().join("demo"))).expect("resolves");
+        assert_eq!(configuration.database(), None);
+        assert_eq!(configuration.orm(), None);
     }
 
     #[test]
@@ -602,6 +810,14 @@ mod tests {
             target: _,
             // Phase 004. A single-variant enum has even less room for a credential than a `bool`.
             transport: _,
+            // Phase 006. Both are closed enums behind an `Option`, so the only values they can
+            // hold are the ones this crate names. A database CONNECTION string would be a
+            // secret-bearing field — which is exactly why the configuration holds a database
+            // KIND and never a DSN. Where the application gets its connection string from is a
+            // runtime concern, and keeping it out of this struct is what keeps invariant I-3
+            // structural rather than a rule someone has to remember.
+            orm: _,
+            database: _,
 
             // ── CATEGORY 2: strings, and therefore checked ─────────────────────────────
             name,

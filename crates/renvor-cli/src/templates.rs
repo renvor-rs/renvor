@@ -21,10 +21,15 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
 ///
+/// **`2` → `3` (Phase 006).** A project generated with `--database` gains `src/persistence.rs` and
+/// a reversible `migrations/0001_create_item` pair, and `renvor.toml` gains a `[persistence]`
+/// section. `Cargo.toml` is deliberately **still** dependency-free: no Renvor crate is published,
+/// so declaring one would emit a project that cannot build.
+///
 /// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
 /// describing the dependency to add once the framework crates are published. `Cargo.toml` is
 /// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
-pub const VERSION: &str = "2";
+pub const VERSION: &str = "3";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[
@@ -63,6 +68,24 @@ const SEED_DATA: &[TemplateEntry] = &[TemplateEntry {
     body: include_str!("../templates/src_seed.rs.j2"),
 }];
 
+/// Added by `--database`. Both migration halves ship together: the pair is what makes the
+/// migration REVERSIBLE, and a declared-reversible migration missing its `.down.sql` is refused at
+/// rollback rather than discovered half-way through one.
+const PERSISTENCE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/persistence.rs",
+        body: include_str!("../templates/src_persistence.rs.j2"),
+    },
+    TemplateEntry {
+        path: "migrations/0001_create_item.up.sql",
+        body: include_str!("../templates/migrations_up.sql.j2"),
+    },
+    TemplateEntry {
+        path: "migrations/0001_create_item.down.sql",
+        body: include_str!("../templates/migrations_down.sql.j2"),
+    },
+];
+
 /// Added by `--container`.
 const CONTAINER: &[TemplateEntry] = &[
     TemplateEntry {
@@ -89,6 +112,7 @@ fn catalogue() -> Vec<TemplateEntry> {
     all.extend_from_slice(BASE);
     all.extend_from_slice(EXAMPLE_DOMAIN);
     all.extend_from_slice(SEED_DATA);
+    all.extend_from_slice(PERSISTENCE);
     all.extend_from_slice(CONTAINER);
     all
 }
@@ -106,6 +130,9 @@ pub fn select(configuration: &ProjectConfiguration) -> TemplateSet {
     }
     if configuration.seed_data() {
         entries.extend_from_slice(SEED_DATA);
+    }
+    if configuration.database().is_some() {
+        entries.extend_from_slice(PERSISTENCE);
     }
     if configuration.container() {
         entries.extend_from_slice(CONTAINER);
