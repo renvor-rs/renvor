@@ -323,6 +323,28 @@ decoder was not — a gap this phase closes for the decoder and leaves open else
 
 ---
 
+## 9a. The commissioned reviews did not report
+
+Three automated reviews were commissioned against this branch — a focused validation review against
+all 88 FR/SC items, a requirements-and-governance review, and a security review. Each received the
+full artifact set, an adversarial brief, and one recovery request after failing to report.
+
+**None returned a usable report.**
+
+That is recorded here as a **tooling failure**. It is **not** recorded as a pass, and no
+conclusion is drawn from it: a review that produced nothing is evidence of nothing, and treating
+silence as approval is the exact substitution this project's rules exist to prevent.
+
+**What the branch did receive is adversarial self-review**, and it is worth being precise about how
+much that is worth. It found four defects — D-1, D-2, D-3 above and the plain-text `404` in §4 —
+that **1024 then-passing tests had all missed**. That is the argument for review as a practice, and
+it is simultaneously the argument for why self-review is not enough: the same person who wrote the
+blind spot is looking for it.
+
+Self-review is not independent review, and nothing in this record presents it as such.
+
+---
+
 ## 10. Automated review is not independent review
 
 Any automated review performed during this phase is **advisory**. Constitution §Development and
