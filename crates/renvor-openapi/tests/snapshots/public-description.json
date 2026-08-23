@@ -106,6 +106,7 @@
               "unsupported_media_type",
               "missing_body",
               "not_found",
+              "resource_not_found",
               "method_not_allowed",
               "host_rejected",
               "origin_rejected",

@@ -369,7 +369,7 @@ pub const fn status_for(code: ApiErrorCode) -> u16 {
         | ApiErrorCode::HostRejected
         | ApiErrorCode::OriginRejected => 400,
         ApiErrorCode::UnsupportedMediaType => 415,
-        ApiErrorCode::NotFound => 404,
+        ApiErrorCode::NotFound | ApiErrorCode::ResourceNotFound => 404,
         ApiErrorCode::MethodNotAllowed => 405,
         ApiErrorCode::PayloadTooLarge => 413,
         ApiErrorCode::RequestTimeout => 408,
@@ -458,6 +458,7 @@ mod tests {
             (ApiErrorCode::UnsupportedMediaType, 415),
             (ApiErrorCode::MissingBody, 400),
             (ApiErrorCode::NotFound, 404),
+            (ApiErrorCode::ResourceNotFound, 404),
             (ApiErrorCode::MethodNotAllowed, 405),
             (ApiErrorCode::HostRejected, 400),
             (ApiErrorCode::OriginRejected, 400),
