@@ -1,4 +1,4 @@
-# ADR-0013: Serialise the OpenAPI 3.2.0 document in Renvor, because no maintained package emits it
+# ADR-0013: Serialise the OpenAPI 3.2.0 document in Renvor, because no maintained package emits its semantics
 
 | Field | Value |
 |---|---|
@@ -39,18 +39,42 @@ official artifact. No row is a README claim.
 |---|---|---|---|---|---|
 | `utoipa` | 5.5.0 | 2026-05-04 | MIT OR Apache-2.0 | **`3.1.0`** | **Rejected** — measured by compiling a `#[derive(OpenApi)]` type and printing the field |
 | `utoipa-axum` | 0.2.0 | 2025-01-16 | MIT OR Apache-2.0 | inherits `utoipa` | **Rejected** — same version, and binds to `axum` |
-| `aide` | 0.15.1 | 2026-04-14 | MIT OR Apache-2.0 | 3.1 | **Rejected** — wrong version; 0.16.0 is a pre-release |
+| `aide` | 0.15.1 | 2026-04-14 | MIT OR Apache-2.0 | 3.1 | **Rejected** — wrong version; 0.16.0 is a pre-release; and **axum-bound** (`axum` and `axum-extra` are non-optional), so not the neutral option it is often taken for |
 | `apistos` | 0.6.1 | 2026-06-08 | MIT OR Apache-2.0 | 3.0/3.1 | **Rejected** — wrong version; actix-bound |
 | `oasgen` | 0.25.0 | 2025-02-25 | MIT | 3.0/3.1 | **Rejected** — wrong version; stale since 2025-02 |
-| `salvo-oapi` | 0.95.2 | 2026-08-06 | MIT OR Apache-2.0 | 3.1 | **Rejected** — wrong version; salvo-bound |
+| `salvo-oapi` | 0.95.2 | 2026-08-06 | **Apache-2.0 only** | **`3.2.0` opt-in, but `$self` and nothing else** | **Rejected** — salvo-bound, so unusable from axum; single-licensed; and its 3.2 is a version string over a 3.1 object model |
 | `poem-openapi` | 5.1.16 | 2025-07-28 | MIT OR Apache-2.0 | 3.0 | **Rejected** — wrong version; poem-bound |
 | `okapi` | 0.7.0 | 2024-01-14 | MIT | 3.0 | **Rejected** — wrong version; unmaintained since 2024-01 |
 | `openapiv3` | 2.2.0 | 2025-06-02 | MIT | a 3.0 data model only | **Rejected** — wrong version |
 
-**No maintained Rust crate emits an `openapi: 3.2.0` document.**
+**No maintained Rust crate emits a document with genuine OpenAPI 3.2 semantics.** One published
+crate emits the version string: **`salvo-oapi` 0.95.2** offers `Version3_2` as an opt-in and writes
+`"3.2.0"`. It implements **`$self` and nothing else** from the 3.2 object model — no
+`additionalOperations`, no `querystring`, no `itemSchema`, no `deviceAuthorization`, no
+`mediaTypes`, and a `Tag` carrying only `name`/`description`. It is also hard-bound to the Salvo
+framework (`salvo_core`, `impl Handler for OpenApi`), so it is unusable from axum, and it is
+**Apache-2.0 only** while the rest of this workspace is dual-licensed.
+
+That crate is the clearest possible illustration of why this phase's gate has a **negative half**:
+it produces a document that is *schema-valid against OAS 3.2* while carrying no 3.2 semantics —
+exactly the relabelling constitution principle V forbids, and exactly what proof 3 detects.
+
+Complete 3.2 object models are **merged but unreleased** in both `utoipa` master
+([PR #1555](https://github.com/juhaku/utoipa/pull/1555), merged 2026-08-09) and `salvo-oapi` main
+([PR #1688](https://github.com/salvo-rs/salvo/pull/1688), merged 2026-08-06 — twenty hours *after*
+0.95.2 was cut, which is the whole explanation for that release's half-support). utoipa master
+still carries `version = "5.5.0"` with no release announced, and `Version31` remains `#[default]`
+there — despite that PR's own description claiming it changed the default, which did not survive
+review.
 
 Relabelling 3.1 output as 3.2 is exactly what principle V forbids, and it would not be a private
 shortcut: the version string is what tells every consumer's tooling how to read the document.
+
+> **This paragraph was corrected on 2026-08-23.** It previously read *"No maintained Rust crate
+> emits an `openapi: 3.2.0` document"* — flatly, with no qualifier. That was **false**:
+> `salvo-oapi` 0.95.2 does. The correction does not change the decision, and it makes the case for
+> it stronger, because the one crate that emits the version string is the exact trap the gate
+> exists to catch. Found by package research after the ADR was written.
 
 ## Decision
 

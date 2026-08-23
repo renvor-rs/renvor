@@ -43,16 +43,39 @@ re-run rather than trusted.
 |---|---|---|---|---|---|
 | `utoipa` | 5.5.0 | 2026-05-04 | MIT OR Apache-2.0 | **`3.1.0`** | **Measured**: compiled a `#[derive(OpenApi)]` type and printed the `openapi` field |
 | `utoipa-axum` | 0.2.0 | 2025-01-16 | MIT OR Apache-2.0 | inherits | Same version; also binds to `axum` |
-| `aide` | 0.15.1 | 2026-04-14 | MIT OR Apache-2.0 | 3.1 | Wrong version. 0.16.0 is a pre-release |
+| `aide` | 0.15.1 | 2026-04-14 | MIT OR Apache-2.0 | 3.1 | Wrong version; 0.16.0 is a pre-release; **axum-bound**, `axum`/`axum-extra` non-optional |
 | `apistos` | 0.6.1 | 2026-06-08 | MIT OR Apache-2.0 | 3.0/3.1 | Wrong version; actix-bound |
 | `oasgen` | 0.25.0 | 2025-02-25 | MIT | 3.0/3.1 | Wrong version; stale since 2025-02 |
-| `salvo-oapi` | 0.95.2 | 2026-08-06 | MIT OR Apache-2.0 | 3.1 | Wrong version; salvo-bound |
+| `salvo-oapi` | 0.95.2 | 2026-08-06 | **Apache-2.0 only** | **`3.2.0` opt-in; `$self` only** | Salvo-bound (unusable from axum); single-licensed; 3.2 version string over a 3.1 object model |
 | `poem-openapi` | 5.1.16 | 2025-07-28 | MIT OR Apache-2.0 | 3.0 | Wrong version; poem-bound |
 | `okapi` | 0.7.0 | 2024-01-14 | MIT | 3.0 | Wrong version; unmaintained since 2024-01 |
 | `openapiv3` | 2.2.0 | 2025-06-02 | MIT | 3.0 model only | Wrong version |
 
-**Verdict: as of 2026-08-23, no maintained Rust crate emits an `openapi: 3.2.0` document.** See
-[ADR-0013](../decisions/0013-openapi-3-2-document-serialiser.md).
+**No maintained Rust crate emits a document with genuine OpenAPI 3.2 semantics.** One published
+crate emits the version string: **`salvo-oapi` 0.95.2** offers `Version3_2` as an opt-in and writes
+`"3.2.0"`. It implements **`$self` and nothing else** from the 3.2 object model — no
+`additionalOperations`, no `querystring`, no `itemSchema`, no `deviceAuthorization`, no
+`mediaTypes`, and a `Tag` carrying only `name`/`description`. It is also hard-bound to the Salvo
+framework (`salvo_core`, `impl Handler for OpenApi`), so it is unusable from axum, and it is
+**Apache-2.0 only** while the rest of this workspace is dual-licensed.
+
+That crate is the clearest possible illustration of why this phase's gate has a **negative half**:
+it produces a document that is *schema-valid against OAS 3.2* while carrying no 3.2 semantics —
+exactly the relabelling constitution principle V forbids, and exactly what proof 3 detects.
+
+Complete 3.2 object models are **merged but unreleased** in both `utoipa` master
+([PR #1555](https://github.com/juhaku/utoipa/pull/1555), merged 2026-08-09) and `salvo-oapi` main
+([PR #1688](https://github.com/salvo-rs/salvo/pull/1688), merged 2026-08-06 — twenty hours *after*
+0.95.2 was cut, which is the whole explanation for that release's half-support). utoipa master
+still carries `version = "5.5.0"` with no release announced, and `Version31` remains `#[default]`
+there — despite that PR's own description claiming it changed the default, which did not survive
+review.
+
+See [ADR-0013](../decisions/0013-openapi-3-2-document-serialiser.md).
+
+> **Corrected 2026-08-23.** This section previously read *"no maintained Rust crate emits an
+> `openapi: 3.2.0` document"*, without qualification. That was false. The corrected statement is
+> narrower and the conclusion is unchanged.
 
 ## 4. Rejected — validation
 
@@ -100,8 +123,20 @@ compile error rather than a review question.
 
 | File | Source | Retrieved | Modified? |
 |---|---|---|---|
-| `crates/renvor-openapi/tests/schemas/oas-3.2-schema-2025-09-17.json` | <https://spec.openapis.org/oas/3.2/schema/2025-09-17> | 2026-08-23 | **No** |
-| `crates/renvor-openapi/tests/schemas/oas-3.1-schema-2022-10-07.json` | <https://spec.openapis.org/oas/3.1/schema/2022-10-07> | 2026-08-23 | **No** |
+| `crates/renvor-openapi/tests/schemas/oas-3.2-schema-2025-11-23.json` | <https://spec.openapis.org/oas/3.2/schema/2025-11-23> | 2026-08-23 | **No** |
+| `crates/renvor-openapi/tests/schemas/oas-3.1-schema-2025-11-23.json` | <https://spec.openapis.org/oas/3.1/schema/2025-11-23> | 2026-08-23 | **No** |
+
+**Re-pinned from `2025-09-17` / `2022-10-07` on 2026-08-23**, after package research established
+that both were superseded. The 3.2 change is `$defs.styles-for-form` becoming
+`$defs.explode-for-form`, which drops `required: ["style"]` from its `if` so the `explode: true`
+default also applies when `style` is omitted — an **annotation-default fix, not a pass/fail
+change**. Every proof in the gate returns the same verdict under both; pinning the older one would
+have frozen the gate on a schema with a known-fixed defaulting bug.
+
+Two traps worth recording: **there is no `/latest` alias** (`.../schema/latest` returns 404, so
+every reference must name a date), and **the dialect and meta artifacts carry a different date**
+than the schema — they remain `2025-09-17`. `OPENAPI_DIALECT` therefore does **not** match the
+schema's date, and correcting it to match would emit a URI that does not exist.
 
 Vendored so verification runs **offline and deterministically** — a gate that needs the network
 fails when the network does, and

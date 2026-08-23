@@ -8,8 +8,27 @@ skip.
 
 | File | Source URL | Retrieved |
 |---|---|---|
-| `oas-3.2-schema-2025-09-17.json` | <https://spec.openapis.org/oas/3.2/schema/2025-09-17> | 2026-08-23 |
-| `oas-3.1-schema-2022-10-07.json` | <https://spec.openapis.org/oas/3.1/schema/2022-10-07> | 2026-08-23 |
+| `oas-3.2-schema-2025-11-23.json` | <https://spec.openapis.org/oas/3.2/schema/2025-11-23> | 2026-08-23 |
+| `oas-3.1-schema-2025-11-23.json` | <https://spec.openapis.org/oas/3.1/schema/2025-11-23> | 2026-08-23 |
+
+## Why these dates, and why they are pinned
+
+**There is no `/latest` alias.** `https://spec.openapis.org/oas/3.2/schema/latest` returns **404**.
+Every reference must name a date, which is inconvenient once and reproducible forever.
+
+**These were re-pinned from `2025-09-17` on 2026-08-23.** That earlier artifact resolves and is
+valid, but it is superseded: `2025-11-23` replaces `$defs.styles-for-form` with
+`$defs.explode-for-form`, dropping `required: ["style"]` from its `if`, so the `explode: true`
+default now also applies when `style` is omitted. That is an **annotation-default fix, not a
+pass/fail change** — every verdict in this suite is identical under both — but pinning the earlier
+one would freeze this gate on a schema with a known-fixed defaulting bug.
+
+**The schema and the dialect carry different dates.** The schema is `2025-11-23`; the dialect and
+meta artifacts are still `2025-09-17`
+(`https://spec.openapis.org/oas/3.2/dialect/2025-09-17`). Do not assume one date across all four.
+
+**Never vendor from the `v3.2-dev` branch.** Its files contain `WORK-IN-PROGRESS` placeholders
+rather than real URIs.
 
 ## Why the 3.1 schema is here too
 

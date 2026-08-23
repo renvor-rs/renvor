@@ -29,9 +29,20 @@ Constitution principle V forbids claiming a version the tooling does not impleme
 §11.1 says the phase *"remains blocked until selected tooling can emit and validate the promised
 version correctly."*
 
-**No maintained Rust crate emits 3.2.0.** `utoipa` 5.5.0 emits `"3.1.0"` — established by compiling
-a `#[derive(OpenApi)]` type and printing the field, not by reading its documentation. The full
-matrix is in [`phase-005-dependency-inventory.md`](phase-005-dependency-inventory.md) §3.
+**No maintained Rust crate emits a document with genuine 3.2 semantics.** `utoipa` 5.5.0 emits
+`"3.1.0"` — established by compiling a `#[derive(OpenApi)]` type and printing the field.
+
+**One published crate does emit the version string**: `salvo-oapi` 0.95.2, opt-in — and it
+implements `$self` and nothing else from the 3.2 object model, is hard-bound to Salvo, and is
+Apache-2.0 only. It is the clearest illustration of why the gate below has a **negative half**: it
+produces a document that is schema-valid against OAS 3.2 while carrying no 3.2 semantics, which is
+precisely the relabelling proof 3 detects.
+
+> **Corrected 2026-08-23.** This paragraph previously read *"No maintained Rust crate emits
+> 3.2.0"*, flatly. That was **false**. Found by package research after the claim was written; the
+> correction narrows the claim and strengthens the case for the gate.
+
+The full matrix is in [`phase-005-dependency-inventory.md`](phase-005-dependency-inventory.md) §3.
 
 Renvor therefore serialises the document ([ADR-0013](../decisions/0013-openapi-3-2-document-serialiser.md)),
 and the claim is proven rather than asserted:
@@ -360,27 +371,48 @@ decoder was not — a gap this phase closes for the decoder and leaves open else
 
 ---
 
-## 9a. The commissioned reviews did not report
+## 9a. The commissioned reviews — corrected
 
-Three automated reviews were commissioned against this branch — a focused validation review against
-all 88 FR/SC items, a requirements-and-governance review, and a security review. Each received the
-full artifact set, an adversarial brief, and one recovery request after failing to report.
+**This section previously said the reviews returned nothing. That was false, and it is corrected
+here rather than quietly rewritten.**
 
-**None returned a usable report.**
+Three automated reviews were commissioned: a validation review against all 88 FR/SC items, a
+requirements-and-governance review, and a security review. At the time the first version of this
+section was written, none had reported and each had been given one recovery request. Recording
+"they returned nothing" was accurate **at that moment** and wrong **as a conclusion** — two of them
+reported afterwards, and one of them found real defects.
 
-That is recorded here as a **tooling failure**. It is **not** recorded as a pass, and no
-conclusion is drawn from it: a review that produced nothing is evidence of nothing, and treating
-silence as approval is the exact substitution this project's rules exist to prevent.
+The lesson is recorded rather than smoothed over: **"has not reported yet" is not "will not
+report", and writing the second when only the first was true put a false statement in a normative
+document.** The correct entry would have been "outstanding at the time of writing".
 
-**What the branch did receive is adversarial self-review**, and it is worth being precise about how
-much that is worth. It found four defects — D-1, D-2, D-3 above and the plain-text `404` in §4 —
-that **1024 then-passing tests had all missed**. That is the argument for review as a practice, and
-it is simultaneously the argument for why self-review is not enough: the same person who wrote the
-blind spot is looking for it.
+### What the security review found
 
-Self-review is not independent review, and nothing in this record presents it as such.
+Two HIGH findings, both **measured** rather than argued, both now fixed. Details in §7a as D-5 and
+D-6.
 
----
+It also confirmed, by direct attack, the claims this record makes about redaction: it sent canaries
+as query keys, as duplicate keys, as `filter[<canary>]`, and as `sort=<canary>`, and found **no
+path** by which runtime data reaches a response or a log. It confirmed the redaction tests are not
+vacuous, that `MAX_DEPTH` accounting is correct on all three recursion sites, and that nothing
+concatenates a filter value anywhere.
+
+Six MEDIUM and four LOW findings followed. Five of the MEDIUMs were **fail-open** paths, each
+contradicting a claim the code itself makes. Four are fixed; the remainder are recorded in §8.
+
+### What the package research found
+
+A correction to this record's headline claim, now applied — see §2.
+
+### What did not report
+
+The **validation review** and the **requirements review** produced nothing. That is recorded as a
+tooling failure and **not** as a pass. No conclusion is drawn from their silence.
+
+The consequence is uneven coverage, and it is worth naming: the security dimension received a
+genuine adversarial review and found real defects; the FR/SC conformance and governance-truthfulness
+dimensions received **only self-review**. The first found six defects the test suite missed. There
+is no reason to believe the other two dimensions are cleaner — only that nobody looked.
 
 ## 10. Automated review is not independent review
 

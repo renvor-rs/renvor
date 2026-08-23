@@ -41,6 +41,16 @@ pub const OPENAPI_VERSION: &str = "3.2.0";
 ///
 /// Emitted explicitly rather than relied on as a default, so a reader of the document knows which
 /// dialect its schemas are written in without having to know the specification's defaults.
+///
+/// # The date here is NOT the schema's date, and that is not a mistake
+///
+/// The vendored **schema** artifacts are `2025-11-23`. The **dialect** and **meta** artifacts are
+/// still `2025-09-17` — the OpenAPI Initiative revised one and not the others. Both resolve; they
+/// simply carry different dates.
+///
+/// Written down because the mismatch looks like an oversight and correcting it to `2025-11-23`
+/// would emit a dialect URI that does not exist. There is also no `/latest` alias to fall back on:
+/// `https://spec.openapis.org/oas/3.2/schema/latest` returns **404**.
 pub const OPENAPI_DIALECT: &str = "https://spec.openapis.org/oas/3.2/dialect/2025-09-17";
 
 /// The media type for request and response payloads.

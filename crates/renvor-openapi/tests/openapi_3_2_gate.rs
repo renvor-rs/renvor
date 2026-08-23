@@ -34,8 +34,8 @@ use renvor_openapi::{
 };
 use serde_json::{Value, json};
 
-const OAS_32: &str = include_str!("schemas/oas-3.2-schema-2025-09-17.json");
-const OAS_31: &str = include_str!("schemas/oas-3.1-schema-2022-10-07.json");
+const OAS_32: &str = include_str!("schemas/oas-3.2-schema-2025-11-23.json");
+const OAS_31: &str = include_str!("schemas/oas-3.1-schema-2025-11-23.json");
 
 fn schema_32() -> Value {
     serde_json::from_str(OAS_32).expect("the vendored 3.2 schema parses")
