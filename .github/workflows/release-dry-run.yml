@@ -77,7 +77,24 @@ env:
   # package cannot depend on an unpublishable one, and the facade depends on it behind the
   # off-by-default `transport-rest` feature. **A default-OFF optional dependency still has to be
   # publishable**: `--dry-run` resolves every optional dependency regardless of its feature.
-  CRATES: "renvor-core renvor-config renvor-http renvor-testkit renvor"
+  #
+  # ── PHASE 005: FIVE CRATES BECAME EIGHT ─────────────────────────────────────────────
+  #
+  # `renvor-error`, `renvor-validation`, and `renvor-openapi` were added, and this assertion
+  # **failed on the first push of that branch** with:
+  #
+  #   expected: renvor renvor-config renvor-core renvor-http renvor-testkit
+  #   actual:   renvor renvor-config renvor-core renvor-error renvor-http renvor-openapi renvor-testkit renvor-validation
+  #
+  # The guard working again, for the same reason and to the same effect.
+  #
+  # All three are publishable for the forced reason ADR-0008 records: `renvor-http` adapts all
+  # three, and `renvor-http` is itself forced by the facade. `renvor-error` is the interesting one
+  # — it depends on **no Renvor crate at all**, so it publishes at position 1 beside the kernel.
+  #
+  # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
+  # sorts both sides — but it makes the line readable as the thing it describes.
+  CRATES: "renvor-core renvor-error renvor-config renvor-testkit renvor-validation renvor-openapi renvor-http renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor

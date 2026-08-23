@@ -278,9 +278,16 @@ async fn a_body_that_fails_mid_stream_is_reported_as_unreadable_not_as_too_large
         StatusCode::BAD_REQUEST,
         "a stream failure was reported as a size problem"
     );
+    // The distinction this test guards is unchanged; only its RENDERING is. Phase 004 answered a
+    // refusal as a plain sentence and this asserted that sentence. Phase 005 answers with RFC 9457,
+    // so the same distinction is asserted on the STABLE code rather than on prose — which is the
+    // stronger assertion, because `error.message` was never a stable surface and `code` is.
     let body = body_string(response).await;
+    let problem: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|error| panic!("not a problem document ({error}): {body}"));
     assert_eq!(
-        body, "the request body could not be read",
+        problem["code"],
+        serde_json::json!("malformed_body"),
         "a stream failure was described as something other than an unreadable body"
     );
 

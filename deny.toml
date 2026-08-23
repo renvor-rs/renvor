@@ -35,8 +35,28 @@ confidence-threshold = 0.93
 
 # Permissive licences compatible with distributing under `MIT OR Apache-2.0`.
 # Adding to this list is a policy change and goes through pull request review.
+#
+# `MIT-0` added 2026-08-23 (Phase 005). It is MIT **without the attribution requirement** — strictly
+# more permissive than `MIT`, which is already allowed — and OSI-approved. Nothing that is
+# compatible under `MIT` becomes incompatible under `MIT-0`.
+#
+# It arrived through `borrow-or-share` 0.2.4, a transitive DEV-only dependency:
+#
+#   jsonschema (dev) -> referencing -> fluent-uri -> borrow-or-share  [MIT-0]
+#
+# It is therefore never distributed in any published crate; it exists only in the build
+# environment. The allowance is recorded anyway, because a licence that is fine for a reason
+# nobody wrote down is a licence somebody will re-litigate.
+#
+# HOW IT WAS FOUND, and why that matters: `cargo deny check` did NOT see it. GitHub's
+# dependency-review action did, and failed the pull request. The two gates inspect different
+# graphs — `cargo deny list` here reports `schemars` (a runtime dependency) and reports neither
+# `jsonschema`, `proptest`, `fluent-uri`, `referencing`, nor `borrow-or-share`, all of which are
+# dev-only. That gap is recorded in governance/deferred-verification-work.md: a local gate narrower
+# than the CI gate it is supposed to pre-empt is a gate that reports a pass it has not earned.
 allow = [
     "MIT",
+    "MIT-0",
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",

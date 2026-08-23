@@ -14,5 +14,7 @@ pub mod dev;
 pub mod docker;
 pub mod doctor;
 pub mod new;
+pub mod openapi;
+pub mod relay;
 pub mod routes;
 pub mod tls;

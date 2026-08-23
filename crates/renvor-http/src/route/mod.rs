@@ -18,8 +18,10 @@
 //! nothing beside the syscalls either side of it.
 
 pub mod build;
+pub mod describe;
 pub mod inspect;
 pub mod registry;
+pub mod spec;
 
 use core::fmt;
 use core::future::Future;
@@ -32,6 +34,7 @@ use renvor_core::{KernelError, TypedStateMap};
 use crate::context::RequestContext;
 
 pub use registry::{RouteError, RouteRegistry};
+pub use spec::{BodySpec, OperationSpec, ParameterSpec, RequestRejection, ResponseSpec};
 
 /// The request methods Renvor routes on.
 ///
@@ -456,6 +459,17 @@ pub struct Route {
     /// An `Arc<[_]>` rather than a `Vec`: every request builds a [`Next`] over it, and a shared
     /// slice is cloned by reference count rather than by copying the chain per request.
     pub(crate) middleware: Arc<[Arc<dyn Middleware>]>,
+    /// What this route declares — the value BOTH runtime validation and the published description
+    /// read.
+    ///
+    /// `Option` because a route may be registered without declarations. Such a route is still
+    /// dispatched and still described; it simply declares no inputs. It is never omitted from the
+    /// description, because a missing route is the failure the single-source rule exists to
+    /// prevent.
+    ///
+    /// `Arc` because a spec holds schemas and every request reads it: sharing by reference count
+    /// costs nothing per request, and cloning one would cost a deep copy of every schema.
+    pub(crate) spec: Option<Arc<OperationSpec>>,
 }
 
 impl Route {
@@ -475,6 +489,14 @@ impl Route {
     #[must_use]
     pub fn group(&self) -> Option<&str> {
         self.group.as_deref()
+    }
+
+    /// What this route declares, if anything.
+    ///
+    /// **The same value** `build::router` validates against and `describe::document` publishes.
+    #[must_use]
+    pub fn spec(&self) -> Option<&OperationSpec> {
+        self.spec.as_deref()
     }
 
     /// How many group middleware wrap this route.
@@ -574,6 +596,7 @@ impl RouteGroup {
                 group: route.group,
                 handler: route.handler,
                 middleware: chain.into(),
+                spec: None,
             });
         }
         Ok(self)
@@ -600,6 +623,7 @@ impl RouteGroup {
             group: Some(self.name.clone()),
             handler: Arc::new(handler),
             middleware: self.middleware.clone().into(),
+            spec: None,
         });
         Ok(self)
     }

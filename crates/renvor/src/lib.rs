@@ -193,11 +193,51 @@ pub use renvor_http as transport;
 // reads as `renvor::{RouteRegistry, HttpServerProvider}` rather than `renvor::transport::…`.
 //
 // `Server` is deliberately ABSENT — see the note above and `tests/facade_boundary.rs`.
+//
+// `Request` was MISSING until Phase 005, and its absence was an oversight rather than a decision:
+// a handler is `async fn(Request) -> Response`, so with `Response` exported and `Request` not, the
+// facade root could not express the one signature every application writes. Found by writing an
+// example against the facade alone.
 #[cfg(feature = "transport-rest")]
 pub use renvor_http::{
     Admission, ClientIdentity, CorsPolicy, HostPolicy, HttpServerConfig, HttpServerProvider,
-    Limits, Method, RequestContext, Response, Route, RouteGroup, RouteRegistry, TrustedProxies,
+    Limits, Method, Request, RequestContext, Response, Route, RouteGroup, RouteRegistry,
+    TrustedProxies,
 };
+
+/// The public API error registry and RFC 9457 Problem Details.
+///
+/// Transport-independent: nothing in it names an HTTP type. It is behind `transport-rest` because
+/// the kernel-only path has no public HTTP API to describe errors for — not because it needs a
+/// transport to work.
+#[cfg(feature = "transport-rest")]
+pub use renvor_error as error;
+
+/// The validation boundary.
+///
+/// One [`validation::Declaration`] is enforced at runtime and published in the description. It is
+/// the same value in both directions, which is what makes them agree.
+#[cfg(feature = "transport-rest")]
+pub use renvor_validation as validation;
+
+/// OpenAPI 3.2.0 description generation and API compatibility checking.
+#[cfg(feature = "transport-rest")]
+pub use renvor_openapi as openapi;
+
+// The declaration surface, promoted to the facade root for the same reason `RouteRegistry` is:
+// the common case should read as `renvor::{Declaration, OperationSpec}`.
+//
+// DELIBERATELY NARROW. The facade does not re-export an item merely because it is public in an
+// implementation crate — contract C-S1 states that explicitly, so that later narrowing is possible
+// without a breaking change. The document MODEL, the compatibility gate, and the interpreter's
+// internals stay one level down, under `renvor::openapi` and `renvor::validation`, where a caller
+// reaching for them is making a visible choice.
+#[cfg(feature = "transport-rest")]
+pub use renvor_error::{ApiErrorCode, InvalidParam, Location, ProblemDetails};
+#[cfg(feature = "transport-rest")]
+pub use renvor_http::route::OperationSpec;
+#[cfg(feature = "transport-rest")]
+pub use renvor_validation::{Declaration, Reason};
 
 #[cfg(test)]
 mod tests {

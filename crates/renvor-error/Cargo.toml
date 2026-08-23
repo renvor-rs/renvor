@@ -1,0 +1,64 @@
+# The stable PUBLIC API error registry and its RFC 9457 rendering (Phase 005).
+#
+# # This crate names no transport, and that is the whole reason it exists
+#
+# A public API error code is a compatibility promise. It outlives the message that explains it, it
+# outlives the handler that raises it, and — crucially — it outlives the transport that carries it.
+# Putting it in `renvor-http` would make the promise a property of HTTP.
+#
+# The dependency list below is the assertion: `serde` and `serde_json`, and nothing else. There is
+# no HTTP type here, no status-code type, and no router. The mapping from a code to an HTTP status
+# lives in `renvor-http`, because a status code IS transport semantics.
+#
+# # Why the RFC 9457 model is written here rather than taken from a package
+#
+# `problem_details` 0.10.0 was evaluated and rejected on a MEASURED fact, not a preference: its
+# core `status` member is `Option<http::StatusCode>`, and the crate depends on `http`
+# unconditionally — even with `default-features = false`. Compiling
+#
+#     let _: Option<http::StatusCode> = ProblemDetails::new().with_status(..).status;
+#
+# succeeds, which is the proof. This crate must be usable with NO transport present, so a
+# transport type in its core model disqualifies it. See ADR-0015 and the Phase 005 dependency
+# inventory.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-error"
+description = "Stable public API error codes and RFC 9457 Problem Details for the Renvor framework: a closed code registry, safe detail derivation, and redaction guarantees, with no transport dependency."
+documentation = "https://docs.rs/renvor-error"
+readme = "README.md"
+keywords = ["renvor", "framework", "rfc9457", "problem-details", "errors"]
+categories = ["web-programming"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# Serialisation of the Problem Details document, and nothing else. `derive` is used for the
+# document's members; the extension members are typed fields rather than an open map, because a
+# map would let an unreviewed value reach a response.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+# The wire rendering. Already in the workspace graph through `renvor-http`; this adds an edge and
+# no new package.
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

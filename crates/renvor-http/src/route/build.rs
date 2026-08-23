@@ -71,6 +71,7 @@ use crate::error::{HttpError, HttpErrorKind};
 use crate::host::{self, HostPolicy};
 use crate::identity::{ForwardingHeaders, TrustedProxies, resolve};
 use crate::limits::Limits;
+use crate::problem;
 use crate::request_id;
 
 /// Everything the security layers need in order to resolve a request.
@@ -171,15 +172,20 @@ pub fn router(registry: &RouteRegistry, config: RouterConfig) -> Result<Router, 
             // The group middleware this route captured at declaration. Cloning an `Arc<[_]>` is a
             // reference-count bump, so the chain is not copied per request.
             let middleware = Arc::clone(&route.middleware);
+            // The route's OWN declaration, captured here so dispatch validates against the same
+            // value `describe::document` publishes. Cloning an `Arc` is a reference-count bump; a
+            // spec holds schemas and copying one per request would be a deep copy of each.
+            let spec = route.spec.clone();
             let shared = Arc::clone(&shared);
             let path_owned = path.to_owned();
 
             let endpoint = move |request: AxumRequest| {
                 let handler = Arc::clone(&handler);
                 let middleware = Arc::clone(&middleware);
+                let spec = spec.clone();
                 let shared = Arc::clone(&shared);
                 let path_owned = path_owned.clone();
-                async move { dispatch(handler, middleware, shared, path_owned, request).await }
+                async move { dispatch(handler, middleware, spec, shared, path_owned, request).await }
             };
 
             let filter = method_filter(route.method);
@@ -300,9 +306,27 @@ const fn method_filter(method: Method) -> MethodFilter {
 }
 
 /// The answer for a path no route declares.
-async fn not_found() -> AxumResponse {
-    let error = HttpError::new(HttpErrorKind::NotFound, "no route declares this path");
-    plain(StatusCode::NOT_FOUND, error.public_message().to_owned())
+///
+/// # It reads the context rather than answering blind
+///
+/// Phase 004 answered this as plain text with no correlation, because a plain string needs
+/// nothing. An RFC 9457 document carries a correlation identifier, so this reads the one the
+/// outermost layer already resolved — the SAME `RequestId` that becomes the `x-request-id` header
+/// and the telemetry field.
+///
+/// A context that is absent means a mis-assembled router, and the document is emitted with the
+/// documented placeholder rather than a fabricated identifier: inventing one would let an operator
+/// search for a request that never had that identity.
+async fn not_found(request: AxumRequest) -> AxumResponse {
+    let request_id = request
+        .extensions()
+        .get::<RequestContext>()
+        .map(RequestContext::request_id);
+
+    problem::from_http_error(
+        &HttpError::new(HttpErrorKind::NotFound, "no route declares this path"),
+        request_id,
+    )
 }
 
 /// **Layers 1, 2, 3 — and the origin refusal.** The outermost layer.
@@ -564,6 +588,7 @@ async fn admit_and_bound(
 async fn dispatch(
     handler: Arc<dyn super::Handler>,
     middleware: Arc<[Arc<dyn super::Middleware>]>,
+    spec: Option<Arc<super::OperationSpec>>,
     shared: Arc<Shared>,
     path: String,
     request: AxumRequest,
@@ -609,6 +634,46 @@ async fn dispatch(
     };
 
     let query = parts.uri.query().unwrap_or_default().to_owned();
+
+    // VALIDATION, against the route's OWN declaration — the same value the description publishes.
+    //
+    // Before the handler, deliberately: an operation that declared its inputs should never receive
+    // one it declared invalid, and a handler that had to re-check would be a second rule that can
+    // disagree with the published one.
+    //
+    // A route with no declaration is not validated and not refused. It declares nothing, so there
+    // is nothing to enforce — and inventing a rule for it would enforce something the description
+    // does not publish.
+    if let Some(declared) = spec.as_deref() {
+        let headers: BTreeMap<String, String> = parts
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                // A header whose bytes are not text is skipped rather than lossily converted: a
+                // lossy conversion invents a value, and a declared header that is absent from this
+                // map is reported as missing, which is the truthful outcome.
+                value
+                    .to_str()
+                    .ok()
+                    .map(|text| (name.as_str().to_ascii_lowercase(), text.to_owned()))
+            })
+            .collect();
+
+        if let Err(rejection) = declared.validate(&path_params, &query, &headers, &collected) {
+            tracing::info!(
+                route = %path,
+                request_id = %request_id,
+                run_id = %run_id,
+                code = rejection.code().as_str(),
+                // The ISSUE COUNT, never the issues themselves and never the rejected values. A
+                // count is an operational fact; the values are caller data.
+                issues = rejection_issue_count(&rejection),
+                "request refused by its declared constraints"
+            );
+            return problem::from_rejection(&rejection, Some(request_id));
+        }
+    }
+
     let renvor_request = Request::new(context, collected, query, path_params)
         .with_state(Arc::clone(&shared.config.state));
 
@@ -839,10 +904,27 @@ fn refuse(error: &HttpError, request_id: Option<RequestId>, run_id: RunIdentifie
         ),
     }
 
-    // The identifier is NOT attached here. The outermost layer attaches it to every response,
-    // including this one, so there is one insertion site rather than one per refusal path.
-    plain(
-        StatusCode::from_u16(error.status()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-        error.public_message().to_owned(),
-    )
+    // RFC 9457, not plain text. Phase 004 answered a refusal with `error.public_message()`; a
+    // machine-readable failure is what Phase 005 promises, and the media type is how a consumer
+    // tells a problem document from a payload.
+    //
+    // `error.detail()` is deliberately NOT passed. It is the operator-facing string, it went to
+    // the telemetry record above, and `problem::from_http_error` cannot read it — the document's
+    // `detail` comes from the code, as a `&'static str`.
+    //
+    // The identifier is NOT attached as a header here. The outermost layer attaches it to every
+    // response, including this one, so there is one insertion site rather than one per refusal
+    // path.
+    problem::from_http_error(error, request_id)
+}
+
+/// How many constraints a rejection reported.
+///
+/// A count, never the issues. `tracing` fields reach a log, and a log is a place a rejected value
+/// must not be — contract C-E3's redaction rule does not stop at the response boundary.
+fn rejection_issue_count(rejection: &super::RequestRejection) -> usize {
+    match rejection {
+        super::RequestRejection::Invalid(issues) => issues.len(),
+        _ => 0,
+    }
 }

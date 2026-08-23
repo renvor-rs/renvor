@@ -6,15 +6,20 @@
 //! structural here rather than advisory:
 //!
 //! ```text
-//!                  RouteRegistry
-//!                 (one value)
-//!                 ╱          ╲
-//!        build::router()   inspect::render()
+//!                     RouteRegistry
+//!                     (one value)
+//!            ╱              │             ╲
+//!    build::router()  inspect::render()  describe::document()
 //! ```
 //!
-//! Both functions take `&RouteRegistry`. Neither has access to any other source, so a route cannot
-//! reach dispatch without reaching inspection, and cannot reach inspection without reaching
-//! dispatch. Making them agree is not a discipline anyone has to keep — there is only one value.
+//! All three take `&RouteRegistry`. None has access to any other source, so a route cannot reach
+//! dispatch without reaching inspection and the description, and cannot reach either without
+//! reaching dispatch. Making them agree is not a discipline anyone has to keep — there is only one
+//! value.
+//!
+//! Phase 005 added the third consumer WITHOUT adding a second collection. An operation's
+//! declarations live on the route, inside this registry, which is why "runtime validation and the
+//! published schema agree" is an identity here rather than a property a test has to chase.
 //!
 //! # Why a duplicate is an error rather than a replacement
 //!
@@ -61,6 +66,8 @@ pub enum RouteError {
         /// The offending status.
         status: u16,
     },
+    /// Declarations were supplied before any route was registered.
+    NoRouteToDescribe,
     /// The method is answered by the transport itself and cannot carry an application route.
     MethodReservedByTransport {
         /// The method that cannot be registered.
@@ -96,6 +103,12 @@ impl fmt::Display for RouteError {
                 "`{status}` is not a status HTTP defines; it must be between 100 and 599. Refused \
                  where the response is built, because a status refused while the response is being \
                  rendered can only become a bare 500 and loses what the handler meant"
+            ),
+            Self::NoRouteToDescribe => f.write_str(
+                "there is no route to describe: `describe` attaches declarations to the most \
+                 recently registered route, and none has been registered. The declaration is \
+                 refused rather than dropped — dropping it would publish a description missing \
+                 exactly the constraints that were written",
             ),
             Self::MethodReservedByTransport { method, reason } => write!(
                 f,
@@ -152,6 +165,7 @@ impl RouteRegistry {
             handler: std::sync::Arc::new(handler),
             // A route registered outside a group has no group middleware, by definition.
             middleware: std::sync::Arc::from(Vec::new()),
+            spec: None,
         })?;
         Ok(self)
     }
@@ -253,6 +267,40 @@ impl RouteRegistry {
         self.seen.insert(key);
         self.routes.push(route);
         Ok(())
+    }
+
+    /// Attaches declarations to the **most recently registered** route.
+    ///
+    /// ```
+    /// # use renvor_http::route::{RouteRegistry, OperationSpec, Request, Response};
+    /// # async fn list(_: Request) -> Response { Response::text("ok") }
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut registry = RouteRegistry::new();
+    /// registry
+    ///     .get("/items", list)?
+    ///     .describe(OperationSpec::new().id("listItems").summary("List items"))?;
+    /// # Ok(()) }
+    /// ```
+    ///
+    /// # Why it attaches to the last route rather than taking a method and path
+    ///
+    /// A method-and-path argument would be a **second** way to name a route, and two names for one
+    /// thing can disagree — a typo would silently describe a route that does not exist while the
+    /// one just registered stayed undeclared. Attaching to the route in hand makes that
+    /// unrepresentable.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteError::NoRouteToDescribe`] when no route has been registered yet. Reported rather
+    /// than ignored: a declaration with nowhere to go is an author mistake, and dropping it would
+    /// publish a description missing exactly the constraints the author wrote.
+    pub fn describe(&mut self, spec: super::OperationSpec) -> Result<&mut Self, RouteError> {
+        let route = self
+            .routes
+            .last_mut()
+            .ok_or(RouteError::NoRouteToDescribe)?;
+        route.spec = Some(std::sync::Arc::new(spec));
+        Ok(self)
     }
 
     /// Every registered route, in registration order.

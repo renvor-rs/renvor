@@ -48,6 +48,15 @@ include = [
 # The kernel. `{ path, version }` — never path-only, which FR-040 forbids for a publishable package.
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 
+# The Phase 005 contracts this transport ADAPTS to HTTP. Each is transport-independent on its own
+# side of the boundary: `renvor-error` names no HTTP type, `renvor-validation` names no HTTP type,
+# and `renvor-openapi` carries no runtime server state. The mapping from a public error code to an
+# HTTP STATUS lives in this crate, in `route::describe::status_for`, because a status code is
+# transport semantics and putting one in the registry would make the registry need a transport.
+renvor-error = { path = "../renvor-error", version = "0.0.0" }
+renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
+renvor-openapi = { path = "../renvor-openapi", version = "0.0.0" }
+
 # The router and server. `axum::http` is used throughout, so no direct `http` dependency is
 # declared. `default-features = false` plus an explicit list keeps `multipart`, `ws`, `form`, and
 # `macros` out of the graph.

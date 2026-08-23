@@ -134,6 +134,17 @@ pub enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
     },
+    /// Show the OpenAPI description this project would publish.
+    ///
+    /// Asks the application binary for its own declarations — the same values that validate
+    /// requests at runtime — rather than parsing source or reading a second manifest. A project
+    /// that declares no Renvor dependency has nothing to describe, and that is a failure with a
+    /// name rather than an empty description.
+    Openapi {
+        /// The project directory. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Run the local development loop.
     Dev,
     /// Container development controls.

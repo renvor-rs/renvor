@@ -54,6 +54,21 @@ renvor-config = { path = "../renvor-config", version = "0.0.0", optional = true 
 # without the feature, and a positive control proving the same query finds the crates with it.
 renvor-http = { path = "../renvor-http", version = "0.0.0", optional = true }
 
+# The Phase 005 contracts, re-exported at the facade root under the same feature.
+#
+# They are declared HERE rather than reached through `renvor-http`'s re-exports because a facade
+# that re-exported a re-export would tie its public surface to a transport crate's internal
+# arrangement: `renvor-http` narrowing what it re-exports would silently narrow the facade.
+#
+# All three are `optional` and gated on `transport-rest`. `renvor-error` and `renvor-validation`
+# are transport-INDEPENDENT and could reasonably be default-on, and they are deliberately not:
+# nothing in the kernel-only path needs a validation boundary or a public HTTP error registry, and
+# a consumer taking `default-features = false` should resolve neither. Feature isolation is
+# asserted in both directions by `xtask` step 7.
+renvor-error = { path = "../renvor-error", version = "0.0.0", optional = true }
+renvor-validation = { path = "../renvor-validation", version = "0.0.0", optional = true }
+renvor-openapi = { path = "../renvor-openapi", version = "0.0.0", optional = true }
+
 # Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
 # dependency EDGE and no new package — checked against the lockfile rather than assumed.
 [dev-dependencies]
@@ -63,6 +78,11 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "macro
 # through `renvor-config`; this adds an edge, not a package.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
+# The Phase 005 example declares a type whose schema drives both validation and the description.
+# Already in the graph through `renvor-validation`; this adds an edge, not a package.
+schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
 # The configuration example uses `renvor::config`, which only exists when the `config` feature is
 # on. Without this declaration `cargo check --no-default-features --all-targets` FAILS to compile
 # it — and did, until T111. The `cargo tree` isolation check in `xtask` step 7 could never have
@@ -71,6 +91,14 @@ serde = { version = "1.0.229", default-features = false, features = ["std", "der
 name = "configuration"
 path = "examples/configuration.rs"
 required-features = ["config"]
+
+# The Phase 005 example needs the transport feature, for the same reason the configuration example
+# needs `config`: without the declaration, `cargo check --all-targets` fails to COMPILE it, and a
+# `cargo tree` isolation check can never catch that — resolving a graph is not compiling against it.
+[[example]]
+name = "described_api"
+path = "examples/described_api.rs"
+required-features = ["transport-rest"]
 
 [features]
 # `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
@@ -82,7 +110,12 @@ config = ["dep:renvor-config"]
 
 # The first real transport. Deliberately NOT in `default`: enabling a transport is a decision, and
 # a consumer who has not made it should not pay for it in build time, binary size, or audit surface.
-transport-rest = ["dep:renvor-http"]
+transport-rest = [
+    "dep:renvor-http",
+    "dep:renvor-error",
+    "dep:renvor-validation",
+    "dep:renvor-openapi",
+]
 
 [lints]
 workspace = true

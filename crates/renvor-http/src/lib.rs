@@ -62,6 +62,7 @@ pub mod cors;
 pub mod host;
 pub mod identity;
 pub mod limits;
+pub mod problem;
 pub mod provider;
 pub mod request_id;
 pub mod route;
@@ -77,6 +78,7 @@ pub use error::{HttpError, HttpErrorKind};
 pub use host::{HostPolicy, InvalidHost};
 pub use identity::TrustedProxies;
 pub use limits::Limits;
+pub use problem::{code_for, status_of};
 pub use provider::{HttpServerConfig, HttpServerProvider};
 pub use route::{
     Method, Middleware, Next, Request, Response, Route, RouteError, RouteGroup, RouteRegistry,

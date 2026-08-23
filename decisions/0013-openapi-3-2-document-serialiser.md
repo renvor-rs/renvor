@@ -1,0 +1,171 @@
+# ADR-0013: Serialise the OpenAPI 3.2.0 document in Renvor, because no maintained package emits its semantics
+
+| Field | Value |
+|---|---|
+| **ID** | 0013 |
+| **State** | `accepted` |
+| **Reviewer** | Ahmed Anbar — self-review under W-011 |
+| **Review date** | 2026-08-23 |
+| **Superseded by** | *(not superseded)* |
+
+> **This record is `accepted` under W-011. The review behind it was NOT independent.**
+>
+> Constitution §Development and Phase Workflow #4 and spec FR-013 require a recorded **independent**
+> review before acceptance. **No independent human review of this record has occurred, and none is
+> claimed.** Acceptance rests on **[W-011](../governance/waivers.md)**, a time-bounded written
+> waiver granted on 2026-08-23, owned by Ahmed Anbar, expiring **2027-02-11** or **immediately**
+> when a qualified independent human reviewer becomes available — whichever is first.
+>
+> **Automated review is advisory and does not satisfy the requirement.** W-011 covers this record,
+> ADR-0014 and ADR-0015 as one coupled Phase 005 decision; it authorises **nothing else** — not
+> phase closure, which is W-012, and not any publication, tag, release or deployment. When its
+> removal plan is executed, this record is re-reviewed **in full** and W-011 closes.
+
+## Context
+
+Constitution principle V is binding and specific:
+
+> *"REST MUST use the current approved OpenAPI standard and RFC 9457 Problem Details. The initial
+> target is OpenAPI 3.2.0, and emitted documents MUST NOT claim a version that selected tooling does
+> not correctly implement."*
+
+PLAN.md §11.1 repeats it and adds the consequence: *"Phase 005 remains blocked until selected tooling
+can emit and validate the promised version correctly."*
+
+OpenAPI Specification **3.2.0** was released on **2025-09-19**. PLAN.md §8.1's package snapshot named
+`utoipa`, `aide`, and `schemars` as candidates and required the snapshot to be re-run rather than
+trusted.
+
+## The research, re-run on 2026-08-23
+
+Every row below was established by **compiling and running** the candidate, or by reading the
+official artifact. No row is a README claim.
+
+| Candidate | Version | Date | License | Emits | Verdict |
+|---|---|---|---|---|---|
+| `utoipa` | 5.5.0 | 2026-05-04 | MIT OR Apache-2.0 | **`3.1.0`** | **Rejected** — measured by compiling a `#[derive(OpenApi)]` type and printing the field |
+| `utoipa-axum` | 0.2.0 | 2025-01-16 | MIT OR Apache-2.0 | inherits `utoipa` | **Rejected** — same version, and binds to `axum` |
+| `aide` | 0.15.1 | 2026-04-14 | MIT OR Apache-2.0 | 3.1 | **Rejected** — wrong version; 0.16.0 is a pre-release; and **axum-bound** (`axum` and `axum-extra` are non-optional), so not the neutral option it is often taken for |
+| `apistos` | 0.6.1 | 2026-06-08 | MIT OR Apache-2.0 | 3.0/3.1 | **Rejected** — wrong version; actix-bound |
+| `oasgen` | 0.25.0 | 2025-02-25 | MIT | 3.0/3.1 | **Rejected** — wrong version; stale since 2025-02 |
+| `salvo-oapi` | 0.95.2 | 2026-08-06 | **Apache-2.0 only** | **`3.2.0` opt-in, but `$self` and nothing else** | **Rejected** — salvo-bound, so unusable from axum; single-licensed; and its 3.2 is a version string over a 3.1 object model |
+| `poem-openapi` | 5.1.16 | 2025-07-28 | MIT OR Apache-2.0 | 3.0 | **Rejected** — wrong version; poem-bound |
+| `okapi` | 0.7.0 | 2024-01-14 | MIT | 3.0 | **Rejected** — wrong version; unmaintained since 2024-01 |
+| `openapiv3` | 2.2.0 | 2025-06-02 | MIT | a 3.0 data model only | **Rejected** — wrong version |
+
+**No maintained Rust crate emits a document with genuine OpenAPI 3.2 semantics.** One published
+crate emits the version string: **`salvo-oapi` 0.95.2** offers `Version3_2` as an opt-in and writes
+`"3.2.0"`. It implements **`$self` and nothing else** from the 3.2 object model — no
+`additionalOperations`, no `querystring`, no `itemSchema`, no `deviceAuthorization`, no
+`mediaTypes`, and a `Tag` carrying only `name`/`description`. It is also hard-bound to the Salvo
+framework (`salvo_core`, `impl Handler for OpenApi`), so it is unusable from axum, and it is
+**Apache-2.0 only** while the rest of this workspace is dual-licensed.
+
+That crate is the clearest possible illustration of why this phase's gate has a **negative half**:
+it produces a document that is *schema-valid against OAS 3.2* while carrying no 3.2 semantics —
+exactly the relabelling constitution principle V forbids, and exactly what proof 3 detects.
+
+Complete 3.2 object models are **merged but unreleased** in both `utoipa` master
+([PR #1555](https://github.com/juhaku/utoipa/pull/1555), merged 2026-08-09) and `salvo-oapi` main
+([PR #1688](https://github.com/salvo-rs/salvo/pull/1688), merged 2026-08-06 — twenty hours *after*
+0.95.2 was cut, which is the whole explanation for that release's half-support). utoipa master
+still carries `version = "5.5.0"` with no release announced, and `Version31` remains `#[default]`
+there — despite that PR's own description claiming it changed the default, which did not survive
+review.
+
+Relabelling 3.1 output as 3.2 is exactly what principle V forbids, and it would not be a private
+shortcut: the version string is what tells every consumer's tooling how to read the document.
+
+> **This paragraph was corrected on 2026-08-23.** It previously read *"No maintained Rust crate
+> emits an `openapi: 3.2.0` document"* — flatly, with no qualifier. That was **false**:
+> `salvo-oapi` 0.95.2 does. The correction does not change the decision, and it makes the case for
+> it stronger, because the one crate that emits the version string is the exact trap the gate
+> exists to catch. Found by package research after the ADR was written.
+
+## Decision
+
+**Renvor owns a bounded OpenAPI 3.2.0 document model and serialiser**, in `renvor-openapi`.
+
+The responsibility is bounded, and the bound is the decision:
+
+| | |
+|---|---|
+| **It does** | emit the document envelope and its operations, deterministically |
+| **It does not** | implement JSON Schema — **`schemars` 1.2.2** does, and it emits draft 2020-12, the exact dialect base OAS 3.2 declares |
+| | parse OpenAPI documents written by anyone else |
+| | resolve remote references |
+| | **judge validity** — the **official published schema** does that, checked by an independent validator |
+
+The `openapi` member is a **constant**. There is no field, argument, or configuration that sets it,
+so relabelling is not something the model can express.
+
+## Why this is not "a custom OpenAPI implementation"
+
+The prohibition this record answers to is principle III's: Renvor must not build custom
+infrastructure *"merely to own the implementation."*
+
+The largest part of an OpenAPI generator is **schema production**, and Renvor writes none of it —
+`schemars` does, and its output was verified to embed as a **valid OAS 3.2 Schema Object** by
+validating a whole document containing one against the official schema. What remains is an envelope
+and its operations: a data model with a `Serialize` implementation.
+
+It is also not built to own anything. It is built because the alternative is emitting `3.1.0` or
+lying about it.
+
+## Consequences
+
+### The gate is fail-closed and does not trust this crate
+
+Five proofs run against the **vendored official schemas**, offline:
+
+1. the document declares `3.2.0`;
+2. it validates against the official **3.2** schema, via `jsonschema` 0.50.1 — a validator
+   independent of the generator;
+3. it is rejected by the official **3.1** schema **with 3.1's version pattern neutralised**, so the
+   rejection is **structural** rather than a version-string mismatch;
+4. **the control** — a genuinely relabelled 3.1 document *passes* that neutralised check, proving
+   the discriminator discriminates rather than rejecting everything;
+5. **the controls** — four malformed documents are rejected, proving the validator is not vacuous.
+
+Proof 3 works because both official schemas use `unevaluatedProperties: false`, so a document
+carrying a 3.2-only member is structurally invalid against 3.1. Generated documents therefore always
+carry 3.2-only constructs — `$self`, Response `summary`, Tag `summary`/`kind`, and Response objects
+with no `description`, which 3.1 requires and 3.2 does not.
+
+### The ownership cost, stated
+
+`renvor-openapi`'s document model is roughly 450 lines including documentation. It must be extended
+whenever Renvor describes a construct it does not yet emit — security schemes in Phase 009,
+callbacks and webhooks later — and each extension must keep passing the five proofs.
+
+That cost is real and it is **smaller than the alternative**, which is either a false version string
+or an indefinitely blocked phase.
+
+### The exit strategy, executable rather than aspirational
+
+**Deletion trigger.** When a maintained Rust crate emits a document whose `openapi` field is `3.2.x`
+**and** which passes proofs 1–5 above, Renvor's serialiser is replaced by it and this record is
+superseded.
+
+The trigger is executable because **the proof harness that would judge a replacement is the one
+already in `crates/renvor-openapi/tests/openapi_3_2_gate.rs`**. Evaluating a candidate costs a
+dependency swap and a test run, not a fresh investigation.
+
+The most likely candidate is `utoipa`, which is actively maintained and has the largest share of the
+ecosystem. This record does not predict when.
+
+### What is NOT decided here
+
+- Which JSON Schema keywords Renvor **enforces** — ADR-0014.
+- The public API error vocabulary — ADR-0015.
+- Anything about security schemes, callbacks, or webhooks, none of which this phase emits.
+
+## Alternatives considered
+
+| Alternative | Why rejected |
+|---|---|
+| Emit 3.1 with `utoipa` and set the version string to `3.2.0` | Precisely what principle V forbids. It would also be undetectable to a reviewer reading the manifest, and detectable to every consumer's tooling |
+| Emit 3.1 honestly and defer 3.2 | PLAN.md §11.1 and §8 name 3.2.0 as the target. Deferring means REST 1.0 ships describing itself with a superseded version |
+| Wait for upstream 3.2 support | No candidate has an announced 3.2 milestone. Waiting blocks Phase 005 and every phase that depends on it, for an unknown duration, on someone else's roadmap |
+| Fork `utoipa` and add 3.2 | A fork is ownership with none of the boundedness: the whole schema generator comes with it, and the exit strategy becomes "merge upstream", which is harder than replacing a serialiser |
+| Generate the document from a template | A template cannot check operation-identifier uniqueness, validate examples, or be compared semantically. It moves the problem into a place with no type system |

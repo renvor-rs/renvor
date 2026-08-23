@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.1.1"
-status: "normative — enforced executably by `xtask`. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+version: "1.1.2"
+status: "normative — enforced executably by `xtask`. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -49,6 +49,22 @@ in [`governance/deferred-verification-work.md`](../governance/deferred-verificat
 
 It is named here rather than left silent, because a contract that lists only the checks that exist
 tells a reader what runs but not what is unguarded.
+
+### Step 6 scope note — added 2026-08-23
+
+**Step 6 does not cover dev-only dependencies.** Measured on this workspace: `cargo deny list`
+reports `schemars` (a runtime dependency) and reports neither `jsonschema`, `proptest`,
+`fluent-uri`, `referencing`, nor `borrow-or-share`, every one of which is dev-only.
+
+A `MIT-0` licence entered through that subgraph in Phase 005, **passed step 6**, and was caught by
+GitHub's dependency-review action instead — which inspects the whole graph.
+
+This is stated here rather than left to the wider reading, because *"Dependency and licence policy —
+`cargo deny check`"* reads as covering everything, and for dev-dependencies it does not. A gate that
+under-describes its own scope is the same defect class as a step this table omits.
+
+The gap, what would close it, and why the cause is not yet established are recorded in
+[`governance/deferred-verification-work.md`](../governance/deferred-verification-work.md).
 
 ### Step 8 command note
 
