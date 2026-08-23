@@ -3,12 +3,16 @@
 | Field | Value |
 |---|---|
 | **ID** | 0012 |
-| **State** | `proposed` |
-| **Reviewer** | *(none — see the acceptance note below)* |
-| **Review date** | *(none)* |
+| **State** | `accepted` |
+| **Accepted under** | **W-009** — maintainer waiver of the independent-review requirement, granted 2026-08-23 |
+| **Reviewer** | *(none independent — see the acceptance note below)* |
+| **Review date** | 2026-08-23 *(maintainer acceptance, not independent review)* |
 | **Superseded by** | *(not superseded)* |
 
-> **This record is `proposed` and MUST NOT be marked `accepted` on the current evidence.**
+> **Accepted on 2026-08-23 under W-009, and under nothing else.**
+>
+> **No independent human review of this record has occurred, and none is claimed.** It was accepted
+> on the maintainer's explicit authority, recorded as a waiver rather than presented as a review.
 > Constitution §Development and Phase Workflow #4 and spec FR-013 require a recorded
 > **independent** review before acceptance. No existing waiver confers that authority here:
 > **W-002** covers Phase 001 decision records; **W-004** names **ADR-0007 alone**; **W-006** names
@@ -221,5 +225,16 @@ Acceptance requires **one** of:
    the trend-guard consequences that a **fourth** consecutive single-maintainer review waiver
    entails.
 
-Until one exists, this record stays `proposed`, the Phase 004 pull request does **not** merge, and
-Phase 004 is **not** marked complete.
+**Route 2 was taken.** On 2026-08-23 Ahmed Anbar granted **W-009**, a time-bounded waiver of the
+independent-review requirement for this record specifically. Its compensating controls, scope limits,
+expiry (**2027-02-11**, inherited under the ledger's ratchet rule rather than restarting the clock)
+and removal plan are recorded in [`governance/waivers.md`](../governance/waivers.md).
+
+**What that does and does not mean.** W-009 authorises accepting *this record*. It does not close
+Phase 004 — that is **W-010**, granted separately, because a record-level waiver does not authorise
+closing a phase. It confers nothing on Phase 005. It waives no finding, no failed check, no missing
+test, and no security blocker. And it does not convert any review that was performed into an
+independent one: **every review inside Phase 004 remains advisory and non-independent, an automated
+reviewer is not a person, and the maintainer's own acceptance is a maintainer decision rather than a
+review.** When a qualified independent reviewer becomes available, this record is re-reviewed in full
+and W-009 closes.

@@ -613,3 +613,46 @@ test input.
 
 The committed-history scanner (`gitleaks git`) in the same step is untouched and still reads all
 335 commits.
+
+## Authority — recorded 2026-08-23
+
+**There is no independent human reviewer.** Nothing below claims otherwise. Ahmed Anbar, Claude,
+Codex, and every subagent are the author or automated; **an automated reviewer is not a person and
+is therefore not independent under any reading of the `GOVERNANCE.md` criteria.** Every review
+performed inside Phase 004 is **advisory and non-independent evidence only**.
+
+Two waivers were granted on Ahmed's explicit authorisation, at two levels, because the waiver ledger
+does not collapse those axes:
+
+| Waiver | Waives | Applied to | Expiry |
+|---|---|---|---|
+| **W-009** | constitution §Development and Phase Workflow **#4** and spec FR-013 — a decision record MUST NOT be accepted without a recorded **independent** review | **ADR-0012 only** | **2027-02-11** |
+| **W-010** | constitution §Development and Phase Workflow **#7** and `PLAN.md` §6.1 step 10 — a phase MUST obtain an independent requirements-and-security review before it closes | **Phase 004 only** | **2027-02-11** |
+
+**Why two and not one.** The ledger states it as a grant term: *"A record-level waiver does not
+authorise closing a phase, and a phase-level waiver does not authorise accepting a decision record
+— which is exactly why Phase 002 needed three new waivers rather than an extension of the two that
+existed."* One record covering both gates would have been a reinterpretation, which the same
+paragraph forbids.
+
+**The expiry did not move.** Both inherit **2027-02-11**, the earliest open expiry, under the
+ledger's ratchet rule. Eight waivers now share that date; the horizon has not moved once since it
+was set, which is the rule working as intended.
+
+**The count is at the limit, not over it.** "Explicit reviewed exceptions" permits at most two per
+phase. Phase 004 holds exactly two. The approval-waiver count stays 1 (W-001) and
+control-unavailability stays 0.
+
+**W-010 is the fourth consecutive phase-level waiver** — W-003, W-005, W-008, W-010. The trend guard
+was already **TRIPPED** at three and a fourth deepens rather than re-trips it. **RO-001 has not
+moved**: no candidate reviewer has been approached, its first review date of **2026-11-19** has not
+arrived, and its failure condition now governs four phase-level waivers. Its progress log carries a
+dated entry saying exactly that, and nothing in this pack should be read as progress against it.
+
+**What these waivers do not do.** They confer nothing on Phase 005. They waive no product defect, no
+missing test, no missing functionality, no publication rule, and no CI failure. Where a requirement
+was unevidenced the remedy applied was a test — thirteen entries closed that way **before** the
+grant, not by it. The named limitations Phase 004 carries are permitted by their governing
+requirements and are **not** waived by either record.
+
+The constitution was not amended.
