@@ -272,7 +272,8 @@ decoder was not — a gap this phase closes for the decoder and leaves open else
 | L-8 | Idempotency keys, conditional requests, and ETags are named in PLAN.md §11.1 for REST 1.0 and require storage | framework | 006+ |
 | L-9 | **`renvor openapi` succeeds against no generated project**, because no Renvor crate is published and no generated project depends on the framework. The relay **is** implemented and **is** asserted end to end against a real binary answering through the real library. Its reach across *generated* projects is what is zero. Carried forward from Phase 004 in the same words, because it is the same limitation | framework | first publication |
 | L-10 | The API snapshot mechanism is implemented and no snapshot is committed, because the framework declares no public API of its own — the gate compares an **application's** description | framework | 012 |
-| L-11 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
+| L-11 | **The relay's deadline bounds this process's wait, not the project's binary.** The direct child is `cargo`, and `cargo run` spawns the binary as a grandchild; killing `cargo` orphans it. Fixing it means a process group, which `std` exposes only through `unsafe` `pre_exec` — and the workspace declares `unsafe_code = "forbid"`. A process-group crate is a dependency decision, not a late edit | framework | 012 |
+| L-12 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
 
 ---
 

@@ -29,6 +29,24 @@
 //! There is no branch that returns an empty success. A relay that could not obtain an answer says
 //! so, because an empty answer and "the question could not be asked" are different facts and a
 //! consumer cannot tell them apart if both arrive as success.
+//!
+//! # What the kill does NOT cover, stated rather than implied
+//!
+//! The direct child is `cargo`, and `cargo run` spawns the project's binary as a **grandchild**.
+//! Killing `cargo` orphans that grandchild rather than ending it: on Unix it is reparented and
+//! keeps running.
+//!
+//! So the deadline reliably bounds **this process's wait** — which is what a hanging command-line
+//! tool costs an operator — and does **not** guarantee the project's binary has stopped.
+//!
+//! Fixing it properly means putting the child in its own process group and signalling the group.
+//! `std::process` exposes that only through `CommandExt::pre_exec`, which is `unsafe`, and this
+//! workspace declares `unsafe_code = "forbid"`. A process-group crate would do it safely and is a
+//! dependency decision rather than a late edit.
+//!
+//! Recorded here and in `governance/phase-005-evidence.md` rather than left to inference — a
+//! constant whose documentation promises more than its code delivers is the defect class
+//! `renvor routes` already recorded against its own size bound.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -55,7 +73,9 @@ pub const MAX_ANSWER_BYTES: usize = 8 * 1024 * 1024;
 pub enum RelayFailure {
     /// The binary could not be started at all.
     Spawn(std::io::Error),
-    /// The binary did not answer within the deadline. **It was killed.**
+    /// The binary did not answer within the deadline. The direct child was killed.
+    ///
+    /// A grandchild — the binary `cargo run` spawned — may survive. See the module documentation.
     Timeout {
         /// The deadline that elapsed.
         after: Duration,
