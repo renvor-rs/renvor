@@ -119,10 +119,21 @@ impl SortAllowlist {
         // THE TIEBREAKER IS ALWAYS APPENDED, including when the caller declared no sort at all.
         // Appending it unconditionally is what makes totality a property of the type rather than
         // of the caller remembering.
+        //
+        // IT INHERITS THE PRECEDING TERM'S DIRECTION, and that is not a cosmetic choice. A
+        // tiebreaker exists to make an ordering total, not to introduce a second scan direction.
+        // Pinning it to `Ascending` made `name DESC` resolve to `name DESC, id ASC`, which is
+        // valid SQL and a perfectly deterministic order — but it cannot be expressed as a single
+        // row-value comparison, so every descending sort became unpageable by keyset seek. That
+        // was found by `renvor-sqlx`'s `seek_predicate`, which refuses a mixed ordering rather
+        // than emitting one whose semantics it cannot honour.
         if !resolved.iter().any(|term| term.column == tiebreaker) {
+            let direction = resolved
+                .last()
+                .map_or(Direction::Ascending, |term| term.direction);
             resolved.push(OrderTerm {
                 column: tiebreaker,
-                direction: Direction::Ascending,
+                direction,
             });
         }
 
@@ -379,7 +390,27 @@ mod tests {
         assert_eq!(order.terms()[0].column(), "title");
         assert_eq!(order.terms()[0].keyword(), "DESC");
         assert_eq!(order.terms()[1].column(), "id");
-        assert_eq!(order.terms()[1].keyword(), "ASC");
+        // INHERITED, not pinned to `ASC`. See `order_by` for why: a tiebreaker running counter to
+        // the primary sort makes the ordering unpageable by a keyset seek.
+        assert_eq!(order.terms()[1].keyword(), "DESC");
+    }
+
+    /// Every term in a resolved ordering shares one direction.
+    ///
+    /// The property `renvor-sqlx`'s row-value seek depends on, asserted here at the source rather
+    /// than only where it is consumed.
+    #[test]
+    fn a_resolved_ordering_never_mixes_directions() {
+        for direction in [Direction::Ascending, Direction::Descending] {
+            let order = allowlist()
+                .order_by(&[("title".to_owned(), direction)])
+                .expect("builds");
+            let first = order.terms()[0].direction();
+            assert!(
+                order.terms().iter().all(|term| term.direction() == first),
+                "a single-term sort resolved to a mixed ordering: {order:?}"
+            );
+        }
     }
 
     #[test]
