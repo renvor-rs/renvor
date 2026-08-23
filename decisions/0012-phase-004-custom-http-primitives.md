@@ -111,6 +111,41 @@ header-validation helper, not a host policy.
 implementation, the body-limit mechanism, the timeout mechanism, the concurrency limiter, tracing,
 and serialisation. All are the selected packages'.
 
+## The public surface this decision fixes
+
+**Decided 2026-08-23**, as part of closing the post-remediation requirements review's finding R-10.
+
+The five primitives above are Renvor's. The question this section settles is a different one: which
+**names Renvor promotes to its own crate root**, where an application reaches for them without
+knowing which transport it was given.
+
+**No facade-root name may expose `axum`, `tower`, or `hyper` in a public callable signature.**
+
+The rule was already written in the facade's rustdoc — *"re-exporting a third-party type would put
+it in Renvor's public API and make every upstream major version a Renvor breaking change"* — and it
+was **false in the shipped surface**. `Server` sat at the facade root, and `Server::serve` takes the
+underlying router **by parameter**. The existing transport scan could not see it: that scan lives in
+`renvor-http` and exempts `server.rs` as a module which *is* the transport. The exemption was right
+for that scan and blind for this one.
+
+| | |
+|---|---|
+| **Normal path, at the root** | `HttpServerProvider`, `HttpServerConfig`, `RouteRegistry`, `RouteGroup`, `Route`, `Method`, `Response`, `RequestContext`, `ClientIdentity`, `HostPolicy`, `CorsPolicy`, `TrustedProxies`, `Limits`, `Admission` — every one Renvor-owned. The application hands Renvor its routes; Renvor owns the bind, the readiness report, the drain budget, and the shutdown ordering |
+| **Escape hatch, one level down** | `renvor::transport::Server` and `renvor::transport::route::build`. Naming a transport type inside the module that **is** the transport is the module's purpose, not a leak. A caller reaching there is choosing the upstream-version coupling deliberately |
+| **Enforced by** | `crates/renvor/tests/facade_boundary.rs` — parses the re-export list from the source rather than hand-listing it, resolves each name to its defining `impl` blocks, and reads the declared signatures |
+
+**The trade-off, stated rather than implied.** Removing `Server` from the root makes the raw path
+one segment longer and slightly less discoverable. An author who wants to drive the router directly
+must write `renvor::transport::Server` and, in doing so, name the transport they are coupling to.
+That friction is the point: the cost of the coupling should be visible at the call site rather than
+absorbed by Renvor's semantic version. The alternative — keeping the ergonomic root name — buys a
+shorter import and pays for it with a public API whose stability is not Renvor's to promise.
+
+**Not done, deliberately**: the router and the route registry are **not** duplicated, and no second
+route manifest exists. Wrapping `Router` in a Renvor-owned opaque newtype was considered and
+rejected — no normative requirement asks for a facade-root `Server`, so the wrapper would add a type
+whose only purpose is to make an unnecessary re-export legal.
+
 ## Alternatives considered
 
 | Alternative | Rejected because |

@@ -170,19 +170,33 @@ pub use renvor_config as config;
 ///
 /// # A deliberately narrow re-export
 ///
-/// The names below are the ones an author declaring routes and starting a server needs. The
-/// underlying router type is **not** among them: re-exporting a third-party type would put it in
-/// Renvor's public API and make every upstream major version a Renvor breaking change. Reach for
-/// [`transport::route::build`] when you genuinely need the router itself.
+/// The names below are the ones an author declaring routes and starting a server needs. **No
+/// third-party type appears in any of their public signatures** — re-exporting one would put it in
+/// Renvor's public API and make every upstream major version a Renvor breaking change. That is
+/// asserted mechanically by `tests/facade_boundary.rs`, not merely promised here.
+///
+/// The consequence is a boundary, not a slogan. The **normal** way to run an HTTP server is the
+/// lifecycle-managed [`HttpServerProvider`] with [`HttpServerConfig`] and [`RouteRegistry`]: the
+/// application hands Renvor its routes and Renvor owns the bind, the readiness report, the drain
+/// budget, and the shutdown ordering. Every type in that path is Renvor's.
+///
+/// The low-level `Server` is **not** at this root. Its `serve` takes the underlying router by
+/// parameter, so promoting it here would place a third-party type in Renvor's public API through
+/// the front door. It remains available as [`transport::Server`] — deliberately one level down,
+/// under the module that **is** the transport, where naming transport types is the point rather
+/// than a leak. Reach for it, and for [`transport::route::build`], when you genuinely need to
+/// drive the router yourself and accept the upstream-version coupling that comes with it.
 #[cfg(feature = "transport-rest")]
 pub use renvor_http as transport;
 
-// The route-declaration surface, promoted to the facade root so that the common case reads as
-// `renvor::{RouteRegistry, Method}` rather than `renvor::transport::…`.
+// The route-declaration and lifecycle surface, promoted to the facade root so that the common case
+// reads as `renvor::{RouteRegistry, HttpServerProvider}` rather than `renvor::transport::…`.
+//
+// `Server` is deliberately ABSENT — see the note above and `tests/facade_boundary.rs`.
 #[cfg(feature = "transport-rest")]
 pub use renvor_http::{
-    Admission, ClientIdentity, CorsPolicy, HostPolicy, Limits, Method, RequestContext, Response,
-    Route, RouteGroup, RouteRegistry, Server, TrustedProxies,
+    Admission, ClientIdentity, CorsPolicy, HostPolicy, HttpServerConfig, HttpServerProvider,
+    Limits, Method, RequestContext, Response, Route, RouteGroup, RouteRegistry, TrustedProxies,
 };
 
 #[cfg(test)]
