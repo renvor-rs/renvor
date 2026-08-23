@@ -180,6 +180,35 @@ fn verify() -> i32 {
     ) {
         return EXIT_STEP_FAILED;
     }
+    // STILL STEP 4. The end-to-end route-relay proof is `#[ignore]`d because it invokes a nested
+    // `cargo run` to build and execute a second crate's example, which would contend with the
+    // build lock held by the test process that spawned it. `--ignored` is therefore not a
+    // convenience here; it is the only safe way to run it.
+    //
+    // It ran in NO automated gate until 2026-08-23. `cargo test` skipped it and CI skipped it, so
+    // every relay assertion that actually executed fed the CLI a payload a human had written. A
+    // change to `answer_dump_request`'s envelope would have broken the real protocol and left the
+    // suite green. Named as its own line of output, counted inside step 4, so the sequence stays
+    // at eleven steps.
+    if !run(
+        4,
+        "tests (end-to-end route relay)",
+        "cargo",
+        &[
+            "test",
+            "-p",
+            "renvor-cli",
+            "--bins",
+            "--",
+            "--ignored",
+            "--exact",
+            "commands::routes::tests::the_relay_reads_what_the_real_library_actually_prints",
+        ],
+        &root,
+        &[],
+    ) {
+        return EXIT_STEP_FAILED;
+    }
     // Warnings are denied via RUSTDOCFLAGS; a broken intra-doc link is a failure.
     if !run(
         5,
@@ -486,6 +515,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !publishable_dependencies_are_resolvable(root) {
         return false;
     }
+    if !required_package_metadata_is_present(root) {
+        return false;
+    }
     if !instability_wording_agrees(root) {
         return false;
     }
@@ -495,8 +527,8 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, facade isolation, lean compile, publishable dependencies, instability \
-         wording, and the executable name all hold, each with a control",
+        "crate DAG, facade isolation, lean compile, publishable dependencies, required package \
+         metadata, instability wording, and the executable name all hold, each with a control",
     );
     true
 }
@@ -1017,8 +1049,9 @@ fn scan_manifests(manifests: &[(String, String)]) -> Result<(), String> {
     let mut path_and_version = 0_usize;
 
     for (name, text) in manifests {
-        // `publish = false` is what exempts a package from this rule.
-        if text.contains("publish = false") {
+        // `publish = false` is what exempts a package from this rule — as a KEY, not as the words
+        // appearing anywhere in the file. See `is_publishable`.
+        if !is_publishable(text) {
             continue;
         }
         publishable += 1;
@@ -1087,6 +1120,222 @@ fn scan_manifests(manifests: &[(String, String)]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Whether a manifest's package is intended for publication.
+///
+/// **Comment-aware, and that is the whole point.** Both this scan and the FR-040 dependency scan
+/// previously tested `text.contains("publish = false")` against the raw file. `renvor-core`,
+/// `renvor-http` and `renvor-testkit` each *discuss* `publish = false` in a leading comment
+/// explaining why they are **not** marked that way — so all three were read as unpublishable and
+/// silently skipped by both gates. Three of the five publishable packages were unexamined, and the
+/// gates reported success. Discovered 2026-08-23 while adding the metadata check, because
+/// `cargo metadata` says five and the scan said two.
+fn is_publishable(manifest: &str) -> bool {
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        // Strip a trailing comment before looking, so `publish = false # ...` still counts.
+        let code = trimmed.split('#').next().unwrap_or(trimmed).trim();
+        if code.starts_with("publish") {
+            let rest = code.trim_start_matches("publish").trim_start();
+            if let Some(value) = rest.strip_prefix('=') {
+                let value = value.trim();
+                if value == "false" || value.starts_with("[]") {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+/// The metadata every publishable package must declare, per `contracts/package-metadata.md`.
+///
+/// The contract said *"A missing field fails metadata validation (FR-040)"* from the day it was
+/// written, and until 2026-08-23 **nothing validated them**. Cargo emits a warning and packages
+/// happily: deleting `keywords`, `categories`, `documentation` and `homepage` from a crate and
+/// running `cargo package --workspace` exited `0` with no error. This is the check that makes the
+/// sentence true rather than the sentence that was corrected to match the gap.
+const REQUIRED_PACKAGE_FIELDS: [&str; 11] = [
+    "name",
+    "version",
+    "description",
+    "license",
+    "repository",
+    "homepage",
+    "documentation",
+    "readme",
+    "keywords",
+    "categories",
+    "rust-version",
+];
+
+/// How a field arrived: written here, or inherited from `[workspace.package]`.
+#[derive(Debug, PartialEq, Eq)]
+enum Declared {
+    Directly,
+    FromWorkspace,
+}
+
+/// The `[package]` table of a manifest, as text. Empty when there is no such table.
+fn package_table(manifest: &str) -> String {
+    let mut inside = false;
+    let mut collected = String::new();
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            inside = trimmed == "[package]";
+            continue;
+        }
+        if inside {
+            collected.push_str(line);
+            collected.push('\n');
+        }
+    }
+    collected
+}
+
+/// The `[workspace.package]` table of the workspace root, as text.
+fn workspace_package_table(root_manifest: &str) -> String {
+    let mut inside = false;
+    let mut collected = String::new();
+    for line in root_manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            inside = trimmed == "[workspace.package]";
+            continue;
+        }
+        if inside {
+            collected.push_str(line);
+            collected.push('\n');
+        }
+    }
+    collected
+}
+
+/// Whether `table` declares `field`, and how.
+///
+/// `field.workspace = true` counts as declared **here** and inherited **there** — the caller must
+/// then confirm the workspace actually provides it, or an inherited field would satisfy this check
+/// while resolving to nothing.
+fn declaration_of(table: &str, field: &str) -> Option<Declared> {
+    for line in table.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix(field) {
+            let rest = rest.trim_start();
+            if rest.starts_with('=') {
+                return Some(Declared::Directly);
+            }
+            if rest.starts_with(".workspace") {
+                return Some(Declared::FromWorkspace);
+            }
+        }
+    }
+    None
+}
+
+/// Every publishable package declares every required field, resolving workspace inheritance.
+///
+/// Returns the number of publishable packages examined, so a scan that silently examined none
+/// cannot report success.
+fn required_metadata_is_declared(
+    manifests: &[(String, String)],
+    root_manifest: &str,
+) -> Result<usize, String> {
+    let workspace = workspace_package_table(root_manifest);
+    let mut publishable = 0_usize;
+
+    for (name, text) in manifests {
+        if !is_publishable(text) {
+            continue;
+        }
+        publishable += 1;
+
+        let table = package_table(text);
+        if table.trim().is_empty() {
+            return Err(format!(
+                "publishable package `{name}` has no readable `[package]` table, so its metadata \
+                 cannot be checked at all"
+            ));
+        }
+
+        for field in REQUIRED_PACKAGE_FIELDS {
+            match declaration_of(&table, field) {
+                None => {
+                    return Err(format!(
+                        "publishable package `{name}` declares no `{field}`. \
+                         `contracts/package-metadata.md` requires it of every package intended for \
+                         publication (FR-040). Cargo only warns, which is why this check exists"
+                    ));
+                }
+                Some(Declared::FromWorkspace) => {
+                    if declaration_of(&workspace, field).is_none() {
+                        return Err(format!(
+                            "publishable package `{name}` inherits `{field}` from the workspace, \
+                             but `[workspace.package]` does not declare it. The field resolves to \
+                             nothing and the package would publish without it"
+                        ));
+                    }
+                }
+                Some(Declared::Directly) => {}
+            }
+        }
+
+        // The shipped file set is stated, never inferred.
+        let has_include = declaration_of(&table, "include").is_some();
+        let has_exclude = declaration_of(&table, "exclude").is_some();
+        if !has_include && !has_exclude {
+            return Err(format!(
+                "publishable package `{name}` declares neither `include` nor `exclude`. The \
+                 contract requires the shipped file set to be explicit rather than inferred"
+            ));
+        }
+    }
+
+    if publishable == 0 {
+        return Err(
+            "the metadata scan found no publishable package. An empty scan proves nothing"
+                .to_owned(),
+        );
+    }
+
+    Ok(publishable)
+}
+
+/// Step 7: required package metadata is present on every publishable package.
+fn required_package_metadata_is_present(root: &std::path::Path) -> bool {
+    let Some(manifests) = workspace_manifests(root) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the workspace manifests could not be read",
+        );
+        return false;
+    };
+
+    let Ok(root_manifest) = std::fs::read_to_string(root.join("Cargo.toml")) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the workspace root manifest could not be read, so inherited metadata cannot be \
+             resolved",
+        );
+        return false;
+    };
+
+    match required_metadata_is_declared(&manifests, &root_manifest) {
+        Ok(_) => true,
+        Err(reason) => {
+            step_fail(7, "architecture invariants", &reason);
+            false
+        }
+    }
 }
 
 /// Reads every workspace member manifest as `(package name, text)`.
@@ -1568,6 +1817,325 @@ mod tests {
             manifests.iter().map(|(name, _)| name).collect::<Vec<_>>()
         );
         scan_manifests(&manifests).expect("the real workspace satisfies FR-040");
+    }
+
+    // ── required package metadata (FR-040, `contracts/package-metadata.md`) ──────────────────
+
+    /// A workspace root that provides the fields the fixtures below inherit.
+    fn workspace_root_manifest() -> String {
+        "[workspace.package]\n\
+         version = \"0.0.0\"\n\
+         rust-version = \"1.94.0\"\n\
+         license = \"MIT OR Apache-2.0\"\n\
+         repository = \"https://example.invalid/repo\"\n\
+         homepage = \"https://example.invalid\"\n"
+            .to_owned()
+    }
+
+    /// A manifest declaring everything the contract requires.
+    fn complete_manifest() -> String {
+        "[package]\n\
+         name = \"renvor-example\"\n\
+         version.workspace = true\n\
+         description = \"One sentence.\"\n\
+         license.workspace = true\n\
+         repository.workspace = true\n\
+         homepage.workspace = true\n\
+         documentation = \"https://docs.rs/renvor-example\"\n\
+         readme = \"README.md\"\n\
+         keywords = [\"renvor\"]\n\
+         categories = [\"web-programming\"]\n\
+         rust-version.workspace = true\n\
+         include = [\"src/**\"]\n\
+         \n\
+         [dependencies]\n"
+            .to_owned()
+    }
+
+    /// Removes one `[package]` field from a manifest, whichever form it takes.
+    fn without_field(manifest: &str, field: &str) -> String {
+        manifest
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim();
+                !(trimmed.starts_with(&format!("{field} ="))
+                    || trimmed.starts_with(&format!("{field}.workspace")))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_complete_manifest_passes_the_metadata_check() {
+        // POSITIVE CONTROL. Without it, a check that rejected everything would satisfy every
+        // negative test below and the suite would prove nothing about acceptance.
+        let examined = super::required_metadata_is_declared(
+            &[("renvor-example".to_owned(), complete_manifest())],
+            &workspace_root_manifest(),
+        )
+        .expect("a complete manifest is accepted");
+        assert_eq!(
+            examined, 1,
+            "the check examined the wrong number of packages"
+        );
+    }
+
+    #[test]
+    fn removing_any_required_field_is_rejected() {
+        // TABLE-DRIVEN. One case per field the contract names, each proving the check actually
+        // depends on that field rather than on some other line happening to be present.
+        for field in super::REQUIRED_PACKAGE_FIELDS {
+            let broken = without_field(&complete_manifest(), field);
+            assert_ne!(
+                broken,
+                complete_manifest(),
+                "the fixture never contained `{field}`, so removing it tested nothing"
+            );
+
+            let reason = super::required_metadata_is_declared(
+                &[("renvor-example".to_owned(), broken)],
+                &workspace_root_manifest(),
+            )
+            .expect_err("a missing required field must be rejected");
+
+            assert!(
+                reason.contains(field),
+                "`{field}` was removed but the failure named something else: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_manifest_declaring_neither_include_nor_exclude_is_rejected() {
+        let broken = without_field(&complete_manifest(), "include");
+        let reason = super::required_metadata_is_declared(
+            &[("renvor-example".to_owned(), broken)],
+            &workspace_root_manifest(),
+        )
+        .expect_err("an unstated file set is rejected");
+        assert!(reason.contains("include"), "{reason}");
+    }
+
+    #[test]
+    fn an_exclude_satisfies_the_file_set_rule_just_as_include_does() {
+        // CONTROL for the test above: the rule is "state the set", not "use `include`".
+        let with_exclude = without_field(&complete_manifest(), "include").replace(
+            "[dependencies]",
+            "exclude = [\"tests/**\"]\n\n[dependencies]",
+        );
+        super::required_metadata_is_declared(
+            &[("renvor-example".to_owned(), with_exclude)],
+            &workspace_root_manifest(),
+        )
+        .expect("`exclude` states the shipped set just as `include` does");
+    }
+
+    #[test]
+    fn a_field_inherited_from_a_workspace_that_does_not_declare_it_is_rejected() {
+        // The failure this catches is invisible to a presence check: `license.workspace = true`
+        // LOOKS declared and resolves to nothing.
+        let empty_workspace = "[workspace.package]\nversion = \"0.0.0\"\n";
+        let reason = super::required_metadata_is_declared(
+            &[("renvor-example".to_owned(), complete_manifest())],
+            empty_workspace,
+        )
+        .expect_err("an unresolvable inherited field is rejected");
+        assert!(
+            reason.contains("inherits") && reason.contains("resolves to nothing"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_package_marked_unpublishable_is_exempt() {
+        // `xtask` declares `publish = false` and is not held to the publication contract.
+        let internal = "[package]\nname = \"xtask\"\npublish = false\n".to_owned();
+        let examined = super::required_metadata_is_declared(
+            &[
+                ("renvor-example".to_owned(), complete_manifest()),
+                ("xtask".to_owned(), internal),
+            ],
+            &workspace_root_manifest(),
+        )
+        .expect("an unpublishable package is exempt");
+        assert_eq!(examined, 1, "the exempt package was counted as publishable");
+    }
+
+    #[test]
+    fn every_real_publishable_package_declares_its_required_metadata() {
+        // The check run against the ACTUAL manifests. This is the assertion that would have failed
+        // on 2026-08-22, when four required fields could be deleted and `cargo package` still
+        // exited zero.
+        let root = super::workspace_root();
+        let manifests =
+            super::workspace_manifests(&root).expect("the workspace manifests are readable");
+        let root_manifest = std::fs::read_to_string(root.join("Cargo.toml"))
+            .expect("the workspace root manifest is readable");
+
+        let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
+            .expect("every publishable package satisfies the metadata contract");
+
+        assert_eq!(
+            examined, 5,
+            "the workspace publishes five packages; the scan examined {examined}"
+        );
+    }
+
+    // ── published documentation agrees with the contracts it republishes ────────────────────
+
+    /// The error-code values of a registry table: rows shaped `| `code` | <exit> | ... |`.
+    ///
+    /// The exit-code column is what separates the registry from the several OTHER tables in these
+    /// documents whose first column is also a backticked identifier — `command`, `status`,
+    /// `result`, `error` are JSON FIELD names, not error codes, and an earlier version of this
+    /// parser collected them and reported four phantom omissions.
+    fn codes_in(markdown: &str) -> std::collections::BTreeSet<String> {
+        markdown
+            .lines()
+            .filter_map(|line| {
+                let rest = line.trim().strip_prefix("| `")?;
+                let (code, tail) = rest.split_once('`')?;
+                let exit = tail.trim_start().strip_prefix('|')?.trim();
+                let (exit, _) = exit.split_once('|')?;
+                exit.trim().parse::<u8>().ok()?;
+                code.chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_')
+                    .then(|| code.to_owned())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_published_cli_page_lists_every_error_code_the_contract_publishes() {
+        // FR-036 / C-2. `docs/docs/cli.mdx` REPUBLISHES the closed error-code registry. On
+        // 2026-08-22 it carried 19 of the 20 codes — `transport_not_wired`, added by this phase,
+        // was missing — while `exit::tests::the_registry_matches_the_published_contract_exactly`
+        // checked only the contract file and passed.
+        //
+        // `xtask` already guards exactly this drift class for `docs/docs/verification.mdx`. Nothing
+        // guarded `cli.mdx`, which is how a published page went one code short.
+        let root = super::workspace_root();
+        let contract = std::fs::read_to_string(root.join("contracts/json-output.md"))
+            .expect("the JSON output contract is readable");
+        let page = std::fs::read_to_string(root.join("docs/docs/cli.mdx"))
+            .expect("the published CLI page is readable");
+
+        let published = codes_in(&contract);
+        assert!(
+            published.len() >= 15,
+            "only {} code(s) parsed from the contract, so the comparison would prove nothing: {:?}",
+            published.len(),
+            published
+        );
+
+        let on_the_page = codes_in(&page);
+        let missing: Vec<&String> = published.difference(&on_the_page).collect();
+
+        assert!(
+            missing.is_empty(),
+            "the published CLI page omits {} code(s) the contract publishes: {missing:?}. A \
+             reader of the site would not learn they exist",
+            missing.len()
+        );
+    }
+
+    #[test]
+    fn the_published_cli_page_does_not_call_a_shipped_command_absent() {
+        // FR-040 read for INTENT rather than only literally. The requirement names public
+        // statements that a capability "becomes available in Phase 004"; `cli.mdx` carried the
+        // CONVERSE falsehood — `routes` listed among commands "that later phases will add —
+        // absent, not stubbed", under a heading reading "Everything below is implemented and
+        // tested". Phase 004 shipped `routes`.
+        let root = super::workspace_root();
+        let page = std::fs::read_to_string(root.join("docs/docs/cli.mdx"))
+            .expect("the published CLI page is readable");
+        let surface = std::fs::read_to_string(root.join("contracts/command-surface.md"))
+            .expect("the command-surface contract is readable");
+
+        let later_phases = page
+            .lines()
+            .find(|line| line.contains("later phases will add"))
+            .expect("the page names the commands later phases will add");
+
+        for command in ["new", "doctor", "check", "dev", "docker", "tls", "routes"] {
+            let shipped = surface.contains(&format!("`renvor {command}"));
+            if !shipped {
+                continue;
+            }
+            assert!(
+                !later_phases.contains(&format!("`{command}`")),
+                "`renvor {command}` has shipped — the command-surface contract documents it — but \
+                 the published page still lists it among the commands later phases will add"
+            );
+        }
+    }
+
+    #[test]
+    fn the_phase_evidence_distinguishes_workspace_from_generated_project_evidence() {
+        // FR-039 and SC-020: development/workspace integration evidence must be distinguished from
+        // evidence about what an externally generated project can build. Both were recorded as
+        // satisfied with NO executable evidence — the distinction was a property of prose that
+        // nothing read back.
+        let root = super::workspace_root();
+        let evidence = std::fs::read_to_string(root.join("governance/phase-004-evidence.md"))
+            .expect("the phase evidence pack is readable");
+
+        // The limitation that makes the distinction matter must be stated, not implied.
+        assert!(
+            evidence.contains("**No generated project depends on the framework**")
+                && evidence.contains("`renvor routes` reaches no generated project"),
+            "the evidence pack no longer states that no generated project depends on the \
+             framework, which is the fact that keeps workspace evidence from reading as evidence \
+             about generated projects"
+        );
+
+        // And it must not claim the converse anywhere.
+        for forbidden in [
+            "proves a generated project can build",
+            "generated projects are proven to build",
+        ] {
+            assert!(
+                !evidence.contains(forbidden),
+                "the evidence pack claims workspace integration as evidence about externally \
+                 generated projects: `{forbidden}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_comment_discussing_publish_false_does_not_exempt_a_package() {
+        // REGRESSION, 2026-08-23. `renvor-core`, `renvor-http` and `renvor-testkit` each carry a
+        // leading comment EXPLAINING why they are not `publish = false`. Both scans tested
+        // `text.contains("publish = false")` against the raw file, so all three were read as
+        // unpublishable and skipped. Three of five publishable packages went unexamined while both
+        // gates reported success — a comment was switching off a gate.
+        let discussed = "# A `publish = false` crate cannot be depended on, so this one is not.\n\
+                         [package]\n\
+                         name = \"renvor-example\"\n";
+        assert!(
+            super::is_publishable(discussed),
+            "a package that merely MENTIONS `publish = false` in a comment was treated as exempt"
+        );
+
+        // CONTROL: the real key still exempts.
+        let marked = "[package]\nname = \"xtask\"\npublish = false\n";
+        assert!(
+            !super::is_publishable(marked),
+            "an actually-unpublishable package was treated as publishable"
+        );
+
+        // And a trailing comment on the real key does not hide it.
+        let trailing = "[package]\nname = \"xtask\"\npublish = false # internal only\n";
+        assert!(
+            !super::is_publishable(trailing),
+            "a trailing comment hid the key"
+        );
+    }
+
+    #[test]
+    fn a_metadata_scan_that_reads_nothing_is_a_failure_rather_than_a_pass() {
+        super::required_metadata_is_declared(&[], &workspace_root_manifest())
+            .expect_err("an empty scan proves nothing");
     }
 
     #[test]
