@@ -656,3 +656,31 @@ grant, not by it. The named limitations Phase 004 carries are permitted by their
 requirements and are **not** waived by either record.
 
 The constitution was not amended.
+
+## A race in the cancellation tests — found by CI 2026-08-23
+
+CI on head `fa2f498` returned **`verify (stable)` failure** while **`verify (1.94.0)` passed on the
+same commit**. Local gates were green on both toolchains. Same-commit disagreement between two legs
+is the signature of a race, not of a defect in the change under test.
+
+**The failure**: `crates/renvor-cli/tests/terminal.rs::control_c_at_a_prompt_is_a_cancellation`,
+`Ctrl-C must exit 4, got 1`.
+
+**Root cause.** Both cancellation tests wrote their keypress immediately after `spawn`, without
+waiting for the prompt to be drawn. If the byte lands before the prompt library puts the pty into
+raw mode, the line discipline is still canonical — so `Ctrl-C` becomes **SIGINT to the foreground
+process group** rather than a byte the library reads, and the process exits `1` instead of `4`. The
+test's own assertion message had anticipated this mechanism without anything preventing it.
+
+**The fix** is `terminal.expect("Project name")` before the keypress in both tests. The library
+enables raw mode before it draws, so waiting for the drawn prompt is what makes "raw mode is on"
+observable. **The assertion is unchanged — the exit code still has to be `4`.** `expect` before
+interacting is the established pattern in this file; these two tests were the only ones that skipped
+it, and the Escape test was fixed alongside because it races identically and had merely not been
+observed failing yet.
+
+**Stated honestly: this was not reproduced locally.** 40 runs of the unfixed test under added CPU
+load produced 0 failures on macOS. The failing observation is the CI run and its log, not a local
+repro. The fix is therefore reasoned from the mechanism and from the file's own established pattern,
+and its confirmation is CI passing on the fixed head — not a local demonstration that would have
+been stronger had the machine cooperated.
