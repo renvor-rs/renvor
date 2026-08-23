@@ -193,10 +193,16 @@ pub use renvor_http as transport;
 // reads as `renvor::{RouteRegistry, HttpServerProvider}` rather than `renvor::transport::…`.
 //
 // `Server` is deliberately ABSENT — see the note above and `tests/facade_boundary.rs`.
+//
+// `Request` was MISSING until Phase 005, and its absence was an oversight rather than a decision:
+// a handler is `async fn(Request) -> Response`, so with `Response` exported and `Request` not, the
+// facade root could not express the one signature every application writes. Found by writing an
+// example against the facade alone.
 #[cfg(feature = "transport-rest")]
 pub use renvor_http::{
     Admission, ClientIdentity, CorsPolicy, HostPolicy, HttpServerConfig, HttpServerProvider,
-    Limits, Method, RequestContext, Response, Route, RouteGroup, RouteRegistry, TrustedProxies,
+    Limits, Method, Request, RequestContext, Response, Route, RouteGroup, RouteRegistry,
+    TrustedProxies,
 };
 
 /// The public API error registry and RFC 9457 Problem Details.

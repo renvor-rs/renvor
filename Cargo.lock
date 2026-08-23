@@ -1538,7 +1538,9 @@ dependencies = [
  "renvor-http",
  "renvor-openapi",
  "renvor-validation",
+ "schemars",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

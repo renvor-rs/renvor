@@ -78,6 +78,11 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "macro
 # through `renvor-config`; this adds an edge, not a package.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
+# The Phase 005 example declares a type whose schema drives both validation and the description.
+# Already in the graph through `renvor-validation`; this adds an edge, not a package.
+schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
 # The configuration example uses `renvor::config`, which only exists when the `config` feature is
 # on. Without this declaration `cargo check --no-default-features --all-targets` FAILS to compile
 # it — and did, until T111. The `cargo tree` isolation check in `xtask` step 7 could never have
@@ -86,6 +91,14 @@ serde = { version = "1.0.229", default-features = false, features = ["std", "der
 name = "configuration"
 path = "examples/configuration.rs"
 required-features = ["config"]
+
+# The Phase 005 example needs the transport feature, for the same reason the configuration example
+# needs `config`: without the declaration, `cargo check --all-targets` fails to COMPILE it, and a
+# `cargo tree` isolation check can never catch that — resolving a graph is not compiling against it.
+[[example]]
+name = "described_api"
+path = "examples/described_api.rs"
+required-features = ["transport-rest"]
 
 [features]
 # `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and

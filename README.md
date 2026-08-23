@@ -20,21 +20,29 @@
 > generator. Phase 004 adds the **first real transport**: a REST and HTTP delivery adapter with
 > declarative routing, a versioned middleware order, trusted-proxy client identity, fail-closed
 > host validation, deny-by-default CORS, documented limits, and a drain bounded by the kernel's
-> own work gate. It runs, and it is tested.
+> own work gate. Phase 005 adds the **validation boundary and the API description**: one schema
+> declaration that the runtime enforces and the OpenAPI document publishes — the same value, so
+> they cannot disagree — RFC 9457 `application/problem+json` failures with a closed error registry,
+> **OpenAPI 3.2.0** generation proven against the official schema, a semantic compatibility gate,
+> bounded cursor pagination contracts, and `renvor openapi`. It runs, and it is tested.
 >
-> **The honest limits, which are several.** There is still no database adapter, no
-> authentication, and no validation boundary. The transport lives behind an **off-by-default**
-> feature, so a default build resolves none of it. And because **nothing is published**, a project
-> the generator produces cannot yet depend on the framework — it records its transport choice and
-> documents the dependency to add later, rather than emitting one that would not resolve.
+> **The honest limits, which are several.** There is still no database adapter and no
+> authentication. Pagination and filtering define **contracts and ports only** — nothing queries
+> anything. The transport lives behind an **off-by-default** feature, so a default build resolves
+> none of it. And because **nothing is published**, a project the generator produces cannot yet
+> depend on the framework — it records its transport choice and documents the dependency to add
+> later, rather than emitting one that would not resolve. `renvor routes` and `renvor openapi`
+> therefore succeed against **no generated project**: the relays are implemented and tested
+> end to end against a real binary, and their reach across generated projects is zero because
+> nothing is published for them to depend on.
 >
-> **Every API is explicitly unstable**, and Phase 004 does **not** change that. The instability
+> **Every API is explicitly unstable**, and Phase 005 does **not** change that. The instability
 > window has two closure conditions in [`contracts/api-stability.md`](contracts/api-stability.md);
 > a real transport exercising the surface satisfies the **first**. The second requires an accepted
 > decision record that supersedes ADR-0002, and none exists. **The window is open.**
 > **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework, currently in Phase 004 of its development programme.
+Renvor is a Rust framework, currently in Phase 005 of its development programme.
 
 ## The command is `renvor`
 

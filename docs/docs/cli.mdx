@@ -39,10 +39,43 @@ is changed.
 | `renvor docker up\|down\|status\|logs` | Container development controls. |
 | `renvor tls trust` | The consent boundary for a trust-store change. **Issues nothing.** |
 | `renvor routes [PATH]` | Show the routes a project would serve, by asking the project's own binary. |
+| `renvor openapi [PATH]` | Show the OpenAPI 3.2.0 description a project would publish, by asking the project's own binary. |
 
-Commands that later phases will add — `generate`, `migrate`, `seed`, `openapi` — are
-**absent**, not stubbed. A command that exits zero without doing the work reports success for
-something that did not happen.
+Commands that later phases will add — `generate`, `migrate`, `seed` — are **absent**, not
+stubbed. A command that exits zero without doing the work reports success for something that did
+not happen.
+
+`openapi` left that list in Phase 005 and is now implemented.
+
+### `renvor openapi` asks the application, and bounds the asking
+
+It does not parse your source, and it does not read a second manifest. It runs the project's own
+declared binary through its build tool with a documented flag, and the binary prints the description
+built from **the same registry that builds its router** — then exits, before it starts anything.
+
+Six ways it can fail, each with its own name and a **non-zero** exit:
+
+| Failure | Reason |
+| --- | --- |
+| The project declares no Renvor dependency | `no_renvor_dependency` |
+| The binary could not be started | `invocation_failed` |
+| The binary did not answer within the deadline — **it is killed** | `invocation_timed_out` |
+| The binary exited non-zero, or reported a failure | `dump_failed` |
+| The answer was not one JSON document, or carried no description | `dump_unreadable` |
+| The answer declared a protocol version this `renvor` does not understand | `protocol_unsupported` |
+
+**None of them prints an empty description and exits zero.** An empty description and "this project
+cannot be asked" are entirely different facts, and a consumer cannot tell them apart if both arrive
+as success.
+
+:::caution Currently succeeds against no generated project
+No Renvor crate is published, so no project the generator produces depends on the framework, and
+`renvor routes` and `renvor openapi` therefore succeed against **none** of them.
+
+The relays **are** implemented and **are** tested end to end against a real binary answering through
+the real library. What is zero is their reach across *generated* projects, and it is zero because
+nothing is published for those projects to depend on.
+:::
 
 ### Global options
 
