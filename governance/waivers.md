@@ -1,6 +1,6 @@
 # Waiver Ledger
 
-**Status**: **7 active waivers** — W-001 (approval gap, seeded at T015), W-002 (ADR review gap), **W-003 (Phase 001 independent-review gap, granted 2026-08-15 at T088)**, **W-004 and W-005 (Phase 002 review gaps, granted 2026-08-16)**, **W-006 (ADR-0009 review gap, granted 2026-08-17)**, and **W-008 (Phase 003 review gap, granted 2026-08-19)**. W-006 is the **third** explicit reviewed exception in Phase 002 and therefore **exceeds this ledger's own expected maximum of two per phase**; that departure is recorded at [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure) rather than absorbed silently. W-008 trips the ledger's **trend guard** — three consecutive phases waiving the same rule for the same reason — which is recorded at [§The trend guard is TRIPPED](#the-trend-guard-is-tripped-and-this-is-the-entry-that-says-so) together with the **RO-001** obligation granted with it.
+**Status**: **9 active waivers** — W-001 (approval gap, seeded at T015), W-002 (ADR review gap), **W-003 (Phase 001 independent-review gap, granted 2026-08-15 at T088)**, **W-004 and W-005 (Phase 002 review gaps, granted 2026-08-16)**, **W-006 (ADR-0009 review gap, granted 2026-08-17)**, **W-008 (Phase 003 review gap, granted 2026-08-19)**, and **W-009 and W-010 (Phase 004 ADR-0012 and phase review gaps, granted 2026-08-23)**. W-006 is the **third** explicit reviewed exception in Phase 002 and therefore **exceeds this ledger's own expected maximum of two per phase**; that departure is recorded at [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure) rather than absorbed silently. W-008 trips the ledger's **trend guard** — three consecutive phases waiving the same rule for the same reason — which is recorded at [§The trend guard is TRIPPED](#the-trend-guard-is-tripped-and-this-is-the-entry-that-says-so) together with the **RO-001** obligation granted with it.
 **Satisfies**: spec FR-015, FR-051; constitution §Governance
 **Schema**: [`data-model.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/001-governance-foundation/data-model.md) §Waiver Record
 
@@ -35,7 +35,8 @@
 | **W-005** | `PLAN.md` §6.1 step 10 and constitution §Development and Phase Workflow #7 — a phase MUST obtain an **independent requirements and security review** before it closes. Applied here to **Phase 002** | The project has a single maintainer. No available person qualifies as independent under the `GOVERNANCE.md` definition, so no genuinely independent human requirements-and-security review of Phase 002 is available. **W-003 covers Phase 001 only**, and a waiver is not extended by reinterpretation | **Counted — these exist only because of this waiver:** (1) **separate clean-context requirements and security advisory reviews**, each run against an **explicit written checklist** rather than open-ended judgement, each labelled **NON-INDEPENDENT and ADVISORY** wherever its results appear, and each **producing a recorded result — enumerated findings, or an explicit "no findings" statement naming what was checked**. A review that returns nothing is recorded as **not performed**, never as passed; (2) **every finding individually dispositioned** (fixed, or refused with a stated reason) in `governance/phase-002-evidence.md`, so nothing is absorbed silently; (3) a **complete FR-001…FR-044 and SC-001…SC-022 evidence mapping**, so a gap appears as an empty cell rather than as an absence nobody looked for. **Preconditions — restated for completeness, and deliberately NOT counted**: running **the cross-artifact analysis step and resolving its inconsistencies** is already mandated for every phase by `PLAN.md` §6.1 step 7; keeping **unresolved limitations visible** and not claiming more than was measured is already mandated by **constitution principle IX and principle XII** and by the workflow rule that a phase stays open while acceptance gaps exist; and the quickstart sequence, MSRV-and-stable runs, dependency/licence/advisory evidence, property-and-fuzz coverage, documentation, and scope isolation are already mandated by **SC-012, SC-013, SC-017, FR-040**, and **principle IX**. They must all hold; none of them is what this waiver buys. | Ahmed Anbar | **2027-02-16**, or **immediately** when a qualified independent reviewer becomes available — **whichever occurs first** | The first qualified independent reviewer re-reviews **Phase 002 in full** against its specification, the constitution, the compatibility matrix, the security checklist, the implementation, and the evidence pack; the result is recorded; W-005 closes | `active` |
 | **W-006** | `PLAN.md` §6.1 and constitution §Development and Phase Workflow #4 — a decision record MUST NOT be accepted without a recorded **independent** review. Applied here to **ADR-0009** (removal of `image-size` from the documentation site by vendoring a no-op replacement), which spec FR-035 and constitution principle III make a blocking prerequisite for merging that custom infrastructure | The project has a single maintainer, who authored the record and the change it justifies. Under `GOVERNANCE.md` and [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D11 a qualified independent reviewer must be **a person**, **not the author**, **competent in the subject**, and **able to reject without the author's consent**; no available person satisfies criteria 1, 2, and 4. **W-004 covers ADR-0007 alone and confers no authority here**, exactly as it confers none over ADR-0008; **W-005 is phase-level and does not authorise accepting any decision record.** Neither is extended by reinterpretation | **Counted — these exist only because of this waiver:** (1) **two clean-context advisory reviews of ADR-0009 specifically** — one requirements/package-governance, one security/supply-chain — run in separate contexts against distinct written scopes, each labelled **NON-INDEPENDENT** and **ADVISORY** wherever its results appear, and each **producing a recorded result: enumerated findings, or an explicit written "no findings" statement naming what was checked**. A review that returns nothing is recorded as **not performed**, never as passed — an empty result is the failure mode this clause exists to catch, and it has already been observed on this project; (2) **every finding individually dispositioned** (fixed, or refused with a stated reason) in `governance/phase-002-evidence.md`, so no finding is absorbed into a group row; (3) **every Critical, High, *and Medium* finding fixed before acceptance** — the **Medium** half is what this control buys, because `PLAN.md` §17.3 already blocks Critical and High unconditionally and stops there; (4) **the custom replacement does not merge until controls 1–3 *and* seven named record elements are on the record**: the two reviews, the dispositions, the executable dependency proof, the fail-closed image guard, the capability-loss statement, the ownership cost, and the removal condition. **Preconditions — restated for completeness, and deliberately NOT counted**, because this ledger holds that a control another rule already mandates unconditionally compensates for nothing: fixing **Critical and High** findings is already required by **PLAN.md §17.3**, which admits no waiver; the **alternatives-and-consequences analysis** and the **package-first evaluation** are already required by **spec FR-035** and **constitution principle III**; stating the **capability loss and the lockfile-readability hazard** is already required by **principle XII**; recording the change in the **dependency inventory** is already required by **FR-040**; and the **CI, dependency-review, licence, advisory, secret-scanning, and code-quality gates** already run unconditionally on every pull request. They must all hold; none of them is what this waiver buys | Ahmed Anbar | **2027-02-11**, or **immediately** when a qualified independent reviewer becomes available — **whichever occurs first**. *(This inherits the **earliest open expiry** for the same single-maintainer review gap rather than restarting the clock, applying the ratchet rule this ledger records below. W-006 is the first waiver to which that rule has been applied.)* | The first qualified independent reviewer re-reviews **ADR-0009 in full** — the record, the vendored replacement, the override, the lockfile, the guard, and the alternatives it rejects; the record's review evidence is updated with the outcome; W-006 closes | `active` |
 | **W-008** | `PLAN.md` §6.1 step 10 and constitution §Development and Phase Workflow #7 — a phase MUST obtain an **independent requirements and security review** before it closes. Applied here to **Phase 003** (the interactive CLI) | The project has a single maintainer, who authored every line of Phase 003 and the evidence describing it. Under `GOVERNANCE.md` and [`research.md`](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/002-core-kernel/research.md) §D11 a qualified independent reviewer must be **a person**, **not the author**, **competent in the subject**, and **able to reject without the author's consent**; no available person satisfies criteria 1, 2, and 4. **W-003 and W-005 are phase-level waivers for Phase 001 and Phase 002 and confer no authority here**, and neither is extended by reinterpretation | **Counted — these exist only because of this waiver:** (1) the **commissioned independent-review packet** (`governance/phase-003-independent-review-packet.md`), whose §-1.3 sign-off log is left **OPEN and visible** rather than closed, so the missing review is a standing, addressable item and not a silence; (2) a **five-area adversarial defect audit** of the shipped CLI — argv and terminal injection, panic payload disclosure, staging cleanup, Windows name and path semantics, and output reliability — in which every reported finding was independently re-run by a separate reviewer instructed to **refute** it, and the refutations recorded: 22 claims examined, **14 confirmed and fixed, 8 refuted with stated grounds**; (3) **every confirmed finding carries a regression test that was observed to FAIL before its fix and pass after**, and each guard was **mutation-tested** — the fix removed, the test observed to fail, the fix restored — which caught two of this phase's own tests passing for the wrong reason. **Preconditions — restated for completeness and deliberately NOT counted**, because this ledger holds that a control another rule already mandates unconditionally compensates for nothing: fixing **Critical and High** findings is already required by **PLAN.md §17.3**; the CI platform matrix, `cargo deny`, CodeQL, dependency review, secret scanning, and the format, clippy, and rustdoc gates already run unconditionally on every pull request; the dependency inventory is already required by **FR-040**; and `cargo xtask verify` is already required by the verification-sequence contract | Ahmed Anbar | **2027-02-11**, or **immediately** when a qualified independent reviewer becomes available — **whichever occurs first**. *(Inherits the **earliest open expiry** for the same single-maintainer review gap under this ledger's ratchet rule rather than restarting the clock. W-006 was the first application; this is the second.)* | A qualified independent reviewer performs the requirements-and-security review of **Phase 003 in full**, against the exact merged content named in the packet's §-1.1 head binding, **including Windows coverage**; the outcome is recorded in the packet's §-1.3 sign-off log; the evidence pack is updated with the findings; W-008 closes | `active` |
-
+| **W-009** | `PLAN.md` §6.1 and constitution §Development and Phase Workflow #4 — *"Consequential decisions MUST be captured as proposed ADRs and reviewed before being treated as accepted"*, and spec FR-013, which requires that review to be **independent**. Applied here to **ADR-0012** (Phase 004 custom HTTP primitives), which spec FR-035 and constitution principle III make a blocking prerequisite for merging custom infrastructure | The project has a single maintainer, who authored the record and the code it justifies. Under `GOVERNANCE.md` a qualified independent reviewer must be **a person**, **not the author**, **competent in the subject**, and **able to reject without the author's consent**; no available person satisfies criteria 1, 2 and 4. **W-002 covers Phase 001 decision records, W-004 names ADR-0007 alone, and W-006 names ADR-0009 alone; none reaches ADR-0012.** **W-005 and W-008 are phase-level and their own scope sections state they do not authorise accepting any decision record.** None is extended by reinterpretation | **Counted — these exist only because of this waiver:** (1) **the public surface this record decides is bounded by an executable guard, not by the record's own prose** — `crates/renvor/tests/facade_boundary.rs` parses the facade-root re-export list from the source and reads each name's declared signatures, and was **mutation-proven** by restoring the removed `Server` and observing the failure; (2) **every finding of the closing post-remediation requirements review individually dispositioned** in `governance/phase-004-evidence.md`, with each one **independently reproduced before being recorded** — three settled by mutation — so no finding is accepted on a reviewer's assertion; (3) **the five custom primitives are enumerated and the surface is asserted to be exactly those five**, so the record cannot quietly widen after acceptance; (4) **no custom infrastructure merges until controls 1–3 are on the record.** **Preconditions — restated and deliberately NOT counted**, because a control another rule already mandates unconditionally compensates for nothing: the alternatives-and-consequences analysis and the package-first evaluation are already required by **spec FR-035** and **principle III**; the accepted-ADR prerequisite for custom infrastructure is required by the same two; and the CI, dependency, licence, advisory, secret-scanning and code-quality gates already run unconditionally on every pull request | Ahmed Anbar | **2027-02-11**, or **immediately** when a qualified independent reviewer becomes available — **whichever occurs first**. *(Inherits the **earliest open expiry** under this ledger's ratchet rule rather than restarting the clock. W-006 was the first application, W-008 the second, this the third.)* | A qualified independent reviewer re-reviews **ADR-0012 in full** — the five primitives, the public-surface decision, and the alternatives it rejects; the record's review evidence is updated with the outcome; W-009 closes | `active` |
+| **W-010** | `PLAN.md` §6.1 step 10 and constitution §Development and Phase Workflow #7 — *"An independent review MUST compare implementation evidence with the specification, constitution, compatibility matrix, and security checklist."* Applied here to **Phase 004** (the REST/HTTP runtime) | The project has a single maintainer, who authored every line of Phase 004 and the evidence describing it. No available person satisfies the `GOVERNANCE.md` criteria. **W-003, W-005 and W-008 are phase-level waivers for Phases 001, 002 and 003 and confer no authority here**, and none is extended by reinterpretation. **This is the fourth consecutive phase to waive this rule for this reason** | **Counted — these exist only because of this waiver:** (1) **a post-remediation requirements review covering FR-001…FR-049 and SC-001…SC-020 in full**, delivered against a named head, which **executed rather than only read** — re-running `cargo xtask verify`, running the `#[ignore]`d end-to-end relay test, and re-measuring crate isolation in both directions; (2) **every one of its findings independently reproduced by the maintainer before being recorded**, three of them by mutation, and **none recorded on the review's assertion alone** — one recorded finding was disproved on reproduction and corrected rather than filed; (3) **every entry it returned as less than SATISFIED closed with executable evidence** — thirteen of them — with **no requirement weakened and no PARTIAL relabelled without a new test**; (4) **every new guard mutation-tested**: the implementation it covers was broken, the test observed to fail, and the implementation restored. That practice found four defects nothing else did, including **a gate whose verdict depended on build state** and **a comment that switched a gate off for three of five publishable packages**. **Preconditions — restated and deliberately NOT counted**: fixing Critical and High findings is already required by **PLAN.md §17.3**; the CI platform matrix, `cargo deny`, CodeQL, dependency review, secret scanning, and the format, clippy and rustdoc gates already run unconditionally; the dependency inventory is already required by **FR-040**; and `cargo xtask verify` is already required by the verification-sequence contract | Ahmed Anbar | **2027-02-11**, or **immediately** when a qualified independent reviewer becomes available — **whichever occurs first**. *(Inherits the **earliest open expiry** under the ratchet rule rather than restarting the clock. Fourth application.)* | A qualified independent reviewer performs the requirements-and-security review of **Phase 004 in full**, against the exact merged content named below, including the Windows platform legs; the outcome is recorded in `governance/phase-004-evidence.md`; W-010 closes | `active` |
 ### W-003 — scope, stated as narrowly as it was granted
 
 **Approved by Ahmed Anbar on 2026-08-15.** The following limits are part of the grant, not
@@ -296,10 +297,102 @@ waiver a release blocker.
 | Date | Entry |
 |---|---|
 | 2026-08-19 | Obligation created. **No candidate has yet been approached.** Recorded as the honest starting state rather than as progress |
+| 2026-08-23 | **Still no candidate approached.** Two further waivers granted against this same gap — **W-009** (ADR-0012) and **W-010** (Phase 004) — taking the category to eight and making Phase 004 the **fourth consecutive** phase-level waiver. This entry exists to record that the gap widened while the obligation did not move. **It is not progress**, and the 2026-11-19 review date and failure condition are unchanged and now govern four phase-level waivers |
 
 **This obligation is tracked and dated. It is not yet progress**, and nothing in this section should
 be read as claiming otherwise. What it buys is that the gap now has an owner, a date, and a failure
 condition, instead of being renewed silently a fourth time.
+
+### W-009 — scope, stated as narrowly as it was granted
+
+**Approved by Ahmed Anbar on 2026-08-23.** The following limits are part of the grant, not
+commentary on it:
+
+- **W-009 waives only the independent-human-review requirement for accepting ADR-0012.** It reaches
+  no other record and no later phase.
+- **W-009 does not authorise closing Phase 004.** It is a *record-level* waiver, on the same terms
+  W-004 sets for ADR-0007 and W-006 for ADR-0009. Phase closure is **W-010**, granted separately for
+  exactly the reason this ledger already records: *"a record-level waiver does not authorise closing
+  a phase, and a phase-level waiver does not authorise accepting a decision record."*
+- **It confers nothing on Phase 005** and is not standing permission for the next ADR.
+- **It does not waive any finding, failed check, missing evidence, acceptance criterion, test,
+  platform, or security blocker.** Anything unevidenced remains unevidenced.
+- **ADR-0012's custom surface stays exactly the five named primitives** — trusted-proxy client
+  identity, always-generate request ID, fail-closed host validation, CORS configuration validation,
+  bounded drain. Widening it needs a new record, not a broader reading of this one.
+- **No independent human review of ADR-0012 has occurred.** Every review performed inside Phase 004
+  is **advisory and non-independent** and must be labelled so wherever its results appear —
+  including the maintainer's own review and **every automated reviewer, which is not a person and is
+  therefore not independent under any reading of the criteria.**
+- **The maintainer's acceptance is a human maintainer decision. It is not independent review**, and
+  must never be described as one — not here, not in the evidence pack, not in `GOVERNANCE.md`, and
+  not in any public document.
+- It expires **2027-02-11** or when a qualified reviewer becomes available, **whichever occurs
+  first**.
+
+#### The identifier is W-009, and it is not the W-009 that ADR-0011 names
+
+[ADR-0011](../decisions/0011-support-linux-macos-and-windows.md) contains the string `W-009`. It
+uses it as the label for a **hypothetical** waiver that would be required under a reading of W-002's
+scope which that record **examines and rejects**, concluding *"W-009 would restate W-002 verbatim
+against a different record number."* **No such waiver was ever created.** The number was therefore
+free, and this record is not the one ADR-0011 describes: it covers a different record (ADR-0012),
+in a different phase, under different controls, and it exists precisely because no existing waiver
+reaches it. Recorded here so a reader meeting the string twice is not left to guess.
+
+### W-010 — scope, stated as narrowly as it was granted
+
+**Approved by Ahmed Anbar on 2026-08-23.** The following limits are part of the grant:
+
+- **W-010 waives only the independent-human-review requirement for closing Phase 004.**
+- **W-010 does not authorise accepting any decision record**, on the same terms W-005 sets for
+  Phase 002 and W-008 for Phase 003. ADR-0012's acceptance is **W-009**.
+- **It confers nothing on Phase 005.** A waiver for one phase is not standing permission for the
+  next, and Phase 005 has not started.
+- **It does not waive any product defect, missing test, missing functionality, publication rule, CI
+  failure, or security blocker.** Where a requirement was unevidenced, the remedy applied was a
+  test, not this waiver — thirteen such entries closed with executable evidence before this grant.
+- **Phase 004 closes with its open review gap transferred and visible rather than closed**, on the
+  same terms W-003, W-005 and W-008 set for the phases before it.
+- **Security release blockers are never waived.**
+- **The named limitations Phase 004 carries stay named**: the panic payload reaching process stderr,
+  the header bounds Renvor does not set, no crate published so `renvor routes` reaches zero
+  generated projects, registry names verified rather than reserved, and the macOS trust-store test's
+  machine sensitivity. Each is permitted by its governing requirement. **None is waived by this
+  record**, and this record must never be cited as covering them.
+- It expires **2027-02-11** or when a qualified reviewer becomes available, **whichever occurs
+  first**.
+
+#### The head and tree this waiver is bound to
+
+| Field | Value |
+|---|---|
+| **Branch** | `feat/phase-004-rest-http-runtime` |
+| **Verified implementation and evidence head** | `a7085eef65db8eeb8ec62a727a98d0bdbf8492d6` |
+| **Tree** | `f30b7898b0d87d27ca11c017a2acb3b108a1c39d` |
+| **Decision record** | **ADR-0012** |
+| **Gate result at that head** | `cargo xtask verify` 11/11 on **1.94.0** and on **stable**; 866 passed / 0 failed / 1 ignored / 55 suites on both toolchains and serial; worktree clean; `git ls-files specs` = 0 |
+
+The re-review this waiver's removal plan requires is against **that content**, not against whatever
+`main` holds when it is performed.
+
+#### This is the FOURTH consecutive phase-level waiver, and the trend guard is already tripped
+
+W-003 (Phase 001), W-005 (Phase 002), W-008 (Phase 003) and now **W-010 (Phase 004)** waive the same
+rule for the same reason in four consecutive phases. The guard was already **TRIPPED** at three; a
+fourth does not trip it again, it deepens it.
+
+**What that means concretely, stated rather than softened:** the condition keeping this from being
+an unaddressed release blocker is **RO-001**, the dated reviewer-recruitment obligation created with
+W-008. RO-001's first review date is **2026-11-19** and has **not** yet arrived, so nothing about
+this grant discharges it and nothing here should be read as progress against it. Its failure
+condition is unchanged and now governs four waivers rather than three: if neither a candidate nor a
+written account of what was attempted is recorded by that date, **every open waiver in this category
+is treated as expired**, and an expired-but-open waiver is a release blocker by this ledger's own
+rule.
+
+**Six waivers across three phases was one problem recorded six times. Eight across four is the same
+problem recorded eight times.** The remedy is a second qualified person, not a ninth recording.
 
 ## Waiver categories and expected counts
 
@@ -310,14 +403,14 @@ one category does not consume the allowance of another.
 |---|---|---|
 | Repository **approval** waivers | exactly **1** | **W-001** — single-maintainer approval gap *(seeded 2026-08-11 at T015)*. **Unchanged by W-003, W-004, W-005, and W-006** |
 | **Control-unavailability** waivers | **0** | none expected — research Finding 3 confirmed every required repository control is free on the public tier, so cost or plan tier is never an accepted reason |
-| **Explicit reviewed exceptions** | **at most 2 per phase** — **breached once, in Phase 002, which holds 3** *(see [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure))*. Phase 001 holds 2, Phase 003 holds 1 | **W-002** — ADR independent-review gap (Phase 001); **W-003** — Phase 001 independent requirements-and-security-review gap *(granted 2026-08-15)*; **W-004** — ADR-0007 independent-review gap *(granted 2026-08-16)*; **W-005** — Phase 002 independent requirements-and-security-review gap *(granted 2026-08-16)*; **W-006** — ADR-0009 independent-review gap *(granted 2026-08-17)*; **W-008** — Phase 003 independent requirements-and-security-review gap *(granted 2026-08-19)* |
+| **Explicit reviewed exceptions** | **at most 2 per phase** — **breached once, in Phase 002, which holds 3** *(see [§The third Phase 002 exception](#the-third-phase-002-exception--an-acknowledged-departure))*. Phase 001 holds 2, Phase 003 holds 1, **Phase 004 holds 2 — at the limit, not over it** | **W-002** — ADR independent-review gap (Phase 001); **W-003** — Phase 001 independent requirements-and-security-review gap *(granted 2026-08-15)*; **W-004** — ADR-0007 independent-review gap *(granted 2026-08-16)*; **W-005** — Phase 002 independent requirements-and-security-review gap *(granted 2026-08-16)*; **W-006** — ADR-0009 independent-review gap *(granted 2026-08-17)*; **W-008** — Phase 003 independent requirements-and-security-review gap *(granted 2026-08-19)*; **W-009** — ADR-0012 independent-review gap *(granted 2026-08-23)*; **W-010** — Phase 004 independent requirements-and-security-review gap *(granted 2026-08-23)* |
 
-**W-002, W-003, W-004, W-005, W-006, and W-008 are explicit reviewed exceptions, not part of the
-normal expected waiver count.** Each was granted by a recorded maintainer decision — W-002 on
+**W-002, W-003, W-004, W-005, W-006, W-008, W-009, and W-010 are explicit reviewed exceptions, not
+part of the normal expected waiver count.** Each was granted by a recorded maintainer decision — W-002 on
 2026-08-11, W-003 on 2026-08-15, W-004 and W-005 on 2026-08-16, W-006 on 2026-08-17, W-008 on
-2026-08-19 — rather than arising from a design shortfall, and none indicates that anything in the
+2026-08-19, and W-009 and W-010 on 2026-08-23 — rather than arising from a design shortfall, and none indicates that anything in the
 design failed to work.
-**All six exist for the same underlying reason: the project has one person.** They are separate
+**All eight exist for the same underlying reason: the project has one person.** They are separate
 waivers because they cover different rules, at different levels, in different phases:
 
 | Waiver | Level | Phase |
@@ -328,6 +421,8 @@ waivers because they cover different rules, at different levels, in different ph
 | **W-005** | phase-level review | Phase 002 |
 | **W-006** | decision record — **ADR-0009 only** | Phase 002 |
 | **W-008** | phase-level review | Phase 003 |
+| **W-009** | decision record — **ADR-0012 only** | Phase 004 |
+| **W-010** | phase-level review | Phase 004 |
 
 **The two axes are deliberately not collapsed.** A record-level waiver does not authorise closing
 a phase, and a phase-level waiver does not authorise accepting a decision record — which is
@@ -413,7 +508,10 @@ Two things follow, and both are stated rather than left implied:
   single-maintainer gap should inherit the **earliest** open expiry — **2027-02-11** — rather than
   restart the clock. Raised by adversarial review; kept visible rather than resolved by moving a
   date the maintainer chose. **Applied for the first time on 2026-08-17: W-006 expires 2027-02-11**,
-  not 2027-02-16, so the horizon did not move for the fifth recording of the same gap.
+  not 2027-02-16, so the horizon did not move for the fifth recording of the same gap. **Applied
+  again on 2026-08-19 (W-008) and on 2026-08-23 (W-009 and W-010).** Eight waivers now share one
+  expiry date, which is the rule working: the horizon has not moved once since 2027-02-11 was set,
+  and re-granting has bought no additional time.
 
 ## Decision-record review under W-002 (ruling of 2026-08-11, T006)
 

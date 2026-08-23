@@ -160,7 +160,7 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Seven** waivers are currently active, all traceable to the same single-maintainer gap. Each
+**Nine** waivers are currently active, all traceable to the same single-maintainer gap. Each
 covers one rule, at one level, in one phase — and none is extended to another by
 reinterpretation:
 
@@ -173,6 +173,8 @@ reinterpretation:
 | **W-005** | no independent requirements-and-security review | phase level | Phase 002 | **2027-02-16** |
 | **W-006** | no independent reviewer for **ADR-0009** | decision record | Phase 002 | **2027-02-11** |
 | **W-008** | no independent requirements-and-security review | phase level | Phase 003 | **2027-02-11** |
+| **W-009** | no independent reviewer for **ADR-0012** | decision record | Phase 004 | **2027-02-11** |
+| **W-010** | no independent requirements-and-security review | phase level | Phase 004 | **2027-02-11** |
 
 Each expires on the date shown **or** immediately when a qualified second person becomes
 available — whichever comes first. Full text, compensating controls, and scope limits are in
@@ -192,6 +194,14 @@ the ledger makes a **release blocker** unless a dated, tracked reviewer-recruitm
 visible progress. That obligation now exists as **RO-001**, owned by Ahmed Anbar, first review date
 **2026-11-19**, and it is recorded as *not yet progress*. The blocker is on **release** — publishing
 a crate, cutting a tag, deploying — and not on merging, because merging publishes nothing.
+
+**W-010 closes Phase 004 and makes it the fourth consecutive phase.** The guard was already tripped
+at three; a fourth does not trip it again, it deepens it. **RO-001 has not moved** — no candidate has
+been approached, its 2026-11-19 review date has not arrived, and its failure condition now governs
+four phase-level waivers instead of three. **W-009** accepts **ADR-0012**, separately, because a
+phase-level waiver does not authorise accepting a decision record and this ledger does not collapse
+those two axes. Phase 004 therefore holds exactly two explicit reviewed exceptions — at the expected
+maximum, not over it. Both inherit **2027-02-11**, so the horizon has still not moved.
 
 **There is no W-007, and its absence is deliberate.** A maintainer ruling forbade creating it, and
 that ruling is part of the rationale for constitution amendment 3.0.0; reusing the number would
