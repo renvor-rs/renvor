@@ -488,6 +488,66 @@ async fn a_preflight_is_answered_rather_than_routed() {
 }
 
 #[tokio::test]
+async fn a_preflight_is_empty_spends_no_permit_and_is_still_correlatable() {
+    // THE REST OF C-11'S PREFLIGHT ROW, added 2026-08-23.
+    //
+    // The contract promises three things the test above did not observe: the response is EMPTY,
+    // admission spends NO PERMIT on it, and — because the whole context block sits outside CORS —
+    // it is still correlatable.
+    //
+    // The last assertion is this file's discriminator for ADJACENT PAIR 3 ↔ 4. Layers 1, 2 and 3
+    // are established in one tower layer; layer 4 is the CORS layer beneath it. If that order were
+    // reversed, the CORS layer would answer the preflight on its own and the response would never
+    // pass through context establishment — so it would carry no request identifier. The identifier
+    // is therefore the observable that distinguishes which of the two ran first.
+    let policy = CorsPolicy::deny_all()
+        .allow_origin("https://app.example")
+        .expect("valid origin");
+
+    let mut configured = cors_config(policy);
+    let gate = WorkGate::new();
+    configured.gate = gate.clone();
+    let app = build(configured);
+
+    assert_eq!(gate.outstanding(), 0);
+
+    let response = app
+        .oneshot(served(
+            request("OPTIONS", "/declared")
+                .header(header::HOST, HOST)
+                .header(header::ORIGIN, "https://app.example")
+                .header("access-control-request-method", "POST"),
+        ))
+        .await
+        .expect("responds");
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Correlatable — the 3 ↔ 4 discriminator.
+    let identifier = header_of(&response, "x-request-id")
+        .expect("a preflight answered beneath the context layer still carries an identifier");
+    assert_eq!(
+        identifier.len(),
+        16,
+        "the preflight's identifier is not one Renvor generated: {identifier}"
+    );
+
+    // No permit spent, and none leaked.
+    assert_eq!(
+        gate.outstanding(),
+        0,
+        "a permit was still outstanding after the preflight was answered"
+    );
+
+    // Empty. A preflight carrying a body is a preflight that reached something that wrote one.
+    let body = body_string(response).await;
+    assert!(
+        body.is_empty(),
+        "the preflight response carried a body: {body:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_preflight_from_a_disallowed_origin_is_refused() {
     // POSITIVE CONTROL for the preflight test: preflight is not a way around the origin check.
     let policy = CorsPolicy::deny_all()
@@ -933,4 +993,61 @@ async fn a_request_with_no_query_string_receives_an_empty_one() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(body_string(response).await, "[]");
+}
+
+// ── SC-008 — the request timeout, asserted at its exact boundary ─────────────────────────────
+
+/// Serves one request whose handler sleeps for `handler_sleep` under a timeout of `budget`.
+async fn status_for_handler_taking(budget: Duration, handler_sleep: Duration) -> StatusCode {
+    let mut registry = RouteRegistry::new();
+    registry
+        .get("/slow", move |_: Request| async move {
+            tokio::time::sleep(handler_sleep).await;
+            Response::text("finished")
+        })
+        .expect("route");
+
+    let mut configured = config();
+    configured.limits.request_timeout = budget;
+    let app = router(&registry, configured).expect("valid");
+
+    app.oneshot(served(request("GET", "/slow").header(header::HOST, HOST)))
+        .await
+        .expect("responds")
+        .status()
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_request_timeout_is_asserted_at_its_exact_boundary_and_one_tick_beyond() {
+    // SC-008: "every documented limit is asserted at its exact boundary and at boundary + 1."
+    //
+    // The requirements review marked this UNDECIDABLE for the timeout, on the grounds that a
+    // `Duration` has no meaningful "+1" and that two wall-clock instants a nanosecond apart are not
+    // separable. That is true of a REAL clock and false of this one: `start_paused` gives tokio a
+    // clock that only advances when every task is idle, so "one tick below the budget" and "exactly
+    // the budget" are exact, reproducible, and cost no real time.
+    //
+    // Asserted 2026-08-23 rather than left undecidable, because the requirement is decidable once
+    // the clock is.
+    // WHERE THE BOUNDARY ACTUALLY IS, measured rather than assumed. A handler that finishes at
+    // EXACTLY the budget succeeds: `tokio::time::timeout` polls the future before the timer on the
+    // instant they coincide, so the budget is the last instant that still counts as inside. The
+    // first version of this test asserted a timeout at exactly the budget, and the failure it
+    // produced is what established the real semantics. Recorded here so a reader does not have to
+    // rediscover it, and so a change to that behaviour fails rather than passing quietly.
+    let budget = Duration::from_secs(30);
+
+    assert_eq!(
+        status_for_handler_taking(budget, budget).await,
+        StatusCode::OK,
+        "a handler finishing at exactly the budget was timed out: the bound is stricter than the \
+         documented value"
+    );
+
+    assert_eq!(
+        status_for_handler_taking(budget, budget + Duration::from_nanos(1)).await,
+        StatusCode::REQUEST_TIMEOUT,
+        "a handler one nanosecond past the budget was NOT timed out, so the bound is looser than \
+         the documented value"
+    );
 }

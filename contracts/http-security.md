@@ -38,6 +38,36 @@ possible if 2 is outside 8.
 
 A textual list of layers is not evidence: it describes what someone wrote, not what runs.
 
+#### What the nine rows are, structurally
+
+The nine rows describe **decision points**, not nine tower layers. Layers **1, 2 and 3** are
+established in a single layer, so their order relative to one another is fixed by straight-line code
+rather than by composition, and is not independently observable from outside. What **is** observable
+— and what the discriminators below establish — is where that block sits relative to everything
+beneath it. Stating this matters: a reader who assumed nine separately composed layers would look
+for a discriminator between 1 and 2 that cannot exist, and conclude the evidence was missing when it
+is the model that was wrong.
+
+#### The discriminator for each adjacent boundary
+
+| Pair | Case whose result differs | Where |
+|---|---|---|
+| 1 ↔ 2 | A host refusal still carries a request identifier | `tests/lifecycle.rs::every_refusal_carries_a_request_identifier_because_correlation_is_outermost` |
+| 2 ↔ 4 | Disallowed host **and** disallowed origin → the **host** rejection | `tests/lifecycle.rs::host_validation_runs_before_admission`, `tests/controls.rs::an_unknown_path_with_a_disallowed_host_returns_the_host_rejection_not_404` |
+| 3 ↔ 4 | A preflight is answered **beneath** the context block, so it still carries a request identifier. Were CORS outside, the CORS layer would answer it alone and the response would be uncorrelated | `tests/controls.rs::a_preflight_is_empty_spends_no_permit_and_is_still_correlatable` |
+| 4 ↔ 6 | Closed gate **and** disallowed origin → the **origin** rejection | `tests/lifecycle.rs::cors_runs_before_admission` |
+| 6 ↔ 8 | Closed gate **and** over-limit body → **503**, not 413 | `tests/lifecycle.rs::admission_runs_before_the_body_limit` |
+| 2 ↔ 8 | Disallowed host **and** over-limit body → the **host** rejection | `tests/lifecycle.rs::host_validation_runs_before_the_body_limit` |
+| 8 ↔ 9 | An over-limit body is refused **without** the handler span being opened. Were the trace outside, a request whose handler never ran would be recorded inside a span named for handler execution | `tests/telemetry.rs::an_over_limit_body_is_refused_before_the_handler_span_is_opened`, with `a_body_within_the_limit_does_open_the_handler_span` as its control |
+
+**Corrected 2026-08-23.** The universal claim above was written before the 3 ↔ 4 and 8 ↔ 9 cases
+existed. Both boundaries were correctly ordered in the code and neither was discriminated by any
+test, so the sentence *"for each adjacent pair there is a case"* was not true of them. The post-
+remediation requirements review found it. Rather than narrow the claim, the two missing cases were
+written and each was **mutation-tested by reversing the composition it asserts** — the CORS layer
+moved outside the context block, and the span moved outside the body limit — with each new test
+observed to fail before the composition was restored.
+
 ## Request identity
 
 | Rule | Behaviour |

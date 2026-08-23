@@ -237,3 +237,161 @@ async fn a_refusal_record_carries_the_run_identifier() {
         "the refusal recorded a run identifier that is not this run's"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// C-11 adjacent pair 8 ↔ 9 — the body limit is OUTSIDE the span
+// ---------------------------------------------------------------------------------------------
+
+/// Sends a body of `bytes` and reports whether the handler span was opened.
+async fn handler_span_opened_for_body(bytes: usize) -> (StatusCode, bool) {
+    let recorder = Recorder::default();
+    let seen = Arc::clone(&recorder.seen);
+    let guard = tracing::subscriber::set_default(recorder);
+
+    let mut registry = RouteRegistry::new();
+    registry
+        .route(renvor_http::Method::Post, "/echo", |_: Request| async {
+            Response::text("ok")
+        })
+        .expect("route");
+
+    let configured = config();
+    let app = router(&registry, configured).expect("a valid router");
+
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri("/echo")
+        .header(header::HOST, HOST)
+        .body(axum::body::Body::from(vec![b'x'; bytes]))
+        .expect("valid");
+    request.extensions_mut().insert(axum::extract::ConnectInfo(
+        "203.0.113.9:44321"
+            .parse::<std::net::SocketAddr>()
+            .expect("a valid peer"),
+    ));
+
+    let response = app.oneshot(request).await.expect("responds");
+    let status = response.status();
+    drop(guard);
+
+    let seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
+    let opened = seen
+        .span_names
+        .iter()
+        .any(|name| name == "renvor.http.handler");
+    (status, opened)
+}
+
+#[tokio::test]
+async fn an_over_limit_body_is_refused_before_the_handler_span_is_opened() {
+    // C-11 ADJACENT PAIR 8 ↔ 9, discriminated by behaviour.
+    //
+    // The contract says the body limit (8) is outside the trace (9). Reversing them is observable
+    // exactly here: if the span were opened first, an over-limit request would be recorded inside
+    // `renvor.http.handler` — a span named for handler execution, covering a request whose handler
+    // never ran. Which layer answered is not visible in the status; whether a span exists is.
+    //
+    // Added 2026-08-23. The pair previously had no discriminating case, so the contract's claim
+    // that "for each adjacent pair there is a case whose result differs" was not true of it.
+    let limit = Limits::new().max_body_bytes;
+
+    let (status, opened) = handler_span_opened_for_body(limit + 1).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(
+        !opened,
+        "an over-limit request opened the handler span, so the trace layer ran outside the body \
+         limit and C-11's order 8 → 9 is inverted"
+    );
+}
+
+#[tokio::test]
+async fn a_body_within_the_limit_does_open_the_handler_span() {
+    // POSITIVE CONTROL for the test above. Without it, a capture that never saw any span — a
+    // broken subscriber, a renamed span — would satisfy the assertion above forever.
+    let (status, opened) = handler_span_opened_for_body(16).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        opened,
+        "a request inside the limit did not open the handler span, so the absence asserted above \
+         proves nothing"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------
+// FR-042 — the redaction rule holds without exception
+// ---------------------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn no_request_supplied_value_reaches_the_adapters_telemetry() {
+    // FR-042: telemetry "MUST use structured fields and MUST be subject to the existing redaction
+    // rule without exception."
+    //
+    // The Phase 002 configuration contract makes redaction a property of the TYPE — a secret
+    // renders as a placeholder in every output form. For this adapter the rule holds by a stronger
+    // and simpler mechanism: **no request-supplied value is written to telemetry at all.** Every
+    // field the adapter emits is one Renvor generated — the route pattern, the request identifier,
+    // the run identifier, an error code, an error detail Renvor wrote.
+    //
+    // That mechanism was asserted nowhere. A future field carrying a header, a query parameter, or
+    // a body would satisfy "structured fields" while putting caller-controlled data — a bearer
+    // token in an `Authorization` header, an API key in a query string — into the log stream. This
+    // test is what would fail.
+    const SECRET: &str = "s3cr3t-canary-do-not-log";
+
+    let recorder = Recorder::default();
+    let seen = Arc::clone(&recorder.seen);
+    let guard = tracing::subscriber::set_default(recorder);
+
+    let mut registry = RouteRegistry::new();
+    registry
+        .route(renvor_http::Method::Post, "/echo", |_: Request| async {
+            Response::text("ok")
+        })
+        .expect("route");
+    let app = router(&registry, config()).expect("a valid router");
+
+    let mut request = axum::http::Request::builder()
+        .method("POST")
+        .uri(format!("/echo?token={SECRET}"))
+        .header(header::HOST, HOST)
+        .header(header::AUTHORIZATION, format!("Bearer {SECRET}"))
+        .header("x-api-key", SECRET)
+        .body(axum::body::Body::from(format!("password={SECRET}")))
+        .expect("valid");
+    request.extensions_mut().insert(axum::extract::ConnectInfo(
+        "203.0.113.9:44321"
+            .parse::<std::net::SocketAddr>()
+            .expect("a valid peer"),
+    ));
+
+    let response = app.oneshot(request).await.expect("responds");
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(guard);
+
+    let seen = seen.lock().unwrap_or_else(PoisonError::into_inner);
+
+    // CONTROL FIRST. Without it, a capture that recorded nothing would satisfy every assertion
+    // below and this test would prove only that the subscriber was broken.
+    let index = seen
+        .span_names
+        .iter()
+        .position(|name| name == "renvor.http.handler")
+        .expect("the request was served, so the handler span must have been captured");
+    assert!(
+        !seen.span_fields[index].is_empty(),
+        "the handler span captured no fields, so finding no secret in them proves nothing"
+    );
+
+    for fields in seen.span_fields.iter().chain(seen.event_fields.iter()) {
+        for (name, value) in fields {
+            assert!(
+                !value.contains(SECRET),
+                "the adapter wrote a request-supplied value into telemetry under `{name}`: {value}"
+            );
+            assert!(
+                !name.contains(SECRET),
+                "the adapter used a request-supplied value as a FIELD NAME: {name}"
+            );
+        }
+    }
+}
