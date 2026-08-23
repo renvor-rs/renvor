@@ -190,23 +190,7 @@ fn verify() -> i32 {
     // change to `answer_dump_request`'s envelope would have broken the real protocol and left the
     // suite green. Named as its own line of output, counted inside step 4, so the sequence stays
     // at eleven steps.
-    if !run(
-        4,
-        "tests (end-to-end route relay)",
-        "cargo",
-        &[
-            "test",
-            "-p",
-            "renvor-cli",
-            "--bins",
-            "--",
-            "--ignored",
-            "--exact",
-            "commands::routes::tests::the_relay_reads_what_the_real_library_actually_prints",
-        ],
-        &root,
-        &[],
-    ) {
+    if !the_end_to_end_relay_ran(&root) {
         return EXIT_STEP_FAILED;
     }
     // Warnings are denied via RUSTDOCFLAGS; a broken intra-doc link is a failure.
@@ -1120,6 +1104,78 @@ fn scan_manifests(manifests: &[(String, String)]) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// The exact test path of the end-to-end route-relay proof.
+///
+/// Named once, and asserted to exist by `the_relay_test_named_by_the_gate_exists`.
+const RELAY_TEST: &str =
+    "commands::routes::tests::the_relay_reads_what_the_real_library_actually_prints";
+
+/// Step 4: the `#[ignore]`d end-to-end route-relay proof actually RAN and passed.
+///
+/// # Why this captures output instead of trusting the exit status
+///
+/// `cargo test -- --exact <name>` where `<name>` matches nothing prints `0 passed` and exits **0**.
+/// A gate that only checked the exit status would therefore keep passing if the test were renamed
+/// or deleted — running nothing, reporting success. That is the same class of failure as the
+/// `#[ignore]` this command exists to defeat, one level up, so the count is read back rather than
+/// assumed.
+fn the_end_to_end_relay_ran(root: &Path) -> bool {
+    println!("[4/{TOTAL_STEPS}] tests (end-to-end route relay) ...");
+
+    let output = Command::new("cargo")
+        .args([
+            "test",
+            "-p",
+            "renvor-cli",
+            "--bins",
+            "--",
+            "--ignored",
+            "--exact",
+            RELAY_TEST,
+        ])
+        .current_dir(root)
+        .output();
+
+    let Ok(output) = output else {
+        step_fail(
+            4,
+            "tests (end-to-end route relay)",
+            "the end-to-end relay test could not be executed",
+        );
+        return false;
+    };
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    if !output.status.success() {
+        step_fail(
+            4,
+            "tests (end-to-end route relay)",
+            &format!("the end-to-end relay test failed:\n{combined}"),
+        );
+        return false;
+    }
+
+    if !combined.contains("1 passed") {
+        step_fail(
+            4,
+            "tests (end-to-end route relay)",
+            &format!(
+                "the filter `{RELAY_TEST}` matched no test, so the gate ran nothing and would \
+                 have reported success. The test was renamed, deleted, or is no longer `#[ignore]`d"
+            ),
+        );
+        return false;
+    }
+
+    step_ok(4, "tests (end-to-end route relay)", "passed");
+    true
 }
 
 /// Whether a manifest's package is intended for publication.
@@ -2100,6 +2156,41 @@ mod tests {
                  generated projects: `{forbidden}`"
             );
         }
+    }
+
+    #[test]
+    fn the_relay_test_named_by_the_gate_exists() {
+        // The gate names one test by its exact path. If that path stops resolving, `--exact`
+        // matches nothing, `cargo test` exits 0 with "0 passed", and the gate reports success
+        // while running the end-to-end proof not at all. Measured, not assumed: a filter naming a
+        // non-existent test was run by hand and exited 0.
+        //
+        // `the_end_to_end_relay_ran` defends against that at run time by reading the count back.
+        // This defends against it in the fast suite, so a rename is caught by `cargo test` rather
+        // than only by the full sequence.
+        let root = super::workspace_root();
+        let source = std::fs::read_to_string(root.join("crates/renvor-cli/src/commands/routes.rs"))
+            .expect("the routes command source is readable");
+
+        let function = super::RELAY_TEST
+            .rsplit("::")
+            .next()
+            .expect("the test path names a function");
+
+        assert!(
+            source.contains(&format!("fn {function}(")),
+            "the gate runs `--exact {}`, but no `fn {function}` exists in \
+             `crates/renvor-cli/src/commands/routes.rs`. The filter would match nothing and the \
+             gate would pass without running the end-to-end proof",
+            super::RELAY_TEST
+        );
+
+        assert!(
+            source.contains("#[ignore"),
+            "the relay test is no longer `#[ignore]`d. If that is deliberate the gate must stop \
+             passing `--ignored`, because `--ignored` runs ONLY ignored tests and would then match \
+             nothing"
+        );
     }
 
     #[test]
