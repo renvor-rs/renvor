@@ -139,8 +139,8 @@ impl core::fmt::Display for DeclarationError {
             ),
             Self::MalformedKeyword { keyword, at } => write!(
                 f,
-                "`{keyword}` at `{at}` has a value this interpreter cannot read. It is refused \
-                 rather than skipped — a keyword the walker cannot read is one it silently \
+                "`{keyword}` at `{at}` has a value this interpreter cannot apply. It is refused \
+                 rather than skipped — a keyword the walker cannot apply is one it silently \
                  ignores, while the description publishes it anyway, so the API would promise a \
                  constraint nothing checks"
             ),
@@ -792,6 +792,22 @@ fn check_keyword_values(object: &Map<String, Value>, at: &str) -> Result<(), Dec
         {
             return Err(wrong(keyword, at));
         }
+    }
+
+    // `multipleOf` must be STRICTLY GREATER THAN ZERO — JSON Schema 2020-12 §6.2.1. Zero and
+    // negative steps are READABLE as numbers and UNUSABLE as constraints: the walker cannot divide
+    // by them, so it skipped the check while the description published the keyword anyway. That is
+    // exactly "a constraint the API promises and nothing enforces", which the error above names as
+    // the reason for refusing rather than skipping — so it is refused here, at declaration time,
+    // rather than guarded at the point of use where the skip is silent.
+    //
+    // The four non-negative integer keywords above are already refused when negative, because
+    // `as_u64` rejects them. `multipleOf` is a float and `as_f64` does not, which is why this
+    // needs its own check.
+    if let Some(step) = object.get("multipleOf").and_then(Value::as_f64)
+        && step <= 0.0
+    {
+        return Err(wrong("multipleOf", at));
     }
 
     // Booleans.

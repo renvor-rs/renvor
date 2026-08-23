@@ -427,6 +427,59 @@ fn a_bounded_body_cannot_buy_an_unbounded_number_of_issues() {
 }
 
 #[test]
+fn a_multiple_of_that_is_not_strictly_positive_is_refused() {
+    // A SECOND shape of the same defect the test below covers, and one it missed.
+    //
+    // The four non-negative integer keywords are refused when negative because `as_u64` rejects
+    // them. `multipleOf` is a float, `as_f64` accepts `0` and `-2` happily, and the walker then
+    // guarded its division with `step > 0.0` — so the constraint was SKIPPED while `schema()`
+    // still published it. Readable, unusable, and silently unenforced: a constraint the API
+    // promises and nothing checks.
+    //
+    // JSON Schema 2020-12 §6.2.1 requires `multipleOf` to be strictly greater than zero.
+    //
+    // Found by maintainer self-review during the Phase 005 L-14 completion audit, NOT by the
+    // security review — which is the point of recording where it came from.
+    for probe in [
+        json!({"type": "number", "multipleOf": 0}),
+        json!({"type": "number", "multipleOf": 0.0}),
+        json!({"type": "number", "multipleOf": -2}),
+        json!({"type": "integer", "multipleOf": -1}),
+    ] {
+        assert!(
+            Declaration::new(probe.clone()).is_err(),
+            "`{probe}` was accepted, and would be published without being enforced"
+        );
+    }
+
+    // POSITIVE CONTROLS: strictly positive steps still build, so the refusal is about the value
+    // and not about `multipleOf` being rejected wholesale.
+    for valid in [
+        json!({"type": "number", "multipleOf": 2}),
+        json!({"type": "number", "multipleOf": 0.5}),
+        json!({"type": "integer", "multipleOf": 3}),
+    ] {
+        assert!(
+            Declaration::new(valid.clone()).is_ok(),
+            "`{valid}` was refused, but it is well-formed"
+        );
+    }
+
+    // AND THE CONSTRAINT IS ACTUALLY ENFORCED once accepted — without this the test above would
+    // pass against an implementation that refused everything.
+    let declaration = Declaration::new(json!({"type": "number", "multipleOf": 2}))
+        .expect("a strictly positive step is well-formed");
+    assert!(
+        !declaration.is_valid(&json!(5)),
+        "5 is not a multiple of 2 and was accepted"
+    );
+    assert!(
+        declaration.is_valid(&json!(4)),
+        "4 is a multiple of 2 and was refused"
+    );
+}
+
+#[test]
 fn a_malformed_keyword_value_is_refused_rather_than_silently_unenforced() {
     // Checking keyword NAMES was not enough. Every read in the walker is `as_u64` / `as_bool` /
     // `as_array`, so a WRONG-TYPED value yielded `None` and the constraint was skipped — while
