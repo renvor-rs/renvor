@@ -573,3 +573,47 @@ fn a_reordered_object_is_still_a_duplicate() {
     );
     assert_eq!(issues[0].reason, Reason::NotUnique);
 }
+
+#[test]
+fn the_issue_cap_holds_at_its_exact_boundary() {
+    // `contracts/http-runtime.md` sets the standard: every bound is asserted "at its exact
+    // boundary and at boundary + 1". `MAX_ISSUES` is a new bound and did not meet it.
+    //
+    // Written rather than reasoned about, because the two defects this phase's review found were
+    // both off-by-one-shaped and both survived being read carefully.
+    let cap = renvor_validation::schema::MAX_ISSUES;
+    let declaration = Declaration::new(json!({"type": "array", "items": {"type": "string"}}))
+        .expect("a valid declaration");
+
+    let violating = |n: usize| serde_json::Value::Array((0..n).map(|_| json!(1)).collect());
+    let truncated = |issues: &[renvor_validation::Issue]| {
+        issues.last().map(|issue| issue.reason) == Some(Reason::TooManyIssues)
+    };
+
+    // ONE BELOW the cap: every violation reported, and NOT announced as truncated.
+    let below = declaration.validate(Location::Body, &violating(cap - 1));
+    assert_eq!(below.len(), cap - 1, "a sub-cap request was truncated");
+    assert!(!truncated(&below), "a complete list claimed truncation");
+
+    // AT the cap: the list is full, and the last slot is spent saying so — one real violation is
+    // given up to carry that signal, which is the right trade. A caller told about a hundred
+    // problems must be able to tell that from being told these are all of them.
+    let at = declaration.validate(Location::Body, &violating(cap));
+    assert_eq!(at.len(), cap, "the list overran the cap");
+    assert!(truncated(&at), "a truncated list did not say so");
+
+    // BOUNDARY + 1, and far beyond it: still exactly the cap, still announced.
+    for count in [cap + 1, cap * 10] {
+        let over = declaration.validate(Location::Body, &violating(count));
+        assert_eq!(
+            over.len(),
+            cap,
+            "{count} violations produced {} issues",
+            over.len()
+        );
+        assert!(
+            truncated(&over),
+            "{count} violations were truncated silently"
+        );
+    }
+}
