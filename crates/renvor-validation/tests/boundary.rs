@@ -298,3 +298,38 @@ fn a_schemars_derived_type_is_inside_the_subset() {
             .is_empty()
     );
 }
+
+#[test]
+fn unique_items_does_not_degrade_quadratically() {
+    // The pairwise version this replaced was O(n²), and `uniqueItems` is reachable WITHOUT
+    // `maxItems` — `schemars` emits exactly that for a set-typed field. An array that fits inside
+    // the 2 MiB body limit could then buy a caller 10¹¹ comparisons.
+    //
+    // 50 000 distinct items is the worst case for the check (nothing matches until the end).
+    // O(n log n) finishes in milliseconds; O(n²) is 2.5 × 10⁹ comparisons and does not.
+    let declaration = Declaration::new(json!({"type": "array", "uniqueItems": true}))
+        .expect("a valid declaration");
+
+    let distinct: Vec<serde_json::Value> = (0..50_000).map(|n| json!(n)).collect();
+    let instance = serde_json::Value::Array(distinct);
+
+    let started = std::time::Instant::now();
+    let issues = declaration.validate(Location::Body, &instance);
+    let elapsed = started.elapsed();
+
+    assert!(
+        issues.is_empty(),
+        "distinct items were reported as repeated"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "uniqueItems took {elapsed:?} for 50 000 distinct items, which is the quadratic shape"
+    );
+
+    // POSITIVE CONTROL: it still DETECTS a repeat, so the speed above is not from skipping work.
+    let mut with_repeat: Vec<serde_json::Value> = (0..1_000).map(|n| json!(n)).collect();
+    with_repeat.push(json!(500));
+    let found = declaration.validate(Location::Body, &serde_json::Value::Array(with_repeat));
+    assert_eq!(found.len(), 1, "a repeat was not detected");
+    assert_eq!(found[0].reason, Reason::NotUnique);
+}

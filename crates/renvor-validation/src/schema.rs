@@ -415,12 +415,22 @@ impl Walker<'_> {
             self.push(pointer, Reason::TooManyItems);
         }
         if schema.get("uniqueItems").and_then(Value::as_bool) == Some(true) {
-            // O(n²) on a bounded array. `maxItems` is what bounds it, and an array with no
-            // `maxItems` is bounded by the request-body limit one layer out.
-            let repeated = items
-                .iter()
-                .enumerate()
-                .any(|(index, item)| items[..index].contains(item));
+            // O(n log n), NOT the obvious O(n²) pairwise scan.
+            //
+            // The pairwise version is what this was first written as, with a comment claiming
+            // `maxItems` bounded it. It does not: `uniqueItems` is reachable WITHOUT `maxItems` —
+            // `schemars` emits exactly that for a `HashSet` or `BTreeSet` field — and the only
+            // remaining bound is the 2 MiB request-body limit. An array of ~500 000 small integers
+            // fits inside it, and 500 000² is 2.5 × 10¹¹ comparisons of a caller's choosing.
+            //
+            // That is an algorithmic-complexity denial of service, and the bound that was supposed
+            // to prevent it was one the schema does not have to declare.
+            //
+            // Serialising each item is exact rather than approximate: `serde_json::Map` is ordered,
+            // so two values are equal if and only if their renderings are. `Value` implements
+            // neither `Hash` nor `Ord`, which is why the set is keyed by the rendering.
+            let mut seen = std::collections::BTreeSet::new();
+            let repeated = items.iter().any(|item| !seen.insert(item.to_string()));
             if repeated {
                 self.push(pointer, Reason::NotUnique);
             }
