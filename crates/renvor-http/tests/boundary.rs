@@ -247,3 +247,177 @@ fn holds_a_span_guard(source: &str) -> bool {
         .filter(|line| !line.starts_with("//"))
         .any(|line| line.contains(".enter()"))
 }
+
+// ── FR-026, FR-027, FR-043 — executable evidence for three claims that had none ──────────────
+
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .expect("the repository root resolves")
+}
+
+fn read(relative: &str) -> String {
+    let path = repository_root().join(relative);
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("`{relative}` is readable: {error}"))
+}
+
+#[test]
+fn renvor_claims_no_header_bound_it_does_not_set() {
+    // FR-026: header-related bounds are documented where the stack exposes them, and the bounds it
+    // does NOT expose are "named as such rather than claimed".
+    //
+    // The naming half was prose with no test. What makes the claim TRUE is that `Limits` — the
+    // only place Renvor publishes a bound — carries no header field at all. If one were added
+    // without the contract gaining a row, Renvor would be bounding something its contract says it
+    // does not control.
+    let limits = read("crates/renvor-http/src/limits.rs");
+    let published: Vec<&str> = limits
+        .lines()
+        .filter(|line| line.trim_start().starts_with("pub ") && line.contains(':'))
+        .collect();
+
+    assert!(
+        !published.is_empty(),
+        "no published bound was found at all, so finding no header bound proves nothing"
+    );
+
+    for field in &published {
+        let lowered = field.to_ascii_lowercase();
+        assert!(
+            !lowered.contains("header"),
+            "`Limits` publishes a header bound: {field}. FR-026 and C-10 say Renvor exposes none \
+             and makes no promise about their values — add the contract row before the field"
+        );
+    }
+
+    // And the contract names the gap rather than staying silent about it.
+    let runtime = read("contracts/http-runtime.md");
+    assert!(
+        runtime.contains("What Renvor does NOT bound"),
+        "C-10 no longer names the bounds Renvor does not control"
+    );
+    assert!(
+        runtime.contains("no header-count or header-size limit")
+            || runtime.contains("header-count or header-size"),
+        "C-10's section no longer names the header bounds specifically"
+    );
+}
+
+#[test]
+fn the_middleware_order_is_a_versioned_contract_that_matches_the_code() {
+    // FR-027: "The middleware order MUST be defined in a versioned public contract."
+    //
+    // Nothing asserted that the contract carried a version, that it listed nine layers, or that
+    // the code's own layer diagram agreed with it. A contract and an implementation that disagree
+    // about how many layers there are is precisely the drift a versioned contract exists to stop.
+    let contract = read("contracts/http-security.md");
+
+    assert!(
+        contract.contains("version: \""),
+        "C-11 carries no version in its frontmatter, so it is not a versioned contract"
+    );
+
+    // The numbered rows of the layer table: `| 1 | **Request context...`
+    let rows: Vec<u32> = contract
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            let rest = trimmed.strip_prefix("| ")?;
+            let (number, tail) = rest.split_once(" |")?;
+            if !tail.trim_start().starts_with("**") {
+                return None;
+            }
+            number.trim().parse::<u32>().ok()
+        })
+        .collect();
+
+    assert_eq!(
+        rows,
+        (1..=9).collect::<Vec<u32>>(),
+        "C-11's layer table no longer lists layers 1 through 9 in order"
+    );
+
+    // The code's own diagram must name every one of them. It is the list a reader of the source
+    // sees, and it going stale is how the contract and the implementation drift apart silently.
+    let build = read("crates/renvor-http/src/route/build.rs");
+    let diagram_start = build
+        .find("```text")
+        .expect("the layer diagram is in the module documentation");
+    let diagram_end = build[diagram_start + 7..]
+        .find("```")
+        .expect("the diagram is terminated")
+        + diagram_start
+        + 7;
+    let diagram = &build[diagram_start..diagram_end];
+
+    for layer in 1..=9 {
+        assert!(
+            diagram.contains(&layer.to_string()),
+            "the module's layer diagram does not mention layer {layer}, so the code's own \
+             description of the order is narrower than the contract's: {diagram}"
+        );
+    }
+}
+
+#[test]
+fn this_phase_implements_none_of_the_things_it_says_it_does_not() {
+    // FR-043: "MUST NOT implement RFC 9457 Problem Details, OpenAPI generation, or the Phase 005
+    // validation boundary."
+    //
+    // A negative requirement with no test is satisfied only until someone adds the thing. This
+    // scans the SHIPPED source — comments stripped, so a line saying "we do not implement
+    // Problem Details" is not read as implementing it.
+    let forbidden = [
+        "application/problem",
+        "problem+json",
+        "ProblemDetails",
+        "OpenApi",
+        "openapi",
+        "utoipa",
+    ];
+
+    let mut offences = Vec::new();
+    for (path, contents) in rust_files(&source_root()) {
+        for (number, line) in contents.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or(line);
+            for needle in forbidden {
+                if code.contains(needle) {
+                    offences.push(format!(
+                        "{path}:{} names `{needle}`: {}",
+                        number + 1,
+                        code.trim()
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        offences.is_empty(),
+        "this phase must implement none of RFC 9457 Problem Details, OpenAPI generation, or the \
+         Phase 005 validation boundary (FR-043):\n{}",
+        offences.join("\n")
+    );
+}
+
+#[test]
+fn the_scan_for_forbidden_features_would_notice_one_arriving() {
+    // POSITIVE CONTROL for the test above. A scan of real source that finds nothing is
+    // indistinguishable from a scan that looks at nothing.
+    let sample = "fn respond() { let media = \"application/problem+json\"; }";
+    let code = sample.split("//").next().unwrap_or(sample);
+    assert!(
+        code.contains("application/problem"),
+        "the matching the scan relies on does not detect the construct it forbids"
+    );
+
+    // And a COMMENT naming it is correctly ignored, which is why the scan strips them.
+    let discussed = "// this phase does not implement application/problem+json";
+    let stripped = discussed.split("//").next().unwrap_or(discussed);
+    assert!(
+        !stripped.contains("application/problem"),
+        "a comment discussing the forbidden feature would be reported as implementing it"
+    );
+}
