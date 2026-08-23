@@ -512,6 +512,7 @@ has not earned, and no amount of running it more often helps.
 | L-15 | **`AGENTS.md` does not exist** in the working tree or anywhere in Git history, though the phase brief named it as required reading. Equivalent authority was taken from `CONSTITUTION.md`, `GOVERNANCE.md`, `PLAN.md`, and `contracts/`. Recorded rather than silently skipped | Ahmed | — |
 | L-16 | **`compat::compare` recurses without a depth bound.** `compare_schema` and `compare_properties` are mutually recursive with no `MAX_DEPTH` and no depth test. Reachable by the application developer only — both documents are developer-supplied — and bounded in practice by `serde_json`'s parse limit, **measured** refusing a 200-deep document, and by `MAX_DEPTH = 64` on Renvor-generated schemas. L-14 audit, LOW | framework | 012 |
 | L-17 | **Property testing covers the cursor decoder and nothing else.** No property test over schema keyword *values* — the gap D-9 came through, so this is evidence and not conjecture — none for `compat::compare`, and none over arbitrary route registries for the serialiser. L-14 audit, informational | framework | 012 |
+| L-19 | **No gate ever compiles in release profile.** `cargo xtask verify` runs `clippy --all-targets` and `test` in the dev profile, so a lint that only fires under `--release` is invisible to every gate. Found during the closing audit: `crates/renvor-cli/src/inject.rs:21` imports `Code`, which is used only inside a `debug_assertions` path, so `cargo build --release` warns and no gate does. **Pre-existing since Phase 003, untouched by Phase 005, and in a `publish = false` crate** — so it is recorded rather than fixed here, because repairing Phase 003 code at the Phase 005 merge gate is not this phase's scope. Same defect class as the `cargo deny` dev-dependency gap in C-2 §1.1.2 | framework | 012 |
 | L-18 | **No live concurrent load test of the bounded-relay path.** §9b area 9 clears it structurally — no shared mutable state, one invocation per process — but structure is an argument, not a measurement. Stated rather than counted as covered | framework | 012 |
 
 ---
@@ -601,6 +602,22 @@ The consequence is uneven coverage, and it is worth naming: the security dimensi
 genuine adversarial review and found real defects; the FR/SC conformance and governance-truthfulness
 dimensions received **only self-review**. The first found six defects the test suite missed. There
 is no reason to believe the other two dimensions are cleaner — only that nobody looked.
+
+## 9c. The 3.2 proof, re-run end to end at the final head
+
+Re-verified on 2026-08-23 at the head this phase merges, through the **real `renvor openapi`
+binary** against a real project that depends on the framework — not through a unit test:
+
+```
+declared openapi = "3.2.0"
+official 3.2  : VALID
+official 3.1 (version pattern neutralised): REJECTED (structural)
+  first structural reason: "description" is a required property
+```
+
+The rejection reason is the point. With 3.1's version pattern removed, the document is still
+refused — because it carries a Response with `summary` and **no `description`**, which OAS 3.1
+requires and 3.2 does not. The document is 3.2 by **construction**, not by label.
 
 ## 9b. The L-14 completion audit — maintainer self-review, 2026-08-23
 
