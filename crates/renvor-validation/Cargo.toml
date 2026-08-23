@@ -1,0 +1,101 @@
+# The transport-independent validation boundary (Phase 005).
+#
+# # One declaration, two consumers — the same structure the route registry uses
+#
+# A constraint is declared ONCE, as a schema. Runtime validation interprets that schema; the
+# OpenAPI document embeds that schema. "Runtime validation and published schemas agree" is
+# therefore an IDENTITY rather than a property tests have to chase — the same argument
+# `contracts/http-routing.md` makes for routes, applied to input rules.
+#
+# # Why Renvor interprets the schema instead of using a JSON Schema validator at runtime
+#
+# MEASURED on 2026-08-23, not estimated:
+#
+#     renvor-http's current runtime graph ....................  65 packages
+#     jsonschema 0.50.1, default-features = false ............ 103 packages
+#
+# Validating a request body against its own schema with `jsonschema` would MORE THAN DOUBLE the
+# transport's dependency surface, pulling the entire ICU stack (icu_normalizer, icu_properties,
+# icu_collections, icu_provider), fancy-regex, num-bigint, uuid-simd, email_address, and
+# wasm-bindgen. Constitution principle XII requires "the smallest design satisfying the contract",
+# and PLAN.md §22 names dependency cost as a tracked program risk.
+#
+# So Renvor interprets a BOUNDED, DECLARED subset of JSON Schema — and `jsonschema` is a
+# DEV-dependency, where its weight is free, used for DIFFERENTIAL TESTING: for generated
+# schema/instance pairs, Renvor's verdict must equal the reference implementation's. That is what
+# stops the bounded interpreter from quietly diverging from the standard it publishes.
+#
+# # Why not `validator` or `garde`
+#
+# Both validate. NEITHER emits a JSON Schema. `schemars` emits a JSON Schema and does not validate.
+# Using one of each declares every constraint TWICE, which is precisely what FR-007 forbids and
+# what turns this phase's central acceptance criterion into a test instead of an identity.
+#
+# See ADR-0014 and the Phase 005 dependency inventory.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-validation"
+description = "Transport-independent validation boundary for the Renvor framework: one schema declaration drives both runtime enforcement and published API description, with issues that identify inputs without quoting them."
+documentation = "https://docs.rs/renvor-validation"
+readme = "README.md"
+keywords = ["renvor", "framework", "validation", "json-schema"]
+categories = ["web-programming"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The issue vocabulary, and the Problem Details types an issue becomes. This crate produces
+# `InvalidParam` values; it does not know how they reach a caller.
+renvor-error = { path = "../renvor-error", version = "0.0.0" }
+
+# Schema PRODUCTION. Emits JSON Schema draft 2020-12 — measured by running `schema_for!` and
+# reading the emitted `$schema` — which is the exact dialect base OpenAPI 3.2 declares. Its output
+# was verified to embed as a VALID OAS 3.2 Schema Object against the official schema.
+#
+# `default-features = false` plus `derive`: net new packages measured against the existing
+# lockfile are SEVEN — schemars, schemars_derive, serde_derive_internals, dyn-clone, ref-cast,
+# ref-cast-impl, zmij. Compare 103 for the runtime-validator alternative above.
+schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
+
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+# Page-cursor encoding ONLY. A cursor is opaque, so its encoding is not a public contract — but it
+# must be URL-safe and stable, and `base64` is the maintained implementation of exactly that.
+# `default-features = false` keeps `std`'s allocator behaviour explicit.
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# THE REFERENCE IMPLEMENTATION, dev-only.
+#
+# Its 103-package graph is the reason it is not a runtime dependency, and its correctness is the
+# reason it is a dev one: Renvor's bounded interpreter is asserted to agree with it over generated
+# schema/instance pairs. A bounded subset that disagrees with the standard it publishes is worse
+# than no subset, and this is how that is caught rather than assumed.
+jsonschema = { version = "0.50.1", default-features = false }
+
+# Cursor decoding must not panic on ANY input, and a cursor is untrusted. PLAN.md §17.1 names
+# "property or fuzz tests for parsers, routing edge cases, pagination cursors, and untrusted
+# formats" — this is that requirement's tooling.
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

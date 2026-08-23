@@ -1,0 +1,94 @@
+# OpenAPI 3.2.0 document generation and the API compatibility gate (Phase 005).
+#
+# # Why Renvor owns the serialiser, stated with the measurement that forced it
+#
+# Constitution principle V is binding and specific:
+#
+#   "REST MUST use the current approved OpenAPI standard ... The initial target is OpenAPI 3.2.0,
+#    and emitted documents MUST NOT claim a version that selected tooling does not correctly
+#    implement."
+#
+# OAS 3.2.0 was released 2025-09-19. On 2026-08-23 the Rust ecosystem was re-evaluated against
+# PRIMARY sources, and every maintained generator emits an EARLIER version:
+#
+#   utoipa 5.5.0 ......... "3.1.0"   <- MEASURED: compiled a #[derive(OpenApi)] type and printed it
+#   utoipa-axum 0.2.0 .... inherits utoipa, and binds to axum
+#   aide 0.15.1 .......... 3.1       (0.16.0 is a pre-release)
+#   apistos 0.6.1 ........ 3.0/3.1   and actix-bound
+#   oasgen 0.25.0 ........ 3.0/3.1   and stale since 2025-02
+#   salvo-oapi 0.95.2 .... 3.1       and salvo-bound
+#   poem-openapi 5.1.16 .. 3.0       and poem-bound
+#   okapi 0.7.0 .......... 3.0       and unmaintained since 2024-01
+#   openapiv3 2.2.0 ...... a 3.0 data model only
+#
+# Relabelling 3.1 output as 3.2 is exactly what principle V forbids. So this crate serialises the
+# document, and its responsibility is BOUNDED — see ADR-0013:
+#
+#   IT DOES        emit the document envelope and its operations, deterministically
+#   IT DOES NOT    implement JSON Schema (schemars does), parse documents written by others,
+#                  resolve remote $refs, or judge validity — the OFFICIAL schema judges validity,
+#                  checked by an independent validator in the test suite
+#
+# DELETION TRIGGER, executable rather than aspirational: when a maintained crate emits a document
+# whose `openapi` field is 3.2.x and which passes the same official-schema and structural-rejection
+# proofs this crate's tests apply, this crate's serialiser is replaced by it and ADR-0013 is
+# superseded. The proof harness that would judge the replacement is the one already in tests/.
+#
+# # This crate carries NO runtime server state
+#
+# It depends on `renvor-validation` and `renvor-error`, and on no server, router, or middleware
+# crate. Generating a description binds nothing and boots nothing.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-openapi"
+description = "OpenAPI 3.2.0 description generation and API compatibility checking for the Renvor framework: deterministic output, official-schema validation, and semantic breaking-change classification."
+documentation = "https://docs.rs/renvor-openapi"
+readme = "README.md"
+keywords = ["renvor", "framework", "openapi", "api", "compatibility"]
+categories = ["web-programming"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The schema values this crate embeds. It does not produce them and does not interpret them; it
+# carries the SAME value the runtime enforces, which is what makes the description true.
+renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
+
+# The public error registry rendered into response components.
+renvor-error = { path = "../renvor-error", version = "0.0.0" }
+
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+# `preserve_order` is deliberately NOT enabled. Determinism here comes from emitting members in a
+# FIXED declared order and open-ended maps in SORTED order — a property of this crate's serialiser,
+# not of a feature flag that would make output depend on insertion order instead.
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# THE INDEPENDENT VALIDATOR. The whole 3.2 gate rests on a validator that is not this crate:
+# a generator that judged its own output would prove nothing.
+#
+# Verified on 2026-08-23 to compile the official OAS 3.2 schema including its $dynamicRef and
+# $dynamicAnchor, and to reject four distinct malformed controls.
+jsonschema = { version = "0.50.1", default-features = false }
+
+[lints]
+workspace = true
