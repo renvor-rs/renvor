@@ -1,0 +1,290 @@
+//! Transport-independent persistence ports for the Renvor framework.
+//!
+//! # This crate names no database
+//!
+//! There is no SQLx type here, no Axum type, no `Row`, and no connection. What is here is the
+//! **shape** an application service depends on: a transaction it opens and closes explicitly, a
+//! bounded pool it configures, a migration contract it can assert against, and a page it can
+//! resume. `renvor-sqlx` is where a driver appears, and the dependency points from that adapter
+//! inward to these ports — never the reverse.
+//!
+//! `xtask` step 7 asserts the absence of every driver crate from this crate's graph, with a
+//! positive control proving the same query finds them where they *are* selected. An architecture
+//! rule that is only written down is a rule somebody edits around.
+//!
+//! # The application declares its own repositories
+//!
+//! Renvor deliberately does **not** publish a blanket `Repository<T>` with `find`, `insert`,
+//! `update`, and `delete`. That would be an ORM boundary, and constitution principle III forbids
+//! creating an ORM. An application declares repository traits in **its own** domain language:
+//!
+//! ```rust,ignore
+//! // In the application layer. No SQLx, no Axum, no `renvor_sqlx`.
+//! pub trait PostRepository {
+//!     fn create(&mut self, draft: NewPost)
+//!         -> impl Future<Output = Result<Post, DatabaseError>> + Send;
+//! }
+//! ```
+//!
+//! and implements them, in an adapter module, for the concrete unit of work `renvor-sqlx` hands
+//! back. The application service is generic over [`Database`] and never learns which driver ran.
+//!
+//! # Transactions are explicit in both directions
+//!
+//! [`Database::begin`] is the only way to start one, and [`UnitOfWork::commit`] is the only way to
+//! finish one successfully. `commit` takes `self` by value, so using a unit of work after
+//! committing it is a **compile** error rather than a runtime one.
+//!
+//! Dropping a unit of work without committing rolls back. That behaviour is inherited from the
+//! driver and is **not** synchronous: see [`UnitOfWork`] for what is actually promised and what is
+//! not.
+
+use core::future::Future;
+
+pub mod error;
+pub mod migrate;
+pub mod page;
+pub mod pool;
+pub mod seed;
+
+pub use error::{DatabaseError, DatabaseErrorKind};
+pub use migrate::{
+    MigrationOutcome, MigrationPolicy, MigrationReport, MigrationSettings, MigrationStep,
+    Reversibility,
+};
+pub use page::{Keyset, KeysetError, OrderBy, OrderTerm, Page, SortAllowlist};
+pub use pool::{ConnectionString, PoolSettings};
+pub use seed::{Idempotence, SeedDeclaration, SeedScope};
+
+/// Which database an adapter is talking to.
+///
+/// # Safe to report, unlike everything else about a connection
+///
+/// A diagnostic needs to say *something*. The database **kind** identifies the driver without
+/// naming a host, a user, or a password, so it is the one connection fact that may appear in an
+/// error. See [`ConnectionString`] for why the rest may not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum DatabaseKind {
+    /// PostgreSQL.
+    Postgres,
+    /// MySQL.
+    MySql,
+}
+
+impl DatabaseKind {
+    /// Every kind Phase 006 supports.
+    pub const ALL: [Self; 2] = [Self::Postgres, Self::MySql];
+
+    /// The stable name, as it appears in a project manifest and in CLI output.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::MySql => "mysql",
+        }
+    }
+
+    /// Parses a kind name.
+    ///
+    /// Returns `None` rather than defaulting. A misspelled database name that silently became
+    /// PostgreSQL is the class of silent fallback constitution principle IV prohibits.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "postgres" => Some(Self::Postgres),
+            "mysql" => Some(Self::MySql),
+            _ => None,
+        }
+    }
+
+    /// Quotes an identifier the way this database expects.
+    ///
+    /// # The input is always a compile-time constant
+    ///
+    /// Every caller passes a `&'static str` drawn from a [`SortAllowlist`]. This function exists
+    /// because the *syntax* differs per database, not because the *value* is ever untrusted.
+    ///
+    /// The doubling below is defence in depth rather than the primary control: an allowlisted
+    /// constant contains no quote character, and if one ever did, doubling is the escape both
+    /// databases define.
+    #[must_use]
+    pub fn quote_identifier(self, identifier: &str) -> String {
+        match self {
+            Self::Postgres => format!("\"{}\"", identifier.replace('"', "\"\"")),
+            Self::MySql => format!("`{}`", identifier.replace('`', "``")),
+        }
+    }
+
+    /// The placeholder for the `index`-th bound parameter, one-based.
+    ///
+    /// PostgreSQL numbers its placeholders and MySQL does not, which is the difference that makes
+    /// a shared statement builder need this rather than a constant.
+    #[must_use]
+    pub fn placeholder(self, index: usize) -> String {
+        match self {
+            Self::Postgres => format!("${index}"),
+            Self::MySql => "?".to_owned(),
+        }
+    }
+}
+
+/// An open transaction, owned by the application service that began it.
+///
+/// # What dropping one actually does
+///
+/// Dropping without committing rolls back — but the rollback is **queued, not synchronous**.
+/// `sqlx-core`'s `impl Drop for Transaction` calls `start_rollback`, whose own comment says it
+/// *"queue[s] a rollback operation that will happen on the next asynchronous invocation of the
+/// underlying connection (including if the connection is returned to a pool)"*.
+///
+/// Stated rather than glossed, because the difference matters and the convenient claim would be
+/// false:
+///
+/// - **No uncommitted row is ever visible to another connection.** That holds from the first
+///   statement onward and does not depend on the rollback having run.
+/// - **The server-side transaction is cleaned up asynchronously.** A test that drops a transaction
+///   and immediately inspects server-side transaction state may see it still open.
+///
+/// Renvor asserts the first property and documents the second, rather than claiming a synchronous
+/// rollback it does not perform.
+///
+/// # There is no commit-on-drop path
+///
+/// Only [`UnitOfWork::commit`] commits. A unit of work that goes out of scope for **any** reason —
+/// an early return, a `?`, a panic, a cancelled future — does not write.
+pub trait UnitOfWork: Send {
+    /// Commits.
+    ///
+    /// Takes `self` by value, so a use after commit does not compile.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::CommitFailed`] when the database refused the commit.
+    fn commit(self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
+
+    /// Rolls back.
+    ///
+    /// Explicit rollback exists so that "undo this deliberately" and "undo this because something
+    /// went wrong" are different statements in the source.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::RollbackFailed`], which is a defect rather than a refusal: the
+    /// connection's state is then unknown and it is discarded rather than reused.
+    fn rollback(self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
+}
+
+/// A configured, bounded connection to one database.
+///
+/// # Implemented by adapters, depended on by services
+///
+/// An application service takes `&impl Database` and never learns whether it is talking to
+/// PostgreSQL or MySQL. That is what makes the same contract suite executable against both.
+pub trait Database: Send + Sync {
+    /// The concrete transaction this database hands out.
+    type UnitOfWork<'c>: UnitOfWork
+    where
+        Self: 'c;
+
+    /// Which database this is.
+    fn kind(&self) -> DatabaseKind;
+
+    /// Begins a transaction.
+    ///
+    /// # This is the only way one starts
+    ///
+    /// No repository call begins a transaction implicitly. `PLAN.md` §12 requires transaction
+    /// boundaries to be *"explicit in service code and tests"*, and a boundary that can appear
+    /// without a line of code naming it is not explicit.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::AcquireTimeout`] when the pool had no connection within its deadline,
+    /// [`DatabaseErrorKind::PoolClosed`] during shutdown, or
+    /// [`DatabaseErrorKind::ConnectFailed`].
+    fn begin(&self) -> impl Future<Output = Result<Self::UnitOfWork<'_>, DatabaseError>> + Send;
+
+    /// Runs the readiness check.
+    ///
+    /// # Readiness is not liveness
+    ///
+    /// This performs a real round-trip, bounded by the configured acquire and connect deadlines.
+    /// Returning `Ok` from a check that never touched the database would let readiness be reported
+    /// before the database could serve a request, which principle IV forbids.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::NotReady`], or a transient kind describing why the round-trip failed.
+    fn check(&self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
+
+    /// Closes the pool within a bounded drain.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::DeadlineExceeded`] when connections did not return in time. A forced
+    /// close is reported as an error rather than as a successful shutdown, per principle IV:
+    /// *"Timeouts and forced termination are visible errors, never successful shutdowns."*
+    fn close(&self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifier_quoting_matches_each_database() {
+        assert_eq!(DatabaseKind::Postgres.quote_identifier("id"), "\"id\"");
+        assert_eq!(DatabaseKind::MySql.quote_identifier("id"), "`id`");
+    }
+
+    #[test]
+    fn a_quote_character_in_an_identifier_is_doubled_not_passed_through() {
+        assert_eq!(
+            DatabaseKind::Postgres.quote_identifier("a\"b"),
+            "\"a\"\"b\""
+        );
+        assert_eq!(DatabaseKind::MySql.quote_identifier("a`b"), "`a``b`");
+    }
+
+    /// The classic identifier-injection payload, against both quoting rules.
+    ///
+    /// This is defence in depth: an allowlisted column is a `&'static str` and can never be this
+    /// value. The assertion exists so that a future change which widened the input type fails here
+    /// rather than in production.
+    #[test]
+    fn an_injection_payload_cannot_escape_either_quoting_rule() {
+        let payload = "id\"; DROP TABLE posts; --";
+        let quoted = DatabaseKind::Postgres.quote_identifier(payload);
+        assert!(quoted.starts_with('"') && quoted.ends_with('"'));
+        // Every interior quote is doubled, so no odd-length run of quotes can terminate it early.
+        assert_eq!(quoted.matches('"').count() % 2, 0);
+
+        let payload = "id`; DROP TABLE posts; --";
+        let quoted = DatabaseKind::MySql.quote_identifier(payload);
+        assert!(quoted.starts_with('`') && quoted.ends_with('`'));
+        assert_eq!(quoted.matches('`').count() % 2, 0);
+    }
+
+    #[test]
+    fn placeholders_differ_per_database() {
+        assert_eq!(DatabaseKind::Postgres.placeholder(1), "$1");
+        assert_eq!(DatabaseKind::Postgres.placeholder(7), "$7");
+        assert_eq!(DatabaseKind::MySql.placeholder(1), "?");
+        assert_eq!(DatabaseKind::MySql.placeholder(7), "?");
+    }
+
+    #[test]
+    fn an_unknown_database_name_is_refused_rather_than_defaulted() {
+        assert_eq!(DatabaseKind::parse("sqlite"), None);
+        assert_eq!(DatabaseKind::parse("Postgres"), None);
+        assert_eq!(DatabaseKind::parse(""), None);
+    }
+
+    #[test]
+    fn kind_names_round_trip() {
+        for kind in DatabaseKind::ALL {
+            assert_eq!(DatabaseKind::parse(kind.as_str()), Some(kind));
+        }
+    }
+}
