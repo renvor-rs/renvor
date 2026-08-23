@@ -148,15 +148,36 @@ Current order:
 | Position | Package | Depends on | Notes |
 |---|---|---|---|
 | 1 | `renvor-core` | *(nothing in the workspace)* | The kernel. Nothing else can publish before it |
+| 1 | `renvor-error` | *(nothing in the workspace)* | The public API error registry and RFC 9457 documents. Depends on **no** Renvor crate — it names no transport and no kernel type — so it shares position 1 with the kernel and the two may publish concurrently |
 | 2 | `renvor-config` | `renvor-core` | The configuration adapter |
 | 2 | `renvor-testkit` | `renvor-core` | The test harness. Independent of `renvor-config`, so position 2 either way |
-| 2 | `renvor-http` | `renvor-core` | The REST transport. Independent of the other two position-2 packages |
-| 3 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http` | Facade. `renvor-config` is optional-but-default-on and `renvor-http` is optional-and-default-**off**; **all three** must exist first |
+| 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
+| 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
+| 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
+| 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http` | Facade. `renvor-config` is optional-but-default-on and `renvor-http` is optional-and-default-**off**; **all three** must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
 
-Position 2's three packages have no dependency on each other and may publish in any
-order, or concurrently. Position 3 waits for **all three**, not only for
-`renvor-core`: an optional dependency still has to be resolvable at publish time.
+Packages sharing a position have no dependency on each other and may publish in any
+order, or concurrently. Each later position waits for **every** package at every
+earlier one — an optional dependency still has to be resolvable at publish time.
+
+**Eight publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
+a package added without appearing in this table fails verification rather than being discovered at
+publication time.
+
+> **Amended 2026-08-23 (Phase 005).** Three packages joined, taking the publishable set from five
+> to eight, and `renvor-http` moved from position 2 to position 4 because it now depends on all
+> three of them.
+>
+> `renvor-error` sits at **position 1 beside the kernel**, which is the non-obvious part and is a
+> property worth stating: a public API error code is a compatibility promise, so it depends on no
+> transport — and it turns out it needs no kernel either. Nothing in the registry or the RFC 9457
+> document model names a Renvor type outside its own crate. `tests/boundary.rs` in `renvor-http`
+> asserts that direction for all four crates, and this ordering is the release-time consequence.
+>
+> `renvor-validation` and `renvor-openapi` are `publish = true` for the reason ADR-0008 records by
+> experiment: a publishable package cannot depend on an unpublishable one, and `renvor-http` — which
+> is itself forced to be publishable by the facade — depends on both.
 
 > **Amended 2026-08-22 (Phase 004).** `renvor-http` was added at position 2 and the facade's
 > dependency list grew to three. **A default-OFF optional dependency still blocks the facade's

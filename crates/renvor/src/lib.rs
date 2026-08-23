@@ -199,6 +199,40 @@ pub use renvor_http::{
     Limits, Method, RequestContext, Response, Route, RouteGroup, RouteRegistry, TrustedProxies,
 };
 
+/// The public API error registry and RFC 9457 Problem Details.
+///
+/// Transport-independent: nothing in it names an HTTP type. It is behind `transport-rest` because
+/// the kernel-only path has no public HTTP API to describe errors for — not because it needs a
+/// transport to work.
+#[cfg(feature = "transport-rest")]
+pub use renvor_error as error;
+
+/// The validation boundary.
+///
+/// One [`validation::Declaration`] is enforced at runtime and published in the description. It is
+/// the same value in both directions, which is what makes them agree.
+#[cfg(feature = "transport-rest")]
+pub use renvor_validation as validation;
+
+/// OpenAPI 3.2.0 description generation and API compatibility checking.
+#[cfg(feature = "transport-rest")]
+pub use renvor_openapi as openapi;
+
+// The declaration surface, promoted to the facade root for the same reason `RouteRegistry` is:
+// the common case should read as `renvor::{Declaration, OperationSpec}`.
+//
+// DELIBERATELY NARROW. The facade does not re-export an item merely because it is public in an
+// implementation crate — contract C-S1 states that explicitly, so that later narrowing is possible
+// without a breaking change. The document MODEL, the compatibility gate, and the interpreter's
+// internals stay one level down, under `renvor::openapi` and `renvor::validation`, where a caller
+// reaching for them is making a visible choice.
+#[cfg(feature = "transport-rest")]
+pub use renvor_error::{ApiErrorCode, InvalidParam, Location, ProblemDetails};
+#[cfg(feature = "transport-rest")]
+pub use renvor_http::route::OperationSpec;
+#[cfg(feature = "transport-rest")]
+pub use renvor_validation::{Declaration, Reason};
+
 #[cfg(test)]
 mod tests {
     use super::*;

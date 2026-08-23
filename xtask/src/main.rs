@@ -2031,9 +2031,13 @@ mod tests {
         let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
             .expect("every publishable package satisfies the metadata contract");
 
+        // EIGHT since Phase 005: `renvor-error`, `renvor-validation`, and `renvor-openapi` joined
+        // the five that existed before. The number is asserted rather than inferred so that adding
+        // a publishable package without adding it to the release ordering fails here — which is
+        // exactly what happened when this count was five and three packages had just been added.
         assert_eq!(
-            examined, 5,
-            "the workspace publishes five packages; the scan examined {examined}"
+            examined, 8,
+            "the workspace publishes eight packages; the scan examined {examined}"
         );
     }
 
