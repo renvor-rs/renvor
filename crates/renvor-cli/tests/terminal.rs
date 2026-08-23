@@ -484,6 +484,19 @@ fn control_c_at_a_prompt_is_a_cancellation() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
+
+    // WAIT FOR THE PROMPT TO BE DRAWN BEFORE SENDING THE KEY.
+    //
+    // Without this the test races the child. The keypress is written the instant after `spawn`,
+    // and if it lands before the prompt library has put the pty into raw mode, the line discipline
+    // is still canonical — so Ctrl-C becomes SIGINT to the foreground process group rather than a
+    // byte the library reads, and the exit code is 1 instead of 4. The library enables raw mode
+    // before it draws, so waiting for the drawn prompt is what makes "raw mode is on" observable.
+    //
+    // Observed on CI 2026-08-23: `verify (stable)` failed here while `verify (1.94.0)` passed on
+    // the same commit, which is the signature of a race rather than a defect. The assertion below
+    // is unchanged — the exit code still has to be 4.
+    terminal.expect("Project name");
     terminal.key("\u{3}");
     let code = terminal.wait();
     assert_eq!(
@@ -508,6 +521,9 @@ fn escape_at_a_prompt_is_a_cancellation() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
+    // Same race as the Ctrl-C test above, and the same fix. This one had not been observed
+    // failing, which is not the same as not racing.
+    terminal.expect("Project name");
     terminal.escape();
     assert_eq!(
         terminal.wait(),
