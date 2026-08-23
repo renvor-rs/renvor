@@ -211,21 +211,35 @@ compared against the committed baseline and the break is caught.
 
 | Gate | Result |
 |---|---|
-| Workspace tests, `--all-features` | **1039 passed, 0 failed, 1 ignored** |
+| Workspace tests, `--all-features` | **1042 passed, 0 failed, 2 ignored**, 69 suites — identical serially (`--test-threads=1`) |
 | `cargo fmt --all --check` | pass |
 | `cargo clippy --all-targets --all-features -- -D warnings` | pass |
 | `renvor-error` | 21 passed |
-| `renvor-validation` | 47 passed |
-| `renvor-openapi` | 39 passed |
-| `renvor-http` | 213 passed |
-| `renvor-cli` | 344 passed |
+| `renvor-validation` | 56 passed |
+| `renvor-openapi` | 41 passed, 1 ignored |
+| `renvor-http` | 214 passed |
+| `renvor-cli` | 345 passed, 1 ignored |
 | `renvor-core` | 208 passed |
 | `renvor-config` | 108 passed |
 | `renvor-testkit` | 13 passed |
 | `renvor` | 12 passed |
 | `xtask` | 24 passed |
 
-The full `cargo xtask verify` sequence on both toolchains is recorded in the pull request.
+The per-crate figures sum to **1042**, which is the workspace figure — stated because a table whose
+rows do not add up to its own total is a table nobody has checked.
+
+Both ignored tests are deliberate and neither hides a failure: `renvor-openapi`'s is the snapshot
+**refresh generator**, which must not run in the gate because it would print an approval nobody
+reviewed, and `renvor-cli`'s is the end-to-end relay against a generated project, which cannot run
+until something is published.
+
+> **Corrected 2026-08-23.** This table read *"1039 passed, 0 failed, 1 ignored"* with per-crate rows
+> that no longer matched any of them. It was accurate when written and went stale as the closing
+> audit added tests. Every figure above was **re-measured** at the final head rather than adjusted
+> by arithmetic.
+
+The full `cargo xtask verify` sequence on both toolchains is recorded in the pull request: **11/11
+on 1.94.0 and 11/11 on stable**, at head `673cf15`.
 
 ### The Phase 004 gap this phase closed
 
