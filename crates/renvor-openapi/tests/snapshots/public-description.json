@@ -1,0 +1,182 @@
+{
+  "openapi": "3.2.0",
+  "info": {
+    "title": "Items",
+    "version": "1.0.0"
+  },
+  "jsonSchemaDialect": "https://spec.openapis.org/oas/3.2/dialect/2025-09-17",
+  "paths": {
+    "/items/{id}": {
+      "get": {
+        "operationId": "getItem",
+        "summary": "Get an item",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "name": "verbose",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "summary": "The item",
+            "description": "The requested item.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "404": {
+            "summary": "No such item"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createItem",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "name": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "status": {
+                    "enum": [
+                      "draft",
+                      "live"
+                    ]
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "summary": "Created"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ProblemDetails": {
+        "description": "An RFC 9457 problem document. `code`, `correlationId`, and `invalidParams` are documented extension members.",
+        "properties": {
+          "code": {
+            "enum": [
+              "validation_failed",
+              "malformed_body",
+              "unsupported_media_type",
+              "missing_body",
+              "not_found",
+              "method_not_allowed",
+              "host_rejected",
+              "origin_rejected",
+              "payload_too_large",
+              "request_timeout",
+              "unavailable",
+              "internal_error"
+            ],
+            "type": "string"
+          },
+          "correlationId": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "format": "uri-reference",
+            "type": "string"
+          },
+          "invalidParams": {
+            "items": {
+              "properties": {
+                "location": {
+                  "enum": [
+                    "path",
+                    "query",
+                    "header",
+                    "body"
+                  ],
+                  "type": "string"
+                },
+                "pointer": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "location",
+                "pointer",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 100,
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "type": {
+            "format": "uri-reference",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "correlationId"
+        ],
+        "title": "Problem Details",
+        "type": "object"
+      }
+    }
+  }
+}

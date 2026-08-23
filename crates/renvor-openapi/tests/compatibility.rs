@@ -494,13 +494,16 @@ fn a_regenerated_snapshot_cannot_approve_its_own_breaking_diff() {
         "the self-comparison did not behave as described, so the demonstration below is unsound"
     );
 
-    // Against the COMMITTED baseline: the break is caught. The gate's correctness therefore
-    // depends on the caller supplying a baseline it did not just produce, which is why the
-    // snapshot is read from committed history rather than regenerated.
-    let changes = compare(&baseline().to_value(), &broken);
+    // Against the COMMITTED snapshot — the real file, read from the repository, not a value this
+    // test just built. The break is caught. The gate's correctness depends on the baseline side
+    // being one the caller did not just produce, which is exactly why it is read from committed
+    // history rather than regenerated.
+    let committed: serde_json::Value =
+        serde_json::from_str(COMMITTED).expect("the committed snapshot is valid JSON");
+    let changes = compare(&committed, &broken);
     assert!(
         is_breaking(&changes),
-        "comparing against the committed baseline missed a removed route"
+        "comparing against the committed snapshot missed a removed route"
     );
 }
 
@@ -536,4 +539,62 @@ fn every_change_class_declares_a_severity_consistent_with_its_name() {
             class.as_str()
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The committed snapshot — FR-043, FR-044
+// ---------------------------------------------------------------------------------------------
+
+/// The snapshot, read from the repository rather than regenerated.
+///
+/// `include_str!` resolves at compile time against the committed file, so the baseline side of
+/// every comparison below comes from **committed history**. That is the property FR-048 depends
+/// on: a gate that regenerated both sides would compare a document with itself and pass for any
+/// change at all.
+const COMMITTED: &str = include_str!("snapshots/public-description.json");
+
+#[test]
+fn the_generated_description_matches_the_committed_snapshot() {
+    // FR-044. `baseline()` stands in for an application's declarations: it is the generated side.
+    // `COMMITTED` is the recorded side. A breaking drift between them fails here.
+    let committed: serde_json::Value =
+        serde_json::from_str(COMMITTED).expect("the committed snapshot is valid JSON");
+    let generated = baseline().to_value();
+
+    let changes = compare(&committed, &generated);
+    assert!(
+        !is_breaking(&changes),
+        "the generated description breaks the committed snapshot: {:?}",
+        breaking(&changes)
+    );
+}
+
+#[test]
+fn the_committed_snapshot_is_byte_identical_to_what_generation_produces() {
+    // Stronger than the semantic check above, and deliberately separate from it: this one fails
+    // for ANY drift, including harmless ones, so the committed file cannot quietly go stale while
+    // the semantic gate keeps passing.
+    let regenerated = baseline().to_json().expect("serialises");
+    assert_eq!(
+        regenerated.trim(),
+        COMMITTED.trim(),
+        "the committed snapshot is stale — refresh it with \
+         `cargo test -p renvor-openapi --test compatibility refresh_the_committed_snapshot \
+         -- --ignored --nocapture` and commit the result"
+    );
+}
+
+/// How the snapshot is updated — the procedure FR-043 requires be stated.
+///
+/// Prints the current description. A maintainer copies it into
+/// `tests/snapshots/public-description.json` and commits it **as a reviewed change**. It is
+/// `#[ignore]`d so it never runs in the gate, and it only prints — it cannot write the file it
+/// would be approving, which is what keeps FR-048 intact.
+#[test]
+#[ignore = "generator — run with --ignored to print a refreshed snapshot"]
+fn refresh_the_committed_snapshot() {
+    println!(
+        "---BEGIN---\n{}\n---END---",
+        baseline().to_json().expect("serialises")
+    );
 }

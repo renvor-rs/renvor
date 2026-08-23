@@ -120,6 +120,35 @@ member is not" sit on opposite sides of one rule.
 **Both directions are required.** A gate that failed on every change would be an obstacle, and an
 obstacle gets routed around — so the harmless mutations are as load-bearing as the breaking ones.
 
+### Where the snapshot lives, who owns it, and how it is updated
+
+**File**: `crates/renvor-openapi/tests/snapshots/public-description.json`, read with `include_str!`
+so the baseline side resolves at compile time against the committed file.
+
+**Owner**: the maintainer. It is a reviewed artifact — it changes only in a pull request, alongside
+the change that moved the description.
+
+**How it is updated**: run
+
+```
+cargo test -p renvor-openapi --test compatibility refresh_the_committed_snapshot -- --ignored --nocapture
+```
+
+and copy the printed document into the file. The generator is `#[ignore]`d so it never runs in the
+gate, and it **only prints** — it cannot write the file it would be approving. That is deliberate:
+a refresh step that wrote its own baseline would approve every break it introduced.
+
+Two tests guard it. One compares **semantically** and fails on a breaking difference. The other
+compares **byte for byte** and fails on any difference at all, so the committed file cannot go
+stale while the semantic gate keeps passing.
+
+> **Added 2026-08-23.** This section did not exist, and FR-043 requires the snapshot's location,
+> owner, and update procedure to be stated. Until it was added there was **no committed snapshot at
+> all**: the compatibility tests built both sides in memory, while the paragraph below already
+> asserted that one side came from committed history. The paragraph was true of the design and
+> false of the code. It is now true of both. Found by maintainer self-review during the Phase 005
+> closing audit.
+
 ### The snapshot cannot approve its own diff
 
 The comparison reads one side from **committed history**. Regenerating both sides would make every
