@@ -131,28 +131,31 @@ impl DatabaseKind {
 
 /// An open transaction, owned by the application service that began it.
 ///
-/// # What dropping one actually does
-///
-/// Dropping without committing rolls back — but the rollback is **queued, not synchronous**.
-/// `sqlx-core`'s `impl Drop for Transaction` calls `start_rollback`, whose own comment says it
-/// *"queue[s] a rollback operation that will happen on the next asynchronous invocation of the
-/// underlying connection (including if the connection is returned to a pool)"*.
-///
-/// Stated rather than glossed, because the difference matters and the convenient claim would be
-/// false:
-///
-/// - **No uncommitted row is ever visible to another connection.** That holds from the first
-///   statement onward and does not depend on the rollback having run.
-/// - **The server-side transaction is cleaned up asynchronously.** A test that drops a transaction
-///   and immediately inspects server-side transaction state may see it still open.
-///
-/// Renvor asserts the first property and documents the second, rather than claiming a synchronous
-/// rollback it does not perform.
-///
 /// # There is no commit-on-drop path
 ///
 /// Only [`UnitOfWork::commit`] commits. A unit of work that goes out of scope for **any** reason —
 /// an early return, a `?`, a panic, a cancelled future — does not write.
+///
+/// # What an adapter must guarantee when one is dropped
+///
+/// Dropping a future does not cancel the statement it started: the client stops waiting, and the
+/// server keeps working. An adapter therefore cannot assume a dropped unit of work leaves a
+/// reusable connection behind, and these are the properties it must provide instead:
+///
+/// - **No uncommitted row is ever visible to another connection.** This holds from the first
+///   statement onward and does not depend on any rollback having run.
+/// - **Dropping must not cost the pool capacity.** Whatever an adapter does with the connection —
+///   return it, discard it, replace it — the pool must regain its full configured capacity within
+///   a bounded, deterministic time. A connection that can never be handed out again, while still
+///   counted against the configured maximum, is a defect and not a slow path.
+/// - **Cleanup must be bounded.** No unbounded wait, and nothing that can make shutdown hang.
+/// - **A committed or explicitly rolled-back unit of work leaves a reusable connection.** The
+///   capacity guarantee above must not be met by discarding every connection unconditionally.
+///
+/// The server-side transaction may be cleaned up asynchronously, so a test that drops a unit of
+/// work and immediately inspects server-side transaction state may still see it open. Renvor
+/// asserts the properties above and documents this one, rather than claiming a synchronous
+/// rollback no adapter performs.
 pub trait UnitOfWork: Send {
     /// Commits.
     ///

@@ -143,47 +143,141 @@ impl PoolStatus {
     }
 }
 
-/// An open SQLx transaction.
+/// An open transaction, owning its pooled connection for the whole of its life.
 ///
-/// # Dropping this does not synchronously roll back
+/// # Why this owns a `PoolConnection` instead of a `sqlx::Transaction`
 ///
-/// `sqlx-core`'s `Drop for Transaction` calls `start_rollback`, which *queues* a rollback; the
-/// flush happens inside a **spawned** task when the connection returns to the pool. So `Drop`
-/// returns before the rollback reaches the database.
+/// Dropping a future does not cancel the statement it started. The client stops waiting; the
+/// server keeps working. `sqlx-core`'s return path then calls `Connection::ping()` **with no
+/// deadline**, while still holding the guard that keeps `Pool::size()` incremented:
 ///
-/// What that does and does not mean, stated rather than softened:
+/// ```text
+/// sqlx-core-0.9.0/src/pool/connection.rs
+///     // this is simply a band-aid as SQLx-next connections should be able
+///     // to recover from cancellations
+///     if let Err(error) = self.raw.ping().await {
+/// ```
 ///
-/// - **No uncommitted row is ever visible to another connection.** That holds from the first
-///   statement, independently of the rollback, and it is the property Renvor asserts.
-/// - **A test that drops a transaction and immediately inspects server-side transaction state may
-///   race.** Only [`UnitOfWork::rollback`] is synchronous.
-#[derive(Debug)]
+/// On MySQL that ping can block forever. `MySqlTransactionManager::start_rollback` pushes an extra
+/// `Waiting::Result` and resets `stream.sequence_id = 0` mid-conversation, after which
+/// `wait_until_ready()` loops on `recv_packet().await` for a packet the server has already sent.
+/// The task never finishes, `size` never decrements, and because the pool still counts the lost
+/// connection against `max_connections` it will not open a replacement. One slot is gone for the
+/// life of the process. Measured at 6 occurrences in 12 trials on MySQL 9.7.2 and 2 in 12 on MySQL
+/// 8.4.11. PostgreSQL survives it only because its protocol resynchronises at `ReadyForQuery` —
+/// but even there a returned connection stays pinned for as long as the abandoned statement runs,
+/// which measured at 9.6s for an abandoned `pg_sleep(10)`.
+///
+/// Owning the connection lets Renvor decide what happens on an abnormal end. See [`Drop`].
+///
+/// [`Drop`]: #impl-Drop-for-SqlxUnitOfWork<'c,+DB>
 pub struct SqlxUnitOfWork<'c, DB: sqlx::Database> {
-    inner: sqlx::Transaction<'c, DB>,
+    /// `None` once [`UnitOfWork::commit`] or [`UnitOfWork::rollback`] has taken the connection.
+    ///
+    /// This is what lets `Drop` tell an abnormal end from a normal one: a connection still present
+    /// here means neither method ran, which means the future was cancelled.
+    connection: Option<sqlx::pool::PoolConnection<DB>>,
+    borrow: core::marker::PhantomData<&'c ()>,
 }
 
-impl<'c, DB: sqlx::Database> SqlxUnitOfWork<'c, DB> {
-    /// The underlying transaction, for a repository implementation to execute against.
+impl<DB: sqlx::Database> core::fmt::Debug for SqlxUnitOfWork<'_, DB> {
+    /// Prints whether the transaction is still open, and nothing about the connection.
+    ///
+    /// The same reasoning as [`renvor_database::ConnectionString`]: a derived `Debug` would print
+    /// whatever the driver's own `Debug` prints, which is not a guarantee anyone controls.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SqlxUnitOfWork")
+            .field("open", &self.connection.is_some())
+            .finish()
+    }
+}
+
+/// Opens a transaction. Both databases accept it unqualified.
+const BEGIN: &str = "BEGIN";
+/// Commits the open transaction.
+const COMMIT: &str = "COMMIT";
+/// Rolls back the open transaction.
+const ROLLBACK: &str = "ROLLBACK";
+
+impl<DB: sqlx::Database> SqlxUnitOfWork<'_, DB> {
+    /// The underlying connection, for a repository implementation to execute against.
     ///
     /// On the adapter side of the boundary, for the reason [`SqlxDatabase::pool`] gives.
-    pub fn inner(&mut self) -> &mut sqlx::Transaction<'c, DB> {
-        &mut self.inner
+    ///
+    /// # Panics
+    ///
+    /// Never in practice. [`UnitOfWork::commit`] and [`UnitOfWork::rollback`] both consume `self`,
+    /// so no caller holds a value whose connection has been taken.
+    pub fn inner(&mut self) -> &mut sqlx::pool::PoolConnection<DB> {
+        self.connection
+            .as_mut()
+            .expect("BUG: the connection is taken only by `commit`/`rollback`, which consume self")
     }
 }
 
-impl<DB: sqlx::Database> UnitOfWork for SqlxUnitOfWork<'_, DB> {
-    async fn commit(self) -> Result<(), DatabaseError> {
-        self.inner.commit().await.map_err(|error| {
-            let _ = error::classify_error(&error);
-            DatabaseError::new(DatabaseErrorKind::CommitFailed)
-        })
+impl<DB: sqlx::Database> UnitOfWork for SqlxUnitOfWork<'_, DB>
+where
+    for<'e> &'e mut DB::Connection: sqlx::Executor<'e, Database = DB>,
+    <DB as sqlx::Database>::Arguments: sqlx::IntoArguments<DB>,
+{
+    async fn commit(mut self) -> Result<(), DatabaseError> {
+        // Taking the connection marks this end as normal, so `Drop` will not discard it.
+        let mut connection = self
+            .connection
+            .take()
+            .expect("BUG: `commit` consumes self, so the connection is present");
+        match sqlx::Executor::execute(&mut *connection, COMMIT).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let _ = error::classify_error(&error);
+                // A failed commit leaves the transaction's fate unknown, so the connection is
+                // discarded rather than returned. `detach` frees the pool slot synchronously, so
+                // a failing commit cannot cost capacity either.
+                drop(connection.detach());
+                Err(DatabaseError::new(DatabaseErrorKind::CommitFailed))
+            }
+        }
     }
 
-    async fn rollback(self) -> Result<(), DatabaseError> {
-        self.inner.rollback().await.map_err(|error| {
-            let _ = error::classify_error(&error);
-            DatabaseError::new(DatabaseErrorKind::RollbackFailed)
-        })
+    async fn rollback(mut self) -> Result<(), DatabaseError> {
+        let mut connection = self
+            .connection
+            .take()
+            .expect("BUG: `rollback` consumes self, so the connection is present");
+        match sqlx::Executor::execute(&mut *connection, ROLLBACK).await {
+            Ok(_) => Ok(()),
+            Err(error) => {
+                let _ = error::classify_error(&error);
+                drop(connection.detach());
+                Err(DatabaseError::new(DatabaseErrorKind::RollbackFailed))
+            }
+        }
+    }
+}
+
+impl<'c, DB: sqlx::Database> Drop for SqlxUnitOfWork<'c, DB> {
+    /// Discards the connection when the transaction ended without `commit` or `rollback`.
+    ///
+    /// # Why discard rather than return
+    ///
+    /// Reaching here means the future was dropped mid-flight. The connection's protocol state is
+    /// therefore unknown, and handing it back to `sqlx-core` risks the unbounded `ping()` this
+    /// type's documentation describes. [`sqlx::pool::PoolConnection::detach`] releases the pool's
+    /// size guard **synchronously**, so the pool may open a replacement immediately; dropping the
+    /// detached connection closes its socket, and both databases roll back an open transaction
+    /// when the client disconnects.
+    ///
+    /// This runs only on the abnormal path. `commit` and `rollback` take the connection first, so
+    /// a successful transaction still returns a healthy connection to the pool for reuse — which
+    /// `commit_reuses_a_pooled_connection` asserts, so that this can never quietly become
+    /// "reconnect every time".
+    ///
+    /// Nothing is spawned and nothing is awaited: `detach` is synchronous and the raw connection
+    /// has no `Drop` of its own, so shutdown cannot hang here.
+    fn drop(&mut self) {
+        if let Some(connection) = self.connection.take() {
+            drop(connection.detach());
+        }
     }
 }
 
@@ -197,6 +291,7 @@ const READINESS_PROBE: &str = "SELECT 1";
 impl<DB: sqlx::Database> Database for SqlxDatabase<DB>
 where
     for<'p> &'p sqlx::Pool<DB>: sqlx::Executor<'p, Database = DB>,
+    for<'e> &'e mut DB::Connection: sqlx::Executor<'e, Database = DB>,
     <DB as sqlx::Database>::Arguments: sqlx::IntoArguments<DB>,
 {
     type UnitOfWork<'c>
@@ -209,12 +304,28 @@ where
     }
 
     async fn begin(&self) -> Result<Self::UnitOfWork<'_>, DatabaseError> {
-        let inner = self
+        // Acquire the connection ourselves rather than calling `Pool::begin`, which would hand
+        // ownership to a `sqlx::Transaction` and leave no way to discard the connection when a
+        // future is cancelled. See `SqlxUnitOfWork` for what that costs.
+        let mut connection = self
             .pool
-            .begin()
+            .acquire()
             .await
             .map_err(|error| error::classify_error(&error))?;
-        Ok(SqlxUnitOfWork { inner })
+        // `Executor::execute` with a bare string uses the TEXT protocol. `sqlx::query`
+        // would prepare the statement, and MySQL's prepared-statement protocol does not
+        // accept `BEGIN` — this is the same call shape `sqlx`'s own transaction manager uses.
+        if let Err(error) = sqlx::Executor::execute(&mut *connection, BEGIN).await {
+            let _ = error::classify_error(&error);
+            // The transaction never opened, so this connection is discarded rather than returned:
+            // its protocol state is unknown for exactly the same reason.
+            drop(connection.detach());
+            return Err(DatabaseError::new(DatabaseErrorKind::StatementRejected));
+        }
+        Ok(SqlxUnitOfWork {
+            connection: Some(connection),
+            borrow: core::marker::PhantomData,
+        })
     }
 
     async fn check(&self) -> Result<(), DatabaseError> {

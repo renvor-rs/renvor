@@ -121,7 +121,7 @@ mod tests {
     fn a_driver_message_never_survives_translation() {
         const CANARY: &str = "password=hunter2 host=db.internal";
         let error = sqlx::Error::Protocol(CANARY.to_owned());
-        let translated = translate(&error);
+        let translated = classify_error(&error);
         assert!(!translated.to_string().contains("hunter2"));
         assert!(!translated.description().contains("hunter2"));
         assert!(!format!("{translated:?}").contains("hunter2"));
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn an_io_failure_is_a_connection_failure_not_an_internal_defect() {
         let error = sqlx::Error::Io(std::io::Error::other("connection refused to db.internal"));
-        let translated = translate(&error);
+        let translated = classify_error(&error);
         assert_eq!(translated.kind(), DatabaseErrorKind::ConnectFailed);
         assert!(!format!("{translated:?}").contains("db.internal"));
     }
