@@ -101,6 +101,30 @@ impl<DB: sqlx::Database> SqlxDatabase<DB> {
         &self.pool
     }
 
+    /// Checks out a pooled connection for work that needs no transaction.
+    ///
+    /// # When to prefer [`Database::begin`]
+    ///
+    /// Whenever two statements must succeed or fail together. This method exists for the reads and
+    /// single statements that genuinely do not need a transaction, so that a repository written
+    /// against [`SqlxExecutor`] can serve both without a second implementation.
+    ///
+    /// # Errors
+    ///
+    /// [`DatabaseErrorKind::AcquireTimeout`] when the pool is full, or
+    /// [`DatabaseErrorKind::ConnectFailed`] when a new connection cannot be established.
+    pub async fn acquire(&self) -> Result<SqlxConnection<DB>, DatabaseError> {
+        let connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|error| error::classify_error(&error))?;
+        Ok(SqlxConnection {
+            connection,
+            kind: self.kind,
+        })
+    }
+
     /// Pool statistics, for tests and for observability.
     ///
     /// # Connection release is measured, not asserted
@@ -177,6 +201,7 @@ pub struct SqlxUnitOfWork<'c, DB: sqlx::Database> {
     /// This is what lets `Drop` tell an abnormal end from a normal one: a connection still present
     /// here means neither method ran, which means the future was cancelled.
     connection: Option<sqlx::pool::PoolConnection<DB>>,
+    kind: DatabaseKind,
     borrow: core::marker::PhantomData<&'c ()>,
 }
 
@@ -187,6 +212,7 @@ impl<DB: sqlx::Database> core::fmt::Debug for SqlxUnitOfWork<'_, DB> {
     /// whatever the driver's own `Debug` prints, which is not a guarantee anyone controls.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SqlxUnitOfWork")
+            .field("kind", &self.kind)
             .field("open", &self.connection.is_some())
             .finish()
     }
@@ -281,6 +307,80 @@ impl<'c, DB: sqlx::Database> Drop for SqlxUnitOfWork<'c, DB> {
     }
 }
 
+/// A pooled connection held outside any transaction.
+///
+/// # Why this exists alongside [`SqlxUnitOfWork`]
+///
+/// So that a repository written once against [`SqlxExecutor`] runs both inside a transaction and
+/// outside one. Without it every repository would need two implementations, and the second would
+/// drift from the first.
+pub struct SqlxConnection<DB: sqlx::Database> {
+    connection: sqlx::pool::PoolConnection<DB>,
+    kind: DatabaseKind,
+}
+
+impl<DB: sqlx::Database> core::fmt::Debug for SqlxConnection<DB> {
+    /// Prints the kind and nothing about the connection, for [`SqlxUnitOfWork`]'s reason.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SqlxConnection")
+            .field("kind", &self.kind)
+            .finish()
+    }
+}
+
+/// Hands out the driver connection underneath an executor.
+///
+/// # Why this is separate from [`renvor_database::Executor`]
+///
+/// The port may not name a driver type — that is what makes an application's repository trait
+/// mechanically unable to reach one. This trait lives in the adapter, where a driver is already
+/// visible, and is what an adapter-side repository implementation is actually generic over.
+pub trait SqlxExecutor {
+    /// The driver this executor speaks.
+    type Database: sqlx::Database;
+
+    /// The underlying connection, for a repository to execute against.
+    fn connection(&mut self) -> &mut <Self::Database as sqlx::Database>::Connection;
+}
+
+impl<DB: sqlx::Database> SqlxExecutor for SqlxConnection<DB> {
+    type Database = DB;
+
+    fn connection(&mut self) -> &mut DB::Connection {
+        &mut self.connection
+    }
+}
+
+impl<DB: sqlx::Database> SqlxExecutor for SqlxUnitOfWork<'_, DB> {
+    type Database = DB;
+
+    fn connection(&mut self) -> &mut DB::Connection {
+        self.inner()
+    }
+}
+
+impl<DB: sqlx::Database> renvor_database::Executor for SqlxConnection<DB> {
+    fn kind(&self) -> DatabaseKind {
+        self.kind
+    }
+
+    /// Always `false`. A pooled connection outside a transaction is exactly what this type is.
+    fn in_transaction(&self) -> bool {
+        false
+    }
+}
+
+impl<DB: sqlx::Database> renvor_database::Executor for SqlxUnitOfWork<'_, DB> {
+    fn kind(&self) -> DatabaseKind {
+        self.kind
+    }
+
+    /// Always `true`. This type only exists between a `begin` and its commit or rollback.
+    fn in_transaction(&self) -> bool {
+        true
+    }
+}
+
 /// The readiness statement.
 ///
 /// A constant with no interpolation and no bound parameters, and the smallest round-trip both
@@ -324,6 +424,7 @@ where
         }
         Ok(SqlxUnitOfWork {
             connection: Some(connection),
+            kind: self.kind,
             borrow: core::marker::PhantomData,
         })
     }

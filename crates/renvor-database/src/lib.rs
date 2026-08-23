@@ -35,9 +35,10 @@
 //! finish one successfully. `commit` takes `self` by value, so using a unit of work after
 //! committing it is a **compile** error rather than a runtime one.
 //!
-//! Dropping a unit of work without committing rolls back. That behaviour is inherited from the
-//! driver and is **not** synchronous: see [`UnitOfWork`] for what is actually promised and what is
-//! not.
+//! Dropping a unit of work without committing never writes. What an adapter must guarantee about
+//! the connection it was holding — including that a cancelled transaction may not cost the pool
+//! capacity — is stated as a contract on [`UnitOfWork`] rather than inherited from whichever driver
+//! happens to be underneath.
 
 use core::future::Future;
 
@@ -129,12 +130,59 @@ impl DatabaseKind {
     }
 }
 
+/// Somewhere a statement can run — a pooled connection, or an open transaction.
+///
+/// # Why this is not a `Repository<T>` trait
+///
+/// A blanket `Repository<T>` with `find`/`insert`/`update`/`delete` would be an ORM boundary, and
+/// constitution principle III forbids building one. What a repository actually needs from Renvor is
+/// narrower than that: somewhere to run its own SQL, and knowledge of which dialect to write. Each
+/// application declares its **own** repository trait in its own domain language and takes an
+/// `&mut impl Executor`. Renvor supplies the transaction machinery, not the vocabulary.
+///
+/// # Why the same repository runs inside and outside a transaction
+///
+/// Both a pooled connection and a [`UnitOfWork`] implement this, so a repository written once
+/// against `&mut impl Executor` runs either way. Without that, every repository would need two
+/// implementations, and the second would drift.
+///
+/// # What it deliberately does not expose
+///
+/// No statement type, no row type, no driver handle. Those live in the adapter, where a driver is
+/// already visible. That is what makes FR-001 mechanically checkable rather than a promise: an
+/// application trait bounded on this **cannot** name a SQLx type, because it was never handed one.
+pub trait Executor: Send {
+    /// Which database this executor speaks to.
+    ///
+    /// A repository needs this to choose dialect-specific SQL from its own closed allowlist — the
+    /// one place a caller-visible difference between the two backends is legitimate.
+    fn kind(&self) -> DatabaseKind;
+
+    /// Whether this executor is inside an explicit transaction.
+    ///
+    /// Lets a repository refuse an operation that is only safe transactionally, rather than
+    /// discovering the absence of a transaction from a partially applied write.
+    fn in_transaction(&self) -> bool;
+}
+
 /// An open transaction, owned by the application service that began it.
 ///
 /// # There is no commit-on-drop path
 ///
 /// Only [`UnitOfWork::commit`] commits. A unit of work that goes out of scope for **any** reason —
 /// an early return, a `?`, a panic, a cancelled future — does not write.
+///
+/// # Nesting is not supported, and cannot be attempted
+///
+/// There is no `begin` on this trait, so a nested transaction is not merely refused at runtime — it
+/// is unrepresentable. Calling [`Database::begin`] again while a unit of work is live yields a
+/// **different connection** carrying a **separate** transaction, not a nested one; that distinction
+/// is asserted, because a nested begin quietly flattened into the outer transaction is the failure
+/// mode this rules out.
+///
+/// SQLx supports savepoints. Renvor does not expose them in Phase 006, because a savepoint API
+/// whose failure semantics are untested is worse than none. Recorded as a limitation with a target
+/// phase rather than half-shipped.
 ///
 /// # What an adapter must guarantee when one is dropped
 ///
