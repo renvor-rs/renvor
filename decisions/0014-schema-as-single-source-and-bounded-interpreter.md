@@ -3,16 +3,23 @@
 | Field | Value |
 |---|---|
 | **ID** | 0014 |
-| **State** | `proposed` |
-| **Reviewer** | *(none — required to enter `accepted`)* |
-| **Review date** | *(none — required to enter `accepted`)* |
+| **State** | `accepted` |
+| **Reviewer** | Ahmed Anbar — self-review under W-011 |
+| **Review date** | 2026-08-23 |
 | **Superseded by** | *(not superseded)* |
 
-> **This record is `proposed` and nothing else.**
+> **This record is `accepted` under W-011. The review behind it was NOT independent.**
 >
 > Constitution §Development and Phase Workflow #4 and spec FR-013 require a recorded **independent**
-> review before acceptance. No independent human review has occurred, and none is claimed. **No
-> Phase 005 waiver exists**, and none is created here.
+> review before acceptance. **No independent human review of this record has occurred, and none is
+> claimed.** Acceptance rests on **[W-011](../governance/waivers.md)**, a time-bounded written
+> waiver granted on 2026-08-23, owned by Ahmed Anbar, expiring **2027-02-11** or **immediately**
+> when a qualified independent human reviewer becomes available — whichever is first.
+>
+> **Automated review is advisory and does not satisfy the requirement.** W-011 covers this record,
+> ADR-0014 and ADR-0015 as one coupled Phase 005 decision; it authorises **nothing else** — not
+> phase closure, which is W-012, and not any publication, tag, release or deployment. When its
+> removal plan is executed, this record is re-reviewed **in full** and W-011 closes.
 
 ## Context
 

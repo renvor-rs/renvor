@@ -160,7 +160,7 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Nine** waivers are currently active, all traceable to the same single-maintainer gap. Each
+**Eleven** waivers are currently active, all traceable to the same single-maintainer gap. Each
 covers one rule, at one level, in one phase — and none is extended to another by
 reinterpretation:
 
@@ -175,6 +175,8 @@ reinterpretation:
 | **W-008** | no independent requirements-and-security review | phase level | Phase 003 | **2027-02-11** |
 | **W-009** | no independent reviewer for **ADR-0012** | decision record | Phase 004 | **2027-02-11** |
 | **W-010** | no independent requirements-and-security review | phase level | Phase 004 | **2027-02-11** |
+| **W-011** | no independent reviewer for **ADR-0013, ADR-0014 and ADR-0015** | decision records | Phase 005 | **2027-02-11** |
+| **W-012** | no independent requirements-and-security review | phase level | Phase 005 | **2027-02-11** |
 
 Each expires on the date shown **or** immediately when a qualified second person becomes
 available — whichever comes first. Full text, compensating controls, and scope limits are in

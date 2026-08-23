@@ -495,7 +495,7 @@ has not earned, and no amount of running it more often helps.
 
 | # | Limitation | Owner | Target |
 |---|---|---|---|
-| L-1 | **No independent human review has occurred.** Constitution §Development and Phase Workflow #7 requires one. ADRs 0013–0015 are `proposed` and **no waiver exists** | Ahmed | before merge |
+| L-1 | ~~**No independent human review has occurred**~~ — **still true, and now WAIVED rather than open.** No independent human review has occurred and none is claimed. ADRs 0013–0015 are `accepted` under **W-011**; Phase 005 closes under **W-012**. Both expire **2027-02-11** or immediately when a qualified independent human reviewer becomes available, whichever is first. The waiver is the record of the gap, **not its closure** | Ahmed | until W-011/W-012 close |
 | L-2 | `pattern` is not enforced. It needs a regex engine on untrusted input, and `regex` is not in the runtime graph. A declaration using it is **refused**, not silently unenforced | framework | 012 |
 | L-3 | `allOf`/`anyOf`/`oneOf`/`not` are not enforced. `schemars` emits them for data-carrying enums; those declarations are refused | framework | 012 |
 | L-4 | Cookie parameters are not validated. A cookie is an authentication carrier and Phase 009 owns authentication | framework | 009 |
@@ -523,7 +523,10 @@ has not earned, and no amount of running it more often helps.
 - **No authentication or authorization.**
 - **No publication.** Zero crates published, zero tags, zero releases, zero deployments — verified
   against the live registry, not assumed.
-- **No waiver created.** W-011 does not exist and was not created.
+- **Two waivers created, and only two.** **W-011** authorises accepting ADRs 0013–0015 as one
+  coupled decision; **W-012** authorises closing Phase 005. Neither authorises the other's subject,
+  and neither authorises publication, a tag, a release, a deployment, a settings change, or an admin
+  bypass. **W-013 does not exist.**
 - **Phase 006 was not started.**
 
 ---
@@ -633,9 +636,10 @@ Any automated review performed during this phase is **advisory**. Constitution �
 Phase Workflow #7 requires an independent review comparing implementation evidence with the
 specification, constitution, compatibility matrix, and security checklist.
 
-**That review has not occurred, and this record does not claim it has.** The phase remains **open**
-until it does, or until a waiver is recorded with an owner, an expiry, and a removal plan — which is
-Ahmed's decision and not this record's.
+**That review has not occurred, and this record does not claim it has.** Phase 005 closes under
+**W-012**, a time-bounded written waiver with an owner (Ahmed Anbar), an expiry (**2027-02-11**, or
+immediately when a qualified independent human reviewer becomes available), and a removal plan that
+names the exact content to be re-reviewed. **A waiver records the gap; it does not close it.**
 
 **This includes the security review in §9a.** It was thorough, it measured rather than argued, and
 it found six defects a 1039-test suite had missed — and it is still an **automated** review. Its
