@@ -29,7 +29,13 @@ use std::path::{Path, PathBuf};
 /// Modules that are allowed to name transport types, because they are where the transport lives.
 ///
 /// Requiring these to be transport-free would be requiring them not to exist.
-const TRANSPORT_MODULES: [&str; 3] = ["route/build.rs", "server.rs", "provider.rs"];
+/// The modules that legitimately name a transport type.
+///
+/// `problem.rs` joined this list in Phase 005. It renders an RFC 9457 document as an HTTP
+/// response, so naming a status code and a header is its job — the same reason `build.rs` is here.
+/// The vocabulary it renders lives in `renvor-error`, which names no transport type at all, and
+/// `the_transport_independent_crates_name_no_transport` below asserts that separately.
+const TRANSPORT_MODULES: [&str; 4] = ["route/build.rs", "server.rs", "provider.rs", "problem.rs"];
 
 /// The transport crate names that must not appear.
 const TRANSPORT_IDENTIFIERS: [&str; 4] = ["axum", "tower_http", "tower::", "hyper"];
@@ -362,43 +368,100 @@ fn the_middleware_order_is_a_versioned_contract_that_matches_the_code() {
 }
 
 #[test]
-fn this_phase_implements_none_of_the_things_it_says_it_does_not() {
-    // FR-043: "MUST NOT implement RFC 9457 Problem Details, OpenAPI generation, or the Phase 005
-    // validation boundary."
+fn the_transport_independent_crates_name_no_transport() {
+    // # This test replaced a Phase 004 guard, and the replacement is deliberate
     //
-    // A negative requirement with no test is satisfied only until someone adds the thing. This
-    // scans the SHIPPED source — comments stripped, so a line saying "we do not implement
-    // Problem Details" is not read as implementing it.
-    let forbidden = [
-        "application/problem",
-        "problem+json",
-        "ProblemDetails",
-        "OpenApi",
-        "openapi",
-        "utoipa",
+    // Phase 004 asserted `this_phase_implements_none_of_the_things_it_says_it_does_not` — that
+    // this crate implemented NO Problem Details, NO OpenAPI generation, and NO validation
+    // boundary. That was true and worth guarding while those were later work.
+    //
+    // Phase 005 delivers all three, so the old assertion is now false BY DESIGN. Deleting it
+    // would remove a guard; what it was actually protecting — that layers stay layers — is
+    // preserved and strengthened here.
+    //
+    // The rule the old test enforced by absence, this one enforces by DIRECTION:
+    //
+    //   renvor-error       must name no transport   (FR-058)
+    //   renvor-validation  must name no transport   (FR-001, FR-058)
+    //   renvor-openapi     must name no transport   (FR-059, FR-032)
+    //   renvor-core        must name no transport AND no OpenAPI or Problem Details
+    //
+    // A public API error code that depended on HTTP would be a promise about HTTP, and a schema
+    // that depended on a server could not be produced without one.
+    let crates_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("crates/ is the parent of this crate");
+
+    let forbidden_transport = ["axum", "tower_http", "tower::", "hyper", "http::"];
+    // The kernel must know about NEITHER side: not the transport below it, and not the description
+    // types Phase 005 introduced above it.
+    let forbidden_in_kernel: Vec<&str> = forbidden_transport
+        .iter()
+        .copied()
+        .filter(|needle| *needle != "http::")
+        .chain(["ProblemDetails", "problem+json", "renvor_openapi", "utoipa"])
+        .collect();
+
+    let cases: [(&str, &[&str]); 4] = [
+        ("renvor-error", &forbidden_transport),
+        ("renvor-validation", &forbidden_transport),
+        ("renvor-openapi", &forbidden_transport),
+        ("renvor-core", &forbidden_in_kernel),
     ];
 
     let mut offences = Vec::new();
-    for (path, contents) in rust_files(&source_root()) {
-        for (number, line) in contents.lines().enumerate() {
-            let code = line.split("//").next().unwrap_or(line);
-            for needle in forbidden {
-                if code.contains(needle) {
-                    offences.push(format!(
-                        "{path}:{} names `{needle}`: {}",
-                        number + 1,
-                        code.trim()
-                    ));
+    let mut scanned = 0_usize;
+
+    for (crate_name, forbidden) in cases {
+        let source = crates_root.join(crate_name).join("src");
+        assert!(
+            source.is_dir(),
+            "`{}` does not exist, so this test scanned nothing for {crate_name}",
+            source.display()
+        );
+
+        for (path, contents) in rust_files(&source) {
+            scanned += 1;
+            for (number, line) in contents.lines().enumerate() {
+                // Documentation is stripped: these crates EXPLAIN why they name no transport, and
+                // a scan that flagged the explanation would force the explanation to be deleted.
+                let code = line.split("//").next().unwrap_or(line);
+                for needle in forbidden {
+                    if code.contains(needle) {
+                        offences.push(format!(
+                            "{crate_name}/{path}:{} names `{needle}`: {}",
+                            number + 1,
+                            code.trim()
+                        ));
+                    }
                 }
             }
         }
     }
 
     assert!(
+        scanned >= 10,
+        "only {scanned} files were scanned across four crates, which is fewer than they contain — \
+         the walk is not finding the source trees"
+    );
+    assert!(
         offences.is_empty(),
-        "this phase must implement none of RFC 9457 Problem Details, OpenAPI generation, or the \
-         Phase 005 validation boundary (FR-043):\n{}",
+        "a transport-independent crate names a transport, or the kernel names a description \
+         type:\n{}",
         offences.join("\n")
+    );
+
+    // POSITIVE CONTROL: the same scan finds a transport type where one legitimately lives. Without
+    // it, a bug in the scan would report every crate clean.
+    let transport = rust_files(&source_root());
+    let found_in_transport = transport.iter().any(|(_, contents)| {
+        contents
+            .lines()
+            .any(|line| line.split("//").next().unwrap_or(line).contains("axum"))
+    });
+    assert!(
+        found_in_transport,
+        "the scan found no `axum` in renvor-http, so it would find none anywhere"
     );
 }
 
