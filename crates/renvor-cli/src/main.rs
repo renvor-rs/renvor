@@ -430,6 +430,7 @@ fn main() {
         Command::Doctor => "doctor",
         Command::Check { .. } => "check",
         Command::Routes { .. } => "routes",
+        Command::Openapi { .. } => "openapi",
         Command::Dev => "dev",
         Command::Docker { .. } => "docker",
         Command::Tls { .. } => "tls",
@@ -477,6 +478,7 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
         Command::Doctor => commands::doctor::run(reporter),
         Command::Check { path } => commands::check::run(reporter, &path),
         Command::Routes { path } => commands::routes::run(reporter, &path),
+        Command::Openapi { path } => commands::openapi::run(reporter, &path),
         Command::Dev => commands::dev::run(reporter, std::path::Path::new("."), dry_run),
         Command::Docker { action } => {
             let action = match action {

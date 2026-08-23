@@ -226,6 +226,12 @@ semver = { version = "1.0.28", default-features = false }
 # Package-first over a thread-plus-channel of our own. The obvious hand-rolled version leaks the
 # waiting thread and the child process when it gives up, which turns a hang into a hang plus a
 # zombie. 49.7M downloads a month; already in the resolved graph via the test harness.
+#
+# SECOND USE, Phase 005 (FR-053): the project-binary relay in `commands/relay.rs`. `renvor routes`
+# used a blocking `Command::output()` and recorded the consequence in its own source — a project
+# binary that ignores the invocation, boots, and streams logs forever was an unbounded wait. The
+# same crate answers both, so there is one bounded-wait mechanism in this program rather than two
+# that can drift.
 wait-timeout = { version = "0.2.1", default-features = false }
 
 [dev-dependencies]

@@ -45,9 +45,7 @@
 //! a consumer, from an application that genuinely declares no routes, and the two mean entirely
 //! different things.
 
-use std::ffi::OsString;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use serde::Deserialize;
 
@@ -72,30 +70,14 @@ pub const DUMP_PROTOCOL: u32 = 1;
 /// The bound on a manifest read, matching `check`'s.
 const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 
-/// The bound on what the project binary may print, **measured after the read, not during it**.
-///
-/// `MAX_ROUTES` is 4096 and a generous row is well under 256 bytes, so this is roughly an order of
-/// magnitude above any legitimate answer, and an over-sized answer is refused by name.
-///
-/// # The limitation, stated rather than implied
-///
-/// `Command::output()` reads the child's stdout to EOF into memory *before* this comparison can
-/// run, so the bound **rejects** an over-sized answer without **preventing** the allocation. An
-/// earlier version of this comment claimed it stopped a project "exhausting this process's
-/// memory". It does not, and the claim is withdrawn rather than left standing — a constant whose
-/// documentation promises more than its code delivers is the same error `server.rs` records under
-/// *"the bound has to be applied, not merely computed"*, one register lower.
-///
-/// The realistic trigger is a **bug, not an attack**: a project binary that does not recognise the
-/// dump flag, ignores it, boots normally, and streams logs forever. By the time stdout is read,
-/// `cargo run` has already compiled and executed that project's build script and binary, so a
-/// hostile project has far more direct capabilities than memory pressure.
-///
-/// Fixing it properly means spawning with a piped stdout, reading at most `MAX_DUMP_BYTES + 1`,
-/// and **killing the child** on overflow — without the kill, a full pipe blocks the child and the
-/// hang replaces the allocation. That is a behavioural change with a cross-platform subprocess
-/// test behind it, and it is recorded here rather than attempted late. Found by review.
-const MAX_DUMP_BYTES: usize = 4 * 1024 * 1024;
+// The bound on what a project binary may print now lives in `super::relay::MAX_ANSWER_BYTES`,
+// alongside the deadline and the kill that make it effective.
+//
+// This file previously carried a `MAX_DUMP_BYTES` whose documentation recorded, honestly, that it
+// "rejects an over-sized answer without preventing the allocation" and that a project which
+// "boots normally and streams logs forever" was an unbounded wait. Both are FIXED in Phase 005, so
+// the note is removed rather than left standing: a comment describing a limitation the code no
+// longer has is the same defect class as a comment promising a guarantee it never had.
 
 /// Just enough of `renvor.toml` to answer "is this a Renvor project, and what transport?".
 ///
@@ -127,59 +109,6 @@ struct RouteReport {
     routes: Vec<RouteRow>,
 }
 
-/// How the project binary is invoked.
-///
-/// A value rather than a hard-coded command, so the relay can be driven in a test by a program
-/// that answers the protocol. The **default** is the documented invocation; a test supplying its
-/// own is testing the same parsing, validation, and rendering a real project goes through.
-#[derive(Debug, Clone)]
-pub struct DumpInvocation {
-    program: OsString,
-    arguments: Vec<OsString>,
-    directory: PathBuf,
-}
-
-impl DumpInvocation {
-    /// The documented default: the project's own default binary, run through `cargo`.
-    ///
-    /// `cargo run` rather than a search of `target/`: the project declares its binary, and asking
-    /// its build tool to run "the binary this package defines" is the only way to get that answer
-    /// without guessing. A package with several binaries and no default gets `cargo`'s own error,
-    /// which names the problem better than a guess would.
-    #[must_use]
-    pub fn for_project(directory: &Path) -> Self {
-        Self {
-            program: OsString::from("cargo"),
-            arguments: vec![
-                OsString::from("run"),
-                OsString::from("--quiet"),
-                OsString::from("--"),
-                OsString::from(DUMP_FLAG),
-            ],
-            directory: directory.to_path_buf(),
-        }
-    }
-
-    /// Builds an invocation that runs `program` with `arguments` in `directory`.
-    ///
-    /// `#[cfg(test)]` because production has exactly one invocation — the documented one above.
-    /// Leaving it compiled into the shipped binary would offer a way to point route inspection at
-    /// an arbitrary program, which is a capability nothing asked for.
-    #[cfg(test)]
-    #[must_use]
-    pub fn new(
-        program: impl Into<OsString>,
-        arguments: Vec<OsString>,
-        directory: impl Into<PathBuf>,
-    ) -> Self {
-        Self {
-            program: program.into(),
-            arguments,
-            directory: directory.into(),
-        }
-    }
-}
-
 /// Runs the command against a project directory.
 ///
 /// # Errors
@@ -189,14 +118,18 @@ impl DumpInvocation {
 ///   not be run, if it answered nothing usable, or if it answered a protocol version this command
 ///   does not understand. Every one of those is a **failure**, never an empty success.
 pub fn run(reporter: &Reporter, path: &Path) -> Result<Exit, CliError> {
-    run_with(reporter, path, &DumpInvocation::for_project(path))
+    run_with(
+        reporter,
+        path,
+        &super::relay::Invocation::for_project(path, DUMP_FLAG),
+    )
 }
 
 /// The relay, with the invocation supplied.
 pub(crate) fn run_with(
     reporter: &Reporter,
     path: &Path,
-    invocation: &DumpInvocation,
+    invocation: &super::relay::Invocation,
 ) -> Result<Exit, CliError> {
     let transport = read_transport(path)?;
 
@@ -290,7 +223,10 @@ fn read_transport(path: &Path) -> Result<String, CliError> {
 /// Every failure below is reported with the reason named in `details.reason`, so a consumer can
 /// tell "the binary would not build" from "the binary answered something I cannot read". Both used
 /// to be indistinguishable, because neither was reachable.
-fn obtain_dump(invocation: &DumpInvocation, transport: &str) -> Result<RouteReport, CliError> {
+fn obtain_dump(
+    invocation: &super::relay::Invocation,
+    transport: &str,
+) -> Result<RouteReport, CliError> {
     let refuse = |reason: &'static str, message: String| {
         CliError::new(Code::TransportNotWired, message)
             .with("transport", transport.to_owned())
@@ -298,49 +234,31 @@ fn obtain_dump(invocation: &DumpInvocation, transport: &str) -> Result<RouteRepo
             .with("invocation", DUMP_FLAG)
     };
 
-    let output = Command::new(&invocation.program)
-        .args(&invocation.arguments)
-        .current_dir(&invocation.directory)
-        // `stderr` is INHERITED, not captured. A build takes time and prints progress, and
-        // swallowing it would leave an operator watching a silent command. C-1 reserves `stdout`
-        // for the result, which is exactly what is captured here and nothing else.
-        .stderr(std::process::Stdio::inherit())
-        .output()
-        .map_err(|error| {
-            refuse(
-                "invocation_failed",
-                format!(
-                    "the project's binary could not be run: {error}. Route inspection runs the \
-                     application and asks it for its own registry"
-                ),
-            )
-        })?;
-
-    if !output.status.success() {
-        return Err(refuse(
-            "dump_failed",
-            format!(
-                "the project's binary exited with {} when asked for its routes. Run `cargo run -- \
-                 {DUMP_FLAG}` in the project to see why",
-                output.status
-            ),
-        ));
-    }
-
-    if output.stdout.len() > MAX_DUMP_BYTES {
-        return Err(CliError::new(
+    // THE SHARED BOUNDED INVOCATION.
+    //
+    // Phase 004 used a blocking `Command::output()` here and recorded the consequence in this
+    // file: a project binary that ignores the flag, boots, and streams logs forever was an
+    // UNBOUNDED wait, and the size bound rejected an over-sized answer without preventing the
+    // allocation. Phase 005 closes both, in `super::relay` — spawned with a piped stdout, drained
+    // by a concurrent reader, bounded by a deadline, and the child KILLED when it elapses.
+    //
+    // It lives there rather than here because `renvor openapi` needs exactly the same thing. Two
+    // implementations of "run the project binary safely" would be two things that can drift, and
+    // one of them would be the one nobody updated.
+    let text = invocation.run().map_err(|failure| match failure {
+        // An over-sized answer is a BOUND failure, not a wiring failure: the project answered, and
+        // what it said was too big. Reporting it as `transport_not_wired` would tell an operator
+        // to check a dependency that is present.
+        super::relay::RelayFailure::TooLarge { limit } => CliError::new(
             Code::BoundExceeded,
-            format!("the route dump is above the {MAX_DUMP_BYTES}-byte limit"),
+            format!("the route dump is above the {limit}-byte limit"),
         )
         .with("bound", "dump_bytes")
-        .with("limit", MAX_DUMP_BYTES.to_string()));
-    }
-
-    let text = String::from_utf8(output.stdout).map_err(|_| {
-        refuse(
-            "dump_unreadable",
-            "the project's binary answered with bytes that are not UTF-8".to_owned(),
-        )
+        .with("limit", limit.to_string()),
+        other => {
+            let reason = other.reason();
+            refuse(reason, other.to_string())
+        }
     })?;
 
     let envelope: serde_json::Value = serde_json::from_str(text.trim()).map_err(|error| {
@@ -407,7 +325,7 @@ fn obtain_dump(invocation: &DumpInvocation, transport: &str) -> Result<RouteRepo
 ///
 /// **Fails closed**: an unreadable or absent `Cargo.toml` answers `false`, which produces a
 /// reported failure rather than an attempt to run a binary that may not exist.
-fn declares_renvor_dependency(path: &Path) -> bool {
+pub(crate) fn declares_renvor_dependency(path: &Path) -> bool {
     let Ok(text) = std::fs::read_to_string(path.join("Cargo.toml")) else {
         return false;
     };
@@ -435,9 +353,7 @@ fn declares_renvor_dependency(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        DUMP_FLAG, DUMP_PROTOCOL, DumpInvocation, declares_renvor_dependency, obtain_dump, run_with,
-    };
+    use super::{DUMP_FLAG, DUMP_PROTOCOL, declares_renvor_dependency, obtain_dump, run_with};
     use crate::exit::Code;
     use crate::output::{Format, Reporter};
     use std::ffi::OsString;
@@ -502,16 +418,16 @@ seed_data = false
 
     /// An invocation that answers with `payload` and exits zero.
     #[cfg(not(windows))]
-    fn answering(directory: &Path, payload: &str) -> DumpInvocation {
+    fn answering(directory: &Path, payload: &str) -> crate::commands::relay::Invocation {
         let file = stage_payload(directory, payload);
-        DumpInvocation::new("/bin/cat", vec![OsString::from(file)], directory)
+        crate::commands::relay::Invocation::new("/bin/cat", vec![OsString::from(file)], directory)
     }
 
     /// An invocation that answers with `payload` and exits zero.
     #[cfg(windows)]
-    fn answering(directory: &Path, payload: &str) -> DumpInvocation {
+    fn answering(directory: &Path, payload: &str) -> crate::commands::relay::Invocation {
         let file = stage_payload(directory, payload);
-        DumpInvocation::new(
+        crate::commands::relay::Invocation::new(
             "cmd",
             vec![
                 OsString::from("/C"),
@@ -524,8 +440,8 @@ seed_data = false
 
     /// An invocation that exits non-zero without answering.
     #[cfg(not(windows))]
-    fn failing(directory: &Path) -> DumpInvocation {
-        DumpInvocation::new(
+    fn failing(directory: &Path) -> crate::commands::relay::Invocation {
+        crate::commands::relay::Invocation::new(
             "/bin/sh",
             vec![OsString::from("-c"), OsString::from("exit 7")],
             directory,
@@ -534,8 +450,8 @@ seed_data = false
 
     /// An invocation that exits non-zero without answering.
     #[cfg(windows)]
-    fn failing(directory: &Path) -> DumpInvocation {
-        DumpInvocation::new(
+    fn failing(directory: &Path) -> crate::commands::relay::Invocation {
+        crate::commands::relay::Invocation::new(
             "cmd",
             vec![OsString::from("/C"), OsString::from("exit 7")],
             directory,
@@ -689,7 +605,7 @@ seed_data = false
     #[test]
     fn a_binary_that_cannot_be_run_at_all_is_refused_by_name() {
         let dir = project(MANIFEST, WITH_DEPENDENCY);
-        let missing = DumpInvocation::new(
+        let missing = crate::commands::relay::Invocation::new(
             "/nonexistent/renvor-test-binary",
             Vec::new(),
             dir.path().to_path_buf(),
@@ -850,7 +766,7 @@ seed_data = false
         // explicitly.
         let dir = project(MANIFEST, WITH_DEPENDENCY);
 
-        let real = DumpInvocation::new(
+        let real = crate::commands::relay::Invocation::new(
             "cargo",
             vec![
                 OsString::from("run"),

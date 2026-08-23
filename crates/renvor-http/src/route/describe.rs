@@ -455,3 +455,209 @@ mod tests {
         }
     }
 }
+
+/// The documented invocation an application binary answers with its OpenAPI description.
+///
+/// A long, prefixed name on purpose: it must not collide with a flag an application defines for
+/// itself, and it must be obvious in a process list that Renvor asked for it. The same reasoning —
+/// and the same shape — as the route-dump flag it sits beside.
+pub const OPENAPI_DUMP_FLAG: &str = "--renvor-dump-openapi";
+
+/// The version of the OpenAPI-dump payload shape.
+///
+/// # Versioned separately from the document it carries
+///
+/// `openapi` inside the payload is the **document's** version, fixed at `3.2.0`. This is the
+/// **protocol's** version — the shape of the envelope around it — and the two change for entirely
+/// different reasons. `renvor openapi` checks this before reading the payload and refuses a
+/// version it does not understand **by name**, for the reason `contracts/http-routing.md` already
+/// states about the route dump: parsing an unknown version on a best-effort basis is how a
+/// description silently loses a field.
+pub const OPENAPI_DUMP_PROTOCOL: u32 = 1;
+
+/// Answers the OpenAPI-dump invocation, if that is what this process was asked for.
+///
+/// An application calls this at the top of `main` and exits when it returns `Some`:
+///
+/// ```
+/// # use renvor_http::route::{RouteRegistry, describe};
+/// # use renvor_openapi::Info;
+/// # fn build_registry() -> RouteRegistry { RouteRegistry::new() }
+/// let registry = build_registry();
+/// let info = Info { title: "My API".into(), version: "1.0.0".into(), description: None };
+///
+/// if let Some(document) = describe::answer_openapi_request(std::env::args(), &registry, info) {
+///     println!("{document}");
+///     return;
+/// }
+/// # ()
+/// ```
+///
+/// # It answers before anything starts
+///
+/// Called first, the description is rendered and the process exits — so asking an application what
+/// its API looks like does not bind a port, run a migration, or open a connection. FR-055.
+///
+/// # A generation failure is reported, never smoothed over
+///
+/// A duplicate operation identifier or an example contradicting its schema produces the **failure**
+/// envelope with a registered code. It does **not** produce an empty description and a success:
+/// an empty description and "this application could not describe itself" are different facts, and
+/// a consumer cannot tell them apart if both arrive as success.
+///
+/// Returns `None` when the invocation was not a dump request, so an ordinary run is unaffected.
+#[must_use]
+pub fn answer_openapi_request<I, S>(
+    arguments: I,
+    registry: &RouteRegistry,
+    info: Info,
+) -> Option<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    if !arguments
+        .into_iter()
+        .any(|argument| argument.as_ref() == OPENAPI_DUMP_FLAG)
+    {
+        return None;
+    }
+
+    // The failure envelopes are CONSTANTS, not formatted strings.
+    //
+    // A generation error can name a path, an operation identifier, or an example, and this string
+    // reaches a terminal and a log. Interpolating the underlying error would put author data into
+    // both. Two fixed classifications say which kind of failure occurred without saying what was
+    // in it — and being constants, they cannot be malformed JSON, which a nested `format!` of
+    // braces very easily can.
+    const DESCRIBE_FAILED: &str = concat!(
+        r#"{"schemaVersion":2,"status":"failure","command":"openapi","#,
+        r#""error":{"code":"internal","#,
+        r#""message":"the application's declarations could not be described","#,
+        r#""details":{}}}"#
+    );
+    const SERIALISE_FAILED: &str = concat!(
+        r#"{"schemaVersion":2,"status":"failure","command":"openapi","#,
+        r#""error":{"code":"internal","#,
+        r#""message":"the description could not be serialised","#,
+        r#""details":{}}}"#
+    );
+
+    Some(match document(registry, info) {
+        // The document is embedded as ALREADY-SERIALISED text rather than re-encoded through a
+        // `Value`. A `serde_json::Value` sorts object members, which would reorder the document
+        // and make the relayed bytes differ from `Document::to_json`'s — two spellings of the same
+        // description, which is exactly the drift this phase refuses.
+        Ok(openapi) => match serde_json::to_string(&openapi) {
+            Ok(rendered) => format!(
+                r#"{{"schemaVersion":2,"status":"success","command":"openapi","result":{{"protocol":{OPENAPI_DUMP_PROTOCOL},"document":{rendered}}}}}"#
+            ),
+            Err(_) => SERIALISE_FAILED.to_owned(),
+        },
+        Err(_) => DESCRIBE_FAILED.to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::{OPENAPI_DUMP_FLAG, OPENAPI_DUMP_PROTOCOL, answer_openapi_request};
+    use crate::route::{OperationSpec, Request, Response, RouteRegistry};
+    use renvor_openapi::Info;
+
+    async fn ok(_: Request) -> Response {
+        Response::json("{}")
+    }
+
+    fn info() -> Info {
+        Info {
+            title: "T".to_owned(),
+            version: "1.0.0".to_owned(),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn an_ordinary_run_is_unaffected() {
+        let registry = RouteRegistry::new();
+        assert!(
+            answer_openapi_request(["myapp", "serve"], &registry, info()).is_none(),
+            "an ordinary invocation was answered as a dump request"
+        );
+    }
+
+    #[test]
+    fn the_success_envelope_is_well_formed_and_carries_the_document() {
+        let mut registry = RouteRegistry::new();
+        registry.get("/items", ok).expect("a valid route");
+
+        let answer = answer_openapi_request(["myapp", OPENAPI_DUMP_FLAG], &registry, info())
+            .expect("the dump flag is answered");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&answer).unwrap_or_else(|e| panic!("not JSON ({e}): {answer}"));
+
+        assert_eq!(value["status"], serde_json::json!("success"));
+        assert_eq!(value["command"], serde_json::json!("openapi"));
+        assert_eq!(value["schemaVersion"], serde_json::json!(2));
+        assert_eq!(
+            value["result"]["protocol"],
+            serde_json::json!(OPENAPI_DUMP_PROTOCOL)
+        );
+        assert_eq!(
+            value["result"]["document"]["openapi"],
+            serde_json::json!("3.2.0")
+        );
+    }
+
+    #[test]
+    fn a_generation_failure_is_a_well_formed_failure_envelope_not_an_empty_success() {
+        // Two operations claiming one identifier. The envelope must say FAILURE — an empty
+        // description and "this application could not describe itself" are different facts.
+        let mut registry = RouteRegistry::new();
+        registry
+            .get("/a", ok)
+            .expect("a valid route")
+            .describe(OperationSpec::new().id("same"))
+            .expect("describes");
+        registry
+            .get("/b", ok)
+            .expect("a valid route")
+            .describe(OperationSpec::new().id("same"))
+            .expect("describes");
+
+        let answer = answer_openapi_request(["myapp", OPENAPI_DUMP_FLAG], &registry, info())
+            .expect("the dump flag is answered");
+
+        let value: serde_json::Value =
+            serde_json::from_str(&answer).unwrap_or_else(|e| panic!("not JSON ({e}): {answer}"));
+
+        assert_eq!(value["status"], serde_json::json!("failure"));
+        assert!(value.get("result").is_none(), "a failure carried a result");
+        assert_eq!(value["error"]["code"], serde_json::json!("internal"));
+
+        // And it names NO operation identifier, so author data did not reach the envelope.
+        assert!(
+            !answer.contains("same"),
+            "the envelope named the operation: {answer}"
+        );
+    }
+
+    #[test]
+    fn the_relayed_document_is_byte_identical_to_the_libraries_own_rendering() {
+        // If these differed, the same description would have two spellings — one served by the
+        // library and one relayed by the command — and a snapshot taken through either would fail
+        // against the other.
+        let mut registry = RouteRegistry::new();
+        registry.get("/items", ok).expect("a valid route");
+
+        let answer = answer_openapi_request(["myapp", OPENAPI_DUMP_FLAG], &registry, info())
+            .expect("answered");
+        let direct = serde_json::to_string(&super::document(&registry, info()).expect("generates"))
+            .expect("serialises");
+
+        assert!(
+            answer.contains(&direct),
+            "the relayed document is not the library's own rendering"
+        );
+    }
+}
