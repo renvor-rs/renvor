@@ -368,29 +368,50 @@ fn parse_query(query: &str) -> BTreeMap<String, String> {
 
 /// Decodes `%XX` escapes and `+` as a space.
 ///
-/// Written here rather than taken from a package because the whole behaviour is twenty lines and
-/// the alternative resolves a URL crate into the transport for one function. An invalid escape is
-/// left **literal** rather than dropped: dropping bytes changes the value silently, and a caller
-/// who sent a stray `%` should see a value that fails validation rather than one that quietly
-/// became something else.
+/// # This works on BYTES, and that is not a stylistic choice
+///
+/// An earlier version read the two hex digits as `&text[index + 1..index + 3]`. Slicing a `&str`
+/// by byte index **panics** when either end is not a character boundary, so `?a=%aé` — a `%`, one
+/// hex digit, and any multi-byte character — aborted the decoder. Measured, not theorised:
+///
+/// ```text
+/// byte index 3 is not a char boundary; it is inside 'é' (bytes 2..4) of `%aé`
+/// ```
+///
+/// A query string is attacker-controlled, so that was a caller-triggerable panic on every
+/// operation that declares a query parameter. The panic boundary in `build.rs` contained it as a
+/// `500` rather than taking the process down, which is exactly the containment that makes this
+/// class of defect easy to miss.
+///
+/// Indexing the byte slice cannot panic on a boundary, because a byte slice has none.
+///
+/// # An invalid escape is left LITERAL rather than dropped
+///
+/// Dropping bytes changes the value silently. A caller who sent a stray `%` should see a value
+/// that fails validation, not one that quietly became something else.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
+
     while index < bytes.len() {
         match bytes[index] {
             b'+' => {
                 out.push(b' ');
                 index += 1;
             }
-            b'%' if index + 2 < bytes.len() => {
-                let hex = &text[index + 1..index + 3];
-                if let Ok(byte) = u8::from_str_radix(hex, 16) {
-                    out.push(byte);
-                    index += 3;
-                } else {
-                    out.push(b'%');
-                    index += 1;
+            // `index + 2 < len` was also wrong by one: it refused a trailing `%41`, whose last
+            // byte sits at `len - 1`. The bound is on the SLICE end, which is `index + 3`.
+            b'%' if index + 3 <= bytes.len() => {
+                match (hex_value(bytes[index + 1]), hex_value(bytes[index + 2])) {
+                    (Some(high), Some(low)) => {
+                        out.push((high << 4) | low);
+                        index += 3;
+                    }
+                    _ => {
+                        out.push(b'%');
+                        index += 1;
+                    }
                 }
             }
             byte => {
@@ -399,7 +420,22 @@ fn percent_decode(text: &str) -> String {
             }
         }
     }
+
+    // LOSSY on purpose. Percent-encoding can express any byte sequence, including one that is not
+    // valid UTF-8. Replacing an undecodable sequence yields a value that FAILS validation, which
+    // is the truthful outcome — refusing here would report "malformed query" for a parameter the
+    // operation may not even declare.
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// One hexadecimal digit, or `None`.
+const fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 /// Converts a text parameter to the JSON type its schema declares.
@@ -464,6 +500,50 @@ mod tests {
         assert_eq!(pairs.get("b").map(String::as_str), Some("hello world"));
         assert_eq!(pairs.get("c").map(String::as_str), Some("/path"));
         assert_eq!(pairs.get("d").map(String::as_str), Some(""));
+    }
+
+    #[test]
+    fn a_percent_escape_before_a_multi_byte_character_does_not_panic() {
+        // THE DEFECT, as a test. `&text[index + 1..index + 3]` panicked here:
+        //   byte index 3 is not a char boundary; it is inside 'é' (bytes 2..4) of `%aé`
+        //
+        // A query string is attacker-controlled, so this was a caller-triggerable abort on every
+        // operation declaring a query parameter.
+        for hostile in ["%aé", "%é", "a=%aé", "%%é", "%fé", "é%aé", "%a\u{1F600}"] {
+            let decoded = percent_decode(hostile);
+            // The assertion is that this RETURNS. A panic would abort before reaching here.
+            assert!(!decoded.is_empty() || hostile.is_empty());
+        }
+    }
+
+    #[test]
+    fn decoding_never_panics_over_a_wide_range_of_hostile_input() {
+        // Every single byte, and every byte after a `%`, and every byte after `%a`. Exhaustive
+        // over the shapes that reach the escape branch.
+        for byte in 0u8..=255 {
+            let raw = [b'%', b'a', byte];
+            if let Ok(text) = core::str::from_utf8(&raw) {
+                let _ = percent_decode(text);
+            }
+            let raw = [b'%', byte];
+            if let Ok(text) = core::str::from_utf8(&raw) {
+                let _ = percent_decode(text);
+            }
+        }
+        for suffix in ["", "%", "%a", "%aa", "+", "%%%", "%2", "%2F", "%zz"] {
+            for prefix in ["", "é", "😀", "\u{0}"] {
+                let _ = percent_decode(&format!("{prefix}{suffix}"));
+            }
+        }
+    }
+
+    #[test]
+    fn a_trailing_escape_at_the_very_end_is_decoded() {
+        // The old bound was `index + 2 < len`, which refused a `%41` whose last byte is the final
+        // one — so `?a=%41` decoded to a literal `%41` instead of `A`. Off by one, and silent.
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("x%41"), "xA");
+        assert_eq!(percent_decode("%2F"), "/");
     }
 
     #[test]
