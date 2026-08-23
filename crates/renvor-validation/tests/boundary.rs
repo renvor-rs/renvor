@@ -371,3 +371,150 @@ fn a_pathologically_nested_schema_is_refused_rather_than_overflowing_the_stack()
         "a 10-deep schema was refused"
     );
 }
+
+#[test]
+fn a_bounded_body_cannot_buy_an_unbounded_number_of_issues() {
+    // THE AMPLIFICATION, as a test.
+    //
+    // `validate` produced one issue per violating element with no cap on the count. Measured on
+    // the unfixed code by security review: a 2 097 001-byte request — inside the 2 MiB body limit —
+    // produced 1 048 500 invalid parameters and a 68 MB response, at 210 MB peak resident memory
+    // and 416 ms of CPU.
+    //
+    // The 30-second request timeout could not cancel it: validation and serialisation are
+    // synchronous with no `.await`, so there is no yield point, and the work blocks a worker
+    // thread outright. At the 1024-request concurrency ceiling that is not a slow request, it is
+    // the whole process.
+    let declaration = Declaration::new(json!({"type": "array", "items": {"type": "string"}}))
+        .expect("a valid declaration");
+
+    // Every element violates. A body of this shape fits well inside the request-body limit.
+    let hostile = serde_json::Value::Array((0..200_000).map(|_| json!(1)).collect());
+
+    let started = std::time::Instant::now();
+    let issues = declaration.validate(Location::Body, &hostile);
+    let elapsed = started.elapsed();
+
+    assert!(
+        issues.len() <= renvor_validation::schema::MAX_ISSUES,
+        "validation reported {} issues for one request; the cap is {}",
+        issues.len(),
+        renvor_validation::schema::MAX_ISSUES
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(2),
+        "validation took {elapsed:?} — the walker is not short-circuiting once the budget is spent"
+    );
+
+    // TRUNCATION IS ANNOUNCED. A caller told about a hundred problems must be able to tell that
+    // from being told these are all of them.
+    assert_eq!(
+        issues.last().map(|issue| issue.reason),
+        Some(Reason::TooManyIssues),
+        "a truncated list did not say it was truncated"
+    );
+
+    // POSITIVE CONTROL: an ordinary failing body is reported in FULL, so the cap is a bound on the
+    // pathological case rather than a ceiling everyone hits.
+    let ordinary = json!([1, 2, 3]);
+    let few = declaration.validate(Location::Body, &ordinary);
+    assert_eq!(few.len(), 3, "an ordinary body was truncated: {few:?}");
+    assert!(
+        few.iter()
+            .all(|issue| issue.reason != Reason::TooManyIssues),
+        "an untruncated list claimed truncation"
+    );
+}
+
+#[test]
+fn a_malformed_keyword_value_is_refused_rather_than_silently_unenforced() {
+    // Checking keyword NAMES was not enough. Every read in the walker is `as_u64` / `as_bool` /
+    // `as_array`, so a WRONG-TYPED value yielded `None` and the constraint was skipped — while
+    // `schema()` handed the same value to OpenAPI, so the description published a rule nothing
+    // checked.
+    //
+    // These are the security review's exact probes. Every one was accepted and unenforced.
+    let probes = [
+        json!({"type": "object", "required": "name"}),
+        json!({"type": "string", "maxLength": "5"}),
+        json!({"type": "string", "maxLength": -1}),
+        json!({"enum": "a"}),
+        json!({"type": "array", "uniqueItems": "true"}),
+        json!({"type": "strng"}),
+        json!({"type": 42}),
+        json!({"type": "integer", "minimum": "5"}),
+        json!({"type": "object", "properties": "not an object"}),
+    ];
+    for probe in probes {
+        assert!(
+            Declaration::new(probe.clone()).is_err(),
+            "`{probe}` was accepted, and would be published without being enforced"
+        );
+    }
+
+    // POSITIVE CONTROLS: the well-typed forms of every one still build, so the refusals are about
+    // the malformed values rather than about these keywords being rejected wholesale.
+    for valid in [
+        json!({"type": "object", "required": ["name"]}),
+        json!({"type": "string", "maxLength": 5}),
+        json!({"enum": ["a", "b"]}),
+        json!({"type": "array", "uniqueItems": true}),
+        json!({"type": ["string", "null"]}),
+        json!({"type": "integer", "minimum": 5}),
+        json!({"type": "object", "properties": {"a": {"type": "string"}}}),
+    ] {
+        assert!(
+            Declaration::new(valid.clone()).is_ok(),
+            "`{valid}` was refused, but it is well-formed"
+        );
+    }
+}
+
+#[test]
+fn a_reference_resolving_to_a_non_schema_is_refused() {
+    // An UNRESOLVABLE reference already failed closed. One that RESOLVED TO A NON-SCHEMA failed
+    // OPEN: the walker found a value, could not read it as a schema, and accepted everything under
+    // it. The security review's probe, verbatim.
+    let schema = json!({
+        "type": "object",
+        "properties": {"admin": {"$ref": "#/title"}},
+        "title": "Widget"
+    });
+    assert!(
+        Declaration::new(schema).is_err(),
+        "a $ref pointing at a string was accepted, and validated nothing beneath it"
+    );
+
+    // POSITIVE CONTROL: a reference to a real schema still resolves and still enforces.
+    let good = Declaration::new(json!({
+        "$defs": {"Name": {"type": "string", "minLength": 2}},
+        "type": "object",
+        "properties": {"name": {"$ref": "#/$defs/Name"}}
+    }))
+    .expect("a reference to a real schema must be accepted");
+    assert!(
+        !good
+            .validate(Location::Body, &json!({"name": "a"}))
+            .is_empty()
+    );
+}
+
+#[test]
+fn additional_properties_false_with_no_properties_permits_nothing() {
+    // In JSON Schema that declaration permits NO members. Renvor accepted everything, because the
+    // check was gated on `properties` being present — deny-by-default, inverted.
+    let declaration = Declaration::new(json!({"type": "object", "additionalProperties": false}))
+        .expect("a valid declaration");
+
+    let issues = declaration.validate(Location::Body, &json!({"injected": "anything"}));
+    assert_eq!(
+        issues.len(),
+        1,
+        "a member was accepted against a schema that permits none: {issues:?}"
+    );
+    assert_eq!(issues[0].reason, Reason::UnknownMember);
+
+    // POSITIVE CONTROL: the empty object satisfies it, so the refusal is about the member rather
+    // than about the schema rejecting everything.
+    assert!(declaration.validate(Location::Body, &json!({})).is_empty());
+}

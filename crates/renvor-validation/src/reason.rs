@@ -66,6 +66,12 @@ pub enum Reason {
     OperatorNotAllowed,
     /// A list-shaped input exceeded its declared bound.
     TooManyTerms,
+    /// More violations were found than are reported.
+    ///
+    /// The last entry in a truncated issue list. See [`crate::schema::MAX_ISSUES`] — a caller that
+    /// sees this has more to fix than it can see, and saying so is the difference between a
+    /// truncated answer and a wrong one.
+    TooManyIssues,
 }
 
 impl Reason {
@@ -93,11 +99,12 @@ impl Reason {
             Self::NotAllowlisted => "not_allowlisted",
             Self::OperatorNotAllowed => "operator_not_allowed",
             Self::TooManyTerms => "too_many_terms",
+            Self::TooManyIssues => "too_many_issues",
         }
     }
 
     /// Every reason, for registry tests.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::TypeMismatch,
         Self::RequiredMissing,
         Self::UnknownMember,
@@ -116,6 +123,7 @@ impl Reason {
         Self::NotAllowlisted,
         Self::OperatorNotAllowed,
         Self::TooManyTerms,
+        Self::TooManyIssues,
     ];
 }
 

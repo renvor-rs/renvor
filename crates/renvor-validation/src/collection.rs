@@ -257,6 +257,23 @@ impl CollectionContract {
             }
         }
 
+        // UNKNOWN KEYS ARE REFUSED, not ignored.
+        //
+        // This module's own header says the alternative to explicit refusal is "a clamp, a
+        // last-one-wins, an IGNORED PARAMETER", and an ignored parameter is exactly what happened:
+        // a key matching none of the reserved names and not shaped like `filter[...]` raised no
+        // issue at all, so `?filtr[status]=admin` returned the UNSCOPED collection to a caller who
+        // believed it had scoped the request. Found by security review.
+        //
+        // The key's TEXT is not echoed — a key that failed the allowlist is caller-chosen.
+        for (key, _) in pairs {
+            let recognised = RESERVED_PARAMETERS.contains(&key.as_str())
+                || (key.starts_with("filter[") && key.ends_with(']'));
+            if !recognised {
+                issues.push(issue("query".to_owned(), Reason::NotAllowlisted));
+            }
+        }
+
         let lookup = |name: &str| -> Option<&str> {
             pairs
                 .iter()
@@ -422,11 +439,17 @@ impl CollectionContract {
     }
 }
 
+/// The query parameters this contract reserves for itself.
+///
+/// Named once. `query_pointer` and the unknown-key check both read it, so a name added to one
+/// cannot be missing from the other.
+pub const RESERVED_PARAMETERS: [&str; 5] = ["page_size", "cursor", "sort", "include", "fields"];
+
 /// Which query-string family a key belongs to, for pointing at a duplicate without echoing it.
 fn query_pointer(key: &str, _contract: &CollectionContract) -> String {
     if key.starts_with("filter[") {
         "filter".to_owned()
-    } else if matches!(key, "page_size" | "cursor" | "sort" | "include" | "fields") {
+    } else if RESERVED_PARAMETERS.contains(&key) {
         // A RESERVED name, so it is this contract's word rather than the caller's.
         key.to_owned()
     } else {

@@ -99,6 +99,16 @@ pub enum DeclarationError {
         /// Where in the schema the non-schema appeared.
         at: String,
     },
+    /// A keyword's VALUE was of a type the interpreter cannot read.
+    ///
+    /// Refused rather than skipped: a keyword the walker cannot read is one it silently ignores,
+    /// while the description publishes it regardless.
+    MalformedKeyword {
+        /// The keyword.
+        keyword: String,
+        /// Where in the schema it appeared.
+        at: String,
+    },
     /// A `$ref` pointed somewhere this crate does not resolve.
     UnresolvableRef {
         /// The reference.
@@ -120,6 +130,13 @@ impl core::fmt::Display for DeclarationError {
             Self::NotASchema { at } => write!(
                 f,
                 "the value at `{at}` is not a schema; a schema is an object or a boolean"
+            ),
+            Self::MalformedKeyword { keyword, at } => write!(
+                f,
+                "`{keyword}` at `{at}` has a value this interpreter cannot read. It is refused \
+                 rather than skipped — a keyword the walker cannot read is one it silently \
+                 ignores, while the description publishes it anyway, so the API would promise a \
+                 constraint nothing checks"
             ),
             Self::UnresolvableRef { reference } => write!(
                 f,
@@ -170,7 +187,7 @@ impl Declaration {
     /// [`DeclarationError::UnsupportedKeyword`] naming the first keyword outside the subset, and
     /// where it appeared. [`DeclarationError::NotASchema`] for a non-schema in a schema position.
     pub fn new(schema: Value) -> Result<Self, DeclarationError> {
-        check_subset(&schema, "", 0)?;
+        check_subset(&schema, &schema, "", 0)?;
         Ok(Self { root: schema })
     }
 
@@ -230,6 +247,28 @@ impl Declaration {
 /// configuration choice (contract C-L7, applied one register lower).
 const MAX_DEPTH: usize = 64;
 
+/// The most violations one validation reports.
+///
+/// # Why a bound on the COUNT, and why here rather than at render time
+///
+/// Every other bound in this phase is real; this one was missing, and it was the expensive one.
+/// `validate` produces one issue per violating element, so a schema of
+/// `{"type":"array","items":{"type":"string"}}` and a body of `[1,1,1,…]` — well inside the 2 MiB
+/// request-body limit — yields over a million issues. Measured on the real code: a 2 097 001-byte
+/// request produced **1 048 500** invalid parameters and a **68 MB** response, at 210 MB peak
+/// resident memory and 416 ms of CPU.
+///
+/// Two facts compounded it. The concurrency ceiling is 1024, and the 30-second request timeout
+/// **cannot cancel this** — validation and serialisation are synchronous with no `.await`, so
+/// there is no yield point for a timeout to act on and the work blocks a worker thread outright.
+///
+/// The cap is applied **in the walker**, not when the response is rendered. Capping at render
+/// would still allocate a million `Pointer` strings first, which is most of the cost.
+///
+/// A truncated list ends with [`Reason::TooManyIssues`], so a caller can tell "these are all your
+/// mistakes" from "these are the first hundred". Reported by security review.
+pub const MAX_ISSUES: usize = 100;
+
 struct Walker<'a> {
     root: &'a Value,
     location: Location,
@@ -238,7 +277,29 @@ struct Walker<'a> {
 }
 
 impl Walker<'_> {
+    /// Whether the issue budget is spent.
+    ///
+    /// Checked before every recursion as well as before every push, so a pathological instance
+    /// stops being WALKED rather than merely stopping being recorded.
+    fn full(&self) -> bool {
+        self.issues.len() >= MAX_ISSUES
+    }
+
     fn push(&mut self, pointer: &str, reason: Reason) {
+        if self.full() {
+            return;
+        }
+        // The LAST slot is spent saying the list is truncated, so a caller is never told a
+        // hundred problems are all of them.
+        if self.issues.len() == MAX_ISSUES - 1 {
+            let root = Pointer::new("").expect("the empty pointer is always representable");
+            self.issues.push(Issue {
+                location: self.location,
+                pointer: root,
+                reason: Reason::TooManyIssues,
+            });
+            return;
+        }
         // A declared name that cannot be represented in a pointer falls back to the ROOT pointer.
         // Less information, never more — the fail-safe direction.
         let pointer = Pointer::new(pointer).unwrap_or_else(|_| {
@@ -252,6 +313,11 @@ impl Walker<'_> {
     }
 
     fn check(&mut self, schema: &Value, instance: &Value, pointer: &str) {
+        // SHORT-CIRCUIT. Once the budget is spent there is nothing left to record, so continuing
+        // to walk a million-element array buys only the walk.
+        if self.full() {
+            return;
+        }
         if self.depth > MAX_DEPTH {
             self.push(pointer, Reason::TypeMismatch);
             return;
@@ -265,6 +331,14 @@ impl Walker<'_> {
             return;
         }
         let Some(object) = schema.as_object() else {
+            // A value in a schema position that is neither an object nor a boolean is not a
+            // schema. Returning here ACCEPTED ANYTHING, which is the wrong direction — a
+            // declaration Renvor cannot interpret must refuse the input, not wave it through.
+            //
+            // `Declaration::new` now refuses these, so this branch should be unreachable. It fails
+            // CLOSED anyway, because "should be unreachable" is not a bound. Found by security
+            // review.
+            self.push(pointer, Reason::TypeMismatch);
             return;
         };
 
@@ -470,11 +544,20 @@ impl Walker<'_> {
         //
         // `additionalProperties: false` is what `schemars` emits for a `deny_unknown_fields`
         // struct. Absent, unknown members are permitted, which is the JSON Schema default.
-        if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
-            && let Some(declared) = properties
-            && members.keys().any(|name| !declared.contains_key(name))
-        {
-            self.push(pointer, Reason::UnknownMember);
+        // An ABSENT `properties` means the empty declared set, not "skip the check".
+        //
+        // The earlier version was gated on `let Some(declared) = properties`, so
+        // `{"additionalProperties": false}` with no `properties` — which in JSON Schema permits NO
+        // members at all — accepted everything. Deny-by-default, inverted. Found by security
+        // review.
+        if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false) {
+            let declared = properties;
+            let unknown = members
+                .keys()
+                .any(|name| declared.is_none_or(|d| !d.contains_key(name)));
+            if unknown {
+                self.push(pointer, Reason::UnknownMember);
+            }
         }
 
         // SORTED, so the issue sequence is deterministic for the same input. A `serde_json::Map`
@@ -538,7 +621,12 @@ fn resolve<'a>(root: &'a Value, reference: &str) -> Option<&'a Value> {
 /// nesting can, and a schema arrives as a `serde_json::Value` that an author may have parsed from
 /// a file. An abort at declaration time is a worse diagnostic than a refusal, and "an author would
 /// not do that" is not a bound.
-fn check_subset(schema: &Value, at: &str, depth: usize) -> Result<(), DeclarationError> {
+fn check_subset(
+    schema: &Value,
+    root: &Value,
+    at: &str,
+    depth: usize,
+) -> Result<(), DeclarationError> {
     if depth > MAX_DEPTH {
         return Err(DeclarationError::NotASchema { at: at.to_owned() });
     }
@@ -564,12 +652,36 @@ fn check_subset(schema: &Value, at: &str, depth: usize) -> Result<(), Declaratio
         }
     }
 
-    if let Some(reference) = object.get("$ref").and_then(Value::as_str)
-        && !reference.starts_with("#/")
-    {
-        return Err(DeclarationError::UnresolvableRef {
-            reference: reference.to_owned(),
-        });
+    // EVERY KEYWORD'S VALUE IS TYPE-CHECKED, not only its name.
+    //
+    // Checking names alone was the gap: every read in the walker is `and_then(Value::as_u64)` or
+    // `as_bool`, so a WRONG-TYPED value yields `None` and the constraint is silently skipped —
+    // while `schema()` hands the same value to OpenAPI, so the description publishes a rule
+    // nothing enforces. `{"maxLength": "5"}`, `{"required": "name"}`, `{"type": 42}`, and
+    // `{"uniqueItems": "true"}` were all accepted and all unenforced.
+    //
+    // That is the direct counterexample to this module's own claim that "refusing at declaration
+    // time means an unenforceable constraint never ships". It held for unknown keyword NAMES and
+    // failed for every malformed VALUE. Found by security review.
+    check_keyword_values(object, at)?;
+
+    if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+        if !reference.starts_with("#/") {
+            return Err(DeclarationError::UnresolvableRef {
+                reference: reference.to_owned(),
+            });
+        }
+        // A reference that RESOLVES TO A NON-SCHEMA is worse than one that does not resolve: the
+        // walker found a value, could not read it as a schema, and accepted everything under it.
+        // `{"$ref": "#/title"}` pointing at a string was accepted, and validated nothing.
+        match resolve(root, reference) {
+            Some(target) if target.is_object() || target.is_boolean() => {}
+            _ => {
+                return Err(DeclarationError::UnresolvableRef {
+                    reference: reference.to_owned(),
+                });
+            }
+        }
     }
 
     for container in ["properties", "$defs"] {
@@ -579,6 +691,7 @@ fn check_subset(schema: &Value, at: &str, depth: usize) -> Result<(), Declaratio
             for name in names {
                 check_subset(
                     &map[name],
+                    root,
                     &format!("{at}/{container}/{}", escape(name)),
                     depth + 1,
                 )?;
@@ -586,12 +699,120 @@ fn check_subset(schema: &Value, at: &str, depth: usize) -> Result<(), Declaratio
         }
     }
     if let Some(items) = object.get("items") {
-        check_subset(items, &format!("{at}/items"), depth + 1)?;
+        check_subset(items, root, &format!("{at}/items"), depth + 1)?;
     }
     if let Some(additional) = object.get("additionalProperties")
         && !additional.is_boolean()
     {
-        check_subset(additional, &format!("{at}/additionalProperties"), depth + 1)?;
+        check_subset(
+            additional,
+            root,
+            &format!("{at}/additionalProperties"),
+            depth + 1,
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Type-checks every keyword's VALUE, not only its name.
+///
+/// A keyword whose value the walker cannot read is a keyword the walker silently skips — while the
+/// description publishes it. Refusing here is what makes "an unenforceable constraint never ships"
+/// true of values as well as names.
+fn check_keyword_values(object: &Map<String, Value>, at: &str) -> Result<(), DeclarationError> {
+    /// The JSON types a keyword's value may take.
+    fn wrong(keyword: &str, at: &str) -> DeclarationError {
+        DeclarationError::MalformedKeyword {
+            keyword: keyword.to_owned(),
+            at: at.to_owned(),
+        }
+    }
+
+    // Non-negative integers.
+    for keyword in ["minLength", "maxLength", "minItems", "maxItems"] {
+        if let Some(value) = object.get(keyword)
+            && value.as_u64().is_none()
+        {
+            return Err(wrong(keyword, at));
+        }
+    }
+
+    // Numbers.
+    for keyword in [
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+    ] {
+        if let Some(value) = object.get(keyword)
+            && value.as_f64().is_none()
+        {
+            return Err(wrong(keyword, at));
+        }
+    }
+
+    // Booleans.
+    if let Some(value) = object.get("uniqueItems")
+        && !value.is_boolean()
+    {
+        return Err(wrong("uniqueItems", at));
+    }
+
+    // `required` is an array OF STRINGS. `{"required": "name"}` reads as a single name and is not.
+    if let Some(value) = object.get("required") {
+        let Some(names) = value.as_array() else {
+            return Err(wrong("required", at));
+        };
+        if names.iter().any(|name| !name.is_string()) {
+            return Err(wrong("required", at));
+        }
+    }
+
+    // `enum` is a non-empty array.
+    if let Some(value) = object.get("enum") {
+        match value.as_array() {
+            Some(members) if !members.is_empty() => {}
+            _ => return Err(wrong("enum", at)),
+        }
+    }
+
+    // `type` is a KNOWN name, or an array of known names. `{"type": "strng"}` was accepted and
+    // matched everything, because the walker's fallback for an unrecognised name is `true`.
+    let known = |name: &str| {
+        matches!(
+            name,
+            "null" | "boolean" | "object" | "array" | "number" | "integer" | "string"
+        )
+    };
+    if let Some(value) = object.get("type") {
+        match value {
+            Value::String(name) if known(name) => {}
+            Value::Array(names) if !names.is_empty() => {
+                let ok = names.iter().all(|name| name.as_str().is_some_and(known));
+                if !ok {
+                    return Err(wrong("type", at));
+                }
+            }
+            _ => return Err(wrong("type", at)),
+        }
+    }
+
+    // Containers that must be objects.
+    for keyword in ["properties", "$defs"] {
+        if let Some(value) = object.get(keyword)
+            && !value.is_object()
+        {
+            return Err(wrong(keyword, at));
+        }
+    }
+
+    // `$ref` is a string.
+    if let Some(value) = object.get("$ref")
+        && !value.is_string()
+    {
+        return Err(wrong("$ref", at));
     }
 
     Ok(())

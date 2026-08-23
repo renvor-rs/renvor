@@ -256,3 +256,40 @@ fn the_contract_denies_by_default() {
         );
     }
 }
+
+#[test]
+fn an_unknown_query_parameter_is_refused_rather_than_ignored() {
+    // The security review's probe, verbatim: a TYPO'd filter and an unrecognised limit were both
+    // accepted, and the caller received the UNSCOPED collection while believing it had scoped the
+    // request.
+    //
+    // This module's own header names "an IGNORED PARAMETER" as one of the silent choices
+    // constitution principle IV prohibits. It was happening here.
+    let found = reasons(&pairs(&[("filtr[status]", "admin"), ("limit", "100000")]));
+    assert!(
+        found.contains(&Reason::NotAllowlisted),
+        "unknown query keys were ignored; got {found:?}"
+    );
+
+    // The key's TEXT is not echoed — it is caller-chosen.
+    let canary = "CANARY-9f2c71ae-UNKNOWN-QUERY-KEY";
+    let issues = contract()
+        .parse(&pairs(&[(canary, "x")]))
+        .expect_err("an unknown key must be refused");
+    assert!(
+        !format!("{issues:?}").contains(canary),
+        "the caller's key was echoed: {issues:?}"
+    );
+
+    // POSITIVE CONTROL: every reserved name and the filter shape are still accepted, so the
+    // refusal is about unknown keys rather than about the parser rejecting everything.
+    contract()
+        .parse(&pairs(&[
+            ("page_size", "10"),
+            ("sort", "name"),
+            ("include", "owner"),
+            ("fields", "name"),
+            ("filter[status]", "active"),
+        ]))
+        .expect("reserved names and the filter shape must be accepted");
+}

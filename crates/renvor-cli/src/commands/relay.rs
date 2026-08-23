@@ -36,17 +36,22 @@
 //! Killing `cargo` orphans that grandchild rather than ending it: on Unix it is reparented and
 //! keeps running.
 //!
-//! So the deadline reliably bounds **this process's wait** — which is what a hanging command-line
-//! tool costs an operator — and does **not** guarantee the project's binary has stopped.
+//! The deadline bounds **this process's wait**. It does **not** guarantee the project's binary has
+//! stopped.
 //!
-//! Fixing it properly means putting the child in its own process group and signalling the group.
-//! `std::process` exposes that only through `CommandExt::pre_exec`, which is `unsafe`, and this
-//! workspace declares `unsafe_code = "forbid"`. A process-group crate would do it safely and is a
-//! dependency decision rather than a late edit.
+//! **That bound is only true because the reader is DETACHED rather than joined on the timeout
+//! path.** An earlier revision joined it, and hung forever: the orphaned grandchild holds an
+//! inherited copy of the stdout write end, so the pipe never closes and the read never returns.
+//! The leak and the hang are the same fact seen from two ends, and joining converted a documented
+//! leak into an undocumented hang.
+//!
+//! Reaping the orphan needs a process group, which `std::process` exposes only through
+//! `CommandExt::pre_exec` — `unsafe`, and this workspace declares `unsafe_code = "forbid"`. A
+//! process-group crate would do it safely and is a dependency decision rather than a late edit.
 //!
 //! Recorded here and in `governance/phase-005-evidence.md` rather than left to inference — a
-//! constant whose documentation promises more than its code delivers is the defect class
-//! `renvor routes` already recorded against its own size bound.
+//! comment promising more than its code delivers is the defect class `renvor routes` already
+//! recorded against its own size bound.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -245,12 +250,38 @@ impl Invocation {
         {
             Some(status) => status,
             None => {
-                // THE KILL. Without it the child keeps running after this process reports a
-                // timeout, which turns a bounded wait into a leaked process.
+                // THE KILL, then the reap. Both are for the DIRECT child.
                 let _ = child.kill();
                 let _ = child.wait();
-                // The reader ends when the pipe closes, which the kill guarantees.
-                let _ = reader.join();
+
+                // THE READER IS DETACHED, NOT JOINED — and this is the whole fix.
+                //
+                // An earlier version joined it here, with a comment saying "the reader ends when
+                // the pipe closes, which the kill guarantees." **That is false**, and it made the
+                // timeout path hang forever against the exact process shape `cargo run` has.
+                //
+                // `cargo run` FORKS: the project's binary is a grandchild holding an inherited
+                // copy of the stdout write end. Killing `cargo` does not close that copy, so the
+                // reader stays blocked in its read, and joining it blocks the CLI **for as long as
+                // the orphan runs** — turning a bounded wait into an unbounded one, which is the
+                // defect contract C-L7 names.
+                //
+                // Measured, because the distinction is invisible from the outside:
+                //
+                //   sh -c 'yes renvor'          sh EXECs  -> ONE process   -> kill closes the pipe
+                //   sh -c 'yes renvor & wait'   sh FORKS  -> grandchild    -> pipe stays OPEN
+                //
+                // Every timeout test in this file used the first shape, so the suite passed
+                // without ever reaching the hazard. `a_forking_child_does_not_hold_the_relay`
+                // below uses the second.
+                //
+                // Dropping the handle detaches the thread. It ends when the orphan does, and until
+                // then it holds one thread and the bytes it has already read — a bounded cost the
+                // caller does not wait for. Reaping the orphan itself needs a process group, which
+                // `std` exposes only through `unsafe` `pre_exec`; that is recorded as a limitation
+                // rather than claimed here.
+                drop(reader);
+
                 return Err(RelayFailure::Timeout {
                     after: self.timeout,
                 });
@@ -341,6 +372,43 @@ mod tests {
             "the relay did not terminate: waited {:?}",
             started.elapsed()
         );
+    }
+
+    #[test]
+    fn a_forking_child_does_not_hold_the_relay() {
+        // THE SHAPE `cargo run` ACTUALLY HAS, and the one every other timeout test in this file
+        // misses.
+        //
+        // `sh -c 'sleep 60'` and `sh -c 'yes renvor'` both cause `sh` to EXEC, collapsing to a
+        // single process — so killing it closes the pipe and any reader returns. `cargo run`
+        // FORKS, leaving a grandchild holding an inherited copy of the stdout write end.
+        //
+        // `& wait` forces the fork. Before the reader was detached, this blocked forever.
+        let started = Instant::now();
+        let failure = shell("yes renvor-fork-probe & wait")
+            .with_timeout(Duration::from_millis(500))
+            .run()
+            .expect_err("a forking child that never answers must be stopped");
+
+        assert!(
+            matches!(failure, RelayFailure::Timeout { .. }),
+            "got {failure:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "the relay was held by an orphaned grandchild for {:?} — the reader is being joined \
+             on the timeout path, and the pipe an orphan holds open never closes",
+            started.elapsed()
+        );
+
+        // Clean up the orphan this test deliberately created. Nothing in production does this;
+        // the limitation is recorded rather than papered over.
+        // A marker UNIQUE to this test. The suite runs in parallel and another test also runs
+        // `yes renvor`; a shared pattern here would kill that test's child out from under it —
+        // which it did, once, and the failure looked like a bug in the other test.
+        let _ = std::process::Command::new("pkill")
+            .args(["-9", "-f", "yes renvor-fork-probe"])
+            .status();
     }
 
     #[test]
