@@ -474,3 +474,97 @@ Phase 004 validation:
    `xtask verify` does not pass `--ignored` and CI does not either. Every other relay test uses a
    hand-written fixture, so a change to the envelope shape would break the real protocol and leave
    the suite green. It was run manually at this head and passes.
+
+## Closure of the five pre-merge items — 2026-08-23
+
+The post-remediation requirements review at `c078385` is the **closing** review. Its findings are
+dispositioned here; no further review round was commissioned.
+
+### A — the public API boundary (R-10)
+
+`Server` is **removed** from the `renvor` facade root. The normal path is the lifecycle-managed
+`HttpServerProvider` / `HttpServerConfig` / `RouteRegistry`, all Renvor-owned. The raw path remains
+as `renvor::transport::Server`, one level down, under the module that **is** the transport. Neither
+the router nor the route registry is duplicated and no second manifest exists. Recorded in ADR-0012
+under *The public surface this decision fixes*, with the trade-off stated.
+
+Enforced by `crates/renvor/tests/facade_boundary.rs`, which parses the re-export list **from the
+source** rather than hand-listing it, resolves each name to its `impl` blocks, and reads the declared
+signatures. **Mutation-proven**: restoring `Server` to the root fails the guard, quoting
+`pub async fn serve<F>(self, router: Router, …)`. Its positive control caught two real bugs in the
+scanner itself — a byte/char offset mismatch and a `pub fn` search that skipped `async` methods —
+which had made the guard pass while reading nothing.
+
+### B — required package metadata
+
+`cargo xtask verify` step 7 now validates all eleven required fields plus the explicit file set, for
+every publishable package, resolving `workspace = true` inheritance against `[workspace.package]`.
+Eight tests: a table-driven negative per field, a positive control, an `exclude`-instead-of-`include`
+control, an unresolvable-inheritance case, an exemption case, and the real workspace. **Mutation-
+proven**: deleting `keywords` from `renvor-http` fails the gate by name.
+
+**A second defect surfaced while building it.** Both this check and the pre-existing FR-040
+dependency scan tested `text.contains("publish = false")` against the raw manifest. `renvor-core`,
+`renvor-http` and `renvor-testkit` each *discuss* `publish = false` in a leading comment explaining
+why they are **not** marked that way — so all three were read as unpublishable and skipped. **Three
+of the five publishable packages went unexamined by both gates, which reported success.** A comment
+was switching off a gate. Fixed by a comment-aware `is_publishable`, with a regression test and two
+controls. `cargo metadata` says five; the scan now says five.
+
+### C — C-11 ordering evidence
+
+Both missing adjacent pairs now have discriminating cases, and the contract's claim was **made true
+rather than narrowed**:
+
+- **8 ↔ 9**: an over-limit body is refused **without** the handler span being opened. Mutation-
+  proven by moving the span outside the body limit.
+- **3 ↔ 4**: a preflight is answered **beneath** the context block and therefore still carries a
+  request identifier. Mutation-proven by moving the CORS layer outside the context layer.
+
+C-11 now also states what the nine rows **structurally are** — layers 1–3 are one tower layer, so
+their internal order is not independently observable — and tabulates the discriminator for every
+boundary. A reader looking for a 1 ↔ 2 composition discriminator would previously have concluded the
+evidence was missing when it was the model that was wrong.
+
+The preflight test asserts all three previously unobserved clauses: status `200`, an **empty** body,
+and **no permit spent**.
+
+### D — the route-relay end-to-end gate
+
+`cargo xtask verify` step 4 now invokes the exact `#[ignore]`d test explicitly. `#[ignore]` is
+retained on its merits: the test spawns a nested `cargo run` to build a second crate's example, which
+would contend with the build lock held by the process that spawned it. CI runs `cargo xtask verify`,
+so it now runs in CI through the normal entry point. **The sequence remains eleven steps** — this is
+a second command inside step 4, not a twelfth step. The three envelope-incompatibility controls are
+preserved, and no fixture replaced the real protocol test.
+
+### E — every non-SATISFIED entry, dispositioned
+
+Thirteen entries. **None was relabelled without new executable evidence, and no requirement was
+weakened.**
+
+| ID | Was | Requirement, in brief | Disposition |
+|---|---|---|---|
+| FR-005 | IMPLEMENTED_UNTESTED | Complete package metadata, and appears in the release ordering | **SATISFIED** — step 7 validation, 8 tests, mutation-proven |
+| FR-026 | IMPLEMENTED_UNTESTED | Header bounds documented where exposed; **named as unexposed** otherwise | **SATISFIED** — `renvor_claims_no_header_bound_it_does_not_set` asserts `Limits` publishes no header field and C-10 still names the gap |
+| FR-027 | IMPLEMENTED_UNTESTED | Middleware order defined in a **versioned public contract** | **SATISFIED** — `the_middleware_order_is_a_versioned_contract_that_matches_the_code`: frontmatter version, nine ordered rows, and the code's own diagram agreeing |
+| FR-039 | IMPLEMENTED_UNTESTED | Workspace evidence distinguished from generated-project evidence | **SATISFIED** — `the_phase_evidence_distinguishes_workspace_from_generated_project_evidence` |
+| FR-043 | IMPLEMENTED_UNTESTED | No Problem Details, no OpenAPI, no Phase 005 boundary | **SATISFIED** — comment-stripped source scan with a two-sided control |
+| FR-036 | PARTIAL | Truthful about where route metadata comes from | **SATISFIED** — `cli.mdx` corrected; two guards added, both mutation-proven |
+| FR-042 | PARTIAL | Structured fields, **subject to the redaction rule without exception** | **SATISFIED** — `no_request_supplied_value_reaches_the_adapters_telemetry`; mutation-proven by adding the query string to the span |
+| FR-049 | PARTIAL | Wizard **must not** gain a transport question | **SATISFIED** — the question set is enumerated from source and pinned at six, with a control |
+| SC-003 | PARTIAL | Routing surface exercised through the real router | **SATISFIED** — `query()` had no reader; two tests added, mutation-proven |
+| SC-008 | PARTIAL | Every limit asserted at its **exact boundary and boundary + 1** | **SATISFIED** — decided under a paused clock. The review called it undecidable for a `Duration`; it is decidable once the clock is. **The boundary was measured, not assumed**: a handler finishing at exactly the budget succeeds, and one nanosecond beyond times out. The first draft asserted the opposite and its failure established the real semantics |
+| SC-012 | PARTIAL | **0** transport types in application-facing interfaces | **SATISFIED** — see A |
+| SC-017 | PARTIAL | Every negative check carries a positive control | **SATISFIED** — the `Defaulted` arm asserted `target` for the `transport` row; each row now asserts its own type |
+| SC-020 | IMPLEMENTED_UNTESTED | No document claims workspace integration as generated-project evidence | **SATISFIED** — same test as FR-039 |
+
+**Reconciled totals: FR-001…FR-049 — 49 SATISFIED, 0 PARTIAL, 0 IMPLEMENTED_UNTESTED, 0 NOT_MET.
+SC-001…SC-020 — 20 SATISFIED, 0 PARTIAL, 0 IMPLEMENTED_UNTESTED, 0 NOT_MET.**
+
+### Limitations retained, honestly
+
+Unchanged and still true: the panic payload reaching process stderr; the header bounds Renvor does
+not set; no crate published, so `renvor routes` reaches zero generated projects; registry names
+verified rather than reserved; the macOS trust-store test's machine sensitivity. Each is permitted by
+its governing requirement and none is waived.
