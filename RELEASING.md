@@ -197,9 +197,16 @@ Packages sharing a position have no dependency on each other and may publish in 
 order, or concurrently. Each later position waits for **every** package at every
 earlier one — an optional dependency still has to be resolvable at publish time.
 
-**Eight publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
+**Eleven publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
 a package added without appearing in this table fails verification rather than being discovered at
-publication time.
+publication time. `publishable_package_count_is_stated_correctly` asserts the same count against
+**this sentence**, which is a separate claim and was the one that had drifted.
+
+> **This line read "Eight" until 2026-08-25, while the table above it listed eleven.** It was
+> already wrong at Phase 006 — the truth was ten — and Phase 007 widened the gap by adding a row to
+> the table without touching the summary. A dependency review found it: the third occurrence of
+> this project's recurring failure, a summary that disagrees with the table it summarises, and the
+> first one in a file no count test covered.
 
 > **Amended 2026-08-23 (Phase 005).** Three packages joined, taking the publishable set from five
 > to eight, and `renvor-http` moved from position 2 to position 4 because it now depends on all

@@ -94,6 +94,8 @@ env:
   #
   # ── PHASE 007: TEN CRATES BECAME ELEVEN ─────────────────────────────────────────────
   #
+  # (Newest first. The blocks below run backwards through the phases.)
+  #
   # `renvor-seaorm` was added. It publishes AFTER `renvor-database`, whose ports it implements, and
   # it is deliberately NOT after `renvor-sqlx`: the two adapters are siblings and neither depends
   # on the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate.
@@ -101,6 +103,18 @@ env:
   # `renvor-testkit` MOVED, from before `renvor-validation` to after `renvor-database`. It now
   # depends on `renvor-database`, because it hosts the shared persistence contract both adapters
   # are measured against, and a dependency must publish first.
+  #
+  # AND SO DID `renvor-database`, WHICH THIS BRANCH FIRST GOT WRONG.
+  #
+  # Making room for `renvor-testkit` moved `renvor-database` from position 6 to 4 — past
+  # `renvor-validation`, which it depends on. The list then claimed a publication order that
+  # cannot publish: `cargo publish` would have failed on `renvor-database` with a
+  # missing-`renvor-validation` registry error that reads like a network fault.
+  #
+  # THE ASSERTION BELOW DID NOT CATCH IT, and could not: it `sort`s both sides before comparing,
+  # so it checks MEMBERSHIP and says nothing about order. A dependency review found it. Order is
+  # now asserted topologically in `xtask`, against `cargo metadata` rather than against this
+  # comment — see `publication_order_is_topological`.
   #
   # ── PHASE 006: EIGHT CRATES BECAME TEN ──────────────────────────────────────────────
   #
@@ -127,7 +141,7 @@ env:
   #
   # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
   # sorts both sides — but it makes the line readable as the thing it describes.
-  CRATES: "renvor-core renvor-error renvor-config renvor-database renvor-testkit renvor-validation renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
+  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-testkit renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor
