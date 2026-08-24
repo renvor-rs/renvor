@@ -238,7 +238,7 @@ pub struct NewArgs {
     // VISIBLE since Phase 006. Persistence has shipped, so these are real choices rather than
     // placeholders that will be refused. Selecting a database is what makes the generated project
     // carry persistence sources and migrations.
-    /// Persistence layer. `sqlx` is the only supported value
+    /// Persistence layer: `sqlx` or `seaorm`. Omitting it with `--database` keeps `sqlx`
     #[arg(long)]
     pub orm: Option<String>,
     /// Database to generate for. `postgres` or `mysql`

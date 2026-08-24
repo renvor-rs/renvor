@@ -3,5 +3,10 @@
 fn main() {
     println!("{{ name }} is running");
 {% if example_domain %}    println!("{} items", domain::all().len());
-{% endif %}{% if database %}    println!("{}", persistence::summary());
+{% endif %}{% if orm == "sqlx" %}    println!("{}", persistence::summary());
+{% endif %}{% if orm == "seaorm" %}    // `src/entity.rs` and `src/repository.rs` are generated and idiomatic, but nothing compiles
+    // them yet: they need `sea-orm`, and this project declares no dependencies so that
+    // `renvor new` works offline. `Cargo.toml` names the four lines to add; then declare
+    // `mod entity;` and `mod repository;` above and call into the repository from here.
+    println!("persistence: seaorm, {{ database }} (see src/entity.rs)");
 {% endif %}}

@@ -1,0 +1,113 @@
+# The SeaORM adapter.
+#
+# It implements the SAME `renvor-database` ports `renvor-sqlx` implements, against the SeaORM
+# programming model. Nothing in `renvor-database` depends on this; dependencies point inward
+# (constitution principle II), and `xtask` step 7 asserts it.
+#
+# WHY THIS CRATE NAMES SQLX AT ALL
+#
+# SeaORM is built on SQLx. This adapter owns the pool and the pooled connection **directly**, in
+# SQLx terms, because that ownership is what the Phase 006 cancellation contract (ADR-0017) is
+# made of and SeaORM's own transaction type does not provide it. See ADR-0021. No SQLx type
+# crosses this crate's public API; the boundary is asserted by a test, not promised here.
+
+[package]
+name = "renvor-seaorm"
+description = "SeaORM adapter for the Renvor framework, implementing the transport-independent persistence ports against PostgreSQL and MySQL. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-seaorm"
+readme = "README.md"
+keywords = ["renvor", "seaorm"]
+categories = ["database"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
+
+# SeaORM 2.0.2, `default-features = false`.
+#
+# WHY `runtime-tokio` AND NOT `runtime-tokio-rustls`
+#
+# `runtime-tokio-rustls` resolves SQLx's `tls-rustls` alias chain, which ends at `webpki-roots` —
+# licensed CDLA-Permissive-2.0, which is NOT on `deny.toml`'s allow-list. `runtime-tokio` selects
+# the runtime and NOTHING about TLS, so TLS is supplied by this crate's own aligned SQLx
+# dependency below, using the `tls-rustls-ring-native-roots` feature Phase 006 already approved.
+# Cargo unifies the two into one `sqlx`, which is why exactly one SQLx version resolves.
+#
+# `macros` is the derive set (`DeriveEntityModel` and friends). Unlike SQLx's `macros`, it needs
+# no live DATABASE_URL and no committed cache at compile time — it is purely derive-based, so the
+# offline generation path Phase 004 guarantees is unaffected. That difference is the reason the
+# feature is taken here and refused in `renvor-sqlx`.
+sea-orm = { version = "2.0.2", default-features = false, features = [
+    "macros",
+    "runtime-tokio",
+    "with-json",
+    "with-uuid",
+    "with-chrono",
+] }
+
+# The published SeaQuery-to-SQLx binder. It supplies `SqlxValues`, the `sqlx::Arguments`
+# implementation that binds a `sea_query::Values` to a prepared statement.
+#
+# It is a DEPENDENCY rather than a reimplementation on purpose (constitution principle III): the
+# alternative is hand-writing the value mapping for every supported column type, which is a great
+# deal more code than ADR-0018's rejected ~60-line vendoring and would have to stay bit-compatible
+# with whatever SeaORM binds. SeaORM depends on this same crate at this same version; `version.rs`
+# carries a compile guard that fails if the two ever disagree.
+sea-query-sqlx = { version = "0.9.1", default-features = false }
+
+# The aligned SQLx. Same version and same TLS feature as `renvor-sqlx`, so the workspace resolves
+# ONE `sqlx`. `derive` is not taken: this crate maps rows through SeaORM's own public
+# `From<PgRow>`/`From<MySqlRow>` conversions rather than deriving `FromRow`.
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-native-roots",
+    "migrate",
+    "json",
+    "uuid",
+    "chrono",
+] }
+
+async-trait = { version = "0.1.92", default-features = false }
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros", "sync"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# The SHARED persistence contract. Both adapters call the same functions, so the four matrix rows
+# are measured against one suite rather than two that agree by inspection.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0" }
+tokio = { version = "1.53.1", default-features = false, features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "sync",
+] }
+
+[features]
+# NEITHER database is default, exactly as in `renvor-sqlx`.
+default = []
+
+# Each name selects one driver in BOTH dependencies. Selecting it in only one would compile and
+# then fail at run time on a backend mismatch, which is why both appear on each line.
+db-postgres = ["sea-orm/sqlx-postgres", "sea-query-sqlx/sqlx-postgres", "sqlx/postgres"]
+db-mysql = ["sea-orm/sqlx-mysql", "sea-query-sqlx/sqlx-mysql", "sqlx/mysql"]
+
+[lints]
+workspace = true

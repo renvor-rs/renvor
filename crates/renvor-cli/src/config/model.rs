@@ -111,24 +111,32 @@ impl Transport {
 
 /// The persistence layer a generated project is built around.
 ///
-/// # One value, and why it is still an enum
+/// # The enum earned its keep in Phase 007
 ///
-/// Phase 006 ships direct SQLx. A later phase adds an ORM, and when it does, this enum gains a
-/// variant rather than a `bool` gaining a meaning. The parse below refuses anything else by name,
-/// so a project generated against a future value fails at generation rather than at build.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// Phase 006 shipped one variant on the argument that a later phase would add an ORM rather than
+/// turn a flag into a keyword. This is that phase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Orm {
     /// Direct SQLx. Queries are written by hand; no object mapper is generated.
     Sqlx,
+    /// SeaORM. An entity and a repository are generated, and queries are built from them.
+    ///
+    /// SeaORM is built on SQLx, so selecting this does not remove SQLx from the graph — it changes
+    /// the programming model the application is written in. Recorded here because a reader of a
+    /// generated `renvor.toml` deserves that fact where the choice is stored.
+    SeaOrm,
 }
 
 impl Orm {
+    /// Every supported value, for prompts and for messages.
+    pub const ALL: [Self; 2] = [Self::Sqlx, Self::SeaOrm];
+
     /// The recorded spelling.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Sqlx => "sqlx",
+            Self::SeaOrm => "seaorm",
         }
     }
 
@@ -138,18 +146,46 @@ impl Orm {
     ///
     /// [`Code::UnsupportedValue`] for any value other than `sqlx`.
     pub fn parse(value: &str) -> Result<Self, CliError> {
-        match value {
-            "sqlx" => Ok(Self::Sqlx),
-            other => Err(CliError::new(
-                Code::UnsupportedValue,
-                format!(
-                    "`{other}` is not a supported persistence layer; the supported value is `sqlx`"
-                ),
-            )
-            .with("flag", "--orm")
-            .with("value", other.to_owned())
-            .with("supported", "sqlx")),
-        }
+        // Matched against `ALL` rather than a second literal list, so a variant added above cannot
+        // become unparseable by omission — which is exactly how `seaorm` would have been missed.
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == value)
+            .ok_or_else(|| {
+                let supported = Self::ALL
+                    .iter()
+                    .map(|candidate| candidate.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                CliError::new(
+                    Code::UnsupportedValue,
+                    format!(
+                        "`{value}` is not a supported persistence layer; the supported values are \
+                         {supported}"
+                    ),
+                )
+                .with("flag", "--orm")
+                .with("value", value.to_owned())
+                .with("supported", supported)
+            })
+    }
+}
+
+/// Serialised through [`Orm::as_str`], never derived.
+///
+/// # A derive here emitted a value the CLI would refuse
+///
+/// `#[serde(rename_all = "kebab-case")]` turns `SeaOrm` into `"sea-orm"`. The flag accepts
+/// `seaorm`, and `renvor.toml` records `seaorm`, so the JSON was naming a third spelling that
+/// round-trips through neither — a consumer that read `--output json` and fed the value back to
+/// `--orm` would be refused by the tool that produced it.
+///
+/// Phase 006 hit exactly this on the container types, where the derive produced `"my-sql97"`. The
+/// remedy is the same and for the same reason: **one function decides the spelling**, and every
+/// output path goes through it.
+impl Serialize for Orm {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
     }
 }
 
@@ -553,9 +589,15 @@ impl ProjectConfiguration {
             (Some(orm), Some(database)) => {
                 (Some(Orm::parse(orm)?), Some(parse_database(database)?))
             }
-            // A database alone takes the one supported layer. This is not a silent default: `sqlx`
-            // is the only value `--orm` accepts in this phase, so there is nothing to choose
-            // between and nothing an operator could have meant instead.
+            // A database alone takes SQLx. THIS IS NOW A REAL DEFAULT, and the justification the
+            // line carried in Phase 006 — "`sqlx` is the only value `--orm` accepts, so there is
+            // nothing to choose between" — stopped being true the moment `seaorm` was added.
+            //
+            // The behaviour is kept because Phase 006 shipped it: a command that generated a
+            // working project must keep generating the same one, and FR-040 requires exactly that.
+            // What changes is the honesty of the reason. It is a DOCUMENTED COMPATIBILITY DEFAULT,
+            // stated in the CLI reference and in `--help`, not an absence of alternatives — and an
+            // operator who wants the other model names it.
             (None, Some(database)) => (Some(Orm::Sqlx), Some(parse_database(database)?)),
             (Some(orm), None) => {
                 // Parsed first, so an operator who typed both a bad layer AND omitted the database
@@ -854,6 +896,23 @@ fn reserved(flag: &str, value: &str, phase: &str) -> CliError {
 
 #[cfg(test)]
 mod tests {
+    /// Every serialised ORM value must be one `--orm` accepts.
+    ///
+    /// The gap this closes is not hypothetical: the derive emitted `"sea-orm"`, which is a third
+    /// spelling of a value with two, and `--orm sea-orm` is refused.
+    #[test]
+    fn every_serialised_orm_round_trips_through_the_flag() {
+        for orm in Orm::ALL {
+            let json = serde_json::to_string(&orm).expect("serialises");
+            let bare = json.trim_matches('"');
+            assert_eq!(
+                Orm::parse(bare).map(|parsed| parsed.as_str()).ok(),
+                Some(orm.as_str()),
+                "`{bare}` is emitted in JSON but `--orm {bare}` is refused"
+            );
+        }
+    }
+
     use super::*;
 
     fn answers(destination: PathBuf) -> Answers {
@@ -876,6 +935,27 @@ mod tests {
             container_cache: None,
             cache_port: None,
         }
+    }
+
+    /// The equivalent command names the ORM, so re-running it reproduces the same project.
+    ///
+    /// Asserted here rather than on generated output because the command is printed only after an
+    /// INTERACTIVE run — echoing a command back at somebody who just typed it is noise — and a
+    /// test cannot answer prompts.
+    #[test]
+    fn the_equivalent_command_names_a_non_default_orm() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut input = answers(base.path().join("demo"));
+        input.name = Some("demo".to_owned());
+        input.orm = Some("seaorm".to_owned());
+        input.database = Some("postgres".to_owned());
+        let (configuration, _destination) = ProjectConfiguration::resolve(input).expect("resolves");
+        let command = configuration.equivalent_command();
+        assert!(
+            command.contains("--orm seaorm") || command.contains("--orm=seaorm"),
+            "the equivalent command omits the ORM, so re-running it produces the SQLx project \
+             instead: {command}"
+        );
     }
 
     // ── Phase 006 persistence selection (FR-032, FR-045, FR-047) ───────────────────────

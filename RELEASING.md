@@ -150,11 +150,12 @@ Current order:
 | 1 | `renvor-core` | *(nothing in the workspace)* | The kernel. Nothing else can publish before it |
 | 1 | `renvor-error` | *(nothing in the workspace)* | The public API error registry and RFC 9457 documents. Depends on **no** Renvor crate — it names no transport and no kernel type — so it shares position 1 with the kernel and the two may publish concurrently |
 | 2 | `renvor-config` | `renvor-core` | The configuration adapter |
-| 2 | `renvor-testkit` | `renvor-core` | The test harness. Independent of `renvor-config`, so position 2 either way |
 | 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
 | 3 | `renvor-database` | `renvor-core`, `renvor-validation` | The persistence **ports**. Names no driver, so it can be depended on by an application that has not chosen one |
 | 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
-| 4 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation` | The direct-SQLx adapter, and the only crate in the workspace that names a database driver. Publishes after the ports it implements |
+| 4 | `renvor-testkit` | `renvor-core`, `renvor-database` | The test harness. **Moved from position 2 in Phase 007**: it now hosts the shared persistence contract both adapters are measured against, so it publishes after the ports |
+| 4 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation` | The direct-SQLx adapter. Publishes after the ports it implements |
+| 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation` | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
 | 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http`, `renvor-error`, `renvor-validation`, `renvor-openapi` | Facade. `renvor-config` is optional-but-default-on; the other four are optional-and-default-**off**, and `transport-rest` enables `renvor-http`, `renvor-error`, `renvor-validation` and `renvor-openapi` together. **All six** must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
@@ -171,6 +172,19 @@ Current order:
 > The release-dry-run guard caught the omission on the first push of that branch, which is the third
 > time it has done so and the reason the list is pinned rather than derived.
 
+> **Extended 2026-08-24 (Phase 007).** `renvor-seaorm` joins at position 4, beside `renvor-sqlx`
+> rather than after it. The two adapters implement the same ports against different programming
+> models and neither depends on the other; `xtask` step 7 asserts both directions with a control.
+>
+> `renvor-testkit` **moved from position 2 to position 4**, because it gained a dependency on
+> `renvor-database`. It hosts `renvor_testkit::persistence`, the contract functions both adapters'
+> suites call, which is what makes *"both SeaORM rows pass the same application contracts as direct
+> SQLx"* a fact about the build rather than two suites that agree by inspection. A crate cannot
+> publish before something it depends on, so the move is forced rather than cosmetic.
+>
+> This time the publishable-count assertion in `xtask` reported the new crate **before** any list
+> was edited, which is the outcome that assertion was pinned for.
+
 > **Corrected 2026-08-23.** The facade row previously listed three dependencies and said "all
 > three". `renvor` declares **six** workspace dependencies: the `transport-rest` feature enables
 > `renvor-error`, `renvor-validation` and `renvor-openapi` alongside `renvor-http`. **The ordering
@@ -183,9 +197,16 @@ Packages sharing a position have no dependency on each other and may publish in 
 order, or concurrently. Each later position waits for **every** package at every
 earlier one — an optional dependency still has to be resolvable at publish time.
 
-**Eight publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
+**Eleven publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
 a package added without appearing in this table fails verification rather than being discovered at
-publication time.
+publication time. `publishable_package_count_is_stated_correctly` asserts the same count against
+**this sentence**, which is a separate claim and was the one that had drifted.
+
+> **This line read "Eight" until 2026-08-25, while the table above it listed eleven.** It was
+> already wrong at Phase 006 — the truth was ten — and Phase 007 widened the gap by adding a row to
+> the table without touching the summary. A dependency review found it: the third occurrence of
+> this project's recurring failure, a summary that disagrees with the table it summarises, and the
+> first one in a file no count test covered.
 
 > **Amended 2026-08-23 (Phase 005).** Three packages joined, taking the publishable set from five
 > to eight, and `renvor-http` moved from position 2 to position 4 because it now depends on all

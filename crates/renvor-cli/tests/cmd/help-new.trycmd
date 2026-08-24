@@ -58,7 +58,7 @@ Options:
           Delivery transport. `rest` is the only supported value
 
       --orm <ORM>
-          Persistence layer. `sqlx` is the only supported value
+          Persistence layer: `sqlx` or `seaorm`. Omitting it with `--database` keeps `sqlx`
 
       --database <DATABASE>
           Database to generate for. `postgres` or `mysql`

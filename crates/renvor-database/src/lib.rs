@@ -61,7 +61,9 @@ pub use pool::{ConnectionString, PoolSettings};
 /// second one here would give the workspace two `Direction` enums that agree by coincidence, and
 /// the conversion between them would be the thing that eventually disagreed.
 pub use renvor_validation::collection::Direction;
-pub use seed::{Idempotence, SeedDeclaration, SeedScope};
+pub use seed::{
+    APPLIED, CREATE_LEDGER, Idempotence, SeedDeclaration, SeedReport, SeedScope, SqlSeed,
+};
 
 /// Which database an adapter is talking to.
 ///

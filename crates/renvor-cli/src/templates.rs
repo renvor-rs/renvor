@@ -21,6 +21,12 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
 ///
+/// **`4` → `5` (Phase 007).** `--orm seaorm` is accepted, and it generates a different tree:
+/// `src/entity.rs` and `src/repository.rs` replace `src/persistence.rs`, and `Cargo.toml` declares
+/// a real `sea-orm` dependency so both compile. `--orm sqlx` is unchanged and still produces
+/// exactly the version-4 tree, which is what FR-043 requires and what
+/// `a_phase_006_project_still_generates_identically` asserts.
+///
 /// **`3` → `4` (Phase 006, container scope addition).** `--container` now generates a complete
 /// local Compose profile rather than two near-empty files: the selected database service with a
 /// pinned image, a named volume, a verified health check, and a localhost-only published port; an
@@ -36,7 +42,7 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
 /// describing the dependency to add once the framework crates are published. `Cargo.toml` is
 /// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
-pub const VERSION: &str = "4";
+pub const VERSION: &str = "5";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[
@@ -75,14 +81,20 @@ const SEED_DATA: &[TemplateEntry] = &[TemplateEntry {
     body: include_str!("../templates/src_seed.rs.j2"),
 }];
 
-/// Added by `--database`. Both migration halves ship together: the pair is what makes the
-/// migration REVERSIBLE, and a declared-reversible migration missing its `.down.sql` is refused at
-/// rollback rather than discovered half-way through one.
-const PERSISTENCE: &[TemplateEntry] = &[
-    TemplateEntry {
-        path: "src/persistence.rs",
-        body: include_str!("../templates/src_persistence.rs.j2"),
-    },
+/// The migrations, which are the same whichever ORM was selected.
+///
+/// # One migration history, not two
+///
+/// Renvor runs SQL-file migrations through SQLx's engine for **both** persistence models, so a
+/// project that switches ORM keeps its schema and its `_sqlx_migrations` bookkeeping. The
+/// alternative — `sea-orm-migration` for the SeaORM path — would give that project a second
+/// history table with no checksum column, and the two would disagree the first time anyone edited
+/// an applied migration. See ADR-0022.
+///
+/// Both halves ship together: the pair is what makes the migration REVERSIBLE, and a
+/// declared-reversible migration missing its `.down.sql` is refused at rollback rather than
+/// discovered half-way through one.
+const MIGRATIONS: &[TemplateEntry] = &[
     TemplateEntry {
         path: "migrations/0001_create_item.up.sql",
         body: include_str!("../templates/migrations_up.sql.j2"),
@@ -90,6 +102,31 @@ const PERSISTENCE: &[TemplateEntry] = &[
     TemplateEntry {
         path: "migrations/0001_create_item.down.sql",
         body: include_str!("../templates/migrations_down.sql.j2"),
+    },
+];
+
+/// Added by `--orm sqlx`.
+///
+/// Statements and an allowlist, with no dependency: the crate this would need is `renvor-sqlx`,
+/// which is not published, so a module that named it would emit a project that does not resolve.
+const PERSISTENCE_SQLX: &[TemplateEntry] = &[TemplateEntry {
+    path: "src/persistence.rs",
+    body: include_str!("../templates/src_persistence.rs.j2"),
+}];
+
+/// Added by `--orm seaorm`.
+///
+/// These two **compile**, unlike the direct-SQLx module, because an entity and a repository need
+/// `sea-orm` — which is published — and nothing from Renvor. Emitting them as inert text would
+/// have made "generated code uses SeaORM idiomatically" a claim about a comment.
+const PERSISTENCE_SEAORM: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/entity.rs",
+        body: include_str!("../templates/src_entity.rs.j2"),
+    },
+    TemplateEntry {
+        path: "src/repository.rs",
+        body: include_str!("../templates/src_repository.rs.j2"),
     },
 ];
 
@@ -134,7 +171,9 @@ fn catalogue() -> Vec<TemplateEntry> {
     all.extend_from_slice(BASE);
     all.extend_from_slice(EXAMPLE_DOMAIN);
     all.extend_from_slice(SEED_DATA);
-    all.extend_from_slice(PERSISTENCE);
+    all.extend_from_slice(MIGRATIONS);
+    all.extend_from_slice(PERSISTENCE_SQLX);
+    all.extend_from_slice(PERSISTENCE_SEAORM);
     all.extend_from_slice(CONTAINER);
     all
 }
@@ -154,7 +193,12 @@ pub fn select(configuration: &ProjectConfiguration) -> TemplateSet {
         entries.extend_from_slice(SEED_DATA);
     }
     if configuration.database().is_some() {
-        entries.extend_from_slice(PERSISTENCE);
+        entries.extend_from_slice(MIGRATIONS);
+    }
+    match configuration.orm() {
+        Some(crate::config::model::Orm::Sqlx) => entries.extend_from_slice(PERSISTENCE_SQLX),
+        Some(crate::config::model::Orm::SeaOrm) => entries.extend_from_slice(PERSISTENCE_SEAORM),
+        None => {}
     }
     if configuration.container() {
         entries.extend_from_slice(CONTAINER);

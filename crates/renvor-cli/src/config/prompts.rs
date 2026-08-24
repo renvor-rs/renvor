@@ -70,6 +70,15 @@ use crate::exit::CliError;
 /// which performs no redaction. See that function for why the type is the enforcement.
 const TITLE: &str = "Create a Renvor application";
 
+/// The one-line help under the persistence-model question.
+///
+/// A constant because `prompt::text` takes `&'static str`. It is written out rather than built
+/// from `Orm::ALL`, so `orm_help_names_every_supported_value` exists to close the gap that
+/// creates: a variant added to `--orm` but not to this line would be accepted by the flag and
+/// invisible in the wizard, which is the quiet half of a half-shipped option.
+const ORM_HELP: &str = "`sqlx` (hand-written SQL, no object mapper) or `seaorm` (entity and \
+                        repository generated; SeaORM is built on SQLx)";
+
 /// Runs the wizard, filling only what the flags did not supply.
 ///
 /// Every flag already given is **not** asked about again. A wizard that re-asks what the operator
@@ -135,6 +144,18 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
             "postgres",
             Some("`postgres` or `mysql`; the choice selects exactly one driver"),
         )?);
+
+        // ASKED, not defaulted, and asked only here — inside the gate, after persistence has been
+        // chosen. FR-039. The non-interactive path keeps SQLx when `--orm` is omitted, because a
+        // command that worked in Phase 006 must keep producing the same project; a wizard has no
+        // such obligation and an operator in front of one deserves the choice.
+        if answers.orm.is_none() {
+            answers.orm = Some(prompt::text(
+                "Persistence model",
+                super::model::Orm::Sqlx.as_str(),
+                Some(ORM_HELP),
+            )?);
+        }
     }
 
     if !answers.container {
@@ -332,6 +353,18 @@ pub fn review(
 
 #[cfg(test)]
 mod tests {
+    /// Every value `--orm` accepts must be named in the wizard's help line.
+    #[test]
+    fn orm_help_names_every_supported_value() {
+        for orm in crate::config::model::Orm::ALL {
+            assert!(
+                super::ORM_HELP.contains(orm.as_str()),
+                "`{}` is accepted by --orm but is not offered in the wizard",
+                orm.as_str()
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -390,17 +423,38 @@ mod tests {
         // "Generate container development controls?" is answered yes, so an operator who declines
         // containers still answers eight.
         //
-        // The count is asserted rather than inferred so that a fifteenth question is reviewed
+        // FIFTEEN in Phase 007. Phase 007 FR-039 requires the wizard to ask SQLx versus SeaORM
+        // when persistence is selected, and it is asked INSIDE the persistence gate — an operator
+        // who declines a database is never asked which ORM they are not using. Reviewed against
+        // FR-049: the question has two documented values, a default that matches the
+        // non-interactive behaviour, and a consequence the operator can see, because the two
+        // answers generate different files.
+        //
+        // The count is asserted rather than inferred so that a sixteenth question is reviewed
         // against FR-049 before it ships. It is not a style rule: each question is a thing an
-        // operator must answer to get a project, and the review that added six is the reason the
-        // number moved.
+        // operator must answer to get a project.
         assert_eq!(
             asked.len(),
-            14,
-            "the wizard asks {} question(s), not the fourteen FR-046 and FR-049 were reviewed \
-             against. A new question must be checked against FR-049 before this count is \
-             updated: {asked:#?}",
+            15,
+            "the wizard asks {} question(s), not the fifteen FR-046, FR-049 and Phase 007 FR-039 \
+             were reviewed against. A new question must be checked against FR-049 before this \
+             count is updated: {asked:#?}",
             asked.len()
+        );
+
+        // AND THE PERSISTENCE GATE. The ORM question must sit inside it, for the same reason the
+        // container questions sit inside theirs: a question with no consequence for the operator
+        // who declined persistence is a question that should not have been asked.
+        let persistence_gate = body
+            .find("Generate database persistence?")
+            .expect("the persistence gate question exists");
+        let orm_question = body
+            .find("Persistence model")
+            .expect("the ORM question exists");
+        assert!(
+            orm_question > persistence_gate,
+            "the ORM question is asked before the persistence gate, so an operator who wants no \
+             database is still asked which ORM they are not using"
         );
 
         // AND THE GATE ITSELF. A container question asked unconditionally would be a question with

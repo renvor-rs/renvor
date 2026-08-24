@@ -120,27 +120,53 @@ treatment `--target` already receives, which amendment 3.0.0 §4 records as comp
 
 ## `--orm` and `--database`
 
-**No longer reserved.** Phase 006 ships persistence, so both are real choices:
+**No longer reserved.** Phase 006 ships persistence and Phase 007 adds a second persistence model,
+so both are real choices with real alternatives:
 
 | Flag | Value | Behaviour |
 |---|---|---|
-| `--orm` | `sqlx` | **accepted** — the only supported value |
-| `--orm` | anything else | `unsupported_value`, exit `3`, naming the supported value |
-| `--orm` | omitted, with `--database` given | **defaulted to `sqlx`** and **recorded** |
+| `--orm` | `sqlx` | **accepted** — hand-written SQL, no object mapper |
+| `--orm` | `seaorm` | **accepted** — an entity and a repository are generated |
+| `--orm` | anything else | `unsupported_value`, exit `3`, naming **both** supported values |
+| `--orm` | omitted, with `--database` given | **defaulted to `sqlx`** and **recorded** — see below |
 | `--orm` | given, `--database` omitted | `unsupported_combination`, exit `3` |
 | `--database` | `postgres`, `mysql` | **accepted** |
 | `--database` | anything else | `unsupported_value`, exit `3`, naming both supported values |
-| `--database` | omitted | **no persistence** — no `src/persistence.rs`, no `migrations/`, and no `[persistence]` table |
+| `--database` | omitted | **no persistence** — no persistence sources, no `migrations/`, and no `[persistence]` table |
 
-The wizard **does** ask about `--database`, because it has two supported values and principle VII
-clause 2 permits defaulting only a single-valued choice. It does not ask about `--orm`, which has
-one supported value and is recorded in `renvor.toml` whenever a database was chosen.
+### The `--orm` default is a compatibility promise, not an absence of alternatives
 
-A selected database adds `src/persistence.rs` and a reversible `migrations/0001_create_item` pair,
-and records `database`, `orm`, and `driver_feature` under `[persistence]`. **`Cargo.toml` still
-declares no dependency**: no Renvor crate is published, so naming one would emit a project that
-does not resolve. The driver feature is recorded and documented rather than declared, which is the
-same treatment the framework dependency itself receives.
+Until Phase 007 this row was justified by *"`sqlx` is the only value `--orm` accepts, so there is
+nothing to choose between"*. **That reasoning expired when `seaorm` was added**, and the behaviour
+was kept anyway for a different and stronger reason: every `renvor new --database postgres` written
+against Phase 006 must keep producing the project it produced. Omission is therefore a
+**documented compatibility default**, stated here and in `--help`, and an operator who wants the
+other model names it.
+
+The wizard **does** now ask, because there are two values to choose between. The question is asked
+**inside** the persistence gate — an operator who declines a database is never asked which ORM they
+are not using.
+
+### What each selection generates
+
+| | `--orm sqlx` | `--orm seaorm` |
+|---|---|---|
+| Sources | `src/persistence.rs` | `src/entity.rs`, `src/repository.rs` |
+| Migrations | `migrations/0001_create_item.{up,down}.sql` | **identical** |
+| Declared as modules in `src/main.rs` | yes | **no** — see below |
+| `Cargo.toml` dependencies | none | none |
+
+`renvor.toml` records `database`, `orm`, and `driver_feature` under `[persistence]` either way.
+
+**`Cargo.toml` declares no dependency in both cases**, and for the SeaORM path the reason is
+stronger than "the crate is unpublished". `sea-orm` *is* published, so it could be declared — but
+generation runs the staged project's own `cargo fmt`, `clippy`, `build`, `test` and `run` **before**
+placing it, so a real dependency would make `renvor new` resolve and compile SeaORM and SQLx from
+the registry. Renvor guarantees offline generation. One ORM choice is not a reason to withdraw it.
+
+Consequently `src/entity.rs` and `src/repository.rs` are generated **in full and idiomatic** but are
+not declared as modules, because declaring a module nothing can compile emits a project that does
+not build. `Cargo.toml` names the four lines to add and the two declarations to make.
 
 ## Reserved flags
 

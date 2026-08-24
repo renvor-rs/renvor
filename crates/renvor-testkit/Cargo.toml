@@ -37,6 +37,11 @@ include = [
 [dependencies]
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 
+# The persistence PORTS, so `persistence.rs` can host the contract every adapter is measured
+# against. Ports only — this crate names no driver, and depends on neither adapter, so hosting the
+# shared suite does not put SQLx or SeaORM into anyone's graph.
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+
 # `test-util` is a NORMAL dependency here and only here. This crate is itself a testing tool, so
 # time control is its product rather than a test convenience — an author consumes it under
 # `[dev-dependencies]`, which is what keeps it out of production binaries (FR-031).
