@@ -56,6 +56,7 @@
 //! fourth clause is the one that binds later work: **when a capability ships, its choice becomes
 //! mandatory in both the wizard and the flag surface.**
 
+use super::container;
 use crate::generate::manifest::FileManifest;
 use crate::output::layout::{Report, Status};
 use crate::output::prompt;
@@ -128,9 +129,7 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
     // FR-046. `--database` has two supported values, so it is asked rather than defaulted. The
     // gate question comes first because persistence is optional: an operator who wants none should
     // not have to name a database to decline one.
-    if answers.database.is_none()
-        && prompt::confirm("Generate database persistence?", false)?
-    {
+    if answers.database.is_none() && prompt::confirm("Generate database persistence?", false)? {
         answers.database = Some(prompt::text(
             "Database",
             "postgres",
@@ -140,6 +139,92 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
 
     if !answers.container {
         answers.container = prompt::confirm("Generate container development controls?", false)?;
+    }
+
+    // ── CONTAINER QUESTIONS, asked only after the gate is open ──────────────────────────
+    //
+    // Nothing below is asked of an operator who declined containers. Asking someone to name a
+    // database port for a Compose file that will not be generated is a question with no
+    // consequence, and a wizard that asks those teaches people to stop reading them.
+    //
+    // Every answer here is a STRING that goes into `Answers`. The wizard does not validate and does
+    // not build a `ContainerSettings`; `ProjectConfiguration::resolve` does both, for the wizard and
+    // for the flags, through one function. That is what keeps "interactive and non-interactive
+    // resolve identically" true by construction rather than by two implementations agreeing.
+    if answers.container {
+        // Parsed rather than matched on the raw string, so the version offered belongs to the
+        // engine chosen. A database value that does not parse is left alone: `resolve` refuses it
+        // by name, and asking a follow-up question about an unsupported engine would bury that
+        // refusal under two more prompts.
+        let kind = answers
+            .database
+            .as_deref()
+            .and_then(|value| super::model::parse_database(value).ok());
+
+        if let Some(kind) = kind {
+            if answers.database_version.is_none() {
+                answers.database_version = Some(prompt::text(
+                    "Database image version",
+                    container::DatabaseVersion::newest_for(kind).as_str(),
+                    Some(container::DatabaseVersion::version_hint(kind)),
+                )?);
+            }
+            if answers.database_name.is_none() {
+                // The SHARED derivation. A second `replace('-', "_")` here would be a second rule
+                // that has to stay equal to the first.
+                let derived = container::Identifier::derive_database_name(
+                    answers.name.as_deref().unwrap_or("app"),
+                )
+                .map(|identifier| identifier.as_str().to_owned())
+                .unwrap_or_default();
+                answers.database_name = Some(prompt::text(
+                    "Database name",
+                    &derived,
+                    Some("ASCII letters, digits, and `_`; a `-` in the project name becomes `_`"),
+                )?);
+            }
+            if answers.database_user.is_none() {
+                answers.database_user = Some(prompt::text(
+                    "Database user",
+                    container::DEFAULT_DATABASE_USER,
+                    Some("not a superuser, and never a password — passwords go in `.env`"),
+                )?);
+            }
+            if answers.database_port.is_none() {
+                answers.database_port = Some(prompt::text(
+                    "Database host port",
+                    &container::DatabaseVersion::newest_for(kind)
+                        .default_host_port()
+                        .to_string(),
+                    Some("published on 127.0.0.1 only; this is the HOST port, not the container's"),
+                )?);
+            }
+        }
+
+        // DEFAULT NO. A cache container is infrastructure this project does not yet use — the
+        // runtime cache capability and its adapter arrive in Phase 010 — so it is opt-in.
+        //
+        // ONE ENGINE, so this is a yes/no rather than a menu. A prompt offering one real option
+        // and one worse option is a prompt pretending to be a decision; which engine gets used is
+        // recorded in `renvor.toml`, not asked.
+        if answers.container_cache.is_none()
+            && prompt::confirm(
+                "Generate a local cache container? (local infrastructure only; Renvor's cache \
+                 capability arrives in Phase 010)",
+                false,
+            )?
+        {
+            answers.container_cache = Some(container::CacheEngine::Valkey.as_str().to_owned());
+            if answers.cache_port.is_none() {
+                answers.cache_port = Some(prompt::text(
+                    "Cache host port",
+                    &container::CacheEngine::Valkey
+                        .default_host_port()
+                        .to_string(),
+                    Some("published on 127.0.0.1 only; must differ from the database port"),
+                )?);
+            }
+        }
     }
 
     if !answers.local_https {
@@ -299,17 +384,48 @@ mod tests {
             .filter(|code| code.contains("prompt::text(") || code.contains("prompt::confirm("))
             .collect();
 
-        // SIX in Phase 004, EIGHT since Phase 006: FR-046 requires the database to be asked,
-        // which needs a gate question and the value itself. The count is asserted rather than
-        // inferred so that a ninth question is reviewed against FR-049 before it ships.
+        // SIX in Phase 004. EIGHT when Phase 006 added persistence: FR-046 requires the database
+        // to be asked, which needs a gate question and the value itself. FOURTEEN since the
+        // container scope addition, which adds six — and every one of the six is asked only after
+        // "Generate container development controls?" is answered yes, so an operator who declines
+        // containers still answers eight.
+        //
+        // The count is asserted rather than inferred so that a fifteenth question is reviewed
+        // against FR-049 before it ships. It is not a style rule: each question is a thing an
+        // operator must answer to get a project, and the review that added six is the reason the
+        // number moved.
         assert_eq!(
             asked.len(),
-            8,
-            "the wizard asks {} question(s), not the eight FR-046 and FR-049 were reviewed \
+            14,
+            "the wizard asks {} question(s), not the fourteen FR-046 and FR-049 were reviewed \
              against. A new question must be checked against FR-049 before this count is \
              updated: {asked:#?}",
             asked.len()
         );
+
+        // AND THE GATE ITSELF. A container question asked unconditionally would be a question with
+        // no consequence for the operator who declined containers — which is what the count above
+        // cannot see, because it counts calls rather than the branch they sit in.
+        let gate = body
+            .find("Generate container development controls?")
+            .expect("the container gate question exists");
+        for needle in [
+            "Database image version",
+            "Database name",
+            "Database user",
+            "Database host port",
+            "Generate a local cache container?",
+            "Cache host port",
+        ] {
+            let at = body
+                .find(needle)
+                .unwrap_or_else(|| panic!("the wizard asks `{needle}`"));
+            assert!(
+                at > gate,
+                "`{needle}` is asked before the container gate, so it would be asked of an \
+                 operator who does not want containers"
+            );
+        }
 
         for line in &asked {
             let lowered = line.to_ascii_lowercase();

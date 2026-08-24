@@ -201,6 +201,11 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     answered.enter(); // default no
     answered.expect("Generate container development controls?");
     answered.key("y");
+    // Containers WITHOUT persistence, so the four database questions are skipped entirely and the
+    // cache question is the only one the gate opens. That skipping is the property being driven
+    // here as much as the answer is.
+    answered.expect("Generate a local cache container?");
+    answered.enter(); // default no
     answered.expect("Record that local HTTPS is wanted?");
     answered.enter();
     answered.expect("Create this project?");

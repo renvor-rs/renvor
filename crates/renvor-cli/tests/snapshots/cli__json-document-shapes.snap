@@ -1,6 +1,6 @@
 ---
 source: crates/renvor-cli/tests/cli.rs
-assertion_line: 269
+assertion_line: 272
 expression: "Value::Object(shapes)"
 ---
 {
@@ -154,6 +154,19 @@ expression: "Value::Object(shapes)"
   "new": {
     "command": "new",
     "result": {
+      "configuration": {
+        "container": "<boolean>",
+        "container_settings": null,
+        "database": null,
+        "example_domain": "<boolean>",
+        "local_domain": "<string>",
+        "local_https": "<string>",
+        "name": "<string>",
+        "orm": null,
+        "seed_data": "<boolean>",
+        "target": "<string>",
+        "transport": "<string>"
+      },
       "destination": "<string>",
       "dryRun": "<boolean>",
       "manifest": [
@@ -172,6 +185,26 @@ expression: "Value::Object(shapes)"
   "new (container)": {
     "command": "new",
     "result": {
+      "configuration": {
+        "container": "<boolean>",
+        "container_settings": {
+          "cache": "<string>",
+          "cache_port": null,
+          "database_name": null,
+          "database_port": null,
+          "database_user": null,
+          "database_version": null
+        },
+        "database": null,
+        "example_domain": "<boolean>",
+        "local_domain": "<string>",
+        "local_https": "<string>",
+        "name": "<string>",
+        "orm": null,
+        "seed_data": "<boolean>",
+        "target": "<string>",
+        "transport": "<string>"
+      },
       "destination": "<string>",
       "dryRun": "<boolean>",
       "manifest": [
@@ -190,6 +223,19 @@ expression: "Value::Object(shapes)"
   "new (dry run)": {
     "command": "new",
     "result": {
+      "configuration": {
+        "container": "<boolean>",
+        "container_settings": null,
+        "database": null,
+        "example_domain": "<boolean>",
+        "local_domain": "<string>",
+        "local_https": "<string>",
+        "name": "<string>",
+        "orm": null,
+        "seed_data": "<boolean>",
+        "target": "<string>",
+        "transport": "<string>"
+      },
       "destination": "<string>",
       "dryRun": "<boolean>",
       "manifest": [

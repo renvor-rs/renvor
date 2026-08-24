@@ -245,6 +245,36 @@ pub struct NewArgs {
     #[arg(long)]
     pub database: Option<String>,
 
+    // ── CONTAINER DEVELOPMENT CONTROLS. Only meaningful with `--container`. ─────────────
+    //
+    // Every one is refused as an UNSUPPORTED COMBINATION when `--container` is absent, rather than
+    // ignored. A flag that parses and does nothing is the worst of the three options: the operator
+    // believes they configured something, and the generated tree does not reflect it.
+    //
+    // NONE OF THESE CAN CARRY A PASSWORD, and no flag that could will be added. A credential on a
+    // command line lands in shell history, in `ps` output, and in the CI log of whatever ran it.
+    /// Database image version: `17` or `18` for postgres, `8.4` or `9.7` for mysql
+    #[arg(long, value_name = "VERSION")]
+    pub database_version: Option<String>,
+    /// Database name inside the container profile. Defaults to the project name with `-` as `_`.
+    #[arg(long)]
+    pub database_name: Option<String>,
+    /// Database user inside the container profile. **Never a password.**
+    #[arg(long)]
+    pub database_user: Option<String>,
+    // A STRING, NOT A `u16`, ON PURPOSE. clap would reject `70000` with its own message before any
+    // renvor code ran, so the interactive and non-interactive paths would refuse the same value
+    // with two different diagnoses — and only one of them would carry `details.flag`.
+    /// Published host port for the container database. Bound to 127.0.0.1.
+    #[arg(long, value_name = "1-65535")]
+    pub database_port: Option<String>,
+    /// Local cache container: `none` or `valkey`. Development infrastructure only.
+    #[arg(long, value_name = "none|valkey")]
+    pub container_cache: Option<String>,
+    /// Published host port for the container cache. Bound to 127.0.0.1.
+    #[arg(long, value_name = "1-65535")]
+    pub cache_port: Option<String>,
+
     // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
     /// Reserved for a later phase.
     #[arg(long, hide = true)]
@@ -274,7 +304,10 @@ const RESERVED: [(&str, &str); 5] = [
     // said Phase 013 until Phase 006 checked it against the roadmap. A reserved flag that names
     // the wrong phase is a false statement about when support arrives, which is why the phase
     // column is read from the roadmap rather than remembered.
-    ("--auth", "Phase 009 (authentication, sessions, tokens, and policies)"),
+    (
+        "--auth",
+        "Phase 009 (authentication, sessions, tokens, and policies)",
+    ),
     ("--frontend", "Phase 019 (full-stack architecture)"),
     ("--styling", "Phase 019 (full-stack architecture)"),
     ("--render-mode", "Phase 019 (full-stack architecture)"),
@@ -346,6 +379,12 @@ impl NewArgs {
             example_domain: self.example_domain,
             orm: self.orm,
             database: self.database,
+            database_version: self.database_version,
+            database_name: self.database_name,
+            database_user: self.database_user,
+            database_port: self.database_port,
+            container_cache: self.container_cache,
+            cache_port: self.cache_port,
         })
     }
 }

@@ -729,10 +729,22 @@ fn the_verification_step_names_each_check_as_it_runs() {
             "--seed-data",
             "--container",
             "--local-https",
-            // Phase 006: without this the wizard still has the persistence gate to ask,
-            // and a test that answers nothing would wait for it forever.
+            // Phase 006: without these the wizard still has questions to ask, and a test that
+            // answers nothing would wait for them forever. `--container` opens four database
+            // questions and the cache gate, so every one has to be supplied for the run to be
+            // genuinely non-interactive.
             "--database",
             "postgres",
+            "--database-version",
+            "18",
+            "--database-name",
+            "demo",
+            "--database-user",
+            "renvor",
+            "--database-port",
+            "55432",
+            "--container-cache",
+            "none",
         ],
         root.path(),
         &[("TERM", "xterm-256color")],
@@ -792,10 +804,21 @@ fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
                 "--seed-data",
                 "--container",
                 "--local-https",
-                // Phase 006: without this the wizard still has the persistence gate to ask,
-                // and a test that answers nothing would wait for it forever.
+                // Phase 006: without these the wizard still has questions to ask, and a test
+                // that answers nothing would wait for them forever. `--container` opens four
+                // database questions and the cache gate.
                 "--database",
                 "postgres",
+                "--database-version",
+                "18",
+                "--database-name",
+                "demo",
+                "--database-user",
+                "renvor",
+                "--database-port",
+                "55432",
+                "--container-cache",
+                "none",
             ],
             root.path(),
             &[("TERM", term)],
@@ -830,10 +853,22 @@ fn only_a_redrawable_terminal_gets_the_live_indicator() {
             "--seed-data",
             "--container",
             "--local-https",
-            // Phase 006: without this the wizard still has the persistence gate to ask,
-            // and a test that answers nothing would wait for it forever.
+            // Phase 006: without these the wizard still has questions to ask, and a test that
+            // answers nothing would wait for them forever. `--container` opens four database
+            // questions and the cache gate, so every one has to be supplied for the run to be
+            // genuinely non-interactive.
             "--database",
             "postgres",
+            "--database-version",
+            "18",
+            "--database-name",
+            "demo",
+            "--database-user",
+            "renvor",
+            "--database-port",
+            "55432",
+            "--container-cache",
+            "none",
         ],
         root.path(),
         &[("TERM", "dumb")],

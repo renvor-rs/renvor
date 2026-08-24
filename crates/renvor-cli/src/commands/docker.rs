@@ -519,4 +519,32 @@ mod tests {
     fn logs_are_requested_without_colour_so_captured_output_is_readable() {
         assert!(Action::Logs.arguments().contains(&"--no-color"));
     }
+
+    /// NO renvor COMMAND DESTROYS A NAMED VOLUME.
+    ///
+    /// `docker compose down -v` removes the volumes, and with them the development database. That
+    /// is a reasonable thing to want and an unreasonable thing to reach by typing `renvor docker
+    /// down` — one flag away from "stop the containers", with no confirmation and no undo.
+    ///
+    /// The generated `compose.yaml` stores both the database and the cache in **named** volumes
+    /// precisely so that `down` is not destructive. This asserts the other half: that no action
+    /// here quietly adds the flag that would make it destructive again.
+    ///
+    /// Adding a destructive operation is not forbidden — it needs its own confirmation contract,
+    /// the way `renvor tls trust` needs
+    /// `--i-understand-this-modifies-my-system-trust-store`. This test is what makes adding one
+    /// silently impossible.
+    #[test]
+    fn no_action_removes_a_volume() {
+        for action in [Action::Up, Action::Down, Action::Status, Action::Logs] {
+            let arguments = action.arguments();
+            for destructive in ["-v", "--volumes", "--rmi", "--remove-orphans"] {
+                assert!(
+                    !arguments.contains(&destructive),
+                    "`renvor docker` would run a destructive compose flag with no confirmation \
+                     contract: {action:?}"
+                );
+            }
+        }
+    }
 }

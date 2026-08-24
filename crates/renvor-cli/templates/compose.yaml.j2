@@ -1,7 +1,118 @@
+# LOCAL DEVELOPMENT for {{ name }}. This is not a deployment.
+#
+# What that means concretely, rather than as a disclaimer:
+#
+#   - every published port is bound to 127.0.0.1, so nothing here is reachable from another
+#     machine even on a network you trust;
+#   - the database and cache talk to the application over a private project network and are not
+#     published to it at all — the host bindings exist so YOU can attach a client;
+#   - passwords come from `.env`, which is git-ignored and which renvor deliberately does not
+#     write. See `.env.example` and the README.
+#
+# A production topology differs in ways this file cannot paper over: secrets from a secret manager
+# rather than a file, TLS between services, backups, resource limits, and an image supply chain you
+# control. Copying this into production would give you none of them.
+name: {{ name }}
+
 services:
-  {{ name }}:
+  app:
     build: .
     init: true
     read_only: true
     security_opt:
       - no-new-privileges:true
+    networks:
+      - internal
+{% if container_database or container_cache %}    env_file:
+      - .env
+{% endif %}{% if container_database %}    depends_on:
+      database:
+        # `service_healthy`, not `service_started`. A database container is listening on its port
+        # seconds before it will answer a query, and an application that connects during that gap
+        # fails its own boot — which, for renvor, is by design: the pool opens during Boot.
+        condition: service_healthy
+{% endif %}{% if container_cache %}      cache:
+        condition: service_healthy
+{% endif %}
+{% if container_database %}  database:
+    image: {{ container_database_image }}
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+    ports:
+      # 127.0.0.1 ON PURPOSE. `"{{ container_database_port }}:{{ container_database_internal_port }}"` — without the
+      # address — binds every interface, publishing a development database with a development
+      # password to the local network.
+      - "127.0.0.1:{{ container_database_port }}:{{ container_database_internal_port }}"
+    environment:
+{% if container_is_postgres %}      POSTGRES_DB: {{ container_database_name }}
+      POSTGRES_USER: {{ container_database_user }}
+      # `:?` makes Compose REFUSE TO START with this message when the variable is unset, rather
+      # than substituting an empty string — which PostgreSQL would accept as "trust anybody".
+      POSTGRES_PASSWORD: ${RENVOR_DATABASE_PASSWORD:?set RENVOR_DATABASE_PASSWORD in .env — copy .env.example and fill it in}
+{% else %}      MYSQL_DATABASE: {{ container_database_name }}
+      MYSQL_USER: {{ container_database_user }}
+      MYSQL_PASSWORD: ${RENVOR_DATABASE_PASSWORD:?set RENVOR_DATABASE_PASSWORD in .env — copy .env.example and fill it in}
+      # The MySQL image demands a root password, a random one, or an explicit "allow empty".
+      # A random one is chosen so that this project needs exactly ONE secret: the application does
+      # not use root, and a second placeholder is a second thing to get wrong. The generated
+      # password is printed once to the container log and is not recoverable afterwards.
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+{% endif %}    volumes:
+      # A NAMED volume, so `renvor docker down` keeps the data. Removing it takes a separate,
+      # explicit `docker volume rm` — there is no renvor command that deletes it.
+      - database-data:{{ container_database_data_dir }}
+    healthcheck:
+      # Verified to fail as well as to pass — see `DatabaseVersion::healthcheck`. It carries no
+      # credential, because `docker inspect` and the container's process list both expose it.
+      test: {{ container_database_healthcheck }}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+{% endif %}{% if container_cache %}  # LOCAL INFRASTRUCTURE ONLY.
+  #
+  # The cache container is optional local infrastructure. Renvor's runtime cache capability and
+  # adapter arrive in Phase 010. Nothing in the generated source reads or writes this service; it
+  # is here so that the container you will need later exists and is configured now.
+  #
+  # {{ container_cache_engine }} {{ container_cache_version }}, {{ container_cache_licence }}.
+  cache:
+    image: {{ container_cache_image }}
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - internal
+    ports:
+      - "127.0.0.1:{{ container_cache_port }}:{{ container_cache_internal_port }}"
+    command:
+      - valkey-server
+      - --requirepass
+      - ${RENVOR_CACHE_PASSWORD:?set RENVOR_CACHE_PASSWORD in .env — copy .env.example and fill it in}
+    environment:
+      # Read by `valkey-cli`, which is how the health check below authenticates WITHOUT the
+      # password appearing in its command text.
+      REDISCLI_AUTH: ${RENVOR_CACHE_PASSWORD:?set RENVOR_CACHE_PASSWORD in .env — copy .env.example and fill it in}
+    volumes:
+      - cache-data:{{ container_cache_data_dir }}
+    healthcheck:
+      test: {{ container_cache_healthcheck }}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+
+{% endif %}networks:
+  internal:
+    # No `external: true` and no host networking. Services reach each other by service name on this
+    # network; nothing else on the machine is on it.
+    driver: bridge
+{% if container_database or container_cache %}
+volumes:
+{% if container_database %}  database-data:
+{% endif %}{% if container_cache %}  cache-data:
+{% endif %}{% endif %}

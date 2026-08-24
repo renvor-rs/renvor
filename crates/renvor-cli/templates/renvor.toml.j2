@@ -23,3 +23,25 @@ database = "{{ database }}"
 orm = "{{ orm }}"
 driver_feature = "{{ driver_feature }}"
 {% endif %}
+{% if container %}
+[container]
+# Local DEVELOPMENT container controls. Recorded because generation ACTED on them: `compose.yaml`,
+# `Dockerfile`, `.dockerignore`, and `.env.example` exist.
+#
+# NO SECRET IS RECORDED HERE, and none can be. Passwords live in `.env`, which is git-ignored and
+# which renvor does not write. A user name is not a credential; a password is, and there is no
+# field below that could hold one.
+{% if container_database %}database_service = "{{ container_database_service }}"
+database_image = "{{ container_database_image }}"
+database_version = "{{ container_database_version }}"
+database_name = "{{ container_database_name }}"
+database_user = "{{ container_database_user }}"
+database_port = {{ container_database_port }}
+{% endif %}cache = "{{ container_cache_choice }}"
+{% if container_cache %}cache_image = "{{ container_cache_image }}"
+cache_version = "{{ container_cache_version }}"
+cache_port = {{ container_cache_port }}
+# The cache container is optional local infrastructure. Renvor's runtime cache capability and
+# adapter arrive in Phase 010.
+cache_wired_into_application = false
+{% endif %}{% endif %}

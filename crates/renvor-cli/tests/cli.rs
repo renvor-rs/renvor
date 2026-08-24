@@ -192,13 +192,7 @@ fn every_json_document_matches_its_recorded_shape() {
             // it stopped being reserved. `--auth` replaces it because the SHAPE being recorded is
             // a reserved-flag refusal, and that shape still has a flag to produce it.
             &[
-                "new",
-                "demo",
-                "--auth",
-                "session",
-                "--yes",
-                "--output",
-                "json",
+                "new", "demo", "--auth", "session", "--yes", "--output", "json",
             ],
             base.path(),
         ),

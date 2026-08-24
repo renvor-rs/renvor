@@ -145,3 +145,64 @@ fn a_manifest_naming_an_unsupported_transport_is_still_refused() {
     assert_eq!(parsed["status"], "failure", "{stdout}");
     assert_eq!(parsed["error"]["code"], "manifest_invalid", "{stdout}");
 }
+
+// ─────────────────────────────────────────── template version 3 → 4 (Phase 006 containers)
+
+/// The captured template-version-3 project.
+///
+/// Produced by running the version-3 generator from a detached worktree at `1a83149`, for the same
+/// reason the Phase 003 fixture was: an imitation proves only that the code matches somebody's
+/// recollection. See its `PROVENANCE.md`.
+fn version_3_project() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("phase-006-v3-project")
+}
+
+#[test]
+fn the_fixture_really_is_a_version_3_manifest() {
+    // The same guard the Phase 003 fixture has. Regenerating this with the current binary would
+    // give it a `[container]` section and stop it testing anything — while still passing.
+    let manifest =
+        std::fs::read_to_string(version_3_project().join("renvor.toml")).expect("readable");
+    assert!(
+        manifest.contains("template_version = \"3\""),
+        "the fixture is not template version 3:\n{manifest}"
+    );
+    assert!(
+        !manifest.contains("[container]"),
+        "the fixture already has a `[container]` section, so it is not a version-3 artifact:\n\
+         {manifest}"
+    );
+    // It DOES record `container = true` in `[project]`, which is exactly the interesting case:
+    // version 3 generated container controls and described them nowhere else.
+    assert!(manifest.contains("container = true"));
+}
+
+#[test]
+fn a_version_3_project_still_validates() {
+    // THE DEFECT THIS EXISTS FOR, one version later. Phase 004 made `transport` required and
+    // invalidated every Phase 003 project. Adding `[container]` in version 4 is the same shape of
+    // change, and `#[serde(default)]` on the section is what stops it being the same mistake.
+    let output = check(&version_3_project());
+    assert!(
+        output.status.success(),
+        "a template-version-3 project was rejected by the current CLI\n--- stdout ---\n{}\n\
+         --- stderr ---\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn a_version_3_project_is_not_silently_upgraded() {
+    // `renvor check` VALIDATES. It must not rewrite the manifest it was pointed at — a validator
+    // that edits its input is a migration tool wearing a validator's name, and the operator who
+    // ran it in CI did not ask for a schema change.
+    let before =
+        std::fs::read_to_string(version_3_project().join("renvor.toml")).expect("readable");
+    let _ = check(&version_3_project());
+    let after = std::fs::read_to_string(version_3_project().join("renvor.toml")).expect("readable");
+    assert_eq!(before, after, "`renvor check` rewrote the manifest");
+}
