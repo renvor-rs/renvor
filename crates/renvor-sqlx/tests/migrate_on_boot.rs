@@ -172,6 +172,19 @@ macro_rules! boot_suite {
                     Some("migrated-on-boot"),
                     "READINESS WAS REPORTED WITHOUT THE MIGRATION HAVING RUN"
                 );
+                // THE POSITIVE CONTROL FOR `table_exists`.
+                //
+                // Every other use of it in this file is negated — "the table is NOT there" — so a
+                // `table_exists` that always answered `false` would satisfy all of them, including
+                // the one guarding "the default policy changed the schema" and the one whose
+                // message reads "THE SCHEMA WAS MODIFIED BEFORE THE CHECKSUM WAS REFUSED". Its
+                // predecessor really did give a wrong answer on MySQL, so this is not a
+                // hypothetical failure mode.
+                assert!(
+                    table_exists(&observer, "rv_boot_marker").await,
+                    "`table_exists` cannot see a table that is definitely there, so every negated \
+                     use of it in this file proves nothing"
+                );
 
                 provider.stop().await.expect("stops");
                 observer.close().await.expect("closes");
@@ -455,9 +468,23 @@ macro_rules! boot_suite {
                 let elapsed = started.elapsed();
 
                 assert!(outcome.is_err(), "boot proceeded while the lock was held");
+                // THE CONFIGURED BOUND, from both sides.
+                //
+                // A ceiling of 30s against a 2s deadline proves the wait is bounded by SOMETHING —
+                // a hardcoded 25s would pass it — while the test's name and FR-021 both claim the
+                // *configured* deadline is honoured. The lower bound is what makes a deadline
+                // collapsed to zero, or a `try_lock`, fail here.
+                //
+                // The upper bound is `lock_timeout + CLEANUP_TIMEOUT` (2 + 5) plus room for the
+                // connect and the pool teardown. Twelve, for the same arithmetic as the run-deadline
+                // test below.
                 assert!(
-                    elapsed < Duration::from_secs(30),
-                    "the lock wait was not bounded: {elapsed:?}"
+                    elapsed >= Duration::from_secs(2),
+                    "boot gave up before its configured 2s lock deadline: {elapsed:?}"
+                );
+                assert!(
+                    elapsed < Duration::from_secs(12),
+                    "the lock wait exceeded lock_timeout + CLEANUP_TIMEOUT: {elapsed:?}"
                 );
                 assert_eq!(provider.readiness(), Readiness::NotReady);
                 assert!(provider.database().is_none());
@@ -521,6 +548,12 @@ macro_rules! boot_suite {
                 // The outcome assertion is the one that catches a deleted deadline: without it the
                 // migration SUCCEEDS after ten seconds, which is inside the bound above.
                 assert!(outcome.is_err(), "an over-long migration booted");
+                // Lower bound for the same reason as the lock test: without it, a deadline mutated
+                // to zero returns `Err` instantly and passes.
+                assert!(
+                    elapsed >= Duration::from_secs(3),
+                    "boot gave up before its configured 3s run deadline: {elapsed:?}"
+                );
                 assert!(
                     elapsed < Duration::from_secs(12),
                     "the run deadline was not honoured: {elapsed:?}"
@@ -695,45 +728,94 @@ macro_rules! boot_suite {
 
             /// A migration failure names no credential, no SQL, and no filesystem path.
             ///
-            /// The DSN carries a canary chosen to be unmistakable. Asserting the **absence** of it
-            /// is stronger than asserting the presence of a redaction marker: a marker can be
-            /// printed alongside the secret it was supposed to replace.
+            /// # The credential under test is the REAL one, and that is the second correction
+            ///
+            /// This poisoned the DSN with a canary and asserted the canary's absence. It could not
+            /// work, in either direction:
+            ///
+            /// - the canary was injected by `replace("devpassword", …)`, and `devpassword` appears
+            ///   nowhere in this repository — it was one developer's local password. For anyone
+            ///   else the replace matched nothing and the assertion was about a string that could
+            ///   not have been there;
+            /// - and had it matched, the DSN would no longer authenticate. `SqlxDatabase::connect`
+            ///   opens the pool eagerly, so boot fails at CONNECT — before `check()`, before any
+            ///   migration — and the remaining assertions would be about a connect error rather
+            ///   than the migration diagnostic the test is named for.
+            ///
+            /// So there is no canary. The DSN stays valid, the failure is a real checksum refusal
+            /// on a real migration, and the secret asserted absent is **the password the operator
+            /// actually supplied** — which is the only credential that could leak here anyway.
             #[tokio::test]
             async fn a_migration_failure_names_no_credential_no_sql_and_no_path() {
                 let Some((dsn, observer, _fixture)) = blank().await else {
                     return;
                 };
 
-                let first =
-                    new_provider(&dsn).with_migrations(migrations("migrations-boot", on_boot()).await);
+                // Pulled out of the DSN so the assertion is about a value that is genuinely in
+                // play. A DSN with no password gives nothing to assert, so the test says so rather
+                // than passing.
+                let raw = dsn.expose();
+                let Some(password) = raw
+                    .split_once("://")
+                    .and_then(|(_, rest)| rest.split_once('@'))
+                    .and_then(|(credentials, _)| credentials.split_once(':'))
+                    .map(|(_, password)| password.to_owned())
+                    .filter(|password| !password.is_empty())
+                else {
+                    println!(
+                        "SKIPPED: the configured DSN carries no password, so there is no \
+                         credential for this test to prove absent"
+                    );
+                    return;
+                };
+
+                let first = new_provider(&dsn)
+                    .with_migrations(migrations("migrations-boot", on_boot()).await);
                 support::initialise(&first).await.expect("first boot");
                 first.stop().await.expect("stops");
 
-                let poisoned = ConnectionString::new(
-                    dsn.expose().replace("devpassword", support::CREDENTIAL_CANARY),
-                );
-                let second = new_provider(&poisoned)
+                // A REAL migration failure: the checksum of an applied migration changed. Boot
+                // gets past connect and past `check()`, so the diagnostic under test is the one
+                // this test is named for.
+                let second = new_provider(&dsn)
                     .with_migrations(migrations("migrations-boot-changed", on_boot()).await);
                 let error = support::initialise(&second)
                     .await
                     .expect_err("a changed checksum must refuse boot");
 
+                // THE CONTROL. Without it this test could be satisfied by a CONNECT failure —
+                // which is the trap the previous version fell into — and a connect error naturally
+                // contains no migration SQL and no migration path, so all three assertions below
+                // would pass while proving nothing about a migration diagnostic.
+                let changed = migrations("migrations-boot-changed", on_boot()).await;
+                let kind = changed
+                    .$run(&observer)
+                    .await
+                    .expect_err("a changed checksum must be refused")
+                    .kind();
+                assert_eq!(
+                    kind,
+                    DatabaseErrorKind::MigrationChecksumMismatch,
+                    "boot did not get as far as the migration, so this test is not exercising a \
+                     migration diagnostic"
+                );
+
                 let rendered = format!("{error} {error:?}");
                 assert!(
-                    !rendered.contains(support::CREDENTIAL_CANARY),
-                    "a credential reached a migration diagnostic"
+                    !rendered.contains(&password),
+                    "the configured password reached a migration diagnostic"
                 );
                 assert!(
                     !rendered.contains("CREATE TABLE") && !rendered.contains("INSERT INTO"),
-                    "migration SQL reached a diagnostic: {rendered}"
+                    "migration SQL reached a diagnostic"
                 );
                 assert!(
                     !rendered.contains("migrations-boot") && !rendered.contains('/'),
-                    "a filesystem path reached a diagnostic: {rendered}"
+                    "a filesystem path reached a diagnostic"
                 );
                 // The provider's own `Debug` is on the same audit path.
                 let printed = format!("{second:?}");
-                assert!(!printed.contains(support::CREDENTIAL_CANARY));
+                assert!(!printed.contains(&password));
                 assert!(!printed.contains('/'));
 
                 observer.close().await.expect("closes");

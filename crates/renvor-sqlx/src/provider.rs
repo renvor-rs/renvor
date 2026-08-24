@@ -112,6 +112,55 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
             .is_some_and(|migrations| migrations.settings().policy().runs_on_boot())
     }
 
+    /// The shortest provider deadline under which this provider can honour its own bounds.
+    ///
+    /// # The kernel's default is shorter than the migration defaults, and that silently wins
+    ///
+    /// `renvor_core`'s `DEFAULT_PROVIDER_DEADLINE` is **30 seconds** and it wraps the whole of
+    /// [`Provider::initialise`]. The migration defaults are a **60-second** lock wait and a
+    /// **300-second** run. With both at their defaults, the kernel drops this future long before
+    /// either migration deadline can elapse, and three things follow:
+    ///
+    /// - [`renvor_database::DatabaseErrorKind::MigrationLockTimeout`] — the diagnostic whose entire
+    ///   purpose is to say *another process is migrating* — can never be produced;
+    /// - neither can [`renvor_database::DatabaseErrorKind::DeadlineExceeded`] from the run bound.
+    ///   `migrate.rs` argues at length that reporting both as one kind sends an operator to the
+    ///   wrong place; under defaults they are reported as a **third** kind that mentions neither
+    ///   migrations nor locks;
+    /// - the cleanup on this crate's returned-error paths does not run at all, because the kernel
+    ///   does not take a returned error — it drops the future. Cleanup then falls to
+    ///   `close_on_drop`, which is bounded but is not the ordered, awaited close those paths were
+    ///   written to perform.
+    ///
+    /// So an application that declares [`renvor_database::MigrationPolicy::OnBoot`] must give the
+    /// kernel a deadline at least this long. The number is returned rather than described, so it is
+    /// not a value an application author has to derive from three constants in two crates:
+    ///
+    /// ```text
+    /// let provider = SqlxProvider::<sqlx::Postgres>::new(...).with_migrations(migrations);
+    /// let application = Application::builder()
+    ///     .with_provider_deadline(provider.required_boot_deadline())?
+    ///     .build()?;
+    /// ```
+    ///
+    /// Returns the kernel's own default when this provider does not migrate on boot, because then
+    /// there is nothing extra to accommodate.
+    #[must_use]
+    pub fn required_boot_deadline(&self) -> std::time::Duration {
+        let Some(migrations) = self.migrations.as_ref() else {
+            return renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE;
+        };
+        if !migrations.settings().policy().runs_on_boot() {
+            return renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE;
+        }
+        // Lock wait, then run, then the bounded close of the migration session. Serial, because
+        // that is the order they occur in.
+        let needed = migrations.settings().lock_timeout()
+            + migrations.settings().run_timeout()
+            + crate::migrate::CLEANUP_TIMEOUT;
+        needed.max(renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE)
+    }
+
     /// The booted database, or `None` before Boot has reached this provider.
     ///
     /// `None` is a fact about the lifecycle phase rather than an error: a caller holding this

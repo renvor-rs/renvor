@@ -49,7 +49,8 @@
 //!
 //! **The cost, stated rather than buried.** `run_direct` is `#[doc(hidden)]` and therefore exempt
 //! from SQLx's semver guarantee: a patch release may change or remove it. Three things bound that
-//! risk — it has exactly one call site in the workspace, `compile_guard` below fails the build the
+//! risk — it has exactly one call site in the workspace, `compile_guard_postgres` and
+//! `compile_guard_mysql` below fail the build the
 //! moment its shape changes, and ADR-0018 records what removal would cost. The full compile probe
 //! is in the Phase 006 evidence.
 //!
@@ -60,7 +61,7 @@
 //! [`DatabaseErrorKind::MigrationDirty`] — but it is **not** rolled back, and the repair is manual.
 //! PostgreSQL is atomic unless a migration opens with `-- no-transaction`.
 
-#[cfg(feature = "db-postgres")]
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use std::future::Future;
 use std::path::Path;
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
@@ -226,7 +227,7 @@ const APPLIED_VERSIONS: &str = "SELECT version FROM _sqlx_migrations ORDER BY ve
 /// fallback path on cancellation *is* `sqlx`'s, so a different bound here would only mean the two
 /// disagree about when a wedged socket stops being waited on.
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
-const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub(crate) const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Fails the build if `Migrator::run_direct` stops being the thing this module depends on.
 ///
@@ -246,12 +247,35 @@ const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
     dead_code,
     reason = "type-checked, never called: it is a compile-time assertion"
 )]
-fn compile_guard(migrator: &Migrator, connection: &mut sqlx::PgConnection) {
-    fn assert_send_future<T: Send + Future<Output = Result<(), sqlx::migrate::MigrateError>>>(
-        _: T,
-    ) {
-    }
-    assert_send_future(migrator.run_direct(None::<i64>, connection, false));
+fn compile_guard_postgres(migrator: &Migrator, connection: &mut sqlx::PgConnection) {
+    assert_send_migration(migrator.run_direct(None::<i64>, connection, false));
+}
+
+/// The same guard for the other driver.
+///
+/// # Both, because a one-driver build must be guarded too
+///
+/// The guard was written once, under `#[cfg(feature = "db-postgres")]`. FR-031 claims each feature
+/// builds alone — and in a `db-mysql`-only build the guard was not compiled at all, so the promise
+/// that it "fails the build the moment its shape changes" held for exactly one of the two
+/// configurations this crate supports.
+#[cfg(feature = "db-mysql")]
+#[expect(
+    dead_code,
+    reason = "type-checked, never called: it is a compile-time assertion"
+)]
+fn compile_guard_mysql(migrator: &Migrator, connection: &mut sqlx::MySqlConnection) {
+    assert_send_migration(migrator.run_direct(None::<i64>, connection, false));
+}
+
+/// Accepts only a `Send` future resolving to `MigrateError`.
+///
+/// Shared so the two guards assert the **same** thing rather than two things that look alike.
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+fn assert_send_migration<T>(_: T)
+where
+    T: Send + Future<Output = Result<(), sqlx::migrate::MigrateError>>,
+{
 }
 
 /// Generates the per-driver runner.

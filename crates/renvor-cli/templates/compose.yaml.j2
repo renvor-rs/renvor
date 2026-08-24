@@ -57,9 +57,20 @@ services:
       MYSQL_PASSWORD: ${RENVOR_DATABASE_PASSWORD:?set RENVOR_DATABASE_PASSWORD in .env — copy .env.example and fill it in}
       # The MySQL image demands a root password, a random one, or an explicit "allow empty".
       # A random one is chosen so that this project needs exactly ONE secret: the application does
-      # not use root, and a second placeholder is a second thing to get wrong. The generated
-      # password is printed once to the container log and is not recoverable afterwards.
+      # not use root, and a second placeholder is a second thing to get wrong.
       MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      # ROOT IS CONFINED TO THE CONTAINER'S OWN LOOPBACK, and this line is load-bearing.
+      #
+      # The image defaults `MYSQL_ROOT_HOST` to `%`, which creates a `root@'%'` superuser that
+      # authenticates over the published port. The generated root password is written to the
+      # container log — and `docker compose logs` re-reads that log, so it is recoverable for the
+      # life of the container, not "printed once". `renvor docker logs` prints it straight to your
+      # terminal, and would print it into a CI artifact.
+      #
+      # With `localhost`, `root@'%'` is never created: the logged password grants nothing over TCP.
+      # Verified — the same credential that succeeded over 127.0.0.1 without this line is refused
+      # with it, while the application user is unaffected.
+      MYSQL_ROOT_HOST: localhost
 {% endif %}    volumes:
       # A NAMED volume, so `renvor docker down` keeps the data. Removing it takes a separate,
       # explicit `docker volume rm` — there is no renvor command that deletes it.

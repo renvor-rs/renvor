@@ -284,9 +284,29 @@ impl DatabaseVersion {
     /// were run against a live server and against a dead endpoint before being written here.
     ///
     /// ```text
-    /// pg_isready -U … -d …          live: 0   dead port: 2
-    /// mysqladmin ping --silent      live: 0   dead port: 1   unreachable host: 1
+    /// pg_isready -h 127.0.0.1 -U … -d …   live: 0   dead port: 2
+    /// mysqladmin -h 127.0.0.1 ping        live: 0   dead port: 1   unreachable host: 1
     /// ```
+    ///
+    /// # `-h 127.0.0.1` is the whole point, and it was missing
+    ///
+    /// Without a host, both tools answer over the **unix socket**. Both official entrypoints run
+    /// their initialisation server with networking disabled — `postgres` with
+    /// `-c listen_addresses=''`, `mysql` with `--skip-networking` — so a socket probe reports
+    /// healthy while the port is closed:
+    ///
+    /// ```text
+    /// pg_isready -U renvor -d demo                 -> accepting connections   exit 0
+    /// pg_isready -h 127.0.0.1 -U renvor -d demo    -> no response             exit 2
+    /// mysqladmin ping --silent                     -> exit 0
+    /// mysqladmin -h 127.0.0.1 ping --silent        -> exit 1
+    /// ```
+    ///
+    /// The application reaches the database over **TCP** on the project network, and
+    /// `depends_on: service_healthy` is what holds it back. A socket-only probe releases it into
+    /// the initialisation window, where `SqlxDatabase::connect` opens the pool during Boot by
+    /// design — so it is a hard boot failure, not a retry. The two directions originally checked
+    /// were *live* and *dead port*; this third state is the one that actually occurs.
     ///
     /// # Neither carries a credential
     ///
@@ -300,6 +320,8 @@ impl DatabaseVersion {
             DatabaseKind::Postgres => vec![
                 "CMD".to_owned(),
                 "pg_isready".to_owned(),
+                "-h".to_owned(),
+                "127.0.0.1".to_owned(),
                 "-U".to_owned(),
                 user.to_owned(),
                 "-d".to_owned(),
@@ -308,6 +330,8 @@ impl DatabaseVersion {
             _ => vec![
                 "CMD".to_owned(),
                 "mysqladmin".to_owned(),
+                "-h".to_owned(),
+                "127.0.0.1".to_owned(),
                 "ping".to_owned(),
                 "--silent".to_owned(),
             ],
@@ -491,8 +515,31 @@ impl CacheEngine {
     /// The first is the form most examples use and it is a health check that can only ever report
     /// healthy. The `grep` makes the exit status depend on the server's actual reply.
     ///
-    /// The password is not here. `valkey-cli` reads `REDISCLI_AUTH` from the environment, so the
-    /// credential stays out of the command text that `docker inspect` and the process list expose.
+    /// The password is not in **this** command: `valkey-cli` reads `REDISCLI_AUTH` from the
+    /// environment.
+    ///
+    /// # What that does and does not buy, stated honestly
+    ///
+    /// It keeps the credential out of the *health check*. It does **not** keep it out of
+    /// `docker inspect`, because the cache service's own `command:` passes `--requirepass` as an
+    /// argv element and `REDISCLI_AUTH` sits in `environment:`. An earlier version of this comment
+    /// claimed the credential "stays out of the command text that `docker inspect` and the process
+    /// list expose", which was true of the health check and false of the two lines above it.
+    ///
+    /// Measured:
+    ///
+    /// ```text
+    /// docker inspect …-cache-1 --format '{{json .Config.Cmd}}'
+    ///   ["valkey-server","--requirepass","<the password>"]
+    /// docker inspect …-cache-1 --format '{{json .Config.Env}}'
+    ///   ["REDISCLI_AUTH=<the password>", …]
+    /// ```
+    ///
+    /// So: a developer who pastes `docker inspect` or `docker compose config` output into a public
+    /// issue discloses their **local development** cache password. That is the actual exposure —
+    /// bounded by the service being loopback-only and by nothing in the project reading it — and it
+    /// is recorded rather than described away. Removing it needs a Compose `secrets:` mount and a
+    /// config file, which is a change to the generated profile's shape rather than a comment.
     #[must_use]
     pub fn healthcheck(self) -> Vec<String> {
         match self {

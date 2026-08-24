@@ -284,6 +284,152 @@ fn postgresql_17_and_18_mount_their_own_data_directories() {
     );
 }
 
+/// Every published port binds loopback, on every selection that publishes one.
+///
+/// # This was claimed and not asserted
+///
+/// The conformance record said "asserted on the rendered file for all five matrix rows". Those
+/// rows came from a shell script that lived in a scratchpad directory — not in the repository, not
+/// reproducible by anyone else, and not in CI. One of its five rows read `all 0 published ports
+/// bound to 127.0.0.1`: an assertion over an empty set.
+///
+/// The template hardcodes the `127.0.0.1:` prefix, so no operator input can change it. The
+/// regression a test *can* catch is a template edit, and until now nothing caught one.
+#[test]
+fn every_published_port_binds_loopback_and_none_binds_every_interface() {
+    let mut checked = 0;
+    for args in [
+        vec!["--database", "postgres", "--container"],
+        vec!["--database", "mysql", "--container"],
+        vec![
+            "--database",
+            "postgres",
+            "--container",
+            "--container-cache",
+            "valkey",
+        ],
+    ] {
+        let compose = generate_ok(&args).read("compose.yaml");
+        let published: Vec<&str> = compose
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("- \"") && line.matches(':').count() >= 2)
+            .collect();
+        // POSITIVE CONTROL. Without it, a template that published nothing would satisfy the loop
+        // below by having nothing to iterate — which is exactly how the shell script's fifth row
+        // "passed".
+        assert!(
+            !published.is_empty(),
+            "no published port was found, so the loop below covers nothing"
+        );
+        for line in &published {
+            assert!(
+                line.contains("\"127.0.0.1:"),
+                "a published port does not bind loopback"
+            );
+        }
+        checked += published.len();
+    }
+    assert!(checked >= 4, "too few ports examined to be meaningful");
+}
+
+/// The security posture of the rendered profile — all of it, not one property.
+///
+/// # Five of six were asserted nowhere
+///
+/// The record claimed `no-new-privileges` on every service, a `read_only` application container,
+/// and the absence of privileged mode, host networking, a Docker socket mount and a broad host
+/// mount. Only the `:latest` check existed in this suite; three of the rest were asserted in no
+/// automated test at all. Every one is true of the template today, and nothing would have caught
+/// their removal.
+#[test]
+fn the_rendered_profile_keeps_its_security_posture() {
+    for args in [
+        vec!["--container"],
+        vec!["--database", "postgres", "--container"],
+        vec![
+            "--database",
+            "mysql",
+            "--container",
+            "--container-cache",
+            "valkey",
+        ],
+    ] {
+        let compose = generate_ok(&args).read("compose.yaml");
+
+        // COUNTED, not merely found, so dropping it from one of three services is a failure.
+        //
+        // Scoped to the `services:` block. A bare two-space-indent count also picks up `internal:`
+        // under `networks:` and each named volume, which made this report "1 of 2" for a profile
+        // with exactly one service.
+        let mut in_services = false;
+        let mut services = 0;
+        for line in compose.lines() {
+            if !line.starts_with(char::is_whitespace) && !line.trim().is_empty() {
+                in_services = line.trim_end() == "services:";
+                continue;
+            }
+            if in_services
+                && line.starts_with("  ")
+                && !line.starts_with("   ")
+                && line.trim_end().ends_with(':')
+            {
+                services += 1;
+            }
+        }
+        let count = compose.matches("no-new-privileges:true").count();
+        assert!(
+            count > 0 && count == services,
+            "no-new-privileges is not on every service (see the `count` and service totals)"
+        );
+        assert!(
+            compose.contains("read_only: true"),
+            "the application container is not read-only"
+        );
+
+        // COMMENTS STRIPPED FIRST. The template explains what it does NOT do — "No `external:
+        // true` and no host networking" — so a naive substring search over the whole file flags
+        // the sentence saying the setting is absent. The assertion is about the settings, not the
+        // prose about them.
+        let settings: String = compose
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for forbidden in [
+            "privileged: true",
+            "network_mode: host",
+            "docker.sock",
+            "/var/run/docker",
+            "external: true",
+            ":latest",
+        ] {
+            assert!(
+                !settings.contains(forbidden),
+                "the profile contains a forbidden setting"
+            );
+        }
+        // A broad host mount. A named volume has no leading `/`, `.` or `~`; a bind mount does.
+        for line in settings.lines().map(str::trim) {
+            if let Some(volume) = line.strip_prefix("- ")
+                && !volume.starts_with('"')
+                && !volume.starts_with("valkey")
+                && !volume.starts_with("--")
+                && !volume.starts_with("${")
+                && !volume.starts_with("internal")
+                && !volume.starts_with(".env")
+            {
+                assert!(
+                    !volume.starts_with('/')
+                        && !volume.starts_with('.')
+                        && !volume.starts_with('~'),
+                    "a host path is bind-mounted into a container"
+                );
+            }
+        }
+    }
+}
+
 // ───────────────────────────────────────────────────────────────────────── the cache
 
 #[test]
@@ -440,6 +586,28 @@ fn no_secret_reaches_any_output_or_any_command_text() {
         assert!(
             !health.contains(forbidden),
             "a credential-shaped argument reached a health-check command"
+        );
+    }
+
+    // AND EVERY OTHER PLACE A SECRET COULD BE WRITTEN DOWN.
+    //
+    // This examined `test:` lines only, while the rationale it cites — "`docker inspect` and the
+    // container's process list expose it" — applies just as much to `command:` and `environment:`.
+    // The cache password IS on the server's command line, and this test did not look there.
+    //
+    // The requirement is not that the word never appears — an env var is *named*
+    // `RENVOR_CACHE_PASSWORD`. It is that no credential is ever written as a LITERAL: every
+    // occurrence must be a `${...}` reference resolved at run time from `.env`.
+    for line in compose.lines() {
+        let lowered = line.to_ascii_lowercase();
+        if line.trim_start().starts_with('#')
+            || (!lowered.contains("password") && !lowered.contains("requirepass"))
+        {
+            continue;
+        }
+        assert!(
+            line.contains("${") || line.trim_end().ends_with("--requirepass"),
+            "a line mentions a credential without a `${{...}}` reference, so it may be a literal"
         );
     }
 

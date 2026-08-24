@@ -188,3 +188,77 @@ suite!(
     support::MYSQL_URL,
     DatabaseKind::MySql
 );
+
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+mod boot_deadline {
+    use std::time::Duration;
+
+    use renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE;
+    use renvor_core::provider::registry::{CapabilityId, ProviderId};
+    use renvor_database::{
+        ConnectionString, DatabaseKind, MigrationPolicy, MigrationSettings, PoolSettings,
+    };
+    use renvor_sqlx::Migrations;
+    use renvor_sqlx::provider::SqlxProvider;
+
+    fn provider_with(settings: MigrationSettings) -> SqlxProvider<sqlx::Postgres> {
+        SqlxProvider::new(
+            ProviderId::new("database"),
+            CapabilityId::new("database"),
+            ConnectionString::new("unused"),
+            PoolSettings::default(),
+            DatabaseKind::Postgres,
+        )
+        .with_migrations(Migrations::from_migrator(
+            sqlx::migrate::Migrator::with_migrations(Vec::new()),
+            settings,
+        ))
+    }
+
+    /// The kernel's default deadline is shorter than the migration defaults, and the provider says
+    /// so rather than leaving an operator to derive it.
+    ///
+    /// With `OnBoot` and default bounds, a 30-second provider deadline drops the future before
+    /// either migration deadline can elapse — so `MigrationLockTimeout` and `DeadlineExceeded`
+    /// become unreachable and the operator sees a kernel timeout that mentions neither migrations
+    /// nor locks. This asserts the number that avoids it.
+    #[cfg(feature = "db-postgres")]
+    #[test]
+    fn migrating_on_boot_needs_more_than_the_kernels_default_deadline() {
+        let on_boot =
+            provider_with(MigrationSettings::default().with_policy(MigrationPolicy::OnBoot));
+        let needed = on_boot.required_boot_deadline();
+        assert!(
+            needed > DEFAULT_PROVIDER_DEADLINE,
+            "the default migration bounds fit inside the kernel default, so this test is stale"
+        );
+        // lock 60 + run 300 + cleanup 5.
+        assert_eq!(needed, Duration::from_secs(365));
+    }
+
+    /// A provider that does NOT migrate needs nothing extra.
+    #[cfg(feature = "db-postgres")]
+    #[test]
+    fn not_migrating_on_boot_needs_only_the_kernels_default() {
+        let never = provider_with(MigrationSettings::default());
+        assert_eq!(never.required_boot_deadline(), DEFAULT_PROVIDER_DEADLINE);
+    }
+
+    /// The answer tracks the configured bounds rather than the defaults.
+    #[cfg(feature = "db-postgres")]
+    #[test]
+    fn the_required_deadline_follows_the_configured_bounds() {
+        let tight = MigrationSettings::default()
+            .with_policy(MigrationPolicy::OnBoot)
+            .with_lock_timeout(Duration::from_secs(2))
+            .expect("bounded")
+            .with_run_timeout(Duration::from_secs(3))
+            .expect("bounded");
+        // 2 + 3 + 5 = 10, which is BELOW the kernel default, so the kernel default governs and the
+        // answer must not drop under it.
+        assert_eq!(
+            provider_with(tight).required_boot_deadline(),
+            DEFAULT_PROVIDER_DEADLINE
+        );
+    }
+}

@@ -71,15 +71,30 @@ impl<DB: sqlx::Database> SqlxDatabase<DB> {
         settings: &PoolSettings,
         kind: DatabaseKind,
     ) -> Result<Self, DatabaseError> {
-        let pool = PoolOptions::<DB>::new()
+        let opening = PoolOptions::<DB>::new()
             .max_connections(settings.max_connections())
             .min_connections(settings.min_connections())
             .acquire_timeout(settings.acquire_timeout())
             .idle_timeout(Some(settings.idle_timeout()))
             .max_lifetime(Some(settings.max_lifetime()))
-            .connect(dsn.expose())
-            .await
-            .map_err(|error| error::classify_error(&error))?;
+            .connect(dsn.expose());
+
+        // THE CONNECT DEADLINE IS APPLIED HERE BECAUSE `sqlx` HAS NOWHERE TO PUT IT.
+        //
+        // `PoolOptions` exposes `acquire_timeout`, `idle_timeout` and `max_lifetime`, and no
+        // separate bound on establishing a connection. So `PoolSettings::connect_timeout` was
+        // accepted, validated against `MAX_TIMEOUT`, and then passed to nothing: an operator who
+        // set two seconds expecting a fast boot failure against an unreachable host waited out
+        // `acquire_timeout` instead. A bound that is accepted and ignored is the silent fallback
+        // principle IV prohibits, and it is worse than not offering the setting.
+        let pool = match tokio::time::timeout(settings.connect_timeout(), opening).await {
+            Ok(Ok(pool)) => pool,
+            Ok(Err(error)) => return Err(error::classify_error(&error)),
+            // `ConnectFailed`, not `DeadlineExceeded`: what happened is that a connection could not
+            // be established inside its bound, and the operator's next step is the host and the
+            // credentials rather than the deadline.
+            Err(_) => return Err(DatabaseError::new(DatabaseErrorKind::ConnectFailed)),
+        };
 
         Ok(Self {
             pool,
@@ -437,14 +452,25 @@ where
         // ability to serve, which principle IV forbids. Acquiring first makes an exhausted pool
         // report as an acquire timeout rather than as an unready database — two different faults
         // with two different corrections.
-        let _guard = self
+        let mut guard = self
             .pool
             .acquire()
             .await
             .map_err(|error| error::classify_error(&error))?;
 
-        sqlx::query(READINESS_PROBE)
-            .execute(&self.pool)
+        // ON THE GUARD, NOT ON THE POOL, and the difference is a deadlock.
+        //
+        // This ran `.execute(&self.pool)` while still holding `guard`, so it acquired a SECOND
+        // connection. `PoolSettings::with_max_connections` accepts `1` — a documented, supported
+        // choice for a sidecar bounding load on a shared database — and with it, the second
+        // acquire waits out the whole `acquire_timeout` and returns `PoolTimedOut`. `check()` maps
+        // that to `NotReady`, so Boot is refused identically on every restart, reporting that the
+        // database is not ready when the database is fine.
+        //
+        // Acquiring first is still deliberate: it makes an exhausted pool report as an acquire
+        // timeout rather than as an unready database. Running the probe on the connection already
+        // held keeps that property and costs one connection instead of two.
+        sqlx::Executor::execute(&mut *guard, READINESS_PROBE)
             .await
             .map_err(|error| {
                 let _ = error::classify_error(&error);

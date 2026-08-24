@@ -18,14 +18,44 @@ pub const POSTGRES_URL: &str = "RENVOR_TEST_POSTGRES_URL";
 /// The variable naming a MySQL instance.
 pub const MYSQL_URL: &str = "RENVOR_TEST_MYSQL_URL";
 
+/// The variable that turns a skip into a failure.
+///
+/// See [`url`]. Set it wherever a database is supposed to be present.
+pub const REQUIRE_DATABASE: &str = "RENVOR_TEST_REQUIRE_DATABASE";
+
 /// Reads a database URL, or explains why the test is being skipped.
 ///
 /// Returns `None` after printing, so the caller returns rather than failing.
-pub fn url(variable: &str) -> Option<ConnectionString> {
-    match std::env::var(variable) {
+///
+/// # A skipped run must not be able to look like a passing one
+///
+/// This printed a line and returned `None`, and that was the whole mechanism. It is not enough,
+/// and the gap was real rather than theoretical: **no automated gate set either URL**, `libtest`
+/// swallows `println!` for a passing test unless `--nocapture` is given, and nothing in this
+/// repository passes it. So every real-database test — the entire migration-on-boot suite
+/// included — reported `ok` in CI having connected to nothing, and a revert of the code they guard
+/// would have gone green.
+///
+/// `xtask` already carries a paragraph about this exact failure mode being found in the relay
+/// test. The remedy there was to make the gate run the thing; the remedy here is to make a
+/// **missing** database a failure wherever one is supposed to exist.
+///
+/// So: when [`REQUIRE_DATABASE`] is set, a missing URL **panics**. CI sets it. A contributor
+/// without a local server does not, and still gets the skip. The difference between "there is no
+/// database here" and "there was supposed to be a database here" is now expressed rather than
+/// assumed.
+pub fn url(name: &str) -> Option<ConnectionString> {
+    match std::env::var(name) {
         Ok(value) if !value.is_empty() => Some(ConnectionString::new(value)),
         _ => {
-            println!("SKIPPED: set {variable} to run this test against a real database");
+            assert!(
+                std::env::var(REQUIRE_DATABASE).is_err(),
+                "{REQUIRE_DATABASE} is set, so a database was expected and `{name}` is empty or \
+                 absent. This is a FAILURE rather than a skip on purpose: a run that silently \
+                 skipped every real-database test would report the same `ok` as one that passed \
+                 them"
+            );
+            println!("SKIPPED: set {name} to run this test against a real database");
             None
         }
     }
@@ -82,9 +112,16 @@ pub async fn initialise<P: renvor_core::provider::registry::Provider>(
 /// connection would violate. The count includes this observer's own connection, so callers compare
 /// against a baseline rather than against zero.
 ///
-/// Returns `0` rather than failing when the view is unreadable: this is used inside polling loops
-/// whose real assertion is the deadline, and a transient read failure there would be reported as a
-/// leak it is not.
+/// # It FAILS rather than returning zero, and that is a correction
+///
+/// This ended in `.unwrap_or(0)`, justified as avoiding a false leak report inside a polling loop.
+/// The cost it did not mention is the one that matters: callers take a `baseline` with this same
+/// helper and then loop until `now <= baseline`. If the view became unreadable — a restricted
+/// `pg_stat_activity`, a missing MySQL `PROCESS` privilege, a driver change — **both** values are
+/// zero, `0 <= 0` breaks on the first iteration, and the leak assertion never runs. The test
+/// reports `ok` having checked nothing, which is exactly the failure it exists to catch.
+///
+/// A test that cannot read the session view should say so loudly.
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 pub async fn sessions<DB>(pool: &sqlx::Pool<DB>) -> i64
 where
@@ -104,7 +141,7 @@ where
     sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
         .fetch_one(pool)
         .await
-        .unwrap_or(0)
+        .expect("the server's session view must be readable for a leak assertion to mean anything")
 }
 
 /// The database the migration-on-boot suite uses, created if it is not there.
