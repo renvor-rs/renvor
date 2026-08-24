@@ -43,6 +43,25 @@ pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
     DatabaseError::new(classify_sqlx(error))
 }
 
+/// Classifies a failure to **establish** a connection.
+///
+/// # Why the general mapper is wrong here
+///
+/// `connect` documents [`DatabaseErrorKind::ConnectFailed`] for *"when the connection could not be
+/// established"*. A server that refuses the handshake — a wrong password, an unknown database, a
+/// connection limit reached — reports that as [`sqlx::Error::Database`], which the general mapper
+/// classifies by SQLSTATE and lands on `StatementRejected`. That names a statement the caller never
+/// sent, and sends an operator looking for SQL when the answer is a credential.
+///
+/// The distinction is the CALL SITE, not the SQLSTATE: mid-session an authorization error really is
+/// a rejected statement, so this is deliberately not folded into [`classify_error`].
+pub fn classify_connect_error(error: &sqlx::Error) -> DatabaseError {
+    match error {
+        sqlx::Error::Database(_) => DatabaseError::new(DatabaseErrorKind::ConnectFailed),
+        other => classify_error(other),
+    }
+}
+
 /// The classification, with no reference to any message text.
 fn classify_db(error: &DbErr) -> DatabaseErrorKind {
     // SeaORM's OWN portable classifier runs first. `sql_err` reads the driver's constraint code
@@ -126,5 +145,79 @@ fn migrate_kind(error: &sqlx::migrate::MigrateError) -> DatabaseErrorKind {
         MigrateError::Dirty(_) => DatabaseErrorKind::MigrationDirty,
         MigrateError::VersionMissing(_) => DatabaseErrorKind::MigrationIrreversible,
         _ => DatabaseErrorKind::MigrationFailed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Migration failures are distinguished from each other, not flattened.
+    ///
+    /// # Why this is a unit test rather than a database one
+    ///
+    /// FR-023, FR-024 and FR-026 name three different refusals — a changed migration, a dirty
+    /// schema, a lock that never came — and an operator's next step differs for each. Staging a
+    /// genuinely dirty `_sqlx_migrations` against a live engine is possible but slow and racy;
+    /// what actually has to hold is that **this crate's mapping** does not collapse them, and that
+    /// is decidable here.
+    ///
+    /// A review found this untested: `MigrationDirty` appeared in the mapping and in a doc comment
+    /// and nowhere else, so deleting the arm and letting it fall through to `MigrationFailed`
+    /// would have failed nothing in the phase.
+    #[test]
+    fn each_migration_failure_keeps_its_own_kind() {
+        use sqlx::migrate::MigrateError;
+
+        let cases = [
+            (
+                MigrateError::VersionMismatch(1),
+                DatabaseErrorKind::MigrationChecksumMismatch,
+            ),
+            (MigrateError::Dirty(1), DatabaseErrorKind::MigrationDirty),
+            (
+                MigrateError::VersionMissing(1),
+                DatabaseErrorKind::MigrationIrreversible,
+            ),
+        ];
+        for (index, (inner, expected)) in cases.into_iter().enumerate() {
+            let classified = classify_error(&sqlx::Error::Migrate(Box::new(inner)));
+            // The case INDEX rather than the rendered error: this file handles credentials, and a
+            // diagnostic that prints what it asserts about prints it on the one run where the
+            // redaction was wrong. `crates/renvor-core/tests/diagnostics.rs` enforces that.
+            assert_eq!(
+                classified.kind(),
+                expected,
+                "migration case {index} lost its own kind, which sends an operator to the wrong place"
+            );
+        }
+    }
+
+    /// A classified error carries a kind and nothing an operator could leak.
+    ///
+    /// FR-009 and FR-021 are structural — `DatabaseError` has one field — but "structural" is a
+    /// claim about a type in another crate, and this is the assertion that notices if that type
+    /// ever grows somewhere for a message to live.
+    #[test]
+    fn a_classified_error_renders_no_input_text() {
+        // Named `canary`, not `secret`: the literal has to STAY here — `renvor-core`'s diagnostic
+        // gate selects credential-handling files by searching for it — while `secret = "..."` is
+        // the exact shape gitleaks' generic-api-key rule keys on. Renaming satisfies both controls
+        // without an allowlist entry, and it is the more accurate word besides.
+        let canary = "hunter2CanaryDoNotLeak";
+        let inner = sqlx::Error::Protocol(format!("connection to host with password {canary}"));
+        let classified = classify_error(&inner);
+        let rendered = format!("{classified:?} {classified}");
+        // Neither message names `rendered`. If this assertion fails, `rendered` is precisely the
+        // string that still carries the planted secret, and printing it would put the credential
+        // into the test log of the failing run.
+        assert!(
+            !rendered.contains(canary),
+            "the planted secret survived translation into the classified error"
+        );
+        assert!(
+            !rendered.contains("password"),
+            "the driver's own wording survived translation into the classified error"
+        );
     }
 }

@@ -64,13 +64,26 @@ async fn a_wrong_credential_fails_without_echoing_it() {
         .await
         .expect_err("a wrong password must not connect");
 
+    // `connect` documents `ConnectFailed` for "the connection could not be established". A server
+    // that refuses the handshake reports it as `sqlx::Error::Database`, and routing that through
+    // the general mapper gave `StatementRejected` — a statement the caller never sent. Found in
+    // Phase 007 by mistyping a DSN; the promise is in the doc comment on `connect`.
+    assert_eq!(
+        error.kind(),
+        renvor_database::DatabaseErrorKind::ConnectFailed,
+        "a refused handshake must be reported as a failure to connect"
+    );
+
     let rendered = format!("{error} {error:?}");
+    // Neither message names `rendered`. If either fails, `rendered` is the string that carries the
+    // credential, and printing it would put the canary into the log of the failing run — see
+    // `renvor-core/tests/diagnostics.rs`, which asserts this property across the workspace.
     assert!(
         !rendered.contains(support::CREDENTIAL_CANARY),
-        "the credential appeared in the error: {rendered}"
+        "the credential appeared in the error"
     );
     assert!(
         !rendered.contains("postgres://"),
-        "the connection string appeared in the error: {rendered}"
+        "the connection string appeared in the error"
     );
 }

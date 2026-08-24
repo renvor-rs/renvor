@@ -89,7 +89,7 @@ impl<DB: sqlx::Database> SqlxDatabase<DB> {
         // principle IV prohibits, and it is worse than not offering the setting.
         let pool = match tokio::time::timeout(settings.connect_timeout(), opening).await {
             Ok(Ok(pool)) => pool,
-            Ok(Err(error)) => return Err(error::classify_error(&error)),
+            Ok(Err(error)) => return Err(error::classify_connect_error(&error)),
             // `ConnectFailed`, not `DeadlineExceeded`: what happened is that a connection could not
             // be established inside its bound, and the operator's next step is the host and the
             // credentials rather than the deadline.

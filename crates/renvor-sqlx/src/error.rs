@@ -34,6 +34,25 @@ pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
     DatabaseError::new(classify(error))
 }
 
+/// Classifies a failure to **establish** a connection.
+///
+/// # Why the general mapper is wrong here
+///
+/// `connect` documents [`DatabaseErrorKind::ConnectFailed`] for *"when the connection could not be
+/// established"*. A server that refuses the handshake — a wrong password, an unknown database, a
+/// connection limit reached — reports that as [`sqlx::Error::Database`], which the general mapper
+/// classifies by SQLSTATE and lands on `StatementRejected`. That names a statement the caller never
+/// sent, and sends an operator looking for SQL when the answer is a credential.
+///
+/// The distinction is the CALL SITE, not the SQLSTATE: mid-session an authorization error really is
+/// a rejected statement, so this is deliberately not folded into [`classify_error`].
+pub fn classify_connect_error(error: &sqlx::Error) -> DatabaseError {
+    match error {
+        sqlx::Error::Database(_) => DatabaseError::new(DatabaseErrorKind::ConnectFailed),
+        other => classify_error(other),
+    }
+}
+
 /// The classification, with no reference to the driver's text.
 fn classify(error: &sqlx::Error) -> DatabaseErrorKind {
     match error {
