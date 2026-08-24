@@ -2041,6 +2041,94 @@ mod tests {
         );
     }
 
+    /// The waiver counts must agree with the waiver table, in every place either is stated.
+    ///
+    /// # This is the third occurrence of the same defect
+    ///
+    /// `governance/waivers.md`'s headline said "6 active waivers" while the table carried seven,
+    /// and was corrected on 2026-08-21. It then said "11" while the table carried thirteen, from
+    /// 2026-08-24 until Phase 007's preconditions audit found it — and that time `GOVERNANCE.md`
+    /// was stale too, so the cross-check that caught the first occurrence did not catch the second.
+    ///
+    /// A count is a claim about a table sitting a few hundred lines below it. Nobody re-reads both.
+    /// So the claim is asserted here instead, in every place it is made: the ledger headline, the
+    /// ledger's level-and-phase summary table, and `GOVERNANCE.md`'s prose and table.
+    #[test]
+    fn the_active_waiver_counts_match_the_waiver_table() {
+        let root = super::workspace_root();
+        let ledger = std::fs::read_to_string(root.join("governance/waivers.md"))
+            .expect("the waiver ledger is readable");
+        let governance = std::fs::read_to_string(root.join("GOVERNANCE.md"))
+            .expect("GOVERNANCE.md is readable");
+
+        /// Every distinct `W-###` that opens a table row in `text`.
+        fn identifiers(text: &str) -> Vec<String> {
+            let mut found: Vec<String> = text
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim_start().strip_prefix('|')?.trim().trim_matches('*');
+                    trimmed
+                        .starts_with("W-")
+                        .then(|| trimmed.chars().take(5).collect::<String>())
+                })
+                .collect();
+            found.sort();
+            found.dedup();
+            found
+        }
+
+        let granted = identifiers(&ledger);
+        // A POSITIVE CONTROL. A parser that silently matched nothing would make every assertion
+        // below compare zero against zero and pass.
+        assert!(
+            granted.len() >= 11,
+            "the waiver-row parser found only {} rows, so it is not reading the table",
+            granted.len()
+        );
+
+        assert!(
+            ledger.contains(&format!("**{} active waivers**", granted.len())),
+            "the ledger headline does not say `{} active waivers`, which is what its table carries",
+            granted.len()
+        );
+
+        // The level-and-phase summary lists every waiver EXCEPT W-001, which is the approval gap
+        // rather than a review-gap exception and is counted separately by the ledger's own rules.
+        for id in &granted {
+            if id == "W-001" {
+                continue;
+            }
+            assert!(
+                ledger.matches(id.as_str()).count() > 1,
+                "{id} appears in the ledger's table but nowhere else in it, so at least one \
+                 summary was left behind"
+            );
+            assert!(
+                governance.contains(id.as_str()),
+                "{id} is granted in the ledger but absent from GOVERNANCE.md's table"
+            );
+        }
+
+        let words = [
+            "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+            "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
+            "Eighteen", "Nineteen", "Twenty",
+        ];
+        let spelled = words
+            .get(granted.len())
+            .unwrap_or_else(|| panic!("no spelling for {}", granted.len()));
+        assert!(
+            governance.contains(&format!("**{spelled}** waivers are currently active")),
+            "GOVERNANCE.md does not say `**{spelled}** waivers are currently active`, which is \
+             what the ledger's table carries"
+        );
+        assert_eq!(
+            identifiers(&governance).len(),
+            granted.len(),
+            "GOVERNANCE.md's waiver table has a different number of rows from the ledger's"
+        );
+    }
+
     // ── published documentation agrees with the contracts it republishes ────────────────────
 
     /// The error-code values of a registry table: rows shaped `| `code` | <exit> | ... |`.
