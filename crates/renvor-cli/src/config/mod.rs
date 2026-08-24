@@ -4,6 +4,7 @@
 //! validated configuration. That is enforced here structurally: [`model::ProjectConfiguration`]
 //! has one constructor, both interfaces call it, and nothing downstream can tell which one ran.
 
+pub mod container;
 pub mod flags;
 pub mod model;
 pub mod prompts;

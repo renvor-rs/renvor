@@ -235,13 +235,47 @@ pub struct NewArgs {
     #[arg(long)]
     pub transport: Option<String>,
 
-    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    // VISIBLE since Phase 006. Persistence has shipped, so these are real choices rather than
+    // placeholders that will be refused. Selecting a database is what makes the generated project
+    // carry persistence sources and migrations.
+    /// Persistence layer. `sqlx` is the only supported value
+    #[arg(long)]
     pub orm: Option<String>,
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    /// Database to generate for. `postgres` or `mysql`
+    #[arg(long)]
     pub database: Option<String>,
+
+    // ── CONTAINER DEVELOPMENT CONTROLS. Only meaningful with `--container`. ─────────────
+    //
+    // Every one is refused as an UNSUPPORTED COMBINATION when `--container` is absent, rather than
+    // ignored. A flag that parses and does nothing is the worst of the three options: the operator
+    // believes they configured something, and the generated tree does not reflect it.
+    //
+    // NONE OF THESE CAN CARRY A PASSWORD, and no flag that could will be added. A credential on a
+    // command line lands in shell history, in `ps` output, and in the CI log of whatever ran it.
+    /// Database image version: `17` or `18` for postgres, `8.4` or `9.7` for mysql
+    #[arg(long, value_name = "VERSION")]
+    pub database_version: Option<String>,
+    /// Database name inside the container profile. Defaults to the project name with `-` as `_`.
+    #[arg(long)]
+    pub database_name: Option<String>,
+    /// Database user inside the container profile. **Never a password.**
+    #[arg(long)]
+    pub database_user: Option<String>,
+    // A STRING, NOT A `u16`, ON PURPOSE. clap would reject `70000` with its own message before any
+    // renvor code ran, so the interactive and non-interactive paths would refuse the same value
+    // with two different diagnoses — and only one of them would carry `details.flag`.
+    /// Published host port for the container database. Bound to 127.0.0.1.
+    #[arg(long, value_name = "1-65535")]
+    pub database_port: Option<String>,
+    /// Local cache container: `none` or `valkey`. Development infrastructure only.
+    #[arg(long, value_name = "none|valkey")]
+    pub container_cache: Option<String>,
+    /// Published host port for the container cache. Bound to 127.0.0.1.
+    #[arg(long, value_name = "1-65535")]
+    pub cache_port: Option<String>,
+
+    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
     /// Reserved for a later phase.
     #[arg(long, hide = true)]
     pub auth: Option<String>,
@@ -264,10 +298,16 @@ pub struct NewArgs {
 /// A table rather than a chain of `if let`s, so that adding a flag to [`NewArgs`] and forgetting to
 /// reject it is visible as a missing row rather than invisible as a missing branch. The test below
 /// asserts the table covers the struct.
-const RESERVED: [(&str, &str); 7] = [
-    ("--orm", "Phase 009 (persistence)"),
-    ("--database", "Phase 009 (persistence)"),
-    ("--auth", "Phase 013 (authentication)"),
+const RESERVED: [(&str, &str); 5] = [
+    // `--orm` and `--database` left this table in Phase 006, which is when persistence shipped.
+    // `--auth` names Phase 009, which is the phase PLAN.md actually assigns authentication — it
+    // said Phase 013 until Phase 006 checked it against the roadmap. A reserved flag that names
+    // the wrong phase is a false statement about when support arrives, which is why the phase
+    // column is read from the roadmap rather than remembered.
+    (
+        "--auth",
+        "Phase 009 (authentication, sessions, tokens, and policies)",
+    ),
     ("--frontend", "Phase 019 (full-stack architecture)"),
     ("--styling", "Phase 019 (full-stack architecture)"),
     ("--render-mode", "Phase 019 (full-stack architecture)"),
@@ -286,9 +326,7 @@ impl NewArgs {
     /// [`Code::ReservedForLaterPhase`] with `details.flag` and `details.phase`, or
     /// [`Code::Usage`] when neither a name nor a path was supplied.
     pub fn into_answers(self) -> Result<Answers, CliError> {
-        let supplied: [(&str, bool); 7] = [
-            ("--orm", self.orm.is_some()),
-            ("--database", self.database.is_some()),
+        let supplied: [(&str, bool); 5] = [
             ("--auth", self.auth.is_some()),
             ("--frontend", self.frontend.is_some()),
             ("--styling", self.styling.is_some()),
@@ -339,6 +377,14 @@ impl NewArgs {
             local_https: self.local_https,
             seed_data: self.seed_data,
             example_domain: self.example_domain,
+            orm: self.orm,
+            database: self.database,
+            database_version: self.database_version,
+            database_name: self.database_name,
+            database_user: self.database_user,
+            database_port: self.database_port,
+            container_cache: self.container_cache,
+            cache_port: self.cache_port,
         })
     }
 }
@@ -350,6 +396,110 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::try_parse_from(args).expect("parses")
+    }
+
+    /// NO FLAG ANYWHERE IN THE SURFACE MAY CARRY A CREDENTIAL.
+    ///
+    /// # This was a comment, and a comment is not a gate
+    ///
+    /// The module above says "no flag that could will be added". An audit tested that claim by
+    /// adding one. A **visible** `--database-password` was caught — but only by the byte-exact
+    /// `--help` snapshot, which fails as "the surface changed" and prints its own regeneration
+    /// command, so the reflex fix is to accept the new snapshot. A flag added with
+    /// `#[arg(long, hide = true)]` — the pattern five reserved flags in this file already use —
+    /// passed **262 tests with zero failures**.
+    ///
+    /// So this walks the whole parsed surface rather than any one command's help text. `hide` does
+    /// not remove an argument from the command, only from the rendering, which is exactly why
+    /// reflecting over `clap::Command` catches what a snapshot cannot.
+    ///
+    /// # Why a name test rather than a type test
+    ///
+    /// There is no type that means "not a credential". What there is, is a naming convention every
+    /// credential-bearing flag in every CLI shares. Refusing the vocabulary is cruder than refusing
+    /// the capability and it is what can actually be enforced here.
+    ///
+    /// A credential on a command line lands in shell history, in `ps` output, and in the CI log of
+    /// whatever ran it. That is why the rule exists; this is why it holds.
+    ///
+    /// # What this cannot see, said so nobody reads it as more than it is
+    ///
+    /// It catches **naming, not behaviour**. An `--env-file` or `--database-init-file` pointing at
+    /// a file that contains a credential passes cleanly, and so would a positional argument if
+    /// `new` ever grew one. The property actually defended is *no credential enters through argv*,
+    /// and a name matcher is a proxy for it — a good proxy, because a credential flag that hides
+    /// its purpose in its name is a deliberate act rather than an oversight.
+    ///
+    /// It also says nothing about what reaches **output**. That is `tests/container.rs`'s
+    /// substring check over stdout and the JSON document, which guards the label rather than the
+    /// value. The two backstop each other: a value cannot leak from argv if argv cannot carry one,
+    /// and a new key name is caught on the way out.
+    #[test]
+    fn no_flag_in_the_whole_surface_can_carry_a_credential() {
+        /// Substrings a credential-bearing flag would almost certainly contain.
+        ///
+        /// `pass` and `pw` are the abbreviations, and they are here because the longer words
+        /// missed them: `--db-pass` and `--db-pw` matched none of the rest. Checked against the
+        /// current surface — 27 long flags — and neither substring collides with any of them. If
+        /// one ever does, the resulting failure is the right place to have that conversation
+        /// rather than a reason to soften the list now.
+        const FORBIDDEN: [&str; 9] = [
+            "password",
+            "passwd",
+            "pass",
+            "pw",
+            "secret",
+            "credential",
+            "token",
+            "apikey",
+            "api-key",
+        ];
+
+        fn walk(command: &clap::Command, path: &str, seen: &mut usize) {
+            for argument in command.get_arguments() {
+                *seen += 1;
+                // `get_long` and the aliases, because an alias is as usable as a name.
+                let names: Vec<String> = argument
+                    .get_long()
+                    .into_iter()
+                    .chain(argument.get_all_aliases().unwrap_or_default())
+                    .map(|name| name.to_ascii_lowercase().replace('_', "-"))
+                    .collect();
+                for name in names {
+                    for forbidden in FORBIDDEN {
+                        assert!(
+                            !name.contains(forbidden),
+                            "`{path} --{name}` looks like it carries a credential. A password on a \
+                             command line reaches shell history, `ps`, and CI logs. Secrets belong \
+                             in the environment or a file the tool never writes"
+                        );
+                    }
+                }
+            }
+            for sub in command.get_subcommands() {
+                let child = format!("{path} {}", sub.get_name());
+                walk(sub, &child, seen);
+            }
+        }
+
+        let command = Cli::command();
+        let mut seen = 0;
+        walk(&command, "renvor", &mut seen);
+
+        // POSITIVE CONTROL. A walk that visited nothing would satisfy every assertion above, which
+        // is the failure mode this whole test exists to prevent in someone else's code.
+        assert!(
+            seen > 20,
+            "the surface walk visited only {seen} argument(s); it is not reading the command tree"
+        );
+        // And a control on the CHECK itself, not just the walk: the matcher must recognise a name
+        // that should be refused.
+        assert!(
+            FORBIDDEN
+                .iter()
+                .any(|forbidden| "database-password".contains(forbidden)),
+            "the forbidden list no longer matches an obviously credential-bearing name"
+        );
     }
 
     #[test]
@@ -366,8 +516,11 @@ mod tests {
             // `--transport` is NO LONGER HERE. Phase 004 ships the transport capability, so
             // reporting "reserved for Phase 004" from inside Phase 004 would be a false statement.
             // Its replacement behaviour is asserted in the two tests below.
-            ("--orm", Some("diesel")),
-            ("--database", Some("postgres")),
+            // `--orm` and `--database` are NO LONGER HERE. Phase 006 ships persistence, so
+            // reporting "reserved for a later phase" from inside Phase 006 would be a false
+            // statement of the same kind `--transport` stopped making in Phase 004. Their
+            // replacement behaviour — an unsupported VALUE refused with the supported ones named,
+            // and `--orm` without `--database` refused as a combination — is asserted below.
             ("--auth", Some("session")),
             ("--frontend", Some("react")),
             ("--styling", Some("tailwind")),
@@ -473,8 +626,15 @@ mod tests {
             // `target` has held this classification since Phase 003 for the identical reason, and
             // amendment 3.0.0 §4 records that as COMPLYING rather than as an exception.
             ("transport", Defaulted("--transport")),
-            ("persistence model", Reserved("--orm")),
-            ("database", Reserved("--database")),
+            // PHASE 006 MOVED BOTH OF THESE ROWS.
+            //
+            // `persistence model` has exactly ONE supported value (`sqlx`), which clause 2 permits
+            // to be defaulted without prompting provided it is RECORDED — and it is, in
+            // `renvor.toml`, whenever a database was chosen.
+            ("persistence model", Defaulted("--orm")),
+            // `database` has TWO supported values, so clause 2 does not apply: it is a real flag
+            // the generator acts on, and the wizard therefore asks about it (FR-046).
+            ("database", Honoured(&["--database"])),
             ("auth starter", Reserved("--auth")),
             ("frontend", Reserved("--frontend")),
             ("compatible render mode", Reserved("--render-mode")),
@@ -517,6 +677,9 @@ mod tests {
                         let mut argv = vec!["renvor", "new", "demo", flag];
                         if *flag == "--local-domain" {
                             argv.push("demo.test");
+                        }
+                        if *flag == "--database" {
+                            argv.push("postgres");
                         }
                         let cli = Cli::try_parse_from(&argv)
                             .unwrap_or_else(|error| panic!("`{flag}` must parse: {error}"));
@@ -583,6 +746,21 @@ mod tests {
                             );
                             assert!(
                                 crate::config::model::Transport::parse("nope").is_err(),
+                                "if every value parsed, `{choice}` would not be single-valued and \
+                                 could not be defaulted without prompting"
+                            );
+                        }
+                        "persistence model" => {
+                            assert!(
+                                args.orm.is_none(),
+                                "`{choice}` must not be required on the command line"
+                            );
+                            assert!(
+                                crate::config::model::Orm::parse("sqlx").is_ok(),
+                                "the defaulted value must be a supported one"
+                            );
+                            assert!(
+                                crate::config::model::Orm::parse("nope").is_err(),
                                 "if every value parsed, `{choice}` would not be single-valued and \
                                  could not be defaulted without prompting"
                             );

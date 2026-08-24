@@ -1,0 +1,53 @@
+# The transport-neutral persistence boundary.
+#
+# This crate names NO database driver. It depends on no SQLx crate, no Axum crate, and no
+# transport type, and `xtask` step 7 asserts that rather than leaving it to review. The adapter
+# that does name a driver is `renvor-sqlx`, and the dependency points from the adapter inward to
+# these ports — never the reverse (constitution principle II).
+#
+# `edition` and `rust-version` are INHERITED, never restated (FR-017).
+
+[package]
+name = "renvor-database"
+description = "Transport-independent persistence ports for the Renvor framework: repository and unit-of-work contracts, explicit transactions, bounded connection settings, an ordered and checksummed migration contract, seed scopes, and keyset pagination primitives. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-database"
+readme = "README.md"
+keywords = ["renvor", "database"]
+categories = ["database"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel, for the error category vocabulary and the readiness contract. This is the ONLY
+# Renvor dependency, and it points inward.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# Contract C-15's cursor, sort plan, and page bounds. `contracts/collection-reads.md` states that
+# "Phase 006 connects that shape to storage" — so this crate REUSES that contract rather than
+# defining a second cursor format, which is exactly what FR-037 forbids.
+#
+# `renvor-validation` is transport-INDEPENDENT: its dependencies are `renvor-error`, `schemars`,
+# `serde`, `serde_json`, and `base64`. Depending on it pulls in no HTTP crate, and `xtask` step 7
+# asserts that rather than trusting this comment.
+renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros", "time"] }
+
+[lints]
+workspace = true

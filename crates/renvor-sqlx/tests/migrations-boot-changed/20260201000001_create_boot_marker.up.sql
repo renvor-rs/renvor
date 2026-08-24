@@ -1,0 +1,1 @@
+CREATE TABLE rv_boot_marker (mark VARCHAR(65) NOT NULL PRIMARY KEY);

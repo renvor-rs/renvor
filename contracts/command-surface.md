@@ -118,14 +118,38 @@ The wizard does **not** ask about it. Constitution v3.0.0 principle VII clause 2
 with **one** supported value to be defaulted without prompting provided it is recorded — the same
 treatment `--target` already receives, which amendment 3.0.0 §4 records as complying.
 
+## `--orm` and `--database`
+
+**No longer reserved.** Phase 006 ships persistence, so both are real choices:
+
+| Flag | Value | Behaviour |
+|---|---|---|
+| `--orm` | `sqlx` | **accepted** — the only supported value |
+| `--orm` | anything else | `unsupported_value`, exit `3`, naming the supported value |
+| `--orm` | omitted, with `--database` given | **defaulted to `sqlx`** and **recorded** |
+| `--orm` | given, `--database` omitted | `unsupported_combination`, exit `3` |
+| `--database` | `postgres`, `mysql` | **accepted** |
+| `--database` | anything else | `unsupported_value`, exit `3`, naming both supported values |
+| `--database` | omitted | **no persistence** — no `src/persistence.rs`, no `migrations/`, and no `[persistence]` table |
+
+The wizard **does** ask about `--database`, because it has two supported values and principle VII
+clause 2 permits defaulting only a single-valued choice. It does not ask about `--orm`, which has
+one supported value and is recorded in `renvor.toml` whenever a database was chosen.
+
+A selected database adds `src/persistence.rs` and a reversible `migrations/0001_create_item` pair,
+and records `database`, `orm`, and `driver_feature` under `[persistence]`. **`Cargo.toml` still
+declares no dependency**: no Renvor crate is published, so naming one would emit a project that
+does not resolve. The driver feature is recorded and documented rather than declared, which is the
+same treatment the framework dependency itself receives.
+
 ## Reserved flags
 
-Flags for later-phase choices — `--orm`, `--database`, `--auth`, `--frontend`,
+Flags for later-phase choices — `--auth`, `--frontend`,
 `--styling`, `--render-mode`, `--desktop` — **parse successfully and then fail validation** with
 exit `3` and a message naming the choice and the phase that will support it.
 
 They are **not** rejected as unknown flags, because "unknown flag" tells a user their command is
-wrong while "not supported until Phase 006" tells them when it will be right. They are **not**
+wrong while "not supported until Phase 009" tells them when it will be right. They are **not**
 silently ignored, because that would let a Phase 003 command line quietly change meaning later.
 
 ## Interaction and terminals

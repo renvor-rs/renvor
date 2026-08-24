@@ -1,0 +1,25 @@
+# What must NOT be sent to the Docker daemon as build context.
+#
+# `.env` is the first line for a reason. A build context is uploaded whole, and every layer of the
+# resulting image can read it. A `COPY . .` with a `.env` present bakes the database password into
+# an image that then gets pushed to a registry — and deleting the file in a later layer does not
+# remove it, because layers are additive.
+.env
+.env.*
+!.env.example
+
+# Build output. Copying it in makes the context enormous and the build slower, and the artefacts
+# are for the host's architecture rather than the image's.
+/target
+
+# Local state that would invalidate the layer cache on every build.
+.git
+.gitignore
+*.swp
+.DS_Store
+
+# The container controls themselves. The image does not need to describe how it is run.
+compose.yaml
+Dockerfile
+.dockerignore
+README.md

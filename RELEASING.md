@@ -152,10 +152,24 @@ Current order:
 | 2 | `renvor-config` | `renvor-core` | The configuration adapter |
 | 2 | `renvor-testkit` | `renvor-core` | The test harness. Independent of `renvor-config`, so position 2 either way |
 | 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
+| 3 | `renvor-database` | `renvor-core`, `renvor-validation` | The persistence **ports**. Names no driver, so it can be depended on by an application that has not chosen one |
 | 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
+| 4 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation` | The direct-SQLx adapter, and the only crate in the workspace that names a database driver. Publishes after the ports it implements |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
 | 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http`, `renvor-error`, `renvor-validation`, `renvor-openapi` | Facade. `renvor-config` is optional-but-default-on; the other four are optional-and-default-**off**, and `transport-rest` enables `renvor-http`, `renvor-error`, `renvor-validation` and `renvor-openapi` together. **All six** must exist first |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
+
+> **Extended 2026-08-24 (Phase 006).** `renvor-database` and `renvor-sqlx` join the table, and they
+> are publishable for a **different reason** from every crate above them. Those are *forced*: the
+> facade reaches them, and ADR-0008 records by experiment that a publishable package cannot depend
+> on an unpublishable one. The facade does **not** depend on either of these — persistence is
+> deliberately outside it, so a project wanting no database resolves no driver. They are publishable
+> because an **application** depends on them directly: `renvor-database` declares the ports a
+> repository is written against, and `renvor-sqlx` is the adapter an application names in its own
+> manifest with exactly one driver feature.
+>
+> The release-dry-run guard caught the omission on the first push of that branch, which is the third
+> time it has done so and the reason the list is pinned rather than derived.
 
 > **Corrected 2026-08-23.** The facade row previously listed three dependencies and said "all
 > three". `renvor` declares **six** workspace dependencies: the `transport-rest` feature enables

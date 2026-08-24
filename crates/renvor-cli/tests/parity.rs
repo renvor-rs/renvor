@@ -75,7 +75,11 @@ fn drive_wizard_accepting_defaults(terminal: &mut Terminal) -> i32 {
     terminal.expect("Generate the example domain module?");
     terminal.enter(); // default yes
     terminal.expect("Generate seed data for it?");
-    terminal.enter(); // default no
+    terminal.enter();
+    // Phase 006. The gate question comes before the value one, so declining persistence needs a
+    // single answer rather than naming a database in order to refuse one.
+    terminal.expect("Generate database persistence?");
+    terminal.enter(); // default no // default no
     terminal.expect("Generate container development controls?");
     terminal.enter(); // default no
     terminal.expect("Record that local HTTPS is wanted?");
@@ -191,8 +195,17 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     answered.enter();
     answered.expect("Generate seed data for it?");
     answered.enter();
+    // Phase 006. The gate question comes before the value one, so declining persistence needs a
+    // single answer rather than naming a database in order to refuse one.
+    answered.expect("Generate database persistence?");
+    answered.enter(); // default no
     answered.expect("Generate container development controls?");
     answered.key("y");
+    // Containers WITHOUT persistence, so the four database questions are skipped entirely and the
+    // cache question is the only one the gate opens. That skipping is the property being driven
+    // here as much as the answer is.
+    answered.expect("Generate a local cache container?");
+    answered.enter(); // default no
     answered.expect("Record that local HTTPS is wanted?");
     answered.enter();
     answered.expect("Create this project?");
@@ -398,6 +411,7 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         "Local development domain",
         "Generate the example domain module?",
         "Generate seed data for it?",
+        "Generate database persistence?",
         "Generate container development controls?",
         "Record that local HTTPS is wanted?",
     ] {

@@ -24,7 +24,8 @@ the two describe different surfaces that change for different reasons — a code
 | `malformed_body` | 400 | The body could not be read as the declared media type |
 | `missing_body` | 400 | A required body was absent |
 | `unsupported_media_type` | 415 | The request's media type is not one the operation accepts |
-| `not_found` | 404 | No route declares the requested path |
+| `not_found` | 404 | No route declares the requested path — a **routing** fact |
+| `resource_not_found` | 404 | The route exists; the resource it identifies does not — a **resource** fact |
 | `method_not_allowed` | 405 | The path is declared, but not for this method. The `Allow` header names the methods it answers |
 | `host_rejected` | 400 | The request host is not served by this application |
 | `origin_rejected` | 400 | The origin is not permitted by the configured policy |

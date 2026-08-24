@@ -1,0 +1,90 @@
+# The direct-SQLx adapter.
+#
+# This is the ONLY crate in the workspace that names a database driver. It depends on
+# `renvor-database` and implements its ports; nothing in `renvor-database` depends on this.
+# Dependencies point inward (constitution principle II), and `xtask` step 7 asserts it.
+
+[package]
+name = "renvor-sqlx"
+description = "Direct SQLx adapter for the Renvor framework, implementing the transport-independent persistence ports against PostgreSQL and MySQL. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-sqlx"
+readme = "README.md"
+keywords = ["renvor", "sqlx"]
+categories = ["database"]
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The lifecycle kernel. `renvor-sqlx` implements `Provider` and `ReadinessContributor` so that a
+# database that cannot be reached fails BOOT rather than the first request, and so that readiness
+# cannot report ready before the database has answered. `renvor-database` deliberately does not
+# depend on this: the ports describe a shape, and only the adapter joins it to a lifecycle.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
+
+# SQLx 0.9.0. `default-features = false` deliberately: the default set contains `any`, which
+# resolves the `AnyDriver` runtime-dispatch layer, and `macros`, which is rejected below.
+#
+# WHY `tls-rustls-ring-native-roots` AND NOT `tls-rustls`
+#
+# `tls-rustls` is an alias for `tls-rustls-ring`, which is an alias for `tls-rustls-ring-webpki`,
+# which resolves `webpki-roots`. That crate is licensed **CDLA-Permissive-2.0**, which is NOT on
+# `deny.toml`'s allow-list — so the obvious feature name FAILS the licence gate. The native-roots
+# variant uses the platform certificate store instead, keeps the same `rustls` and `ring`, and
+# passes. Measured against this repository's own `deny.toml`, not assumed.
+#
+# `deny.toml` sets `all-features = true`, so a feature this crate merely EXPOSES is enabled when
+# the gate runs. That is why no passthrough to a webpki variant exists below, and why `mysql-rsa`
+# is absent: it resolves `rsa`, which carries RUSTSEC-2023-0071 with `patched = []`.
+#
+# `macros` is NOT taken. It enables the checked `query!` macros, which require either a live
+# DATABASE_URL at COMPILE time or a committed `.sqlx` cache. `derive` alone gives `FromRow`.
+sqlx = { version = "0.9.0", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring-native-roots",
+    "derive",
+    "migrate",
+    "json",
+    "uuid",
+    "chrono",
+] }
+
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "time",
+] }
+
+[features]
+# NEITHER database is default. Selecting one is a decision, and a consumer who has not made it
+# resolves no driver at all — the same rule the facade already applies to `transport-rest`.
+default = []
+
+# Exactly two passthroughs, each naming exactly one driver. There is deliberately no `all-databases`
+# convenience feature: `--all-features` already selects both, and a third name for the same thing
+# is a third thing to keep correct.
+db-postgres = ["sqlx/postgres"]
+db-mysql = ["sqlx/mysql"]
+
+[lints]
+workspace = true

@@ -1,0 +1,7 @@
+services:
+  legacy-v3:
+    build: .
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true

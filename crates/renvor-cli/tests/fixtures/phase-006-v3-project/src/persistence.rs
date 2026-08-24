@@ -1,0 +1,103 @@
+//! Persistence for legacy-v3, against postgres via sqlx.
+//!
+//! # Why this module declares SQL and does not execute it
+//!
+//! No Renvor crate is published to crates.io yet, so this project depends on none of them — see
+//! `README.md`. What is here is everything that does **not** need the framework: the statements,
+//! the sort allowlist, and the tests that pin them. When `renvor-sqlx` is published, add the
+//! dependency the README names and pass an `&mut impl Executor` to each function below.
+//!
+//! Generating a module that named `renvor_database` today would produce a project that does not
+//! build, and a generator that emits a project which cannot be built has not generated a project.
+
+/// The database this project was generated for.
+pub const DATABASE: &str = "postgres";
+
+/// Inserts one item.
+///
+/// The value is a **bound parameter**, never interpolated. That is the whole discipline: a
+/// statement is a constant, and everything that varies arrives beside it.
+pub const INSERT_ITEM: &str = "INSERT INTO item (name) VALUES ($1)";
+
+/// Reads one item by id.
+pub const ITEM_BY_ID: &str = "SELECT id, name FROM item WHERE id = $1";
+
+/// The columns this application will sort by, and the only ones.
+///
+/// # Why an allowlist rather than a validated string
+///
+/// A column name cannot be a bound parameter — it is part of the statement, not a value beside it.
+/// So the only safe construction is one where every possible value is written here, in the source,
+/// as a constant. Rejecting "bad" names would still leave the set open-ended; this leaves nothing
+/// to reject, because a caller's field name either maps to one of these or the sort is refused.
+///
+/// `id` is present so that ordering is TOTAL: two rows sharing a `name` would otherwise come back
+/// in an order the database is free to change between calls, and a cursor built on an unstable
+/// order silently skips or repeats rows.
+pub const SORTABLE: [(&str, &str); 2] = [("name", "name"), ("id", "id")];
+
+/// The column a caller-visible field name sorts by, if any.
+///
+/// `None` means the sort is refused. Note what this does NOT do: it never falls back to a default
+/// column. A caller who asked for an unknown sort gets an error, not a different answer quietly
+/// substituted for the one they asked for.
+#[must_use]
+pub fn sort_column(field: &str) -> Option<&'static str> {
+    SORTABLE
+        .iter()
+        .find(|(name, _)| *name == field)
+        .map(|(_, column)| *column)
+}
+
+/// A one-line description of what this module declares.
+///
+/// Called from `main` so that everything above has a caller in the binary as well as in the tests.
+/// A module whose items were only reachable from `#[cfg(test)]` would compile, and `cargo clippy`
+/// would rightly report it as dead — which is a real signal about generated code, so it is
+/// answered rather than silenced with an `allow`.
+#[must_use]
+pub fn summary() -> String {
+    format!(
+        "{DATABASE}: {} statements, {} sortable columns, tiebreaker `{}`",
+        [INSERT_ITEM, ITEM_BY_ID].len(),
+        SORTABLE.len(),
+        sort_column("id").unwrap_or("none")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_statement_binds_its_values() {
+        for statement in [INSERT_ITEM, ITEM_BY_ID] {
+            assert!(
+                statement.contains('$') || statement.contains('?'),
+                "`{statement}` interpolates rather than binds"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_sort_field_maps_to_nothing() {
+        assert_eq!(sort_column("name"), Some("name"));
+        // The property the allowlist exists for: anything not written above has no column, so it
+        // cannot reach a statement.
+        assert_eq!(sort_column("name; DROP TABLE item"), None);
+        assert_eq!(sort_column("password"), None);
+    }
+
+    #[test]
+    fn the_summary_names_the_database_it_was_generated_for() {
+        assert!(summary().contains(DATABASE));
+    }
+
+    #[test]
+    fn ordering_can_always_be_made_total() {
+        assert!(
+            sort_column("id").is_some(),
+            "without a unique tiebreaker, a cursor over equal values is not resumable"
+        );
+    }
+}

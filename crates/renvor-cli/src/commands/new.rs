@@ -44,6 +44,25 @@ struct Context {
     container: bool,
     example_domain: bool,
     seed_data: bool,
+    /// The selected database's name, or empty when the project has no persistence.
+    ///
+    /// A string rather than an `Option` because the template engine's `{% if %}` treats an empty
+    /// string as false, and a two-shaped value would need two template branches to say one thing.
+    database: String,
+    /// The selected persistence layer's name, or empty.
+    orm: String,
+    /// The bound-parameter placeholder the selected database uses, or empty.
+    ///
+    /// Pre-rendered for the reason `modules` gives: `src/persistence.rs` is whitespace-sensitive
+    /// Rust, and a conditional around a `const` is the difference between a clean
+    /// `cargo fmt --check` and the pre-placement verification refusing to write anything. Taken
+    /// from `DatabaseKind::placeholder` so there is one placeholder rule in the workspace.
+    placeholder: String,
+    /// The `renvor-sqlx` feature that resolves the selected driver, or empty.
+    ///
+    /// Pre-computed so the template never joins `"db-"` to a value — a template that builds a
+    /// feature name can build one that does not exist.
+    driver_feature: String,
     generator_version: String,
     template_version: String,
     /// The `mod` block for `src/main.rs`, **pre-rendered**.
@@ -54,7 +73,238 @@ struct Context {
     /// can review. Empty means "no modules"; otherwise it opens and closes with a newline so the
     /// surrounding blank lines come out right in both cases.
     modules: String,
+
+    // ── CONTAINER DEVELOPMENT CONTROLS ──────────────────────────────────────────────────
+    //
+    // Every one of these is PRE-RENDERED here rather than assembled in the template, for the
+    // reason `driver_feature` gives: a template that can build an image reference or a health-check
+    // command can build one that does not exist. The allow-listed filter set has no `join`, no
+    // `default`, and no arithmetic — deliberately — so anything that needs composing composes here,
+    // in Rust, where it is type-checked and unit-testable.
+    //
+    // NONE OF THESE CAN HOLD A SECRET. They come from `ContainerSettings`, which cannot hold one.
+    /// Whether a database service is generated.
+    container_database: bool,
+    /// The Compose service name for the database.
+    container_database_service: String,
+    /// The pinned image reference.
+    container_database_image: String,
+    /// The version an operator typed, echoed back into the manifest.
+    container_database_version: String,
+    /// The database name.
+    container_database_name: String,
+    /// The database user. **Never a password.**
+    container_database_user: String,
+    /// The published host port.
+    container_database_port: String,
+    /// The port the server listens on inside the container.
+    container_database_internal_port: String,
+    /// Where the server keeps its data inside the container. Differs between PostgreSQL 17 and 18.
+    container_database_data_dir: String,
+    /// The health check as an inline YAML list, verified to fail as well as to pass.
+    container_database_healthcheck: String,
+    /// A connection string shaped for the README, with the password as a named placeholder.
+    container_database_dsn_example: String,
+    /// Whether the selected engine is PostgreSQL, so the template picks the right environment keys.
+    container_is_postgres: bool,
+    /// Whether a cache service is generated.
+    container_cache: bool,
+    /// `none`, or the engine name.
+    container_cache_choice: String,
+    /// The engine's display name.
+    container_cache_engine: String,
+    /// The pinned image reference.
+    container_cache_image: String,
+    /// The engine version.
+    container_cache_version: String,
+    /// The engine licence, recorded so a reader need not go and look.
+    container_cache_licence: String,
+    /// The published host port.
+    container_cache_port: String,
+    /// The port inside the container.
+    container_cache_internal_port: String,
+    /// Where the cache keeps its data inside the container.
+    container_cache_data_dir: String,
+    /// The health check as an inline YAML list.
+    container_cache_healthcheck: String,
 }
+
+/// Renders a health-check command as an inline YAML list.
+///
+/// # Quoting is safe here because the values cannot need quoting
+///
+/// The only interpolated values are an [`crate::config::container::Identifier`] user and database,
+/// whose grammar admits ASCII letters, digits, and `_`. Nothing that reaches this function can
+/// contain a quote, a backslash, or a newline, so a plain `"` wrapper is correct rather than
+/// merely usually correct.
+fn yaml_list(parts: &[String]) -> String {
+    let quoted: Vec<String> = parts.iter().map(|part| format!("\"{part}\"")).collect();
+    format!("[{}]", quoted.join(", "))
+}
+
+impl Context {
+    /// Builds the render context from the one validated configuration.
+    ///
+    /// # Why this is a constructor and not two literals
+    ///
+    /// It was two literals — one here and one in the test below — and adding the container fields
+    /// would have meant writing twenty-two of them twice. Two literals that must agree are two
+    /// literals that eventually do not, and the one in the test is precisely the copy whose drift
+    /// nothing would catch.
+    fn build(configuration: &ProjectConfiguration) -> Self {
+        let container = configuration.container_settings();
+        let database = container.and_then(|settings| {
+            settings.database_version.map(|version| {
+                (
+                    version,
+                    settings
+                        .database_name
+                        .as_ref()
+                        .expect("a version implies a name"),
+                    settings
+                        .database_user
+                        .as_ref()
+                        .expect("a version implies a user"),
+                    settings.database_port.expect("a version implies a port"),
+                )
+            })
+        });
+        let cache = container.and_then(|settings| {
+            settings.cache.engine().map(|engine| {
+                (
+                    engine,
+                    settings.cache_port.expect("an engine implies a port"),
+                )
+            })
+        });
+
+        Self {
+            name: configuration.name().to_owned(),
+            target: match configuration.target() {
+                crate::config::model::Target::Api => "api".to_owned(),
+            },
+            local_domain: configuration.local_domain().to_owned(),
+            transport: configuration.transport().as_str().to_owned(),
+            local_https: match configuration.local_https() {
+                crate::config::model::LocalHttps::Off => "off".to_owned(),
+                crate::config::model::LocalHttps::Requested => "requested".to_owned(),
+            },
+            container: configuration.container(),
+            example_domain: configuration.example_domain(),
+            seed_data: configuration.seed_data(),
+            database: configuration
+                .database()
+                .map(|kind| kind.as_str().to_owned())
+                .unwrap_or_default(),
+            orm: configuration
+                .orm()
+                .map(|orm| orm.as_str().to_owned())
+                .unwrap_or_default(),
+            placeholder: configuration
+                .database()
+                .map(|kind| kind.placeholder(1))
+                .unwrap_or_default(),
+            driver_feature: configuration
+                .database()
+                .map(driver_feature)
+                .unwrap_or_default(),
+            generator_version: env!("CARGO_PKG_VERSION").to_owned(),
+            template_version: templates::VERSION.to_owned(),
+            modules: module_block(
+                configuration.example_domain(),
+                configuration.seed_data(),
+                configuration.database().is_some(),
+            ),
+
+            container_database: database.is_some(),
+            container_database_service: if database.is_some() {
+                DATABASE_SERVICE.to_owned()
+            } else {
+                String::new()
+            },
+            container_database_image: database
+                .map(|(version, ..)| version.image().to_owned())
+                .unwrap_or_default(),
+            container_database_version: database
+                .map(|(version, ..)| version.as_str().to_owned())
+                .unwrap_or_default(),
+            container_database_name: database
+                .map(|(_, name, ..)| name.as_str().to_owned())
+                .unwrap_or_default(),
+            container_database_user: database
+                .map(|(_, _, user, _)| user.as_str().to_owned())
+                .unwrap_or_default(),
+            container_database_port: database
+                .map(|(.., port)| port.to_string())
+                .unwrap_or_default(),
+            container_database_internal_port: database
+                .map(|(version, ..)| version.container_port().to_string())
+                .unwrap_or_default(),
+            container_database_data_dir: database
+                .map(|(version, ..)| version.data_dir().to_owned())
+                .unwrap_or_default(),
+            container_database_healthcheck: database
+                .map(|(version, name, user, _)| {
+                    yaml_list(&version.healthcheck(user.as_str(), name.as_str()))
+                })
+                .unwrap_or_default(),
+            container_database_dsn_example: database
+                .map(|(version, name, user, _)| {
+                    // The service name, NOT 127.0.0.1: inside the project network the application
+                    // reaches the database by service name on its internal port, and the published
+                    // host port is irrelevant there. Getting this wrong is the single most common
+                    // Compose mistake, so the README shows the form that works.
+                    format!(
+                        "{}://{}:<RENVOR_DATABASE_PASSWORD>@{DATABASE_SERVICE}:{}/{}",
+                        match version.kind() {
+                            renvor_database::DatabaseKind::Postgres => "postgres",
+                            _ => "mysql",
+                        },
+                        user.as_str(),
+                        version.container_port(),
+                        name.as_str(),
+                    )
+                })
+                .unwrap_or_default(),
+            container_is_postgres: database.is_some_and(|(version, ..)| {
+                version.kind() == renvor_database::DatabaseKind::Postgres
+            }),
+            container_cache: cache.is_some(),
+            container_cache_choice: container
+                .map(|settings| settings.cache.as_str().to_owned())
+                .unwrap_or_default(),
+            container_cache_engine: cache
+                .map(|(engine, _)| engine.as_str().to_owned())
+                .unwrap_or_default(),
+            container_cache_image: cache
+                .map(|(engine, _)| engine.image().to_owned())
+                .unwrap_or_default(),
+            container_cache_version: cache
+                .map(|(engine, _)| engine.version().to_owned())
+                .unwrap_or_default(),
+            container_cache_licence: cache
+                .map(|(engine, _)| engine.licence().to_owned())
+                .unwrap_or_default(),
+            container_cache_port: cache.map(|(_, port)| port.to_string()).unwrap_or_default(),
+            container_cache_internal_port: cache
+                .map(|(engine, _)| engine.container_port().to_string())
+                .unwrap_or_default(),
+            container_cache_data_dir: cache
+                .map(|(engine, _)| engine.data_dir().to_owned())
+                .unwrap_or_default(),
+            container_cache_healthcheck: cache
+                .map(|(engine, _)| yaml_list(&engine.healthcheck()))
+                .unwrap_or_default(),
+        }
+    }
+}
+
+/// The Compose service name for the database.
+///
+/// A constant rather than the project name: `depends_on` and the README's connection string both
+/// have to say the same word, and a service named after the project would put that word in three
+/// places that could disagree.
+const DATABASE_SERVICE: &str = "database";
 
 /// Anything the operator should see on the review screen before agreeing.
 ///
@@ -82,10 +332,13 @@ fn warnings_for(configuration: &ProjectConfiguration) -> Vec<String> {
 }
 
 /// Builds the `mod` block. See [`Context::modules`].
-fn module_block(example_domain: bool, seed_data: bool) -> String {
+fn module_block(example_domain: bool, seed_data: bool, persistence: bool) -> String {
     let mut modules = Vec::new();
     if example_domain {
         modules.push("mod domain;");
+    }
+    if persistence {
+        modules.push("mod persistence;");
     }
     if seed_data {
         modules.push("mod seed;");
@@ -95,6 +348,26 @@ fn module_block(example_domain: bool, seed_data: bool) -> String {
     } else {
         format!("\n{}\n", modules.join("\n"))
     }
+}
+
+/// The `renvor-sqlx` feature that resolves a database's driver.
+///
+/// # Why a match rather than `format!("db-{}", kind.as_str())`
+///
+/// Because the two happen to agree today and there is no reason they must. A generated manifest
+/// naming a feature that does not exist fails at the operator's `cargo build`, long after the
+/// generator reported success — and an interpolation would keep producing plausible names for
+/// every database added later, each of them wrong in the same invisible way.
+fn driver_feature(kind: renvor_database::DatabaseKind) -> String {
+    match kind {
+        renvor_database::DatabaseKind::Postgres => "db-postgres",
+        renvor_database::DatabaseKind::MySql => "db-mysql",
+        // `DatabaseKind` is `#[non_exhaustive]`, so this arm is required by the language rather
+        // than chosen. It is not a silent fallback: `every_database_has_a_driver_feature` below
+        // enumerates `DatabaseKind::ALL` and fails the moment a kind reaches it.
+        _ => "",
+    }
+    .to_owned()
 }
 
 /// How much this run may ask.
@@ -137,24 +410,7 @@ pub fn run(
     };
     let (configuration, destination) = ProjectConfiguration::resolve(answers)?;
 
-    let context = Context {
-        name: configuration.name().to_owned(),
-        target: match configuration.target() {
-            crate::config::model::Target::Api => "api".to_owned(),
-        },
-        local_domain: configuration.local_domain().to_owned(),
-        transport: configuration.transport().as_str().to_owned(),
-        local_https: match configuration.local_https() {
-            crate::config::model::LocalHttps::Off => "off".to_owned(),
-            crate::config::model::LocalHttps::Requested => "requested".to_owned(),
-        },
-        container: configuration.container(),
-        example_domain: configuration.example_domain(),
-        seed_data: configuration.seed_data(),
-        generator_version: env!("CARGO_PKG_VERSION").to_owned(),
-        template_version: templates::VERSION.to_owned(),
-        modules: module_block(configuration.example_domain(), configuration.seed_data()),
-    };
+    let context = Context::build(&configuration);
 
     let renderer = Renderer::new(templates::select(&configuration))?;
 
@@ -279,6 +535,18 @@ pub fn run(
                 "dryRun": true,
                 "destination": destination.display_path().display().to_string(),
                 "templateVersion": templates::VERSION,
+                // THE RESOLVED CONFIGURATION, not the answers.
+                //
+                // A consumer scripting `renvor new` needs to know what the run actually decided —
+                // which database version it defaulted to, which port it published — and reading
+                // that back out of the generated `renvor.toml` means parsing a file to learn what
+                // the command it just ran did.
+                //
+                // It is safe to emit because `ProjectConfiguration` cannot hold a secret: the
+                // exhaustive-destructuring test in `config::model` fails to compile if a field is
+                // added without being classified, and `destination` is `#[serde(skip)]` and
+                // reported separately through the redacting path above.
+                "configuration": &configuration,
                 "manifest": manifest.entries,
             }),
         ));
@@ -310,6 +578,7 @@ pub fn run(
             "dryRun": false,
             "destination": destination.display_path().display().to_string(),
             "templateVersion": templates::VERSION,
+            "configuration": &configuration,
             "manifest": manifest.entries,
         }),
     ))
@@ -320,6 +589,39 @@ mod tests {
     use super::*;
     use crate::output::Format;
     use std::path::PathBuf;
+
+    /// Every database resolves a driver feature — the guard the `_` arm above depends on.
+    #[test]
+    fn every_database_has_a_driver_feature() {
+        for kind in renvor_database::DatabaseKind::ALL {
+            let feature = driver_feature(kind);
+            assert!(
+                !feature.is_empty(),
+                "`{}` reached the catch-all arm, so a generated manifest would name no driver",
+                kind.as_str()
+            );
+            assert!(
+                feature.starts_with("db-"),
+                "`{feature}` is not a `renvor-sqlx` driver feature"
+            );
+        }
+    }
+
+    /// The persistence module is declared when, and only when, a database was chosen.
+    #[test]
+    fn the_persistence_module_follows_the_database_choice() {
+        assert!(!module_block(false, false, false).contains("mod persistence;"));
+        assert!(module_block(false, false, true).contains("mod persistence;"));
+        // Ordering matters for `cargo fmt --check`, which the pre-placement verification runs.
+        let all = module_block(true, true, true);
+        let domain = all.find("mod domain;").expect("domain");
+        let persistence = all.find("mod persistence;").expect("persistence");
+        let seed = all.find("mod seed;").expect("seed");
+        assert!(
+            domain < persistence && persistence < seed,
+            "modules must stay ordered: {all:?}"
+        );
+    }
 
     fn answers(destination: PathBuf) -> Answers {
         Answers {
@@ -332,6 +634,14 @@ mod tests {
             local_https: false,
             seed_data: false,
             example_domain: false,
+            orm: None,
+            database: None,
+            database_version: None,
+            database_name: None,
+            database_user: None,
+            database_port: None,
+            container_cache: None,
+            cache_port: None,
         }
     }
 
@@ -353,9 +663,12 @@ mod tests {
         // The exact strings, because one extra newline here is a `cargo fmt --check` failure in
         // every generated project — which is the acceptance criterion "the generated skeleton
         // formats". Found by running rustfmt over the output, not by inspection.
-        assert_eq!(module_block(false, false), "");
-        assert_eq!(module_block(true, false), "\nmod domain;\n");
-        assert_eq!(module_block(true, true), "\nmod domain;\nmod seed;\n");
+        assert_eq!(module_block(false, false, false), "");
+        assert_eq!(module_block(true, false, false), "\nmod domain;\n");
+        assert_eq!(
+            module_block(true, true, false),
+            "\nmod domain;\nmod seed;\n"
+        );
     }
 
     #[test]
@@ -412,19 +725,7 @@ mod tests {
     fn manifest_of(answers: Answers) -> Vec<String> {
         let (configuration, destination) =
             ProjectConfiguration::resolve(answers).expect("resolves");
-        let context = Context {
-            name: configuration.name().to_owned(),
-            target: "api".to_owned(),
-            local_domain: configuration.local_domain().to_owned(),
-            transport: configuration.transport().as_str().to_owned(),
-            local_https: "off".to_owned(),
-            container: configuration.container(),
-            example_domain: configuration.example_domain(),
-            seed_data: configuration.seed_data(),
-            generator_version: "0".to_owned(),
-            template_version: templates::VERSION.to_owned(),
-            modules: module_block(configuration.example_domain(), configuration.seed_data()),
-        };
+        let context = Context::build(&configuration);
         let renderer = Renderer::new(templates::select(&configuration)).expect("builds");
         let staging = Staging::create(&destination).expect("stages");
         renderer

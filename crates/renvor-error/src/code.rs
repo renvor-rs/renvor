@@ -62,7 +62,17 @@ pub enum ApiErrorCode {
     /// A required request body was absent.
     MissingBody,
     /// No route declares the requested path.
+    ///
+    /// A **routing** fact: the application serves no such path at all. Distinct from
+    /// [`ApiErrorCode::ResourceNotFound`], which means the route exists and the row does not.
     NotFound,
+    /// The route exists, but the resource it identifies does not.
+    ///
+    /// Separated from [`ApiErrorCode::NotFound`] because the two send a caller in opposite
+    /// directions: one means the URL is wrong, the other means the URL is right and the thing is
+    /// gone. Collapsing them tells a client to fix a path that was never the problem — and it
+    /// makes a persistence-layer miss indistinguishable from a routing defect in a dashboard.
+    ResourceNotFound,
     /// The path is declared, but not for this method.
     MethodNotAllowed,
     /// The request host is not served by this application.
@@ -88,12 +98,13 @@ impl ApiErrorCode {
     ///
     /// The length assertion below moves with this array, so an edit that adds a variant without
     /// updating the contract still fails loudly. This mirrors `renvor-core`'s `ErrorCategory::ALL`.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::ValidationFailed,
         Self::MalformedBody,
         Self::UnsupportedMediaType,
         Self::MissingBody,
         Self::NotFound,
+        Self::ResourceNotFound,
         Self::MethodNotAllowed,
         Self::HostRejected,
         Self::OriginRejected,
@@ -116,6 +127,7 @@ impl ApiErrorCode {
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::MissingBody => "missing_body",
             Self::NotFound => "not_found",
+            Self::ResourceNotFound => "resource_not_found",
             Self::MethodNotAllowed => "method_not_allowed",
             Self::HostRejected => "host_rejected",
             Self::OriginRejected => "origin_rejected",
@@ -140,6 +152,7 @@ impl ApiErrorCode {
             Self::UnsupportedMediaType => "Unsupported media type",
             Self::MissingBody => "Missing request body",
             Self::NotFound => "Not found",
+            Self::ResourceNotFound => "Resource not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::HostRejected => "Host rejected",
             Self::OriginRejected => "Origin rejected",
@@ -176,6 +189,7 @@ impl ApiErrorCode {
             }
             Self::MissingBody => "This operation requires a request body.",
             Self::NotFound => "No route is declared for this path.",
+            Self::ResourceNotFound => "The requested resource does not exist.",
             Self::MethodNotAllowed => {
                 "This path is declared, but not for the requested method. \
                  See the Allow header for the methods it answers."
@@ -214,6 +228,7 @@ impl ApiErrorCode {
                 | Self::UnsupportedMediaType
                 | Self::MissingBody
                 | Self::NotFound
+                | Self::ResourceNotFound
                 | Self::MethodNotAllowed
                 | Self::PayloadTooLarge
         )

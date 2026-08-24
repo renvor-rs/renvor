@@ -104,6 +104,27 @@ const ARCHIVE_CRATES: [&str; 11] = [
     "sevenz-rust",
 ];
 
+/// Database driver crates.
+///
+/// # The CLI must not resolve one, and nothing asserted it
+///
+/// `renvor-cli` gained a dependency on `renvor-database` in Phase 006 — the **ports**, which name
+/// no driver. It must never gain one on `renvor-sqlx`, which names two. FR-063's claim that
+/// generation cannot reach a database rests on that, and the claim was checked by hand rather than
+/// by this file: neither list below mentioned `sqlx`, so an accidental `renvor-sqlx` edge would
+/// have left this suite green.
+///
+/// `renvor-database` is deliberately absent from this list. It is a dependency **on purpose** —
+/// the CLI parses `--database` into `DatabaseKind` so there is one list of database names in the
+/// workspace rather than two that agree by coincidence.
+const DRIVER_CRATES: [&str; 5] = [
+    "sqlx",
+    "sqlx-core",
+    "sqlx-postgres",
+    "sqlx-mysql",
+    "renvor-sqlx",
+];
+
 /// HTTP and network client crates.
 ///
 /// This is the structural half of FR-043. The behavioural half — running with every proxy pointed
@@ -120,6 +141,35 @@ const NETWORK_CRATES: [&str; 9] = [
     "http-client",
     "native-tls",
 ];
+
+/// The generator resolves no database driver.
+///
+/// # Why this matters beyond tidiness
+///
+/// A generated project selects exactly one driver, and the generator selects none. If `renvor-cli`
+/// took an edge to `renvor-sqlx`, every `renvor new` would carry both drivers' compile cost and
+/// the feature-isolation claim would stop being about the framework and start being about the
+/// framework-minus-the-CLI.
+#[test]
+fn the_executable_reaches_no_database_driver() {
+    let reachable = closure("renvor-cli");
+    let found: Vec<&str> = DRIVER_CRATES
+        .iter()
+        .copied()
+        .filter(|name| reachable.contains(*name))
+        .collect();
+    assert!(
+        found.is_empty(),
+        "the generator resolves a database driver: {found:?}"
+    );
+    // THE POSITIVE CONTROL, and it is the interesting half. `renvor-database` IS a dependency, so
+    // finding it proves the closure walk can see a Renvor crate at all — without it, an empty
+    // `found` would be satisfied by a walk that returned nothing.
+    assert!(
+        reachable.contains("renvor-database"),
+        "the closure walk cannot see `renvor-database`, so the absence above proves nothing"
+    );
+}
 
 #[test]
 fn the_executable_reaches_no_archive_crate() {

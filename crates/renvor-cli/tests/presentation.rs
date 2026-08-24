@@ -52,9 +52,11 @@ const RECORDED: &[(&str, &[&str], &str)] = &[
         include_str!("json/usage-missing-name.json"),
     ),
     (
-        "reserved-database.json",
-        &["--output", "json", "new", "demo", "--database", "postgres"],
-        include_str!("json/reserved-database.json"),
+        // `--auth` rather than `--database`: Phase 006 shipped persistence, so `--database` no
+        // longer produces a reserved-flag document. The SHAPE this fixture freezes is unchanged.
+        "reserved-auth.json",
+        &["--output", "json", "new", "demo", "--auth", "session"],
+        include_str!("json/reserved-auth.json"),
     ),
     // PHASE 004 REPLACED THIS ROW.
     //
@@ -63,7 +65,7 @@ const RECORDED: &[(&str, &[&str], &str)] = &[
     // Deleting the row would have lost the coverage, so it is repointed at the shape that took its
     // place — an unsupported VALUE, which is a different code with a different meaning.
     //
-    // The `reserved_for_later_phase` shape itself is still covered, by `reserved-database.json`.
+    // The `reserved_for_later_phase` shape itself is still covered, by `reserved-auth.json`.
     (
         "unsupported-transport.json",
         &["--output", "json", "new", "demo", "--transport", "grpc"],
@@ -280,7 +282,7 @@ fn a_human_failure_puts_nothing_at_all_on_stdout() {
     let root = workspace();
     for arguments in [
         vec!["new"],
-        vec!["new", "demo", "--database", "postgres"],
+        vec!["new", "demo", "--auth", "session"],
         vec!["new", "demo", "--output=yaml"],
         vec!["docker", "up"],
         vec!["check", "."],

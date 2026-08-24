@@ -35,6 +35,10 @@ name = "renvor"
 path = "src/main.rs"
 
 [dependencies]
+# The database VOCABULARY only — names and dialect helpers, no driver and no pool. The CLI needs
+# to parse `--database` into the same type the runtime uses, so that a generated `renvor.toml`
+# cannot name a database the runtime will not recognise.
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-config = { path = "../renvor-config", version = "0.0.0" }
 

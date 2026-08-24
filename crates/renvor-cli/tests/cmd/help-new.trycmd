@@ -57,6 +57,30 @@ Options:
       --transport <TRANSPORT>
           Delivery transport. `rest` is the only supported value
 
+      --orm <ORM>
+          Persistence layer. `sqlx` is the only supported value
+
+      --database <DATABASE>
+          Database to generate for. `postgres` or `mysql`
+
+      --database-version <VERSION>
+          Database image version: `17` or `18` for postgres, `8.4` or `9.7` for mysql
+
+      --database-name <DATABASE_NAME>
+          Database name inside the container profile. Defaults to the project name with `-` as `_`
+
+      --database-user <DATABASE_USER>
+          Database user inside the container profile. **Never a password.**
+
+      --database-port <1-65535>
+          Published host port for the container database. Bound to 127.0.0.1
+
+      --container-cache <none|valkey>
+          Local cache container: `none` or `valkey`. Development infrastructure only
+
+      --cache-port <1-65535>
+          Published host port for the container cache. Bound to 127.0.0.1
+
   -h, --help
           Print help (see a summary with '-h')
 

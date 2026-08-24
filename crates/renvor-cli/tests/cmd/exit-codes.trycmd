@@ -18,8 +18,13 @@ For more information, try '--help'.
 A reserved flag is a VALIDATION error, exit 3 — deliberately not exit 2, because the command is
 well formed and the request is refused.
 
+This example used `--database` until Phase 006, which is when persistence shipped and `--database`
+stopped being reserved. `--auth` replaces it here rather than the case being deleted: the contract
+being demonstrated is the exit code for a reserved flag, and that contract still has flags to
+demonstrate it with.
+
 ```
-$ renvor new demo --database postgres --output json
+$ renvor new demo --auth session --output json
 ? 3
 {
   "schemaVersion": 2,
@@ -29,7 +34,7 @@ $ renvor new demo --database postgres --output json
     "code": "reserved_for_later_phase",
     "message": "[..]",
     "details": {
-      "flag": "--database",
+      "flag": "--auth",
       "phase": "[..]"
     }
   }

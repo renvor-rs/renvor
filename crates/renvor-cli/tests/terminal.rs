@@ -547,7 +547,10 @@ fn a_confirmation_submits_on_the_keypress_and_n_declines() {
     terminal.expect("Generate the example domain module?");
     terminal.key("n");
     // If `n` had not submitted, this next question would never be asked and the expect would time
-    // out — which is the assertion.
+    // out — which is the assertion. Declining the example domain also skips the seed-data
+    // question, so the persistence gate is what comes next.
+    terminal.expect("Generate database persistence?");
+    terminal.key("n");
     terminal.expect("Generate container development controls?");
     terminal.key("n");
     terminal.expect("Record that local HTTPS is wanted?");
@@ -607,6 +610,7 @@ fn the_cursor_is_restored_after_a_successful_run() {
         "Local development domain",
         "Generate the example domain module?",
         "Generate seed data for it?",
+        "Generate database persistence?",
         "Generate container development controls?",
         "Record that local HTTPS is wanted?",
     ] {
@@ -649,7 +653,11 @@ fn the_cursor_is_restored_after_a_failure() {
     terminal.enter();
     terminal.expect("Local development domain");
     std::fs::remove_dir_all(&parent).expect("the parent is removed");
-    for _ in 0..5 {
+    // SIX since Phase 006, five before it: the wizard gained the persistence gate. A blind count
+    // is used here rather than waiting on each prompt by name because the destination's parent has
+    // just been removed, so the run is racing toward a failure and the later prompts may not all
+    // be drawn — what matters is only that the wizard is not left waiting for input.
+    for _ in 0..6 {
         terminal.enter();
     }
     let code = terminal.wait();
@@ -721,6 +729,22 @@ fn the_verification_step_names_each_check_as_it_runs() {
             "--seed-data",
             "--container",
             "--local-https",
+            // Phase 006: without these the wizard still has questions to ask, and a test that
+            // answers nothing would wait for them forever. `--container` opens four database
+            // questions and the cache gate, so every one has to be supplied for the run to be
+            // genuinely non-interactive.
+            "--database",
+            "postgres",
+            "--database-version",
+            "18",
+            "--database-name",
+            "demo",
+            "--database-user",
+            "renvor",
+            "--database-port",
+            "55432",
+            "--container-cache",
+            "none",
         ],
         root.path(),
         &[("TERM", "xterm-256color")],
@@ -780,6 +804,21 @@ fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
                 "--seed-data",
                 "--container",
                 "--local-https",
+                // Phase 006: without these the wizard still has questions to ask, and a test
+                // that answers nothing would wait for them forever. `--container` opens four
+                // database questions and the cache gate.
+                "--database",
+                "postgres",
+                "--database-version",
+                "18",
+                "--database-name",
+                "demo",
+                "--database-user",
+                "renvor",
+                "--database-port",
+                "55432",
+                "--container-cache",
+                "none",
             ],
             root.path(),
             &[("TERM", term)],
@@ -814,6 +853,22 @@ fn only_a_redrawable_terminal_gets_the_live_indicator() {
             "--seed-data",
             "--container",
             "--local-https",
+            // Phase 006: without these the wizard still has questions to ask, and a test that
+            // answers nothing would wait for them forever. `--container` opens four database
+            // questions and the cache gate, so every one has to be supplied for the run to be
+            // genuinely non-interactive.
+            "--database",
+            "postgres",
+            "--database-version",
+            "18",
+            "--database-name",
+            "demo",
+            "--database-user",
+            "renvor",
+            "--database-port",
+            "55432",
+            "--container-cache",
+            "none",
         ],
         root.path(),
         &[("TERM", "dumb")],
@@ -882,6 +937,7 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         "Local development domain",
         "Generate the example domain module?",
         "Generate seed data for it?",
+        "Generate database persistence?",
         "Generate container development controls?",
         "Record that local HTTPS is wanted?",
     ] {

@@ -1,0 +1,19 @@
+[package]
+name = "legacy-v3"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# PERSISTENCE IS SELECTED, AND THIS SECTION IS STILL EMPTY. That is deliberate.
+#
+# No Renvor crate is published to crates.io yet, so naming one here would produce a project that
+# does not resolve and therefore does not build. `src/persistence.rs` and `migrations/` are
+# generated and complete; only the dependency waits. When the crates are published, add:
+#
+#   renvor       = { version = "<published>", features = ["transport-rest"] }
+#   renvor-sqlx  = { version = "<published>", features = ["db-postgres"] }
+#   tokio        = { version = "1", features = ["rt-multi-thread", "macros"] }
+#
+# `db-postgres` resolves the postgres driver and ONLY that driver — selecting one
+# database does not build the other.

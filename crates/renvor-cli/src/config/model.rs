@@ -12,8 +12,13 @@
 
 use std::path::PathBuf;
 
+use renvor_database::DatabaseKind;
 use serde::Serialize;
 
+use crate::config::container;
+use crate::config::container::{
+    CacheChoice, ContainerSettings, DEFAULT_DATABASE_USER, DatabaseVersion, Identifier,
+};
 use crate::exit::{CliError, Code};
 use crate::paths::{Destination, validate_project_name};
 
@@ -104,6 +109,78 @@ impl Transport {
     }
 }
 
+/// The persistence layer a generated project is built around.
+///
+/// # One value, and why it is still an enum
+///
+/// Phase 006 ships direct SQLx. A later phase adds an ORM, and when it does, this enum gains a
+/// variant rather than a `bool` gaining a meaning. The parse below refuses anything else by name,
+/// so a project generated against a future value fails at generation rather than at build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Orm {
+    /// Direct SQLx. Queries are written by hand; no object mapper is generated.
+    Sqlx,
+}
+
+impl Orm {
+    /// The recorded spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Sqlx => "sqlx",
+        }
+    }
+
+    /// Parses an `--orm` value.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] for any value other than `sqlx`.
+    pub fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "sqlx" => Ok(Self::Sqlx),
+            other => Err(CliError::new(
+                Code::UnsupportedValue,
+                format!(
+                    "`{other}` is not a supported persistence layer; the supported value is `sqlx`"
+                ),
+            )
+            .with("flag", "--orm")
+            .with("value", other.to_owned())
+            .with("supported", "sqlx")),
+        }
+    }
+}
+
+/// Parses a `--database` value into the runtime's own vocabulary.
+///
+/// # Why this returns `renvor_database::DatabaseKind` rather than a CLI enum
+///
+/// So there is exactly one list of database names in the workspace. Two enums that agree by
+/// coincidence drift the first time one of them gains a member, and the drift would show up as a
+/// generated project naming a database the runtime cannot parse.
+///
+/// # Errors
+///
+/// [`Code::UnsupportedValue`], naming both supported values, for anything else.
+pub fn parse_database(value: &str) -> Result<DatabaseKind, CliError> {
+    DatabaseKind::parse(value).ok_or_else(|| {
+        let supported = DatabaseKind::ALL
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        CliError::new(
+            Code::UnsupportedValue,
+            format!("`{value}` is not a supported database; the supported values are {supported}"),
+        )
+        .with("flag", "--database")
+        .with("value", value.to_owned())
+        .with("supported", supported)
+    })
+}
+
 /// Whether local HTTPS was asked for.
 ///
 /// **Neither value causes a certificate to be issued or a trust store to be touched in this
@@ -143,6 +220,13 @@ pub struct ProjectConfiguration {
     local_https: LocalHttps,
     seed_data: bool,
     example_domain: bool,
+    /// `None` when the project was generated without persistence.
+    orm: Option<Orm>,
+    /// `None` when the project was generated without persistence.
+    #[serde(serialize_with = "serialize_database")]
+    database: Option<DatabaseKind>,
+    /// `None` when container controls were not selected.
+    container_settings: Option<ContainerSettings>,
 }
 
 /// The unvalidated answers, from either interface.
@@ -170,6 +254,184 @@ pub struct Answers {
     pub seed_data: bool,
     /// Generate the example domain module.
     pub example_domain: bool,
+    /// `--orm` as typed, so an unsupported value can be reported verbatim.
+    pub orm: Option<String>,
+    /// `--database` as typed. `None` means "generate without persistence".
+    pub database: Option<String>,
+    /// `--database-version` as typed.
+    pub database_version: Option<String>,
+    /// `--database-name` as typed.
+    pub database_name: Option<String>,
+    /// `--database-user` as typed. **Never a password**; see [`ContainerSettings`].
+    pub database_user: Option<String>,
+    /// `--database-port` as typed, so `70000` is refused by renvor with renvor's diagnosis.
+    pub database_port: Option<String>,
+    /// `--container-cache` as typed.
+    pub container_cache: Option<String>,
+    /// `--cache-port` as typed.
+    pub cache_port: Option<String>,
+}
+
+/// Resolves the container development controls, or refuses an incoherent combination.
+///
+/// # Every refusal here is a COMBINATION, not a value
+///
+/// The values themselves are checked by [`crate::config::container`]. What this adds is the four
+/// ways a set of individually-valid answers can still not describe a project:
+///
+/// 1. a container database field without `--container` — there is no Compose file to put it in;
+/// 2. a container database field without `--database` — there is no database service to configure;
+/// 3. `--cache-port` with no cache — a port for a service that will not exist;
+/// 4. `--container-cache` without `--container` — same as (1).
+///
+/// Each is refused rather than ignored. A flag that parses and does nothing leaves the operator
+/// believing they configured something the generated tree does not reflect, and that belief
+/// survives until whatever they configured turns out to matter.
+fn resolve_container(
+    answers: &Answers,
+    container: bool,
+    database: Option<DatabaseKind>,
+    project_name: &str,
+) -> Result<Option<ContainerSettings>, CliError> {
+    // Listed rather than tested one at a time, so a flag added to `Answers` and forgotten here is
+    // visible as a missing row rather than invisible as a missing branch — the same construction
+    // `RESERVED` uses for the reserved flags.
+    let database_fields: [(&str, bool); 4] = [
+        ("--database-version", answers.database_version.is_some()),
+        ("--database-name", answers.database_name.is_some()),
+        ("--database-user", answers.database_user.is_some()),
+        ("--database-port", answers.database_port.is_some()),
+    ];
+    let cache_fields: [(&str, bool); 2] = [
+        ("--container-cache", answers.container_cache.is_some()),
+        ("--cache-port", answers.cache_port.is_some()),
+    ];
+
+    if !container {
+        for (flag, present) in database_fields.iter().chain(cache_fields.iter()) {
+            if *present {
+                return Err(CliError::new(
+                    Code::UnsupportedCombination,
+                    format!(
+                        "`{flag}` needs `--container`: it configures the generated `compose.yaml`, \
+                         and without `--container` there is no `compose.yaml` to configure"
+                    ),
+                )
+                .with("flags", format!("{flag}, --container")));
+            }
+        }
+        return Ok(None);
+    }
+
+    // ── the database service ────────────────────────────────────────────────────────────
+    let database_settings = match database {
+        None => {
+            for (flag, present) in database_fields {
+                if present {
+                    return Err(CliError::new(
+                        Code::UnsupportedCombination,
+                        format!(
+                            "`{flag}` needs `--database`: it configures the database service, and \
+                             a project generated without persistence has no database service"
+                        ),
+                    )
+                    .with("flags", format!("{flag}, --database")));
+                }
+            }
+            None
+        }
+        Some(kind) => {
+            let version = match answers.database_version.as_deref() {
+                Some(value) => DatabaseVersion::parse(kind, value)?,
+                // DEFAULTED AND RECORDED, not silently chosen: the manifest writes the version out,
+                // so what ran is readable without knowing what the default was on the day.
+                None => DatabaseVersion::newest_for(kind),
+            };
+            let name = match answers.database_name.as_deref() {
+                Some(value) => Identifier::database_name(value)?,
+                None => Identifier::derive_database_name(project_name)?,
+            };
+            let user = match answers.database_user.as_deref() {
+                Some(value) => Identifier::database_user(value)?,
+                None => Identifier::database_user(DEFAULT_DATABASE_USER)?,
+            };
+            let port = match answers.database_port.as_deref() {
+                Some(value) => container::parse_port(value, "--database-port")?,
+                None => version.default_host_port(),
+            };
+            Some((version, name, user, port))
+        }
+    };
+
+    // ── the cache service ───────────────────────────────────────────────────────────────
+    let cache = match answers.container_cache.as_deref() {
+        Some(value) => CacheChoice::parse(value)?,
+        // `None`, and the default is deliberate: a cache container is infrastructure the project
+        // does not yet use, so it is opt-in.
+        None => CacheChoice::None,
+    };
+    let cache_port = match (cache.engine(), answers.cache_port.as_deref()) {
+        (Some(_), Some(value)) => Some(container::parse_port(value, "--cache-port")?),
+        (Some(engine), None) => Some(engine.default_host_port()),
+        (None, Some(_)) => {
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                "`--cache-port` needs `--container-cache`: a port for a service that will not be \
+                 generated configures nothing",
+            )
+            .with("flags", "--cache-port, --container-cache"));
+        }
+        (None, None) => None,
+    };
+
+    // ── one port, one service ───────────────────────────────────────────────────────────
+    //
+    // Refused rather than shifted to the next free port. Choosing a different port silently would
+    // mean the manifest records one number, the running container publishes another, and the
+    // README tells you to connect to a third.
+    if let (Some((_, _, _, database_port)), Some(cache_port)) = (&database_settings, cache_port)
+        && *database_port == cache_port
+    {
+        return Err(CliError::new(
+            Code::UnsupportedCombination,
+            format!(
+                "`--database-port` and `--cache-port` are both {cache_port}; two services \
+                     cannot publish the same host port. It is refused rather than moved to the \
+                     next free port, because a port chosen for you is a port the manifest and the \
+                     README would both describe wrongly"
+            ),
+        )
+        .with("flags", "--database-port, --cache-port")
+        .with("port", cache_port.to_string()));
+    }
+
+    Ok(Some(ContainerSettings {
+        database_version: database_settings.as_ref().map(|(version, ..)| *version),
+        database_name: database_settings.as_ref().map(|(_, name, ..)| name.clone()),
+        database_user: database_settings
+            .as_ref()
+            .map(|(_, _, user, _)| user.clone()),
+        database_port: database_settings.as_ref().map(|(.., port)| *port),
+        cache,
+        cache_port,
+    }))
+}
+
+/// Serialises a database as its stable name.
+///
+/// # Why a helper rather than `#[derive(Serialize)]` on `DatabaseKind`
+///
+/// Because that would put `serde` into `renvor-database`, and the whole point of that crate is
+/// that it carries nothing an application does not need. The name written here is the same
+/// `as_str()` the runtime parses back, so there is still exactly one spelling.
+fn serialize_database<S>(value: &Option<DatabaseKind>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(kind) => serializer.serialize_some(kind.as_str()),
+        None => serializer.serialize_none(),
+    }
 }
 
 /// The project name a destination implies, when the operator did not give one.
@@ -243,7 +505,11 @@ impl ProjectConfiguration {
 
         let destination = Destination::open(&answers.destination)?;
 
-        let name = match answers.name {
+        // CLONED so that `answers` stays whole. `resolve_container` below needs the container
+        // fields, and a partial move here would take the name out from under it — the alternative
+        // being to thread six `Option<&str>` through a second signature for the sake of one short
+        // string.
+        let name = match answers.name.clone() {
             Some(name) => name,
             // Derived through the SHARED function, from the validated destination's name — which
             // is the same string the wizard offers as its default, because the wizard calls this.
@@ -260,7 +526,7 @@ impl ProjectConfiguration {
             None => Transport::Rest,
         };
 
-        let local_domain = match answers.local_domain {
+        let local_domain = match answers.local_domain.clone() {
             Some(domain) => domain,
             None => derive_local_domain(&name),
         };
@@ -278,6 +544,41 @@ impl ProjectConfiguration {
             .with("flags", "--seed-data, --example-domain"));
         }
 
+        // Persistence is a PAIR. `--orm` without `--database` names a layer with nothing to talk
+        // to, and `--database` without `--orm` leaves the query style undeclared. Rather than
+        // default the missing half — which is the silent fallback principle IV prohibits — both
+        // directions are refused with the flag that would complete the pair.
+        let (orm, database) = match (answers.orm.as_deref(), answers.database.as_deref()) {
+            (None, None) => (None, None),
+            (Some(orm), Some(database)) => {
+                (Some(Orm::parse(orm)?), Some(parse_database(database)?))
+            }
+            // A database alone takes the one supported layer. This is not a silent default: `sqlx`
+            // is the only value `--orm` accepts in this phase, so there is nothing to choose
+            // between and nothing an operator could have meant instead.
+            (None, Some(database)) => (Some(Orm::Sqlx), Some(parse_database(database)?)),
+            (Some(orm), None) => {
+                // Parsed first, so an operator who typed both a bad layer AND omitted the database
+                // hears about the value they got wrong rather than the flag they omitted.
+                Orm::parse(orm)?;
+                return Err(CliError::new(
+                    Code::UnsupportedCombination,
+                    "`--orm` needs `--database`: a persistence layer with no database selected \
+                     has nothing to generate against",
+                )
+                .with("flags", "--orm, --database")
+                .with("supported", "postgres, mysql"));
+            }
+        };
+
+        // ── CONTAINER CONTROLS ──────────────────────────────────────────────────────────
+        //
+        // Resolved through ONE path, reached identically by the wizard and by the flags. The
+        // wizard fills `Answers` and calls this; it does not build a `ContainerSettings` of its
+        // own. That is what makes "interactive and non-interactive resolve identically" a property
+        // of the code rather than of two implementations that currently agree.
+        let container_settings = resolve_container(&answers, answers.container, database, &name)?;
+
         let configuration = Self {
             name,
             destination: destination.display_path(),
@@ -292,6 +593,9 @@ impl ProjectConfiguration {
             },
             seed_data: answers.seed_data,
             example_domain: answers.example_domain,
+            orm,
+            database,
+            container_settings,
         };
         Ok((configuration, destination))
     }
@@ -300,6 +604,21 @@ impl ProjectConfiguration {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The persistence layer, or `None` when the project was generated without one.
+    #[must_use]
+    pub const fn orm(&self) -> Option<Orm> {
+        self.orm
+    }
+
+    /// The selected database, or `None` when the project was generated without persistence.
+    ///
+    /// This is what template selection reads, so a project carries persistence sources only when a
+    /// database was actually chosen — data-model invariant I-12.
+    #[must_use]
+    pub const fn database(&self) -> Option<DatabaseKind> {
+        self.database
     }
 
     /// The destination as it will be reported, **for display only**. Not a capability.
@@ -327,6 +646,15 @@ impl ProjectConfiguration {
     #[must_use]
     pub fn container(&self) -> bool {
         self.container
+    }
+
+    /// The container development controls, or `None` when `--container` was not selected.
+    ///
+    /// A reference rather than a copy: [`ContainerSettings`] owns two `Identifier`s, and a
+    /// `Copy` type holding a validated name is a type somebody can build a second way.
+    #[must_use]
+    pub const fn container_settings(&self) -> Option<&ContainerSettings> {
+        self.container_settings.as_ref()
     }
 
     /// Whether local HTTPS was requested. **Nothing is issued either way.**
@@ -415,6 +743,48 @@ impl ProjectConfiguration {
         if self.seed_data {
             parts.push("--seed-data".to_owned());
         }
+        // ── PERSISTENCE. THESE WERE MISSING, and the omission was a real defect. ────────
+        //
+        // Until the Phase 006 container work, a wizard run that selected a database printed a
+        // command that reproduced everything EXCEPT the database — so pasting it produced a
+        // project with no `src/persistence.rs` and no `migrations/`, silently. FR-009 calls this
+        // string the "exact equivalent command", and it was not.
+        //
+        // `tests/parity.rs` executes this output and compares the tree byte for byte, which is
+        // exactly the test that should have caught it — and did not, because no parity case
+        // selected a database. One now does.
+        if let Some(database) = self.database {
+            parts.push(format!("--database {}", database.as_str()));
+        }
+        if let Some(orm) = self.orm {
+            parts.push(format!("--orm {}", orm.as_str()));
+        }
+        // ── CONTAINER CONTROLS ─────────────────────────────────────────────────────────
+        //
+        // EVERY non-default answer, including the ones that happen to equal the default. A command
+        // that omitted a defaulted value would reproduce this project only for as long as the
+        // default stayed the same — and the whole point of printing it is that somebody pastes it
+        // into a script that outlives this release.
+        if let Some(settings) = &self.container_settings {
+            if let Some(version) = settings.database_version {
+                parts.push(format!("--database-version {}", version.as_str()));
+            }
+            if let Some(name) = &settings.database_name {
+                parts.push(format!("--database-name {}", shell_quote(name.as_str())));
+            }
+            if let Some(user) = &settings.database_user {
+                parts.push(format!("--database-user {}", shell_quote(user.as_str())));
+            }
+            if let Some(port) = settings.database_port {
+                parts.push(format!("--database-port {port}"));
+            }
+            if settings.cache.engine().is_some() {
+                parts.push(format!("--container-cache {}", settings.cache.as_str()));
+            }
+            if let Some(port) = settings.cache_port {
+                parts.push(format!("--cache-port {port}"));
+            }
+        }
         parts.push("--yes".to_owned());
         parts.join(" ")
     }
@@ -497,7 +867,85 @@ mod tests {
             local_https: false,
             seed_data: false,
             example_domain: false,
+            orm: None,
+            database: None,
+            database_version: None,
+            database_name: None,
+            database_user: None,
+            database_port: None,
+            container_cache: None,
+            cache_port: None,
         }
+    }
+
+    // ── Phase 006 persistence selection (FR-032, FR-045, FR-047) ───────────────────────
+
+    #[test]
+    fn an_unsupported_persistence_layer_is_refused_by_name() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.orm = Some("diesel".to_owned());
+        answers.database = Some("postgres".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert!(
+            error.message.contains("sqlx"),
+            "the refusal must name the supported value: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn an_unsupported_database_is_refused_with_both_supported_values() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.database = Some("sqlite".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        // SQLite is the one an operator is most likely to try, and Phase 006 does not ship it.
+        // Naming both supported values is what makes the refusal actionable rather than a wall.
+        for supported in ["postgres", "mysql"] {
+            assert!(
+                error.message.contains(supported),
+                "the refusal must name `{supported}`: {}",
+                error.message
+            );
+        }
+    }
+
+    #[test]
+    fn a_persistence_layer_without_a_database_is_refused_rather_than_defaulted() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.orm = Some("sqlx".to_owned());
+        let error = ProjectConfiguration::resolve(answers).expect_err("refuses");
+        assert_eq!(error.code, Code::UnsupportedCombination);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "flags" && v.contains("--database"))
+        );
+    }
+
+    #[test]
+    fn a_database_alone_takes_the_single_supported_layer() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut answers = answers(base.path().join("demo"));
+        answers.database = Some("mysql".to_owned());
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers).expect("resolves");
+        assert_eq!(configuration.database(), Some(DatabaseKind::MySql));
+        assert_eq!(configuration.orm(), Some(Orm::Sqlx));
+    }
+
+    #[test]
+    fn no_persistence_is_recorded_as_no_persistence() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers(base.path().join("demo"))).expect("resolves");
+        assert_eq!(configuration.database(), None);
+        assert_eq!(configuration.orm(), None);
     }
 
     #[test]
@@ -602,12 +1050,42 @@ mod tests {
             target: _,
             // Phase 004. A single-variant enum has even less room for a credential than a `bool`.
             transport: _,
+            // Phase 006. Both are closed enums behind an `Option`, so the only values they can
+            // hold are the ones this crate names. A database CONNECTION string would be a
+            // secret-bearing field — which is exactly why the configuration holds a database
+            // KIND and never a DSN. Where the application gets its connection string from is a
+            // runtime concern, and keeping it out of this struct is what keeps invariant I-3
+            // structural rather than a rule someone has to remember.
+            orm: _,
+            database: _,
 
             // ── CATEGORY 2: strings, and therefore checked ─────────────────────────────
             name,
             local_domain,
             destination,
+            // Phase 006 container scope. `ContainerSettings` holds two `Identifier`s, which ARE
+            // strings — so it is category 2 and is checked below rather than waved through. Its
+            // other fields are two `u16`s and two closed enums, which have no room for a
+            // credential. There is deliberately no password field, and adding one would have to
+            // pass this test.
+            container_settings,
         } = configuration.clone();
+
+        // The identifier grammar admits ASCII letters, digits, and `_`. `=` and `:` are therefore
+        // unrepresentable, which is the property that makes these inert rather than a filter.
+        if let Some(settings) = &container_settings {
+            for (field, value) in [
+                ("database_name", settings.database_name.as_ref()),
+                ("database_user", settings.database_user.as_ref()),
+            ] {
+                if let Some(value) = value {
+                    assert!(
+                        !value.as_str().contains('=') && !value.as_str().contains(':'),
+                        "{field} can carry a key=value shape, so it needs redaction coverage"
+                    );
+                }
+            }
+        }
 
         // `name` and `local_domain` are validated to character sets that exclude `=` and `:`, so
         // they cannot carry a `key=value` shape at all. Asserted rather than assumed, because that

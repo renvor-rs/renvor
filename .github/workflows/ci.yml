@@ -26,7 +26,11 @@ jobs:
   verify:
     # Produces the required checks `verify (1.94.0)` and `verify (stable)`.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 45, not 30, since this job gained real databases. Measured locally, the suites that were
+    # previously skipping add roughly two minutes of test time on top of pulling two images. The
+    # old ceiling would probably have held; a timeout is an expensive and uninformative way to find
+    # out that it did not, and it matches what the `platform` job already allows.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       # Both matrix jobs run the same link check against the same host. In parallel they
@@ -34,6 +38,17 @@ jobs:
       # which is how one job hit HTTP/2 stream resets while the other passed on the same
       # commit. Serialising them costs wall-clock and buys a deterministic result.
       max-parallel: 1
+      # ONE DIMENSION, AND IT STAYS ONE DIMENSION.
+      #
+      # The engine pair is chosen from the toolchain inside the step below rather than added here
+      # as extra matrix keys. That is not a style preference — the comment above about `os` says
+      # exactly why, and this job proved it the hard way: adding `postgres` and `mysql` keys
+      # renamed the required contexts to
+      # `verify (1.94.0, postgres:17.11-trixie, mysql:8.4.11)`, so the branch protection rule that
+      # requires `verify (1.94.0)` by name was left waiting on a context that no longer existed —
+      # silently satisfied by nothing. Observed on PR #34 before it could do any harm.
+      #
+      # Anything that varies per leg belongs in the step, not in the matrix.
       matrix:
         toolchain: ["1.94.0", "stable"]
     steps:
@@ -89,10 +104,101 @@ jobs:
       # This is the run's built-in installation token, scoped by the workflow-level
       # `contents: read` above; it is not a stored secret and grants nothing beyond reading
       # this repository. lychee holds it as a secret value and does not print it.
+      # ── THE REAL DATABASES ──────────────────────────────────────────────────────────────
+      #
+      # THIS STEP DID NOT EXIST, AND ITS ABSENCE MADE THE DATABASE SUITE DECORATIVE.
+      #
+      # `support::url` returns `None` when its variable is unset, the test returns early, and
+      # `libtest` swallows the printed `SKIPPED` line for a passing test unless `--nocapture` is
+      # given — which nothing here passes. Neither URL was set anywhere in this repository, so
+      # every real-database test reported `ok` having connected to nothing. A revert of the
+      # migration-on-boot fix would have gone green through this job.
+      #
+      # `RENVOR_TEST_REQUIRE_DATABASE` closes it from the other side: with it set, a missing URL
+      # is a FAILURE rather than a skip. Deleting this step therefore breaks the build loudly
+      # instead of quietly restoring the gap.
+      #
+      # # Why `docker run` rather than `services:`
+      #
+      # A service container's `env:` must be a literal or a repository secret, so the password
+      # would have to be committed. `.gitleaks.toml` requires every allowlist entry to be narrow
+      # and individually justified, and "we committed a password because the syntax made us" is
+      # not a justification. Generating one per run and masking it costs six lines and commits
+      # nothing.
+      - name: Start the real databases
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 24)"
+          echo "::add-mask::$password"
+
+          # The two legs run DIFFERENT engines, so between them they cover all four versions
+          # Phase 006 claims rather than testing one pair twice. Chosen here rather than in the
+          # matrix, so the required check names stay `verify (1.94.0)` and `verify (stable)`.
+          # A `case` WITH A FAILING DEFAULT, not an if/else.
+          #
+          # An `else` branch silently absorbs any toolchain it was not written for. Bump the MSRV
+          # pin without editing this map and every leg falls into it, so both run the same engine
+          # pair — the "testing one pair twice" failure the matrix was arranged to avoid, and it
+          # fails quiet. An unmapped toolchain now fails the leg instead.
+          case "${{ matrix.toolchain }}" in
+            "1.94.0")
+              postgres_image="postgres:17.11-trixie"
+              mysql_image="mysql:8.4.11"
+              ;;
+            "stable")
+              postgres_image="postgres:18.6-trixie"
+              mysql_image="mysql:9.7.2"
+              ;;
+            *)
+              echo "::error::no engine pair is mapped for toolchain '${{ matrix.toolchain }}'." \
+                   "Add one here when the matrix gains a leg, or the engines this phase claims" \
+                   "stop being covered." >&2
+              exit 1
+              ;;
+          esac
+          echo "toolchain=${{ matrix.toolchain }} postgres=$postgres_image mysql=$mysql_image"
+
+          docker run -d --name rv-postgres \
+            -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=renvor_test \
+            -p 5432:5432 "$postgres_image"
+          # `MYSQL_ROOT_HOST=%` is the image's own default and is set explicitly because the
+          # tests connect as root over TCP. The GENERATED profile does the opposite —
+          # `MYSQL_ROOT_HOST: localhost` — and the two are not in tension: this is an ephemeral
+          # container on a throwaway runner with a per-run password that is never written down,
+          # whereas a developer's container has an application user and no reason to expose root.
+          docker run -d --name rv-mysql \
+            -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE=renvor_test \
+            -e MYSQL_ROOT_HOST='%' \
+            -p 3306:3306 "$mysql_image"
+
+          # Polled to a deadline rather than slept at. Both probes need no credentials, so
+          # neither can warm MySQL's password cache and hide an authentication problem.
+          for _ in $(seq 1 60); do
+            docker exec rv-postgres pg_isready -U postgres >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec rv-postgres pg_isready -U postgres
+          for _ in $(seq 1 60); do
+            docker exec rv-mysql mysqladmin ping --silent >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec rv-mysql mysqladmin ping --silent
+
+          {
+            echo "RENVOR_TEST_POSTGRES_URL=postgres://postgres:$password@127.0.0.1:5432/renvor_test"
+            echo "RENVOR_TEST_MYSQL_URL=mysql://root:$password@127.0.0.1:3306/renvor_test"
+            echo "RENVOR_TEST_REQUIRE_DATABASE=1"
+          } >> "$GITHUB_ENV"
+
       - name: cargo xtask verify
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: cargo xtask verify
+
+      # Named separately so a failure here is not mistaken for a verification failure.
+      - name: Stop the real databases
+        if: always()
+        run: docker rm -f rv-postgres rv-mysql || true
 
   platform:
     # Produces `platform (macos-latest, 1.94.0)`, `platform (macos-latest, stable)`,
@@ -137,6 +243,20 @@ jobs:
       # tracing global subscriber has exactly one owner, and the readiness ceiling is
       # per-application but observable across tests in one binary — so a parallel run is
       # testing a different thing from the one the evidence describes.
+      #
+      # # THE REAL-DATABASE SUITES SKIP HERE, AND THAT IS STATED RATHER THAN SILENT
+      #
+      # `RENVOR_TEST_REQUIRE_DATABASE` is deliberately NOT set on this job, so a missing database
+      # is a skip rather than a failure. macOS runners have no container daemon and Windows
+      # runners cannot run Linux containers, so there is nowhere to start PostgreSQL or MySQL.
+      #
+      # What this job is FOR is the platform-sensitive code — path resolution, `OsString`
+      # handling that is WTF-8 on Windows and arbitrary bytes on unix, and file-opening flags.
+      # None of that is database code. The real-database claim rests on the `verify` job above,
+      # which sets the variable and therefore fails closed.
+      #
+      # Said plainly: **this job does not verify the database adapter on macOS or Windows, and
+      # `SUPPORT.md` should not be read as claiming it does.**
       - name: Workspace tests
         run: cargo test --workspace --all-features -- --test-threads=1
 

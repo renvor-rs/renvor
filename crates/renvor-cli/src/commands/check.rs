@@ -144,12 +144,86 @@ struct ProjectTable {
     seed_data: bool,
 }
 
+/// The `[persistence]` table — present only when a database was chosen.
+///
+/// Added in Phase 006, when persistence shipped and `--database` moved from a reserved input to an
+/// honoured choice.
+///
+/// # Why the whole table is optional rather than its fields
+///
+/// Because "no persistence" is a real and common answer, and it is recorded by the table's
+/// **absence** rather than by three empty strings. A project generated without `--database` has no
+/// `src/persistence.rs` and no `migrations/`, so a manifest claiming a database would describe a
+/// project that was not generated — the same rule `[project]`'s comment states for every other
+/// honoured choice.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PersistenceTable {
+    database: String,
+    orm: String,
+    driver_feature: String,
+}
+
+/// The `[container]` section a project generated with `--container` carries.
+///
+/// # Every field is optional except the cache choice
+///
+/// Containers without persistence is a supported combination — the application image and its
+/// network are useful on their own — so the database fields are absent rather than empty in that
+/// case. `cache` is always written, because "no cache" is an answer and recording it is what makes
+/// the manifest a complete description rather than a partial one.
+///
+/// # There is no password field, and there cannot be
+///
+/// `deny_unknown_fields` is what makes that enforceable rather than aspirational: a manifest
+/// carrying `database_password` is REFUSED by `renvor check` rather than quietly accepted. A
+/// project that grew a credential in its committed manifest fails its own validation.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ContainerTable {
+    #[serde(default)]
+    database_service: Option<String>,
+    #[serde(default)]
+    database_image: Option<String>,
+    #[serde(default)]
+    database_version: Option<String>,
+    #[serde(default)]
+    database_name: Option<String>,
+    #[serde(default)]
+    database_user: Option<String>,
+    #[serde(default)]
+    database_port: Option<u16>,
+    cache: String,
+    #[serde(default)]
+    cache_image: Option<String>,
+    #[serde(default)]
+    cache_version: Option<String>,
+    #[serde(default)]
+    cache_port: Option<u16>,
+    /// Always `false` in this phase. Recorded so the manifest states the limitation rather than
+    /// leaving a reader to infer it from the absence of a cache adapter.
+    #[serde(default)]
+    cache_wired_into_application: Option<bool>,
+}
+
 /// A generated `renvor.toml`.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     renvor: RenvorTable,
     project: ProjectTable,
+    /// `None` means the project was generated without persistence, which is not an error.
+    #[serde(default)]
+    persistence: Option<PersistenceTable>,
+    /// `None` means the project was generated without container controls, which is not an error.
+    ///
+    /// # Backward compatibility
+    ///
+    /// A manifest written by template version 3 or earlier has no `[container]` section, and
+    /// `#[serde(default)]` is what lets `renvor check` keep reading it. The compatibility contract
+    /// is that an older manifest stays valid; it is not that an older manifest gains fields.
+    #[serde(default)]
+    container: Option<ContainerTable>,
 }
 
 /// Runs the command against a project directory.
