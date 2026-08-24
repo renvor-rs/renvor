@@ -38,18 +38,19 @@ jobs:
       # which is how one job hit HTTP/2 stream resets while the other passed on the same
       # commit. Serialising them costs wall-clock and buys a deterministic result.
       max-parallel: 1
-      # The DATABASE PAIR IS PART OF THE MATRIX, so the two toolchain legs cover all four
-      # supported engines between them rather than testing the same pair twice. Phase 006 claims
-      # PostgreSQL 17 and 18 and MySQL 8.4 and 9.7; a gate that only ever ran one of each would
-      # support half of that claim.
+      # ONE DIMENSION, AND IT STAYS ONE DIMENSION.
+      #
+      # The engine pair is chosen from the toolchain inside the step below rather than added here
+      # as extra matrix keys. That is not a style preference — the comment above about `os` says
+      # exactly why, and this job proved it the hard way: adding `postgres` and `mysql` keys
+      # renamed the required contexts to
+      # `verify (1.94.0, postgres:17.11-trixie, mysql:8.4.11)`, so the branch protection rule that
+      # requires `verify (1.94.0)` by name was left waiting on a context that no longer existed —
+      # silently satisfied by nothing. Observed on PR #34 before it could do any harm.
+      #
+      # Anything that varies per leg belongs in the step, not in the matrix.
       matrix:
-        include:
-          - toolchain: "1.94.0"
-            postgres: "postgres:17.11-trixie"
-            mysql: "mysql:8.4.11"
-          - toolchain: "stable"
-            postgres: "postgres:18.6-trixie"
-            mysql: "mysql:9.7.2"
+        toolchain: ["1.94.0", "stable"]
     steps:
       # Full history: verification step 7 scans every commit, and a shallow clone
       # would silently scan only the tip.
@@ -129,12 +130,31 @@ jobs:
           set -euo pipefail
           password="$(openssl rand -hex 24)"
           echo "::add-mask::$password"
+
+          # The two legs run DIFFERENT engines, so between them they cover all four versions
+          # Phase 006 claims rather than testing one pair twice. Chosen here rather than in the
+          # matrix, so the required check names stay `verify (1.94.0)` and `verify (stable)`.
+          if [ "${{ matrix.toolchain }}" = "1.94.0" ]; then
+            postgres_image="postgres:17.11-trixie"
+            mysql_image="mysql:8.4.11"
+          else
+            postgres_image="postgres:18.6-trixie"
+            mysql_image="mysql:9.7.2"
+          fi
+          echo "postgres=$postgres_image mysql=$mysql_image"
+
           docker run -d --name rv-postgres \
             -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=renvor_test \
-            -p 5432:5432 "${{ matrix.postgres }}"
+            -p 5432:5432 "$postgres_image"
+          # `MYSQL_ROOT_HOST=%` is the image's own default and is set explicitly because the
+          # tests connect as root over TCP. The GENERATED profile does the opposite —
+          # `MYSQL_ROOT_HOST: localhost` — and the two are not in tension: this is an ephemeral
+          # container on a throwaway runner with a per-run password that is never written down,
+          # whereas a developer's container has an application user and no reason to expose root.
           docker run -d --name rv-mysql \
             -e MYSQL_ROOT_PASSWORD="$password" -e MYSQL_DATABASE=renvor_test \
-            -p 3306:3306 "${{ matrix.mysql }}"
+            -e MYSQL_ROOT_HOST='%' \
+            -p 3306:3306 "$mysql_image"
 
           # Polled to a deadline rather than slept at. Both probes need no credentials, so
           # neither can warm MySQL's password cache and hide an authentication problem.
