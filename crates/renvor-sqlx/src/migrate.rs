@@ -223,11 +223,21 @@ const APPLIED_VERSIONS: &str = "SELECT version FROM _sqlx_migrations ORDER BY ve
 
 /// How long the migration session is given to close itself.
 ///
+/// # Public, and NOT feature-gated
+///
+/// `SqlxProvider::required_boot_deadline` composes this with the two migration bounds, and that
+/// method exists on the generic provider — which compiles with **no driver feature at all**, since
+/// neither is a default. Gating this constant made the crate fail to build in exactly the
+/// configuration a `cargo package` verification uses, and nothing local caught it because every
+/// local build selected a driver.
+///
+/// Public rather than `pub(crate)` for the same reason it is composed at all: an application
+/// setting a provider deadline by hand should be able to read the number rather than infer it.
+///
 /// Matches `sqlx`'s own `CLOSE_ON_DROP_TIMEOUT` rather than inventing a second number: the
 /// fallback path on cancellation *is* `sqlx`'s, so a different bound here would only mean the two
 /// disagree about when a wedged socket stops being waited on.
-#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
-pub(crate) const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+pub const CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Fails the build if `Migrator::run_direct` stops being the thing this module depends on.
 ///

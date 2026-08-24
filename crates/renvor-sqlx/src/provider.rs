@@ -10,12 +10,15 @@
 
 use std::sync::OnceLock;
 
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use renvor_core::error::BoxedCause;
 use renvor_core::health::{Readiness, ReadinessContributor};
-use renvor_core::provider::registry::{
-    CapabilityId, InitContext, Provider, ProviderFuture, ProviderId,
-};
-use renvor_database::{ConnectionString, Database, DatabaseKind, PoolSettings};
+use renvor_core::provider::registry::{CapabilityId, ProviderId};
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+use renvor_core::provider::registry::{InitContext, Provider, ProviderFuture};
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+use renvor_database::Database;
+use renvor_database::{ConnectionString, DatabaseKind, PoolSettings};
 
 use crate::SqlxDatabase;
 use crate::migrate::Migrations;
@@ -29,6 +32,16 @@ use crate::migrate::Migrations;
 /// publish a value without a lock on the read path — and "written exactly once, by Boot" is
 /// precisely what a `OnceLock` promises, so the invariant is enforced by the type rather than by a
 /// comment asking callers not to write twice.
+#[cfg_attr(
+    not(any(feature = "db-postgres", feature = "db-mysql")),
+    allow(
+        dead_code,
+        reason = "`provides`, `dsn` and `settings` are read by the per-driver `Provider` impl, \
+                  which is feature-gated. With neither driver selected — the DEFAULT, since \
+                  neither is a default feature — there is no impl to read them, and that is the \
+                  configuration `cargo package` verifies"
+    )
+)]
 pub struct SqlxProvider<DB: sqlx::Database> {
     id: ProviderId,
     provides: Vec<CapabilityId>,

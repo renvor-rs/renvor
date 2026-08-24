@@ -421,12 +421,33 @@ mod tests {
     ///
     /// A credential on a command line lands in shell history, in `ps` output, and in the CI log of
     /// whatever ran it. That is why the rule exists; this is why it holds.
+    ///
+    /// # What this cannot see, said so nobody reads it as more than it is
+    ///
+    /// It catches **naming, not behaviour**. An `--env-file` or `--database-init-file` pointing at
+    /// a file that contains a credential passes cleanly, and so would a positional argument if
+    /// `new` ever grew one. The property actually defended is *no credential enters through argv*,
+    /// and a name matcher is a proxy for it — a good proxy, because a credential flag that hides
+    /// its purpose in its name is a deliberate act rather than an oversight.
+    ///
+    /// It also says nothing about what reaches **output**. That is `tests/container.rs`'s
+    /// substring check over stdout and the JSON document, which guards the label rather than the
+    /// value. The two backstop each other: a value cannot leak from argv if argv cannot carry one,
+    /// and a new key name is caught on the way out.
     #[test]
     fn no_flag_in_the_whole_surface_can_carry_a_credential() {
         /// Substrings a credential-bearing flag would almost certainly contain.
-        const FORBIDDEN: [&str; 7] = [
+        ///
+        /// `pass` and `pw` are the abbreviations, and they are here because the longer words
+        /// missed them: `--db-pass` and `--db-pw` matched none of the rest. Checked against the
+        /// current surface — 27 long flags — and neither substring collides with any of them. If
+        /// one ever does, the resulting failure is the right place to have that conversation
+        /// rather than a reason to soften the list now.
+        const FORBIDDEN: [&str; 9] = [
             "password",
             "passwd",
+            "pass",
+            "pw",
             "secret",
             "credential",
             "token",
