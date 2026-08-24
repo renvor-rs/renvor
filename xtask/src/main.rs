@@ -493,6 +493,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !facade_feature_isolation_holds(root) {
         return false;
     }
+    if !persistence_isolation_holds(root) {
+        return false;
+    }
     if !lean_facade_compiles(root) {
         return false;
     }
@@ -511,9 +514,167 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, facade isolation, lean compile, publishable dependencies, required package \
-         metadata, instability wording, and the executable name all hold, each with a control",
+        "crate DAG, transport and persistence isolation, facade isolation, lean compile, \
+         publishable dependencies, required package metadata, instability wording, and the \
+         executable name all hold, each with a control",
     );
+    true
+}
+
+/// Phase 007 FR-002, FR-003, FR-032, FR-050, FR-056, FR-057: the persistence adapters are isolated.
+///
+/// # Why this lives here rather than in a script
+///
+/// It was a shell script. The script lived in a scratch directory, the FR conformance table cited
+/// it as the evidence for six requirements, and **the scratch directory was deleted** — after which
+/// six requirements were evidenced by a file that no longer existed. A review found it.
+///
+/// Evidence that is not run by a gate is not evidence. This runs inside `cargo xtask verify`.
+///
+/// Every claim carries a control, because a count of zero proves nothing without proof the walk can
+/// see what IS there.
+///
+/// | Claim | Control |
+/// |---|---|
+/// | `db-postgres` alone resolves no MySQL or SQLite driver | it resolves `sqlx-postgres` |
+/// | `db-mysql` alone resolves no PostgreSQL or SQLite driver | it resolves `sqlx-mysql` |
+/// | neither adapter resolves the other | each resolves `renvor-database` |
+/// | `renvor-database` resolves no driver and no ORM under **any** feature | it resolves itself |
+/// | the banned crates are absent workspace-wide | the permitted near-namesakes are present |
+/// One isolation row: a label, the `cargo tree` arguments, what must be absent, what must be
+/// present.
+///
+/// A named type because the tuple is four fields wide and clippy is right that the inline form is
+/// unreadable — and because "forbidden" and "controls" are otherwise two anonymous `&[&str]`s a
+/// reader has to count positions to tell apart.
+type IsolationCheck<'a> = (&'a str, &'a [&'a str], &'a [&'a str], &'a [&'a str]);
+
+fn persistence_isolation_holds(root: &std::path::Path) -> bool {
+    /// Matches a crate at an entry boundary, so `sea-orm` never matches `renvor-seaorm` and `rsa`
+    /// never matches `rsa-something`.
+    fn resolves(tree: &str, name: &str) -> bool {
+        tree.lines().any(|line| {
+            line.split_once(' ')
+                .is_some_and(|(package, rest)| package == name && rest.starts_with('v'))
+        })
+    }
+
+    fn fail(detail: &str) -> bool {
+        step_fail(7, "architecture invariants", detail);
+        false
+    }
+
+    // Each row: the tree to build, then what must be absent, then the control that must be present.
+    let checks: [IsolationCheck<'_>; 5] = [
+        (
+            "renvor-seaorm + db-postgres",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &[
+                "sqlx-mysql",
+                "sqlx-sqlite",
+                "webpki-roots",
+                "rsa",
+                "sea-schema",
+                "sea-orm-cli",
+                "sea-orm-migration",
+                "renvor-sqlx",
+            ],
+            &[
+                "sqlx-postgres",
+                "sea-orm",
+                "sea-query-sqlx",
+                "renvor-database",
+            ],
+        ),
+        (
+            "renvor-seaorm + db-mysql",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-mysql",
+            ],
+            &[
+                "sqlx-postgres",
+                "sqlx-sqlite",
+                "webpki-roots",
+                "rsa",
+                "sea-schema",
+                "renvor-sqlx",
+            ],
+            &["sqlx-mysql", "sea-orm", "sea-query-sqlx"],
+        ),
+        (
+            "renvor-seaorm with no driver",
+            &["-p", "renvor-seaorm", "--no-default-features"],
+            &["sqlx-postgres", "sqlx-mysql", "sqlx-sqlite"],
+            &["sea-orm", "sqlx"],
+        ),
+        (
+            "renvor-sqlx (--all-features)",
+            &["-p", "renvor-sqlx", "--all-features"],
+            &["sea-orm", "renvor-seaorm"],
+            &["sqlx", "renvor-database"],
+        ),
+        (
+            "renvor-database (--all-features)",
+            &["-p", "renvor-database", "--all-features"],
+            &["sea-orm", "sqlx", "renvor-seaorm", "renvor-sqlx"],
+            &["renvor-database"],
+        ),
+    ];
+
+    for (label, args, forbidden, controls) in checks {
+        let Some(tree) = normal_edges(root, args) else {
+            return fail(&format!("the `{label}` tree query failed"));
+        };
+        for name in forbidden {
+            if resolves(&tree, name) {
+                return fail(&format!(
+                    "{label} resolves `{name}`, which persistence feature isolation forbids"
+                ));
+            }
+        }
+        for name in controls {
+            if !resolves(&tree, name) {
+                return fail(&format!(
+                    "{label} does not resolve `{name}`, so the absences above prove nothing — the \
+                     walk cannot see what IS there"
+                ));
+            }
+        }
+    }
+
+    // The banned crates, workspace-wide and under every feature. `webpki-roots` fails the licence
+    // allow-list; `rsa` carries RUSTSEC-2023-0071 with no fixed version.
+    let Some(everything) = normal_edges(root, &["--workspace", "--all-features"]) else {
+        return fail("the workspace-wide tree query failed");
+    };
+    for name in ["webpki-roots", "rsa"] {
+        if resolves(&everything, name) {
+            return fail(&format!(
+                "`{name}` resolves somewhere in the workspace under --all-features"
+            ));
+        }
+    }
+    // CONTROL. `rustls-webpki` is a DIFFERENT crate from `webpki-roots` — the X.509 verifier, not
+    // the root store — and `ring` and `rustls` are present. If the walk cannot see these, its
+    // failure to see the two above means nothing.
+    for name in ["rustls-webpki", "rustls", "ring"] {
+        if !resolves(&everything, name) {
+            return fail(&format!(
+                "the workspace walk cannot see `{name}`, so the two absences above prove nothing"
+            ));
+        }
+    }
+
     true
 }
 
@@ -2039,6 +2200,140 @@ mod tests {
         assert_eq!(
             examined, 11,
             "the workspace publishes eleven packages; the scan examined {examined}"
+        );
+    }
+
+    /// `RELEASING.md`'s publishable-package headline agrees with the manifests.
+    ///
+    /// # The third occurrence of one failure
+    ///
+    /// A count stated in prose above a table nobody re-derives. `governance/waivers.md` did it
+    /// twice — six-versus-seven, then eleven-versus-thirteen — and after the second the count test
+    /// was written. `RELEASING.md` then did it a third time, saying **Eight** while its own table
+    /// listed eleven and `xtask` asserted eleven, because the test written after the second
+    /// occurrence covered only the two files that had already failed.
+    ///
+    /// This covers the third. The number is read from `cargo metadata`, so it tracks the
+    /// manifests rather than another sentence.
+    #[test]
+    fn publishable_package_count_is_stated_correctly() {
+        let root = super::workspace_root();
+        let manifests =
+            super::workspace_manifests(&root).expect("the workspace manifests are readable");
+        let root_manifest = std::fs::read_to_string(root.join("Cargo.toml"))
+            .expect("the workspace root manifest is readable");
+        let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
+            .expect("every publishable package satisfies the metadata contract");
+
+        let words = [
+            "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+            "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+        ];
+        let spelled = words
+            .get(examined)
+            .unwrap_or_else(|| panic!("no spelling for {examined}"));
+
+        let releasing =
+            std::fs::read_to_string(root.join("RELEASING.md")).expect("RELEASING.md is readable");
+        assert!(
+            releasing.contains(&format!("**{spelled} publishable packages.**")),
+            "RELEASING.md does not say `**{spelled} publishable packages.**`, which is what the \
+             manifests carry"
+        );
+
+        // The list the release rehearsal actually publishes must be the same size.
+        let workflow = std::fs::read_to_string(root.join(".github/workflows/release-dry-run.yml"))
+            .expect("the release dry-run workflow is readable");
+        let listed = workflow
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("CRATES:"))
+            .expect("the workflow declares a CRATES list")
+            .trim()
+            .trim_matches('"')
+            .split_whitespace()
+            .count();
+        assert_eq!(
+            listed, examined,
+            "the release rehearsal publishes {listed} crates but the workspace has {examined}"
+        );
+    }
+
+    /// The publication order in `release-dry-run.yml` is topologically valid.
+    ///
+    /// # Why the workflow's own assertion cannot do this
+    ///
+    /// It `sort`s both sides before comparing, so it checks **membership** and says nothing about
+    /// **order** — and `cargo publish --dry-run` computes its own order rather than following the
+    /// list, so a wrong order dry-runs green and fails only on a real publish, with a
+    /// missing-dependency registry error that reads like a network fault.
+    ///
+    /// Phase 007 broke it: making room for `renvor-testkit` moved `renvor-database` from position
+    /// 6 to 4, past `renvor-validation`, which it depends on. A dependency review found it.
+    ///
+    /// # Read from `cargo tree`, not from a hand-rolled parse
+    ///
+    /// The first version of this test sliced `cargo metadata`'s JSON by hand — `xtask` carries no
+    /// dependencies, so there is no JSON crate — and it reported `renvor-core` depending on
+    /// `renvor-error`, which is false: the slice ran past the package's own block. `normal_edges`
+    /// is the same helper step 7 uses, and it answers the question directly.
+    #[test]
+    fn publication_order_is_topological() {
+        let root = super::workspace_root();
+        let workflow = std::fs::read_to_string(root.join(".github/workflows/release-dry-run.yml"))
+            .expect("the release dry-run workflow is readable");
+        let line = workflow
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("CRATES:"))
+            .expect("the workflow declares a CRATES list");
+        let order: Vec<String> = line
+            .trim()
+            .trim_matches('"')
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect();
+        assert!(
+            order.len() > 1,
+            "the CRATES list parsed to {order:?}, so this test is checking nothing"
+        );
+
+        for (index, package) in order.iter().enumerate() {
+            let tree = super::normal_edges(&root, &["-p", package, "--all-features"])
+                .unwrap_or_else(|| panic!("`cargo tree -p {package}` failed"));
+            for (later, later_index) in order.iter().zip(0..).skip(index + 1) {
+                let resolves = tree.lines().any(|line| {
+                    line.split_once(' ')
+                        .is_some_and(|(name, rest)| name == later && rest.starts_with('v'))
+                });
+                assert!(
+                    !resolves,
+                    "`{package}` publishes at position {index} but depends on `{later}` at \
+                     position {later_index}. `cargo publish` would fail on `{package}` with a \
+                     missing-`{later}` registry error"
+                );
+            }
+        }
+
+        // CONTROL. A walk that saw nothing would pass every assertion above. The facade is last
+        // and must resolve the kernel, which is first.
+        let facade = super::normal_edges(&root, &["-p", "renvor", "--all-features"])
+            .expect("the facade tree query works");
+        assert!(
+            facade.lines().any(|line| line.starts_with("renvor-core v")),
+            "the facade does not resolve renvor-core, so the ordering assertions above prove \
+             nothing"
+        );
+    }
+
+    /// Persistence isolation holds, and is reachable from `cargo test` as well as from `verify`.
+    ///
+    /// Running it here too is deliberate. Step 7 runs it inside the full sequence, which takes
+    /// minutes; this gives the same answer in seconds, and it means the check is exercised by
+    /// `cargo test --workspace` on every machine and in CI even if the sequence is not run.
+    #[test]
+    fn persistence_isolation_holds_with_its_controls() {
+        assert!(
+            super::persistence_isolation_holds(&super::workspace_root()),
+            "persistence feature isolation failed — see the printed step-7 detail above"
         );
     }
 
