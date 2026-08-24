@@ -57,9 +57,17 @@ nothing shells out to it.
 
 ## 4. What actually enters the graph
 
-The lockfile gained **78** entries. Most are `sea-orm`'s *optional* dependencies — `arrow*`,
-`pgvector`, `rkyv`, `borsh`, `bigdecimal`, `rust_decimal`, `sea-schema` and so on — which Cargo
-records in `Cargo.lock` whether or not a feature enables them. A lockfile entry is not a dependency.
+The lockfile gained **87** `[[package]]` entries (386 → 473), of which **78 are new crate names**.
+The other nine are second versions of crates already present: `syn`, `hashbrown`, `heck`, `time`,
+`rand`, `rand_core`, `rand_chacha`, `libm` and `ahash`.
+
+> This paragraph said "**78** entries". 78 is the count of new *names*, not of entries, and the two
+> differ by exactly the duplicate-version set — the number a reviewer checking for a supply-chain
+> surprise most wants. A dependency review caught the wrong unit.
+
+Most of the 78 are `sea-orm`'s *optional* dependencies — `arrow*`, `pgvector`, `rkyv`, `borsh`,
+`bigdecimal`, `rust_decimal`, `sea-schema` and so on — which Cargo records in `Cargo.lock` whether
+or not a feature enables them. A lockfile entry is not a dependency.
 
 Measured on the **resolved** graph, `renvor-seaorm` with both drivers adds **27** packages over
 `renvor-sqlx` with both drivers:
