@@ -177,7 +177,7 @@ The FR-057 and FR-061 findings in that batch were already closed by §6a before 
 their independent confirmation of the gap is recorded because two audits reaching the same
 conclusion from different directions is worth more than one.
 
-### 6c. Two open CodeQL alerts, analysed and NOT dismissed
+### 6c. Two CodeQL alerts: two code fixes attempted, then dismissed
 
 CodeQL raised **two high-severity `rust/cleartext-logging` alerts** against this branch, both
 attributed to `crates/renvor-sqlx/tests/provider.rs` — the macro invocation lines, since CodeQL
@@ -208,11 +208,37 @@ asserted:
 So it is a false positive on unshipped test code, where the flagged line is the proof rather than
 the leak.
 
-**It has NOT been dismissed.** Dismissing a high-severity security alert is a change to this
-repository's security record, and it is the maintainer's decision rather than an author's — the
-more so when the author is also the person the alert is about. CodeQL is not among the required
-status checks (`verify (1.94.0)`, `verify (stable)`, `security`, `docs`), so the alert does not
-block the merge and nothing was weakened to make it pass.
+**Both were dismissed as false positives on 2026-08-24, on the maintainer's explicit
+instruction — and only after two attempts to fix the code instead.**
+
+That sequence is the record, so it is written down rather than summarised as a dismissal:
+
+1. **A correction.** This section first said CodeQL "is not among the required status checks", on
+   the strength of `required_status_checks.contexts` listing only `verify (1.94.0)`,
+   `verify (stable)`, `security` and `docs`. That was wrong. GitHub's **code-scanning merge
+   protection** is a separate mechanism that does not appear in that list, and it blocked the merge.
+2. **First attempt — remove the planted credential.** The test was rewritten from "assert one
+   canary string is absent" to a **structural** assertion: `SqlxProvider`'s `Debug` declares four
+   fields, and the rendering must carry those four and no fifth. Mutation-checked both ways — a
+   fifth field carrying the DSN fails, and so does a harmless one. Strictly stronger than what it
+   replaced. **The alert persisted.**
+3. **Second attempt — remove the URL shape.** The rewrite had kept
+   `postgres://host:5432/name`. It was replaced with a plain marker. **The alert persisted.**
+4. **The trigger identified.** CodeQL classifies the location as `["test"]` and still calls the
+   literal `zz-connection-marker-zz` a secret, so it keys on the `ConnectionString` **type name**
+   rather than on any value. The only untried code-level move was renaming a public type to satisfy
+   a scanner heuristic, which was rejected.
+
+Nothing was bypassed to achieve this. `--admin` and `--auto` were both offered by `gh` at the
+refused merge and both were declined; dismissal is the path GitHub provides for a false positive,
+it is reversible, and every required check passed on its own merits before it was used.
+
+**The two rewrites are kept.** They were undertaken to clear the alert and did not, but both tests
+are better than the ones they replaced — and the second rewrite exposed a third test,
+`a_seed_report_carries_no_credential`, that built its statement from `CREDENTIAL_CANARY.len()` (the
+integer 22) and therefore asserted the absence of a string that never entered the seed, the
+database, or the report. That assertion could not fail under any mutation. It is now non-vacuous
+and mutation-checked.
 
 The precedent for handling a scanner false positive in this repository is `.gitleaks.toml`, whose
 policy requires every allowlist entry to be **narrow and individually justified**, naming the rule,
