@@ -43,7 +43,15 @@ macro_rules! suite {
             use renvor_database::{Database, PoolSettings, UnitOfWork};
             use sqlx::AssertSqlSafe;
 
-            async fn database() -> Option<$alias> {
+            /// A clean fixture, and the guard that keeps it clean for the test's duration.
+            ///
+            /// Every test in this file shares one table, which this drops or clears. Two running at
+            /// once therefore delete each other's rows, and the suite passed only under
+            /// `--test-threads=1` — a requirement nothing in the code stated, and one an ordinary
+            /// `cargo test` breaks with assertion failures that look like flakiness. Returning the
+            /// guard puts the requirement in the type. See [`support::SHARED_FIXTURE`].
+            async fn database() -> Option<($alias, tokio::sync::MutexGuard<'static, ()>)> {
+                let guard = support::SHARED_FIXTURE.lock().await;
                 let dsn = support::url($url)?;
                 let settings = PoolSettings::default()
                     .with_max_connections(CAPACITY)
@@ -62,7 +70,7 @@ macro_rules! suite {
                     .execute(database.pool())
                     .await
                     .expect("clears");
-                Some(database)
+                Some((database, guard))
             }
 
             /// Abandons a statement while it is provably still executing on the server.
@@ -102,17 +110,15 @@ macro_rules! suite {
             }
 
             async fn count(database: &$alias) -> i64 {
-                sqlx::query_scalar(AssertSqlSafe(
-                    "SELECT COUNT(*) FROM rv_cancel".to_owned(),
-                ))
-                .fetch_one(database.pool())
-                .await
-                .expect("counts")
+                sqlx::query_scalar(AssertSqlSafe("SELECT COUNT(*) FROM rv_cancel".to_owned()))
+                    .fetch_one(database.pool())
+                    .await
+                    .expect("counts")
             }
 
             #[tokio::test]
             async fn one_cancellation_returns_capacity_within_a_bound() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 cancel_mid_statement(&database).await;
@@ -133,7 +139,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn repeated_cancellation_does_not_shrink_capacity() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 for round in 0..5 {
@@ -147,7 +153,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn cancelled_work_commits_nothing() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let _ = tokio::time::timeout(Duration::from_millis(500), async {
@@ -174,17 +180,16 @@ macro_rules! suite {
             /// discarding every connection always — correct, and quietly ruinous.
             #[tokio::test]
             async fn commit_reuses_a_pooled_connection() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let mut sessions = Vec::new();
                 for _ in 0..6 {
                     let mut uow = database.begin().await.expect("begins");
-                    let session: String =
-                        sqlx::query_scalar(AssertSqlSafe($session.to_owned()))
-                            .fetch_one(&mut **uow.inner())
-                            .await
-                            .expect("reads session");
+                    let session: String = sqlx::query_scalar(AssertSqlSafe($session.to_owned()))
+                        .fetch_one(&mut **uow.inner())
+                        .await
+                        .expect("reads session");
                     uow.commit().await.expect("commits");
                     sessions.push(session);
                 }
@@ -193,7 +198,10 @@ macro_rules! suite {
                 // spawned task and a connection is not always back in the idle list before
                 // the next acquire. What this must catch is six DISTINCT sessions, which is
                 // what "discard the connection every time" would produce.
-                let distinct = sessions.iter().collect::<std::collections::BTreeSet<_>>().len();
+                let distinct = sessions
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len();
                 assert!(
                     distinct <= CAPACITY as usize,
                     "commit opened a new server session instead of reusing one: {sessions:?}"
@@ -203,21 +211,23 @@ macro_rules! suite {
             /// An explicit rollback must also reuse its connection.
             #[tokio::test]
             async fn rollback_reuses_a_pooled_connection() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let mut sessions = Vec::new();
                 for _ in 0..6 {
                     let mut uow = database.begin().await.expect("begins");
-                    let session: String =
-                        sqlx::query_scalar(AssertSqlSafe($session.to_owned()))
-                            .fetch_one(&mut **uow.inner())
-                            .await
-                            .expect("reads session");
+                    let session: String = sqlx::query_scalar(AssertSqlSafe($session.to_owned()))
+                        .fetch_one(&mut **uow.inner())
+                        .await
+                        .expect("reads session");
                     uow.rollback().await.expect("rolls back");
                     sessions.push(session);
                 }
-                let distinct = sessions.iter().collect::<std::collections::BTreeSet<_>>().len();
+                let distinct = sessions
+                    .iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len();
                 assert!(
                     distinct <= CAPACITY as usize,
                     "rollback opened a new server session instead of reusing one: {sessions:?}"

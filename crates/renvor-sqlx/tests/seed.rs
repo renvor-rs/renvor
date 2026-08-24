@@ -11,9 +11,19 @@ macro_rules! suite {
             use renvor_sqlx::seed::{SqlSeed, run};
             use sqlx::AssertSqlSafe;
 
-            async fn database() -> Option<$alias> {
+            /// A clean fixture, and the guard that keeps it clean for the test's duration.
+            ///
+            /// Every test in this file shares one table, which this drops or clears. Two running at
+            /// once therefore delete each other's rows, and the suite passed only under
+            /// `--test-threads=1` — a requirement nothing in the code stated, and one an ordinary
+            /// `cargo test` breaks with assertion failures that look like flakiness. Returning the
+            /// guard puts the requirement in the type. See [`support::SHARED_FIXTURE`].
+            async fn database() -> Option<($alias, tokio::sync::MutexGuard<'static, ()>)> {
+                let guard = support::SHARED_FIXTURE.lock().await;
                 let dsn = support::url($url)?;
-                let database: $alias = $connect(&dsn, &support::settings()).await.expect("connects");
+                let database: $alias = $connect(&dsn, &support::settings())
+                    .await
+                    .expect("connects");
                 for statement in [
                     "DROP TABLE IF EXISTS _renvor_seeds",
                     "DROP TABLE IF EXISTS rv_seeded",
@@ -24,7 +34,7 @@ macro_rules! suite {
                         .await
                         .expect("prepares");
                 }
-                Some(database)
+                Some((database, guard))
             }
 
             async fn count(database: &$alias) -> i64 {
@@ -44,7 +54,7 @@ macro_rules! suite {
             /// FR-035: a `RunOnce` seed runs once, however many times the runner is invoked.
             #[tokio::test]
             async fn a_run_once_seed_is_not_applied_twice() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let seeds = [once("insert-one", 1)];
@@ -62,7 +72,7 @@ macro_rules! suite {
             /// An `Idempotent` seed runs every time, because its author said that is safe.
             #[tokio::test]
             async fn an_idempotent_seed_runs_every_time() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 // `DELETE` then `INSERT` — genuinely repeatable, which is what the declaration
@@ -86,7 +96,7 @@ macro_rules! suite {
             /// FR-033: a seed declared for another scope does not run, and the report says why.
             #[tokio::test]
             async fn an_out_of_scope_seed_is_skipped_and_named() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let seeds = [SqlSeed::new(
@@ -105,7 +115,7 @@ macro_rules! suite {
             /// property of the construction rather than of ordering the writes carefully.
             #[tokio::test]
             async fn a_failing_seed_leaves_no_trace() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let seeds = [SqlSeed::new(
@@ -118,24 +128,23 @@ macro_rules! suite {
                 let error = run(&database, SeedScope::Test, &seeds)
                     .await
                     .expect_err("the duplicate key fails");
-                assert!(!format!("{error:?}").contains("rv_seeded"), "the SQL leaked");
+                assert!(
+                    !format!("{error:?}").contains("rv_seeded"),
+                    "the SQL leaked"
+                );
                 assert_eq!(count(&database).await, 0, "a failed seed left a row behind");
 
                 // And it may be retried, because it was never recorded.
-                let retried = run(
-                    &database,
-                    SeedScope::Test,
-                    &[once("broken", 5)],
-                )
-                .await
-                .expect("runs");
+                let retried = run(&database, SeedScope::Test, &[once("broken", 5)])
+                    .await
+                    .expect("runs");
                 assert_eq!(retried.applied(), ["broken"]);
             }
 
             /// FR-036: nothing a seed run reports can carry a credential.
             #[tokio::test]
             async fn a_seed_report_carries_no_credential() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let seeds = [SqlSeed::new(
@@ -155,7 +164,7 @@ macro_rules! suite {
             /// Seeds are applied in the order given, not in some order the database chose.
             #[tokio::test]
             async fn seeds_apply_in_declaration_order() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let seeds = [once("c", 3), once("a", 1), once("b", 2)];

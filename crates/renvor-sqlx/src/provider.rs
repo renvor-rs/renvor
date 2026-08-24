@@ -10,15 +10,15 @@
 
 use std::sync::OnceLock;
 
+use renvor_core::error::BoxedCause;
 use renvor_core::health::{Readiness, ReadinessContributor};
 use renvor_core::provider::registry::{
     CapabilityId, InitContext, Provider, ProviderFuture, ProviderId,
 };
-use renvor_core::error::BoxedCause;
 use renvor_database::{ConnectionString, Database, DatabaseKind, PoolSettings};
 
-use crate::migrate::Migrations;
 use crate::SqlxDatabase;
+use crate::migrate::Migrations;
 
 /// A database, booted and stopped by the kernel.
 ///
@@ -93,7 +93,7 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
     /// the policy at its default has not asked for schema change — which is the safe reading of an
     /// ambiguous configuration, and the reading the default was chosen to produce.
     ///
-    /// See [`Provider::initialise`] for why the provider records this rather than performing it.
+    /// See [`Provider::initialise`] for when the recorded policy is acted on.
     #[must_use]
     pub fn with_migrations(mut self, migrations: Migrations) -> Self {
         self.migrations = Some(migrations);
@@ -102,8 +102,9 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
 
     /// Whether this provider will change the schema during Boot.
     ///
-    /// Exposed so a deployment can **record** the decision, rather than an operator having to
-    /// infer it from two separate settings.
+    /// Exposed so a deployment can read the decision back, rather than an operator having to infer
+    /// it from two separate settings. `true` here means Boot **applies** migrations — see
+    /// [`Provider::initialise`].
     #[must_use]
     pub fn migrates_on_boot(&self) -> bool {
         self.migrations
@@ -125,14 +126,11 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
 ///
 /// # Why this is a macro and not a generic impl
 ///
-/// `Migrations::run_postgres` and `run_mysql` are driver-concrete, and a generic impl would have to
-/// reach them through a trait. That does not compile: the returned future must be `Send` for the
-/// boxed `ProviderFuture`, and proving that generically asks the compiler to show
-/// `sqlx::Acquire<'a>` holds for *any* `'a`, which it will not. Written per driver, every lifetime
-/// is concrete and the proof succeeds.
-///
-/// `migrate.rs` reaches for the same construction for the same reason, which is the strongest
-/// argument that it is the shape of the problem rather than a shortcut.
+/// [`Migrations::run_postgres`] and [`Migrations::run_mysql`] are driver-concrete, and a generic
+/// impl would have to reach them through a trait whose bound cannot be written: the boxed
+/// [`ProviderFuture`] erases every region, and `sqlx::Acquire` is implemented for one region at a
+/// time. `migrate.rs` reaches for the same construction for the same reason, which is the
+/// strongest argument that it is the shape of the problem rather than a shortcut.
 macro_rules! provider_for {
     ($driver:ty, $feature:literal, $run:ident) => {
         #[cfg(feature = $feature)]
@@ -145,27 +143,37 @@ macro_rules! provider_for {
                 &self.provides
             }
 
-            /// Opens the pool and proves the database answers.
+            /// Connects, proves the database answers, migrates if asked, and only then publishes.
             ///
-            /// Both steps, deliberately. Opening a pool can succeed against a host that accepts
-            /// TCP and serves nothing, so a boot that stopped at `connect` would report ready for
-            /// a database that cannot run a statement. [`Database::check`] costs one round trip
-            /// and closes that gap.
+            /// ```text
+            /// connect pool
+            ///   -> prove connectivity                     (one round trip, not just a socket)
+            ///   -> if the policy is OnBoot:
+            ///        dedicated migration connection
+            ///        apply under the lock and run deadlines
+            ///        end that session whatever happened
+            ///   -> publish the database into provider state
+            ///   -> readiness may report Ready
+            /// ```
             ///
-            /// # Migrations are NOT applied here, and the reason is upstream
+            /// # The order is the requirement, not an implementation detail
             ///
-            /// [`SqlxProvider::migrates_on_boot`] records whether a deployment asked for schema
-            /// change during Boot, but this method does not perform it. `sqlx`'s migration future
-            /// is **not `Send`** — the compiler cannot show `sqlx::Acquire<'a>` holds for the
-            /// lifetimes involved — and [`ProviderFuture`] is a boxed `Send` future, so the two
-            /// cannot meet. Verified against both drivers with concrete types, so this is a fact
-            /// about `sqlx` 0.9.0 rather than a limit of a generic signature here.
+            /// FR-021. Every failure above short-circuits **before** `self.database.set`, so a
+            /// provider that did not finish migrating has no database to hand out and
+            /// [`ReadinessContributor::readiness`] answers `NotReady` for the only reason it can:
+            /// there is nothing there. A migration that ran *after* publication would leave a
+            /// window in which the application is ready against a schema that does not exist yet,
+            /// which is the failure this ordering exists to make unrepresentable.
             ///
-            /// An application that declares [`renvor_database::MigrationPolicy::OnBoot`] therefore
-            /// applies migrations from its own boot sequence, before the provider graph is built —
-            /// which still satisfies "before readiness is reported", because nothing is ready until
-            /// Boot completes. Recorded as a Phase 006 limitation rather than worked around with a
-            /// thread whose failures the kernel could not report.
+            /// Connectivity is proved separately from connecting because opening a pool can
+            /// succeed against a host that accepts TCP and serves nothing.
+            /// [`Database::check`] costs one round trip and closes that gap.
+            ///
+            /// # A failed boot closes the pool it opened
+            ///
+            /// Otherwise a refused start leaves its connections on the server until the process
+            /// exits — and a crash-looping deployment turns that into connection exhaustion for
+            /// everything else on the same database.
             fn initialise<'a>(&'a self, _context: &'a mut InitContext<'_>) -> ProviderFuture<'a> {
                 Box::pin(async move {
                     let database =
@@ -173,10 +181,22 @@ macro_rules! provider_for {
                             .await
                             .map_err(|error| Box::new(error) as BoxedCause)?;
 
-                    database
-                        .check()
-                        .await
-                        .map_err(|error| Box::new(error) as BoxedCause)?;
+                    if let Err(error) = database.check().await {
+                        let _ = database.close().await;
+                        return Err(Box::new(error) as BoxedCause);
+                    }
+
+                    // The two halves of FR-021 are checked together: migrations supplied, AND a
+                    // policy that asked for them. Either alone is not a request to change a schema.
+                    if let Some(migrations) = self.migrations.as_ref() {
+                        if migrations.settings().policy().runs_on_boot() {
+                            if let Err(error) = migrations.$run(&database).await {
+                                let _ = database.close().await;
+                                return Err(Box::new(error) as BoxedCause);
+                            }
+                        }
+                    }
+
                     // `set` returns the value back on a second call. That cannot happen — the
                     // kernel initialises each provider once — so the result is discarded rather
                     // than unwrapped, which keeps a panic off a Boot path for a case the lifecycle

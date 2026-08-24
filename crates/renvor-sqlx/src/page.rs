@@ -15,9 +15,7 @@
 //! paging shifts every later page, silently skipping or repeating rows. A keyset seek asks for
 //! "rows after this position" and is unaffected by both.
 
-use renvor_database::{
-    DatabaseError, DatabaseErrorKind, DatabaseKind, Direction, OrderBy,
-};
+use renvor_database::{DatabaseError, DatabaseErrorKind, DatabaseKind, Direction, OrderBy};
 
 /// Renders the `WHERE` predicate that resumes an ordering after a position.
 ///
@@ -137,7 +135,10 @@ mod tests {
             .order_by(&[("name".to_owned(), Direction::Descending)])
             .expect("allowed");
         let rendered = seek_predicate(&order, DatabaseKind::Postgres, 1).expect("renders");
-        assert!(rendered.contains('<'), "descending must seek backwards: {rendered}");
+        assert!(
+            rendered.contains('<'),
+            "descending must seek backwards: {rendered}"
+        );
     }
 
     /// A mixed ordering is REFUSED, not served with the wrong semantics.

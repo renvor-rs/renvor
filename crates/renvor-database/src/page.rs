@@ -289,10 +289,14 @@ impl Keyset {
         let mut values = Vec::with_capacity(count);
         let mut offset = 10_usize;
         for _ in 0..count {
-            let len_bytes = bytes.get(offset..offset + 2).ok_or(KeysetError::Malformed)?;
+            let len_bytes = bytes
+                .get(offset..offset + 2)
+                .ok_or(KeysetError::Malformed)?;
             let len = u16::from_be_bytes([len_bytes[0], len_bytes[1]]) as usize;
             offset += 2;
-            let value = bytes.get(offset..offset + len).ok_or(KeysetError::Malformed)?;
+            let value = bytes
+                .get(offset..offset + len)
+                .ok_or(KeysetError::Malformed)?;
             offset += len;
             values.push(value.to_vec());
         }

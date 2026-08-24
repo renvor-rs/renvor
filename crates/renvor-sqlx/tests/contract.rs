@@ -39,7 +39,18 @@ macro_rules! suite {
                  title VARCHAR(200) NOT NULL, \
                  rank_value BIGINT NOT NULL)";
 
-            async fn fresh() -> Option<renvor_sqlx::SqlxDatabase<$driver>> {
+            /// A clean fixture, and the guard that keeps it clean.
+            ///
+            /// The guard is returned rather than taken and dropped here: it has to be held for the
+            /// whole test, because `rv_post` is shared and the next test's `fresh()` would
+            /// otherwise drop the table this one is still using. See
+            /// [`support::SHARED_FIXTURE`] for why that requirement is expressed in the type
+            /// rather than in a comment asking people to pass `--test-threads=1`.
+            async fn fresh() -> Option<(
+                renvor_sqlx::SqlxDatabase<$driver>,
+                tokio::sync::MutexGuard<'static, ()>,
+            )> {
+                let guard = support::SHARED_FIXTURE.lock().await;
                 let dsn = support::url($url)?;
                 let database = $connect(&dsn, &support::settings())
                     .await
@@ -52,7 +63,7 @@ macro_rules! suite {
                     .execute(database.pool())
                     .await
                     .expect("creates");
-                Some(database)
+                Some((database, guard))
             }
 
             /// `INSERT` with every value bound. No value is ever formatted into the statement.
@@ -76,7 +87,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn crud_round_trips() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let mut uow = database.begin().await.expect("begins");
@@ -141,7 +152,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn a_commit_makes_both_writes_visible() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let mut uow = database.begin().await.expect("begins");
@@ -161,7 +172,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn an_explicit_rollback_writes_nothing() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let mut uow = database.begin().await.expect("begins");
@@ -185,7 +196,7 @@ macro_rules! suite {
             /// an uncommitted row was never visible to another connection in the first place.
             #[tokio::test]
             async fn dropping_without_committing_writes_nothing() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 {
@@ -205,7 +216,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn cancelling_mid_transaction_writes_nothing() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let cancelled = tokio::time::timeout(Duration::from_millis(1), async {
@@ -236,7 +247,7 @@ macro_rules! suite {
             /// SC-002, measured rather than asserted.
             #[tokio::test]
             async fn every_ending_returns_the_connection_to_the_pool() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
 
@@ -264,7 +275,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn an_exhausted_pool_reports_an_acquire_timeout_rather_than_waiting_forever() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 // The pool holds four. Take all four and keep them.
@@ -288,7 +299,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn a_duplicate_key_is_classified_as_a_unique_violation() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let mut uow = database.begin().await.expect("begins");
@@ -323,7 +334,7 @@ macro_rules! suite {
             /// A value that would be catastrophic if interpolated, bound instead.
             #[tokio::test]
             async fn an_injection_payload_bound_as_a_value_is_stored_verbatim() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 const PAYLOAD: &str = "'); DROP TABLE rv_post; --";
@@ -372,7 +383,7 @@ macro_rules! suite {
             /// Ties are broken totally, so no row is skipped or repeated across pages.
             #[tokio::test]
             async fn paging_over_ties_returns_every_row_exactly_once() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 // Ten rows, all with the SAME rank — every row is a tie.
@@ -409,7 +420,9 @@ macro_rules! suite {
                 let mut after: Option<(i64, i64)> = None;
                 loop {
                     let sql = match after {
-                        None => format!("SELECT id, rank_value FROM rv_post ORDER BY {rendered} LIMIT 3"),
+                        None => format!(
+                            "SELECT id, rank_value FROM rv_post ORDER BY {rendered} LIMIT 3"
+                        ),
                         Some(_) => format!(
                             "SELECT id, rank_value FROM rv_post \
                              WHERE (rank_value, id) > ({}, {}) ORDER BY {rendered} LIMIT 3",
@@ -443,7 +456,7 @@ macro_rules! suite {
 
             #[tokio::test]
             async fn an_empty_table_yields_an_empty_page_rather_than_an_error() {
-                let Some(database) = fresh().await else {
+                let Some((database, _fixture)) = fresh().await else {
                     return;
                 };
                 let rows = sqlx::query_as::<_, (i64, i64)>(

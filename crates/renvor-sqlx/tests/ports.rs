@@ -33,7 +33,9 @@ impl renvor_database::Executor for FakeExecutor {
 }
 
 /// An application service generic over the port, with no driver anywhere in its signature.
-fn requires_a_transaction<E: renvor_database::Executor>(executor: &E) -> Result<&'static str, &'static str> {
+fn requires_a_transaction<E: renvor_database::Executor>(
+    executor: &E,
+) -> Result<&'static str, &'static str> {
     if executor.in_transaction() {
         Ok(executor.kind().as_str())
     } else {
@@ -80,9 +82,19 @@ macro_rules! suite {
                     .map(|_| ())
             }
 
-            async fn database() -> Option<$alias> {
+            /// A clean fixture, and the guard that keeps it clean for the test's duration.
+            ///
+            /// Every test in this file shares one table, which this drops or clears. Two running at
+            /// once therefore delete each other's rows, and the suite passed only under
+            /// `--test-threads=1` — a requirement nothing in the code stated, and one an ordinary
+            /// `cargo test` breaks with assertion failures that look like flakiness. Returning the
+            /// guard puts the requirement in the type. See [`support::SHARED_FIXTURE`].
+            async fn database() -> Option<($alias, tokio::sync::MutexGuard<'static, ()>)> {
+                let guard = support::SHARED_FIXTURE.lock().await;
                 let dsn = support::url($url)?;
-                let database = $connect(&dsn, &support::settings()).await.expect("connects");
+                let database = $connect(&dsn, &support::settings())
+                    .await
+                    .expect("connects");
                 sqlx::query(AssertSqlSafe(
                     "CREATE TABLE IF NOT EXISTS rv_ports (id BIGINT PRIMARY KEY)".to_owned(),
                 ))
@@ -93,12 +105,12 @@ macro_rules! suite {
                     .execute(database.pool())
                     .await
                     .expect("clears");
-                Some(database)
+                Some((database, guard))
             }
 
             #[tokio::test]
             async fn one_repository_runs_both_inside_and_outside_a_transaction() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
 
@@ -114,31 +126,29 @@ macro_rules! suite {
                 insert_widget(&mut uow, 2).await.expect("inserts");
                 uow.commit().await.expect("commits");
 
-                let total: i64 = sqlx::query_scalar(AssertSqlSafe(
-                    "SELECT COUNT(*) FROM rv_ports".to_owned(),
-                ))
-                .fetch_one(database.pool())
-                .await
-                .expect("counts");
+                let total: i64 =
+                    sqlx::query_scalar(AssertSqlSafe("SELECT COUNT(*) FROM rv_ports".to_owned()))
+                        .fetch_one(database.pool())
+                        .await
+                        .expect("counts");
                 assert_eq!(total, 2, "both execution contexts must have written");
             }
 
             /// A rolled-back transaction writes nothing, through that same repository.
             #[tokio::test]
             async fn a_rolled_back_transaction_leaves_no_row() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let mut uow = database.begin().await.expect("begins");
                 insert_widget(&mut uow, 99).await.expect("inserts");
                 uow.rollback().await.expect("rolls back");
 
-                let total: i64 = sqlx::query_scalar(AssertSqlSafe(
-                    "SELECT COUNT(*) FROM rv_ports".to_owned(),
-                ))
-                .fetch_one(database.pool())
-                .await
-                .expect("counts");
+                let total: i64 =
+                    sqlx::query_scalar(AssertSqlSafe("SELECT COUNT(*) FROM rv_ports".to_owned()))
+                        .fetch_one(database.pool())
+                        .await
+                        .expect("counts");
                 assert_eq!(total, 0);
             }
 
@@ -149,7 +159,7 @@ macro_rules! suite {
             /// nested begin flattened into the outer transaction would fail the second assertion.
             #[tokio::test]
             async fn a_second_begin_is_separate_rather_than_nested() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let mut outer = database.begin().await.expect("begins");
@@ -164,12 +174,11 @@ macro_rules! suite {
                     .fetch_one(inner.connection())
                     .await
                     .expect("reads session");
-                let seen: i64 = sqlx::query_scalar(AssertSqlSafe(
-                    "SELECT COUNT(*) FROM rv_ports".to_owned(),
-                ))
-                .fetch_one(inner.connection())
-                .await
-                .expect("counts");
+                let seen: i64 =
+                    sqlx::query_scalar(AssertSqlSafe("SELECT COUNT(*) FROM rv_ports".to_owned()))
+                        .fetch_one(inner.connection())
+                        .await
+                        .expect("counts");
 
                 assert_ne!(
                     outer_session, inner_session,
@@ -187,7 +196,7 @@ macro_rules! suite {
             /// Both executors report the kind they were built for.
             #[tokio::test]
             async fn every_executor_reports_its_kind() {
-                let Some(database) = database().await else {
+                let Some((database, _fixture)) = database().await else {
                     return;
                 };
                 let connection = database.acquire().await.expect("acquires");

@@ -51,6 +51,9 @@ macro_rules! pager {
             use renvor_sqlx::page::{limit_clause, order_clause, seek_predicate};
             use sqlx::AssertSqlSafe;
 
+            // Held for the whole function. `rv_page` is shared with the other driver's pager,
+            // and both are called from one test — see `support::SHARED_FIXTURE`.
+            let _fixture = support::SHARED_FIXTURE.lock().await;
             let dsn = support::url($url)?;
             let database: $alias = $connect(&dsn, &support::settings()).await.expect("connects");
 
@@ -189,14 +192,21 @@ async fn both_databases_return_the_same_page_boundaries() {
         .filter(|(name, _)| name == "alpha")
         .map(|(_, id)| *id)
         .collect();
-    assert_eq!(alphas, vec![1, 2, 3], "the tiebreaker did not order the ties");
+    assert_eq!(
+        alphas,
+        vec![1, 2, 3],
+        "the tiebreaker did not order the ties"
+    );
 }
 
 /// FR-037: a cursor issued under one query is refused by another.
 #[cfg(all(feature = "db-postgres", feature = "db-mysql"))]
 #[test]
 fn a_cursor_from_a_different_query_is_refused() {
-    let issued = Keyset::new(FINGERPRINT, vec![b"alpha".to_vec(), 1_i64.to_be_bytes().to_vec()]);
+    let issued = Keyset::new(
+        FINGERPRINT,
+        vec![b"alpha".to_vec(), 1_i64.to_be_bytes().to_vec()],
+    );
     let text = issued.to_cursor();
     assert!(Keyset::from_cursor(text.encode().as_str(), FINGERPRINT).is_ok());
     // The same bytes, presented against a different filter set.

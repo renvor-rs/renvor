@@ -101,7 +101,9 @@ macro_rules! suite {
 
             // ── FR-021: schema change during boot is an explicit, recorded choice ─────
 
-            async fn migrations(policy: renvor_database::MigrationPolicy) -> renvor_sqlx::migrate::Migrations {
+            async fn migrations(
+                policy: renvor_database::MigrationPolicy,
+            ) -> renvor_sqlx::migrate::Migrations {
                 let settings = renvor_database::MigrationSettings::default().with_policy(policy);
                 renvor_sqlx::migrate::Migrations::load(
                     std::path::Path::new("tests/migrations"),
@@ -126,8 +128,8 @@ macro_rules! suite {
             #[tokio::test]
             async fn supplying_migrations_is_not_asking_for_them() {
                 let loaded = migrations(renvor_database::MigrationPolicy::Never).await;
-                let provider = provider(ConnectionString::new("unused".to_owned()))
-                    .with_migrations(loaded);
+                let provider =
+                    provider(ConnectionString::new("unused".to_owned())).with_migrations(loaded);
                 assert!(
                     !provider.migrates_on_boot(),
                     "the default policy applied migrations"

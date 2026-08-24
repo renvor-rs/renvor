@@ -54,13 +54,13 @@ pub use migrate::{
     Reversibility,
 };
 pub use page::{Keyset, KeysetError, OrderBy, OrderTerm, Page, SortAllowlist};
+pub use pool::{ConnectionString, PoolSettings};
 /// Re-exported from `renvor-validation` rather than redefined.
 ///
 /// A sort direction is already part of contract C-15's collection-read vocabulary. Declaring a
 /// second one here would give the workspace two `Direction` enums that agree by coincidence, and
 /// the conversion between them would be the thing that eventually disagreed.
 pub use renvor_validation::collection::Direction;
-pub use pool::{ConnectionString, PoolSettings};
 pub use seed::{Idempotence, SeedDeclaration, SeedScope};
 
 /// Which database an adapter is talking to.

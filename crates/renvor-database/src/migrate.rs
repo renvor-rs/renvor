@@ -316,7 +316,10 @@ mod tests {
 
     #[test]
     fn automatic_migration_is_not_the_default() {
-        assert_eq!(MigrationSettings::default().policy(), MigrationPolicy::Never);
+        assert_eq!(
+            MigrationSettings::default().policy(),
+            MigrationPolicy::Never
+        );
         assert!(!MigrationPolicy::default().runs_on_boot());
     }
 
