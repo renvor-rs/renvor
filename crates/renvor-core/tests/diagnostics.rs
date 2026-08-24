@@ -47,6 +47,16 @@ fn credential_needles() -> Vec<String> {
         format!("{}{}", "s3cr3t", "-token"),
         format!("{}{}", "LEAKED", "-TAIL"),
         format!("{}{}", "do-not", "-print"),
+        // THE NAME OF THE SHARED TEST CONSTANT, not only the value behind it. Every needle above
+        // is a literal, so a file was in scope only if it *inlined* a canary — and the persistence
+        // suites do not: they reference the constant that `tests/support` exports. Four files that
+        // plant a password and render the refusal were therefore invisible to this gate, one of
+        // them printing the secret itself on failure. Found in Phase 007 by widening the needle
+        // set and reading what appeared; the offences it exposed are fixed in the same change.
+        //
+        // SPLIT, like the others, because a needle written whole would put this file into its own
+        // scope — where the synthetic controls below, which interpolate on purpose, are offences.
+        format!("{}{}", "CREDENTIAL", "_CANARY"),
     ]
 }
 
@@ -59,6 +69,9 @@ const PERMITTED: &[&str] = &[
     "route",
     "variant",
     "index",
+    // A loop counter under another name. Admitted rather than renaming the variable at each call
+    // site: `round` is a count of iterations and can carry nothing else.
+    "round",
     "payload_index",
     "needle_index",
     "label",
@@ -262,6 +275,25 @@ fn no_credential_handling_file_prints_what_it_asserts_about() {
         in_scope.len() >= 8,
         "only {} files were found to handle a credential; the needles have gone stale",
         in_scope.len()
+    );
+
+    // POSITIVE CONTROL 4: the scope reaches a file that names the shared constant WITHOUT inlining
+    // a canary literal. A count floor cannot guard this — 21 files matched the literals alone,
+    // well clear of the floor above — so deleting the constant needle would silently shrink the
+    // scope by the four files it was added for and every assertion here would still pass.
+    let constant = format!("{}{}", "CREDENTIAL", "_CANARY");
+    let literals = &needles[..4];
+    let by_constant_only = in_scope
+        .iter()
+        .filter(|(_, text)| {
+            text.contains(constant.as_str())
+                && !literals.iter().any(|needle| text.contains(needle.as_str()))
+        })
+        .count();
+    assert!(
+        by_constant_only >= 3,
+        "only {by_constant_only} files reach this gate through the shared constant alone; the \
+         needle that puts them in scope has gone stale, and they plant passwords"
     );
 
     let mut failures = Vec::new();

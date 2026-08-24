@@ -342,24 +342,93 @@ macro_rules! suite {
                 );
 
                 // The operator's REAL password, taken from the DSN this test is using.
+                //
+                // # An empty extraction is a FAILURE, not a skip
+                //
+                // This ended in `.unwrap_or_default()` guarded by `if !secret.is_empty()`, so a
+                // DSN with no password — trust auth, a `?password=` query form, a socket URL —
+                // turned the whole assertion into a no-op while the test still reported `ok`.
+                // That is exactly the silent-skip failure mode `support/mod.rs` argues against at
+                // length for the database URL, and the guard had not been applied here. A
+                // security review found it.
+                //
+                // The suite only reaches this line when `RENVOR_TEST_REQUIRE_DATABASE` is set or a
+                // URL was supplied, so a DSN this cannot read is a misconfiguration worth failing.
                 let exposed = dsn.expose();
                 let secret = exposed
                     .split_once("://")
                     .and_then(|(_, rest)| rest.split_once('@'))
                     .and_then(|(credentials, _)| credentials.split_once(':'))
                     .map(|(_, password)| password.to_owned())
-                    .unwrap_or_default();
-                let rendered = format!("{error:?} {error} {second:?}");
-                if !secret.is_empty() {
-                    assert!(
-                        !rendered.contains(&secret),
-                        "the password reached a diagnostic"
-                    );
-                }
-                for forbidden in ["CREATE TABLE", "INSERT INTO", "tests/migrations"] {
+                    .filter(|password| !password.is_empty())
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "no password could be extracted from the configured DSN, so the \
+                             redaction assertion below would check nothing. Point the test at a \
+                             password-authenticated instance rather than letting this pass"
+                        )
+                    });
+
+                // AND a canary that is unmistakable, so the assertion does not depend on the
+                // operator's password happening to be an unusual string. `CREDENTIAL_CANARY` was
+                // defined, documented as "a recognisable value that must never appear in output",
+                // and referenced by no test in this crate — `#![allow(dead_code)]` suppressed the
+                // warning that would have said so.
+                //
+                // The canary is put somewhere it could leak from: a DSN whose password IS the
+                // canary, connected with, and the resulting failure rendered. A version of this
+                // that merely asserted a freshly-built `DatabaseError` lacks a string nothing ever
+                // put in it would have proved nothing at all.
+                let poisoned = renvor_database::ConnectionString::new(
+                    exposed.replace(&secret, support::CREDENTIAL_CANARY),
+                );
+                let refusal = $connect(&poisoned, &support::settings())
+                    .await
+                    .err()
+                    .expect("a wrong password must be refused");
+                // Same promise as `renvor-sqlx`, asserted on the same terms: the two adapters
+                // document one contract and must not disagree about which kind a wrong password is.
+                assert_eq!(
+                    refusal.kind(),
+                    renvor_database::DatabaseErrorKind::ConnectFailed,
+                    "a refused handshake must be reported as a failure to connect"
+                );
+                let canary_rendered = format!("{refusal:?} {refusal}");
+                assert!(
+                    !canary_rendered.contains(support::CREDENTIAL_CANARY),
+                    "the canary reached a rendered connection error"
+                );
+
+                // Every `Debug` this crate defines, not just the provider's. The originals
+                // rendered `SeaOrmProvider` alone, leaving `SeaOrmDatabase`, `SeaOrmUnitOfWork`,
+                // `SeaOrmConnection` and `Migrations` unexercised by any test.
+                let database = $connect(&dsn, &support::settings()).await.expect("connects");
+                let unit = renvor_database::Database::begin(&database).await.expect("begins");
+                let migrations_debug = Migrations::load(
+                    std::path::Path::new("tests/migrations-boot"),
+                    boot_settings(MigrationPolicy::Never),
+                )
+                .await
+                .expect("loads");
+                let rendered = format!(
+                    "{error:?} {error} {second:?} {database:?} {unit:?} {migrations_debug:?}"
+                );
+                let _ = renvor_database::UnitOfWork::rollback(unit).await;
+                let _ = renvor_database::Database::close(&database).await;
+
+                assert!(
+                    !rendered.contains(&secret),
+                    "the password reached a diagnostic"
+                );
+                // Reported by INDEX rather than by naming the needle and printing the rendering:
+                // this file plants a password, and a diagnostic that prints what it asserts about
+                // prints it on the one run where the redaction was wrong.
+                for (needle_index, forbidden) in
+                    ["CREATE TABLE", "INSERT INTO", "tests/migrations"].into_iter().enumerate()
+                {
                     assert!(
                         !rendered.contains(forbidden),
-                        "`{forbidden}` reached a diagnostic: {rendered}"
+                        "forbidden needle {needle_index} reached a diagnostic"
                     );
                 }
             }

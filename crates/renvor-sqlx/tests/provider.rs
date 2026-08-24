@@ -60,10 +60,10 @@ macro_rules! suite {
                 // The refusal must not repeat the DSN. This is the whole reason `DatabaseError`
                 // has one field.
                 let rendered = format!("{:?}", outcome.unwrap_err());
-                for secret in ["127.0.0.1", ":p@", "none"] {
+                for (needle_index, secret) in ["127.0.0.1", ":p@", "none"].into_iter().enumerate() {
                     assert!(
                         !rendered.contains(secret),
-                        "the boot failure leaked `{secret}`: {rendered}"
+                        "the boot failure leaked DSN needle {needle_index}"
                     );
                 }
             }
