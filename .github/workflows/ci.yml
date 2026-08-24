@@ -26,7 +26,11 @@ jobs:
   verify:
     # Produces the required checks `verify (1.94.0)` and `verify (stable)`.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 45, not 30, since this job gained real databases. Measured locally, the suites that were
+    # previously skipping add roughly two minutes of test time on top of pulling two images. The
+    # old ceiling would probably have held; a timeout is an expensive and uninformative way to find
+    # out that it did not, and it matches what the `platform` job already allows.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       # Both matrix jobs run the same link check against the same host. In parallel they
