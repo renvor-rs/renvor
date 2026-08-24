@@ -73,8 +73,19 @@ valkey-cli ping | grep -q PONG live 0   NO AUTH 1     WRONG PASSWORD 1
 ```
 
 The plain `valkey-cli ping` is the form most examples use and it can only ever report healthy.
+Both database probes additionally pass `-h 127.0.0.1`: without a host they answer over the unix
+socket, and both entrypoints initialise with networking disabled — so a socket probe reports healthy
+while the port is still closed, and `depends_on: service_healthy` releases the application into that
+window.
+
 None of the three carries a credential, because `docker inspect` and the container's process list
 both expose the command text; `valkey-cli` reads `REDISCLI_AUTH` from the environment instead.
+
+**That is true of the health checks and not of the whole profile**, and the distinction is worth
+stating because an earlier draft blurred it. The cache service's own `command:` passes
+`--requirepass` as an argv element, so the local cache password *is* visible to `docker inspect` and
+`docker compose config`. Removing that needs a Compose `secrets:` mount and a config file — a change
+to the profile's shape, not a comment. It is carried as **L-11** rather than described away.
 
 ### 4. Pinned tags, deliberately not digests
 
@@ -99,9 +110,16 @@ as immutability the generated project has no mechanism to maintain.
 - **`renvor docker down` keeps the data**, and no renvor command removes a volume. A test prevents
   a destructive flag being added without its own confirmation contract, the way `renvor tls trust`
   has one.
-- **Generation stays offline.** It renders files and starts nothing, verified with proxies and
-  `DOCKER_HOST` pointed at a dead endpoint — and structurally, since `renvor-cli` resolves neither
-  `sqlx` nor any HTTP client.
+- **Generation stays offline.** It renders files and starts nothing, verified with every proxy
+  variable and `DOCKER_HOST` pointed at a dead endpoint.
+
+  An earlier draft said this held **structurally**, "since `renvor-cli` resolves neither `sqlx` nor
+  any HTTP client". The dependency facts are true and asserted, but the conclusion does not follow:
+  the binary **spawns `docker`** for `renvor docker up`, and a missing HTTP crate prevents nothing
+  when the work is delegated to a child process. The honest statement is about **routing** — the
+  `new` path reaches no Docker call site — and that is what the test asserts. Corrected here rather
+  than left standing, because the same sentence appeared in the conformance record and a claim
+  repeated twice is a claim, not a typo.
 - **Template version 3 → 4**, with a real version-3 project captured by building the v3 generator
   in a detached worktree. It still validates, and is not silently upgraded by `renvor check`.
 

@@ -125,8 +125,9 @@ its own favour is worse than one with a lower number.
 
 ## 6. The commissioned reviews
 
-Four were commissioned: requirements conformance, security and database threat, dependency and
-MSRV, and test quality. **All four returned findings**; none is recorded as NOT PERFORMED.
+Six ran in total: requirements conformance, security and database threat, dependency and MSRV,
+test quality, and two further audits of the container-render and credential surfaces. **All six
+returned findings**; none is recorded as NOT PERFORMED.
 
 They found **more than this phase's own testing did**, and the most serious finding was against the
 *record* rather than the code.
@@ -154,6 +155,27 @@ They found **more than this phase's own testing did**, and the most serious find
 | — | Low | Adjacent, pre-existing: `PoolSettings::connect_timeout` was validated and applied to nothing | **Fixed.** `sqlx` has no such option, so Renvor applies it to the opening connect |
 | D1, D2 | Low | Packaging observations about `publish = false` | **No change.** The publishable set is asserted in CI against an expected list, so a change would be a visible edit |
 | T9, R11 | Low | Pre-existing non-hermetic tests (a 1ms deadline; a test hashing the macOS login keychain) | **Recorded, not fixed** — outside this phase, and noted so the "passes twice" claim is read as a statement about machine state |
+
+### 6b. Two further audits, and what they found that the first four did not
+
+Two additional automated audits ran against the pre-fix tree. Both are **advisory**. Both found
+things the four above missed, and one of them found the most valuable single finding of the phase.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| P1 | **High** | *"No flag can carry a password"* was a **comment, not a test.** A visible `--database-password` was caught only by the byte-exact `--help` snapshot — which fails as "the surface changed" and prints its own regeneration command, so the reflex fix accepts it. Added with `#[arg(long, hide = true)]`, the pattern five reserved flags already use, it passed **262 tests with zero failures** | **Fixed.** `no_flag_in_the_whole_surface_can_carry_a_credential` reflects over the whole `clap::Command` tree — `hide` removes an argument from the rendering, not from the command — and refuses any long name or alias containing `password`, `secret`, `credential`, `token`, or `apikey`. Verified against the peer's exact case: hidden, the snapshot passes and only this guard fires |
+| P2 | **High** | The health-check **content** was asserted nowhere. Reverting `CacheEngine::healthcheck` to the plain `valkey-cli ping` — the form that exits 0 on a wrong password — kept all 27 tests green **and** the Docker matrix green, because the matrix's cache checks are positive-only | **Fixed.** `the_health_checks_are_the_forms_that_can_actually_fail`, mutation-checked in both directions: reverting the cache form fails, dropping `-h` from `pg_isready` fails |
+| P3 | Medium | The engine assertion covered the **image** in both directions but the **environment block** in one. Inverting `container_is_postgres` would render `MYSQL_*` keys under a `library/postgres` image — a container that starts and serves nothing the application expects — and every test would pass | **Fixed.** Both directions asserted for both engines |
+| P4 | Medium | `sqlx` was absent from `capabilities.rs`'s crate lists, so an accidental `renvor-sqlx` edge from the CLI would have left the suite green — and FR-063 rests on that closure | **Fixed.** `the_executable_reaches_no_database_driver`, with `renvor-database` as the positive control since it **is** a dependency |
+| P5 | Medium | ADR-0019 repeated the *"structurally cannot"* over-claim, so it was not a one-document slip | **Fixed** in the ADR, with the correction recorded rather than the sentence quietly replaced |
+| P6 | Low | The `${VAR:?}` assertion rendered PostgreSQL only, so the MySQL branch was never exercised; and a bare `${VAR}` — which Compose substitutes empty with only a warning — slipped past a `:-` check | **Fixed.** Both engines exercised; every reference must now carry `:?` |
+| P7 | Low | The named-volume claim was asserted for the database and not the cache | **Fixed** |
+| P8 | — | FR-062 audited **clean**. The peer went past `PROVENANCE.md` and rebuilt the v3 generator from `git archive 1a83149`, diffing all ten files byte-for-byte; and mutation-killed the compatibility gate by making `[container]` required | **No change.** Their qualification is adopted: v3 lived four commits on an unmerged branch, so the gate protects an intermediate no user ever had. Sound test, narrow value — recorded, not overstated |
+| P9 | — | `#[serde(default)]` on `Option<ContainerTable>` is redundant; serde already treats a missing `Option` as `None` | **No change.** An equivalent mutant, recorded so nobody reads it as a dead gate |
+
+The FR-057 and FR-061 findings in that batch were already closed by §6a before the audits reported;
+their independent confirmation of the gap is recorded because two audits reaching the same
+conclusion from different directions is worth more than one.
 
 **Automated review is not independent review.** Constitution §Development and Phase Workflow #4 and
 `PLAN.md` §6.1 step 10 require a review by a qualified person other than the author. No such review

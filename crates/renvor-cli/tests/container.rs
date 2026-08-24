@@ -210,9 +210,25 @@ fn only_the_selected_database_engine_appears_in_the_profile() {
         !compose.contains("library/postgres"),
         "a PostgreSQL service was generated for a MySQL project"
     );
-    // The environment keys are engine-specific too, and getting them crossed produces a container
-    // that starts and then serves the wrong database name.
-    assert!(compose.contains("MYSQL_DATABASE") && !compose.contains("POSTGRES_DB"));
+    // THE ENVIRONMENT BLOCK, IN BOTH DIRECTIONS.
+    //
+    // This checked the MySQL branch only, and nothing else in the workspace mentioned
+    // `POSTGRES_DB`. So inverting the `container_is_postgres` flag would render a PostgreSQL
+    // project carrying `MYSQL_DATABASE`/`MYSQL_USER`/`MYSQL_PASSWORD` under a `library/postgres`
+    // image — a container that starts and serves nothing the application expects — and every test
+    // here would still pass. "Asserted in both directions" was true of the image and not of this.
+    assert!(compose.contains("MYSQL_DATABASE") && compose.contains("MYSQL_USER"));
+    assert!(!compose.contains("POSTGRES_DB") && !compose.contains("POSTGRES_USER"));
+
+    let postgres_env = postgres.read("compose.yaml");
+    assert!(
+        postgres_env.contains("POSTGRES_DB") && postgres_env.contains("POSTGRES_USER"),
+        "a PostgreSQL project does not carry PostgreSQL environment keys"
+    );
+    assert!(
+        !postgres_env.contains("MYSQL_DATABASE") && !postgres_env.contains("MYSQL_USER"),
+        "MySQL environment keys leaked into a PostgreSQL project"
+    );
 }
 
 /// Every tested version generates, and pins the image it names.
@@ -488,6 +504,76 @@ fn the_cache_says_it_is_not_wired_into_the_application() {
     );
 }
 
+/// The health checks are the forms that were verified to FAIL, not merely to pass.
+///
+/// # Reverting them kept every lane green
+///
+/// `valkey-cli ping` exits **0** on a wrong password and on no auth at all — measured, not
+/// assumed — so the obvious form is a health check that can only ever report healthy, and
+/// `depends_on: service_healthy` then releases the application against a dead cache. The
+/// `| grep -q PONG` form exits 1 in both failure cases.
+///
+/// Likewise both database probes must name a host. Without `-h` they answer over the unix socket,
+/// and both official entrypoints initialise with networking disabled — so the probe passes while
+/// the port is still closed.
+///
+/// Neither property was asserted anywhere. Reverting `CacheEngine::healthcheck` to the plain
+/// `ping` kept all 27 tests green **and** kept the manual Docker matrix green, because the
+/// matrix's cache checks are positive-only and a check that always reports healthy satisfies them.
+/// Undefended in both lanes is what this closes.
+#[test]
+fn the_health_checks_are_the_forms_that_can_actually_fail() {
+    let cached = generate_ok(&[
+        "--database",
+        "postgres",
+        "--container",
+        "--container-cache",
+        "valkey",
+    ]);
+    let compose = cached.read("compose.yaml");
+    assert!(
+        compose.contains("valkey-cli ping | grep -q PONG"),
+        "the cache health check is not the form that fails on a wrong password"
+    );
+    assert!(
+        !compose.contains(r#"["CMD", "valkey-cli", "ping"]"#),
+        "the cache health check is the form that exits 0 even unauthenticated"
+    );
+    assert!(
+        compose.contains(r#""pg_isready", "-h", "127.0.0.1""#),
+        "pg_isready has no host, so it answers over the unix socket"
+    );
+
+    let mysql = generate_ok(&["--database", "mysql", "--container"]);
+    assert!(
+        mysql
+            .read("compose.yaml")
+            .contains(r#""mysqladmin", "-h", "127.0.0.1""#),
+        "mysqladmin has no host, so it answers over the unix socket"
+    );
+}
+
+/// Both services keep their state in NAMED volumes, so `renvor docker down` is not destructive.
+///
+/// The database half was asserted; the cache half was not — `cache-data:` appeared in no test.
+#[test]
+fn both_services_use_named_volumes() {
+    let generated = generate_ok(&[
+        "--database",
+        "postgres",
+        "--container",
+        "--container-cache",
+        "valkey",
+    ]);
+    let compose = generated.read("compose.yaml");
+    for volume in ["database-data:", "cache-data:"] {
+        assert!(
+            compose.contains(volume),
+            "a service does not use a named volume, so `renvor docker down` would destroy its data"
+        );
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────── secrets
 
 /// Generation never writes a `.env`, and the example it does write holds nothing usable.
@@ -551,10 +637,26 @@ fn a_missing_secret_is_a_refusal_rather_than_a_blank_password() {
         "valkey",
     ]);
     let compose = generated.read("compose.yaml");
+    // BOTH ENGINES. This rendered PostgreSQL only, so `MYSQL_PASSWORD` — a different template
+    // branch — was never exercised by the assertion that every secret uses the refusing form.
+    let mysql = generate_ok(&["--database", "mysql", "--container"]).read("compose.yaml");
+    assert!(
+        mysql.contains("${RENVOR_DATABASE_PASSWORD:?"),
+        "the MySQL branch does not use the refusing form"
+    );
+
     for name in ["RENVOR_DATABASE_PASSWORD", "RENVOR_CACHE_PASSWORD"] {
         assert!(
             compose.contains(&format!("${{{name}:?")),
             "a required secret does not use the `${{VAR:?}}` form, so Compose would substitute an empty string: {name}"
+        );
+        // A BARE `${VAR}` also slips past a `:-` check, and Compose substitutes an empty string
+        // for it with only a warning — which is the silent fallback this whole form exists to
+        // prevent. Every reference must carry the `:?`.
+        assert_eq!(
+            compose.matches(&format!("${{{name}")).count(),
+            compose.matches(&format!("${{{name}:?")).count(),
+            "a reference to a required secret does not use the refusing `:?` form"
         );
         assert!(
             !compose.contains(&format!("${{{name}:-")),

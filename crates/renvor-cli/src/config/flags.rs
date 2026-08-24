@@ -398,6 +398,89 @@ mod tests {
         Cli::try_parse_from(args).expect("parses")
     }
 
+    /// NO FLAG ANYWHERE IN THE SURFACE MAY CARRY A CREDENTIAL.
+    ///
+    /// # This was a comment, and a comment is not a gate
+    ///
+    /// The module above says "no flag that could will be added". An audit tested that claim by
+    /// adding one. A **visible** `--database-password` was caught — but only by the byte-exact
+    /// `--help` snapshot, which fails as "the surface changed" and prints its own regeneration
+    /// command, so the reflex fix is to accept the new snapshot. A flag added with
+    /// `#[arg(long, hide = true)]` — the pattern five reserved flags in this file already use —
+    /// passed **262 tests with zero failures**.
+    ///
+    /// So this walks the whole parsed surface rather than any one command's help text. `hide` does
+    /// not remove an argument from the command, only from the rendering, which is exactly why
+    /// reflecting over `clap::Command` catches what a snapshot cannot.
+    ///
+    /// # Why a name test rather than a type test
+    ///
+    /// There is no type that means "not a credential". What there is, is a naming convention every
+    /// credential-bearing flag in every CLI shares. Refusing the vocabulary is cruder than refusing
+    /// the capability and it is what can actually be enforced here.
+    ///
+    /// A credential on a command line lands in shell history, in `ps` output, and in the CI log of
+    /// whatever ran it. That is why the rule exists; this is why it holds.
+    #[test]
+    fn no_flag_in_the_whole_surface_can_carry_a_credential() {
+        /// Substrings a credential-bearing flag would almost certainly contain.
+        const FORBIDDEN: [&str; 7] = [
+            "password",
+            "passwd",
+            "secret",
+            "credential",
+            "token",
+            "apikey",
+            "api-key",
+        ];
+
+        fn walk(command: &clap::Command, path: &str, seen: &mut usize) {
+            for argument in command.get_arguments() {
+                *seen += 1;
+                // `get_long` and the aliases, because an alias is as usable as a name.
+                let names: Vec<String> = argument
+                    .get_long()
+                    .into_iter()
+                    .chain(argument.get_all_aliases().unwrap_or_default())
+                    .map(|name| name.to_ascii_lowercase().replace('_', "-"))
+                    .collect();
+                for name in names {
+                    for forbidden in FORBIDDEN {
+                        assert!(
+                            !name.contains(forbidden),
+                            "`{path} --{name}` looks like it carries a credential. A password on a \
+                             command line reaches shell history, `ps`, and CI logs. Secrets belong \
+                             in the environment or a file the tool never writes"
+                        );
+                    }
+                }
+            }
+            for sub in command.get_subcommands() {
+                let child = format!("{path} {}", sub.get_name());
+                walk(sub, &child, seen);
+            }
+        }
+
+        let command = Cli::command();
+        let mut seen = 0;
+        walk(&command, "renvor", &mut seen);
+
+        // POSITIVE CONTROL. A walk that visited nothing would satisfy every assertion above, which
+        // is the failure mode this whole test exists to prevent in someone else's code.
+        assert!(
+            seen > 20,
+            "the surface walk visited only {seen} argument(s); it is not reading the command tree"
+        );
+        // And a control on the CHECK itself, not just the walk: the matcher must recognise a name
+        // that should be refused.
+        assert!(
+            FORBIDDEN
+                .iter()
+                .any(|forbidden| "database-password".contains(forbidden)),
+            "the forbidden list no longer matches an obviously credential-bearing name"
+        );
+    }
+
     #[test]
     fn the_declared_command_surface_is_valid() {
         // clap's own consistency check. Catches a duplicate long flag or a malformed default at
