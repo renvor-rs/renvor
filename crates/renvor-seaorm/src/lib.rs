@@ -40,7 +40,9 @@
 
 pub mod error;
 pub mod migrate;
+pub mod page;
 pub mod provider;
+pub mod seed;
 pub mod version;
 
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
@@ -131,7 +133,7 @@ impl<DB: sqlx::Database> SeaOrmDatabase<DB> {
         // accepted and validated would otherwise be passed to nothing.
         let pool = match tokio::time::timeout(settings.connect_timeout(), opening).await {
             Ok(Ok(pool)) => pool,
-            Ok(Err(error)) => return Err(error::classify_error(&error)),
+            Ok(Err(error)) => return Err(error::classify_connect_error(&error)),
             Err(_) => return Err(DatabaseError::new(DatabaseErrorKind::ConnectFailed)),
         };
 
@@ -186,7 +188,8 @@ pub type MySqlDatabase = SeaOrmDatabase<sqlx::MySql>;
 ///
 /// # Nesting is unrepresentable
 ///
-/// There is no `begin` on this type. Calling [`Database::begin`] again yields a **separate**
+/// There is no `begin` on this type. Calling [`renvor_database::Database::begin`] again yields a
+/// **separate**
 /// session on a **different** connection, which is asserted rather than assumed.
 pub struct SeaOrmUnitOfWork<'c, DB: sqlx::Database> {
     /// `None` once `commit` or `rollback` has taken the connection.
@@ -498,6 +501,14 @@ macro_rules! driver {
             ///
             /// This is the escape hatch's last rung, and the only one with no binding. FR-037: a
             /// value from a request belongs in `Statement::from_sql_and_values`, one rung up.
+            ///
+            /// # The blast radius is stacked statements, not one rewritten query
+            ///
+            /// This routes through [`sqlx::raw_sql`], which accepts *"one or more raw SQL
+            /// statements, separated by semicolons"* — and `sqlx-mysql` negotiates
+            /// `CLIENT_MULTI_STATEMENTS`, so it is not a PostgreSQL-only concern. An injection
+            /// here is arbitrary DDL and DML on either engine. SeaORM's own driver behaves
+            /// identically; this is parity, and it is written down rather than assumed known.
             async fn execute_unprepared(
                 &self,
                 sql: &str,
@@ -618,8 +629,19 @@ macro_rules! driver {
                 .as_ref()
                 .map_or_else(|| sea_orm::sea_query::Values(Vec::new()), Clone::clone);
             // `AssertSqlSafe` is SQLx 0.9's marker that this string is not caller-interpolated.
-            // It is sound here because `stmt.sql` is built by SeaQuery, which parameterises every
-            // value it is given; the values travel separately, in `SqlxValues`.
+            //
+            // AN EARLIER VERSION OF THIS COMMENT SAID IT WAS SOUND "because `stmt.sql` is built by
+            // SeaQuery, which parameterises every value it is given". **That is not a property of
+            // the type.** `sea_orm::Statement.sql` is a `pub String`, and
+            // `Statement::from_string(backend, impl Into<String>)` accepts arbitrary text with
+            // `values: None` — so a caller CAN put unbound SQL here, and a reader who trusted that
+            // sentence would conclude the opposite. A security review caught it.
+            //
+            // What is actually true: this adapter is a faithful executor, and the assertion
+            // belongs to whoever built the `Statement` — the same trust model SeaORM's own driver
+            // offers. When the statement comes from the entity or SeaQuery APIs (rung 1 of the
+            // escape hatch) every value IS parameterised and travels separately in `SqlxValues`.
+            // When it comes from `Statement::from_string`, nothing is parameterised at all.
             sqlx::query_with(
                 sqlx::AssertSqlSafe(stmt.sql.as_str()),
                 sea_query_sqlx::SqlxValues(values),

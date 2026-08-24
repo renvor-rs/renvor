@@ -180,6 +180,28 @@ impl Migrations {
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 const APPLIED_VERSIONS: &str = "SELECT version FROM _sqlx_migrations ORDER BY version";
 
+/// Whether a failed read of the bookkeeping table means "it does not exist yet".
+///
+/// # Why this is not `unwrap_or_default()`
+///
+/// It was. Before the first run the table genuinely does not exist, and an empty set is the truth
+/// — but the same fallback also swallowed a denied privilege, a transient failure, and pool
+/// exhaustion. The report is then built by comparing an empty "before" against the real "after",
+/// so **every** migration is reported `Applied` and the elapsed time is divided across a count
+/// that never happened. A security review found it, and it sits badly in a crate whose migration
+/// engine was chosen over `sea-orm-migration` precisely because that one cannot tell you when its
+/// bookkeeping is wrong.
+///
+/// The report is boot evidence. Evidence that fabricates itself when it cannot read is worse than
+/// evidence that says it could not read.
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+fn table_is_simply_absent(error: &sqlx::Error) -> bool {
+    // Both engines report an unknown relation through `Error::Database` with a SQLSTATE:
+    // PostgreSQL `42P01` (undefined_table), MySQL `42S02` (base table not found).
+    matches!(error, sqlx::Error::Database(inner)
+        if matches!(inner.code().as_deref(), Some("42P01" | "42S02")))
+}
+
 /// How long the migration session is given to close itself.
 ///
 /// Public and **not** feature-gated: [`crate::provider::SeaOrmProvider::required_boot_deadline`]
@@ -231,10 +253,13 @@ macro_rules! runner {
 
                 let pool = database.pool();
 
-                let before: Vec<i64> = sqlx::query_scalar(APPLIED_VERSIONS)
-                    .fetch_all(pool)
-                    .await
-                    .unwrap_or_default();
+                let before: Vec<i64> =
+                    match sqlx::query_scalar(APPLIED_VERSIONS).fetch_all(pool).await {
+                        Ok(versions) => versions,
+                        // The first run. There is nothing applied, and that IS the answer.
+                        Err(inner) if table_is_simply_absent(&inner) => Vec::new(),
+                        Err(inner) => return Err(error::classify_error(&inner)),
+                    };
                 let started = Instant::now();
 
                 let mut connection = pool
@@ -288,10 +313,14 @@ macro_rules! runner {
 
                 outcome?;
 
+                // The migration itself has already succeeded by here — `outcome?` is above. A
+                // failure to read the table back is therefore a failure to REPORT, and it is
+                // returned rather than papered over with an empty set that would mark every
+                // migration newly applied.
                 let after: Vec<i64> = sqlx::query_scalar(APPLIED_VERSIONS)
                     .fetch_all(pool)
                     .await
-                    .unwrap_or_default();
+                    .map_err(|inner| error::classify_error(&inner))?;
                 Ok(self.report(&before, &after, started.elapsed()))
             }
         }
