@@ -92,9 +92,32 @@ env:
   # three, and `renvor-http` is itself forced by the facade. `renvor-error` is the interesting one
   # — it depends on **no Renvor crate at all**, so it publishes at position 1 beside the kernel.
   #
+  # ── PHASE 006: EIGHT CRATES BECAME TEN ──────────────────────────────────────────────
+  #
+  # `renvor-database` and `renvor-sqlx` were added, and this assertion **failed on the first push
+  # of that branch** with:
+  #
+  #   expected: renvor renvor-config renvor-core renvor-error renvor-http renvor-openapi renvor-testkit renvor-validation
+  #   actual:   renvor renvor-config renvor-core renvor-database renvor-error renvor-http renvor-openapi renvor-sqlx renvor-testkit renvor-validation
+  #
+  # The guard working a third time, for the same reason and to the same effect. Recorded here in
+  # the same form as the two above, because the value of this line is the history of decisions it
+  # has forced, not the list itself.
+  #
+  # These two are publishable for a DIFFERENT reason from the Phase 004 and 005 additions, and the
+  # difference matters. Those were **forced**: the facade reaches them, and ADR-0008 records by
+  # experiment that a publishable package cannot depend on an unpublishable one. The facade does
+  # **not** depend on `renvor-database` or `renvor-sqlx` — persistence is deliberately outside it,
+  # so a project that wants no database resolves no driver.
+  #
+  # They are publishable because an application depends on them **directly**. `renvor-database`
+  # declares the ports an application writes its repositories against, and `renvor-sqlx` is the
+  # adapter it names in its own `Cargo.toml` with one driver feature. A framework whose persistence
+  # ports could not be depended on would have no persistence story at all.
+  #
   # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
   # sorts both sides — but it makes the line readable as the thing it describes.
-  CRATES: "renvor-core renvor-error renvor-config renvor-testkit renvor-validation renvor-openapi renvor-http renvor"
+  CRATES: "renvor-core renvor-error renvor-config renvor-testkit renvor-validation renvor-database renvor-sqlx renvor-openapi renvor-http renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor

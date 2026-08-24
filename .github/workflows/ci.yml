@@ -134,14 +134,29 @@ jobs:
           # The two legs run DIFFERENT engines, so between them they cover all four versions
           # Phase 006 claims rather than testing one pair twice. Chosen here rather than in the
           # matrix, so the required check names stay `verify (1.94.0)` and `verify (stable)`.
-          if [ "${{ matrix.toolchain }}" = "1.94.0" ]; then
-            postgres_image="postgres:17.11-trixie"
-            mysql_image="mysql:8.4.11"
-          else
-            postgres_image="postgres:18.6-trixie"
-            mysql_image="mysql:9.7.2"
-          fi
-          echo "postgres=$postgres_image mysql=$mysql_image"
+          # A `case` WITH A FAILING DEFAULT, not an if/else.
+          #
+          # An `else` branch silently absorbs any toolchain it was not written for. Bump the MSRV
+          # pin without editing this map and every leg falls into it, so both run the same engine
+          # pair — the "testing one pair twice" failure the matrix was arranged to avoid, and it
+          # fails quiet. An unmapped toolchain now fails the leg instead.
+          case "${{ matrix.toolchain }}" in
+            "1.94.0")
+              postgres_image="postgres:17.11-trixie"
+              mysql_image="mysql:8.4.11"
+              ;;
+            "stable")
+              postgres_image="postgres:18.6-trixie"
+              mysql_image="mysql:9.7.2"
+              ;;
+            *)
+              echo "::error::no engine pair is mapped for toolchain '${{ matrix.toolchain }}'." \
+                   "Add one here when the matrix gains a leg, or the engines this phase claims" \
+                   "stop being covered." >&2
+              exit 1
+              ;;
+          esac
+          echo "toolchain=${{ matrix.toolchain }} postgres=$postgres_image mysql=$mysql_image"
 
           docker run -d --name rv-postgres \
             -e POSTGRES_PASSWORD="$password" -e POSTGRES_DB=renvor_test \
