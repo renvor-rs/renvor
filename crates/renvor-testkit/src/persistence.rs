@@ -22,7 +22,10 @@
 
 use core::future::Future;
 
-use renvor_database::{Database, DatabaseError, DatabaseErrorKind, DatabaseKind, UnitOfWork};
+use renvor_database::{
+    Database, DatabaseError, DatabaseErrorKind, DatabaseKind, SeedReport, SeedScope, SqlSeed,
+    UnitOfWork,
+};
 
 /// The driver-specific operations a contract run needs, supplied by the adapter under test.
 ///
@@ -47,6 +50,20 @@ pub trait PersistenceFixture: Sync {
         id: i64,
     ) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 
+    /// Counts rows through the supplied transaction's **own** connection.
+    ///
+    /// # Why this exists alongside [`count`](Self::count)
+    ///
+    /// Because reading from a third connection cannot tell a *separate* transaction from a
+    /// *nested* one. Both engines hide an uncommitted write from every other session, so an outer
+    /// write is invisible from outside whether or not the second `begin` actually took a new
+    /// session — and an assertion that only looks from outside passes under the bug it exists to
+    /// catch. Reading from inside the second transaction distinguishes them.
+    fn count_within(
+        &self,
+        unit: &mut <Self::Database as Database>::UnitOfWork<'_>,
+    ) -> impl Future<Output = i64> + Send;
+
     /// Counts rows **on a connection outside any open transaction**.
     ///
     /// Outside, because visibility is the property under test: a count taken inside the
@@ -56,6 +73,25 @@ pub trait PersistenceFixture: Sync {
 
     /// Empties the fixture table.
     fn reset(&self) -> impl Future<Output = ()> + Send;
+
+    /// Applies a seed set through this adapter's own runner.
+    ///
+    /// # Why seeding is in the shared contract at all
+    ///
+    /// Phase 007's FR-033 requires SeaORM seeding to behave identically to the direct-SQLx row.
+    /// A review found that claim evidenced by an argument rather than a test, and the argument was
+    /// false: the seed types lived inside the SQLx adapter, where the other one could not reach
+    /// them. They now live in `renvor-database`, and the two **runners** are compared here.
+    ///
+    /// Only the runner is per-adapter, so only the runner is behind this method.
+    fn seed(
+        &self,
+        scope: SeedScope,
+        seeds: &[SqlSeed],
+    ) -> impl Future<Output = Result<SeedReport, DatabaseError>> + Send;
+
+    /// Empties the seed ledger, so a run starts from nothing.
+    fn reset_seed_ledger(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// An explicit commit persists, and is visible from another connection.
@@ -133,18 +169,45 @@ pub async fn cancellation_commits_nothing<F: PersistenceFixture>(fixture: &F) {
 
 /// A second `begin` is a separate session, not a nested transaction.
 ///
-/// A nested begin that quietly flattened into the outer transaction is the failure this rules out,
-/// so the assertion is on **visibility** rather than on two handles existing.
+/// # Read from INSIDE the second transaction, with a control
+///
+/// This asserted only that the outer write was invisible from a third, unrelated connection — and
+/// that assertion **passes under the exact bug it names**. Both engines hide an uncommitted write
+/// from every other session, so a second `begin` that reused the first's session (on PostgreSQL a
+/// second `BEGIN` on an open transaction emits a notice and continues the *same* one) would still
+/// look correct from outside. A review caught it; the adapter-specific tests in
+/// `renvor-sqlx/tests/ports.rs` and `renvor-seaorm/tests/cancellation.rs` were already doing this
+/// properly, and only the shared version — the one both adapters rely on — was weak.
+///
+/// Two assertions, and the first is a **control**: the outer transaction must see its own write.
+/// Without it, a `count_within` that quietly read from the pool would satisfy the second assertion
+/// while measuring nothing.
 pub async fn a_second_begin_is_separate<F: PersistenceFixture>(fixture: &F) {
     fixture.reset().await;
     let mut outer = fixture.database().begin().await.expect("begins");
     fixture.insert(&mut outer, 6).await.expect("inserts");
-    let inner = fixture.database().begin().await.expect("begins a second");
+
+    // CONTROL: proves `count_within` really reads through the unit it is given.
+    assert_eq!(
+        fixture.count_within(&mut outer).await,
+        1,
+        "a transaction cannot see its own uncommitted write, so `count_within` is not reading \
+         through the connection it was handed and the assertion below would prove nothing"
+    );
+
+    let mut inner = fixture.database().begin().await.expect("begins a second");
+    assert_eq!(
+        fixture.count_within(&mut inner).await,
+        0,
+        "the outer transaction's uncommitted write was visible to the second, so the second \
+         `begin` continued the first transaction instead of starting a separate one"
+    );
     assert_eq!(
         fixture.count().await,
         0,
         "the outer transaction's write was visible outside it"
     );
+
     inner.rollback().await.expect("rolls back the inner");
     outer.rollback().await.expect("rolls back the outer");
 }
@@ -171,6 +234,93 @@ where
         "a unit of work reported the wrong kind"
     );
     unit.rollback().await.expect("rolls back");
+}
+
+/// Seeding honours scope, records what it applied, and is idempotent across runs.
+///
+/// Three properties in one pass, because the interesting failures are in the interaction: a seed
+/// out of scope must not be recorded, a `RunOnce` seed must be skipped the second time, and an
+/// `Idempotent` seed must run again.
+///
+/// # The scopes are `Development` and `Test`, and that is the whole set
+///
+/// `SeedScope` is deny-by-default and exact — a seed runs only in the scope it declared. There is
+/// deliberately no "any" scope and no production scope, so the two seeds below declare *different*
+/// scopes and each run refuses one of them.
+pub async fn seeding_honours_scope_and_idempotence<F: PersistenceFixture>(fixture: &F) {
+    use renvor_database::{Idempotence, SeedDeclaration};
+
+    fixture.reset_seed_ledger().await;
+
+    let seeds = vec![
+        SqlSeed::new(
+            SeedDeclaration::new("dev_once", SeedScope::Development, Idempotence::RunOnce),
+            vec!["INSERT INTO rv_seed_probe (id) VALUES (1)".to_owned()],
+        ),
+        SqlSeed::new(
+            SeedDeclaration::new("test_repeat", SeedScope::Test, Idempotence::Idempotent),
+            vec![
+                "DELETE FROM rv_seed_probe WHERE id = 2".to_owned(),
+                "INSERT INTO rv_seed_probe (id) VALUES (2)".to_owned(),
+            ],
+        ),
+    ];
+
+    // ── Test scope: the development-only seed is refused, and refused for the RIGHT reason.
+    let under_test = fixture.seed(SeedScope::Test, &seeds).await.expect("seeds");
+    assert_eq!(
+        under_test.skipped_out_of_scope(),
+        ["dev_once"],
+        "a `Development` seed was not refused under the `Test` scope"
+    );
+    assert_eq!(
+        under_test.applied(),
+        ["test_repeat"],
+        "the `Test` seed did not run under the `Test` scope"
+    );
+
+    // ── Development scope: the other half, which proves the refusal above was about scope rather
+    //    than about that seed being broken.
+    let under_dev = fixture
+        .seed(SeedScope::Development, &seeds)
+        .await
+        .expect("seeds");
+    assert_eq!(
+        under_dev.applied(),
+        ["dev_once"],
+        "the `Development` seed did not run under the `Development` scope"
+    );
+    assert_eq!(
+        under_dev.skipped_out_of_scope(),
+        ["test_repeat"],
+        "a `Test` seed ran under the `Development` scope"
+    );
+
+    // ── Second runs: `RunOnce` is skipped, `Idempotent` runs again. A runner that ignored the
+    //    ledger would apply both, and a runner that consulted it too eagerly would skip both.
+    let dev_again = fixture
+        .seed(SeedScope::Development, &seeds)
+        .await
+        .expect("seeds");
+    assert_eq!(
+        dev_again.skipped_already_applied(),
+        ["dev_once"],
+        "a `RunOnce` seed ran a second time"
+    );
+    assert!(
+        dev_again.applied().is_empty(),
+        "a second development run applied something: {:?}",
+        dev_again.applied()
+    );
+
+    let test_again = fixture.seed(SeedScope::Test, &seeds).await.expect("seeds");
+    assert_eq!(
+        test_again.applied(),
+        ["test_repeat"],
+        "an `Idempotent` seed was skipped on a second run"
+    );
+
+    fixture.reset_seed_ledger().await;
 }
 
 /// Readiness costs a real round trip and succeeds against a live database.
@@ -264,5 +414,6 @@ where
     cancellation_commits_nothing(fixture).await;
     a_second_begin_is_separate(fixture).await;
     cancellation_does_not_shrink_the_pool(fixture, capacity, 3).await;
+    seeding_honours_scope_and_idempotence(fixture).await;
     fixture.reset().await;
 }

@@ -51,6 +51,19 @@ macro_rules! row {
                         .map_err(|error| renvor_sqlx::error::classify_error(&error))
                 }
 
+                async fn count_within(
+                    &self,
+                    unit: &mut <Self::Database as renvor_database::Database>::UnitOfWork<'_>,
+                ) -> i64 {
+                    // Through the unit's OWN connection — see the harness.
+                    sqlx::query_scalar(AssertSqlSafe(
+                        concat!("SELECT COUNT(*) FROM ", $table).to_owned(),
+                    ))
+                    .fetch_one(&mut **unit.inner())
+                    .await
+                    .expect("counts")
+                }
+
                 async fn count(&self) -> i64 {
                     // On the POOL, so outside any open transaction.
                     sqlx::query_scalar(AssertSqlSafe(
@@ -59,6 +72,26 @@ macro_rules! row {
                     .fetch_one(self.database.pool())
                     .await
                     .expect("counts")
+                }
+
+                async fn seed(
+                    &self,
+                    scope: renvor_database::SeedScope,
+                    seeds: &[renvor_database::SqlSeed],
+                ) -> Result<renvor_database::SeedReport, DatabaseError> {
+                    renvor_sqlx::seed::run(&self.database, scope, seeds).await
+                }
+
+                async fn reset_seed_ledger(&self) {
+                    for statement in [
+                        "DROP TABLE IF EXISTS _renvor_seeds",
+                        "DROP TABLE IF EXISTS rv_seed_probe",
+                        "CREATE TABLE rv_seed_probe (id BIGINT PRIMARY KEY)",
+                    ] {
+                        let _ = sqlx::query(AssertSqlSafe(statement.to_owned()))
+                            .execute(self.database.pool())
+                            .await;
+                    }
                 }
 
                 async fn reset(&self) {

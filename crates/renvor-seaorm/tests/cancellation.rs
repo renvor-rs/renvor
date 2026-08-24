@@ -340,8 +340,23 @@ macro_rules! suite {
                 }
 
                 // The comparison that is actually asserted: Renvor's own path, same pool, same
-                // cancellation, must be back inside its bound. A run where BOTH recovered instantly
-                // would mean the probe measured nothing, and this is what would catch that.
+                // cancellation, must be back inside its bound.
+                //
+                // THIS TEST DOES NOT GATE THE NATIVE BEHAVIOUR, and an earlier version of this
+                // comment claimed otherwise — it said a run where both recovered instantly "would
+                // mean the probe measured nothing, and this is what would catch that". It would
+                // not: the assertion below requires only that RENVOR recovers, which a run where
+                // the native path also recovered instantly satisfies. If upstream SeaORM fixed
+                // `DatabaseTransaction` tomorrow, the print above would read "STRANDED for 10ms"
+                // and this test would still pass green.
+                //
+                // That is deliberate — asserting a verdict on the native path would be flaky on
+                // PostgreSQL by construction, and `PLAN.md` §17 treats a flaky test as a defect —
+                // but the claim that it was nonetheless self-checking was false, and a false
+                // claim about a safety net is worse than an acknowledged absence. What carries
+                // the decision is the STRUCTURAL argument in ADR-0021: SeaORM's transaction keeps
+                // its connection behind an `Arc`, so its `Drop` can only `try_lock` and its
+                // failure path is `expect`. That does not depend on a measurement.
                 let renvor_started = Instant::now();
                 cancel_mid_statement(&database).await;
                 assert!(

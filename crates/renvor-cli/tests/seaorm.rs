@@ -443,15 +443,39 @@ fn the_generated_source_is_idiomatic_and_binds_its_values() {
     // warning from a use.
     for line in repository.lines() {
         let code = line.split("//").next().unwrap_or(line);
-        assert!(
-            !code.contains("execute_unprepared"),
-            "the generated repository reaches the rung of the escape hatch that binds nothing: \
-             {line}"
-        );
-        assert!(
-            !code.contains("format!(\"SELECT") && !code.contains("format!(\"INSERT"),
-            "the generated repository builds SQL by interpolation: {line}"
-        );
+        for unbound in ["execute_unprepared", "Statement::from_string"] {
+            assert!(
+                !code.contains(unbound),
+                "the generated repository uses `{unbound}`, which carries SQL with no bound \
+                 values: {line}"
+            );
+        }
+        // Concatenation, not just `format!`. A template edit could build SQL with `push_str` or
+        // `+` and pass a scan that only looked for one macro.
+        if code.contains("push_str") || code.contains("\" + ") {
+            let upper = code.to_ascii_uppercase();
+            for verb in ["SELECT", "INSERT", "UPDATE", "DELETE", "WHERE", "ORDER BY"] {
+                assert!(
+                    !upper.contains(verb),
+                    "the generated repository concatenates `{verb}` into SQL: {line}"
+                );
+            }
+        }
+        // ANY interpolation into SQL, not two verbs. The previous form scanned for
+        // `format!("SELECT` and `format!("INSERT` only, so `format!("ORDER BY {sort}")` — the
+        // exact shape FR-035 forbids, and the one an allowlist exists to prevent — passed it.
+        if let Some(rest) = code.split_once("format!(\"").map(|(_, rest)| rest) {
+            let fragment = rest.to_ascii_uppercase();
+            for verb in [
+                "SELECT", "INSERT", "UPDATE", "DELETE", "ORDER BY", "WHERE", "FROM", "LIMIT",
+                "OFFSET", "GROUP BY", "HAVING", "JOIN",
+            ] {
+                assert!(
+                    !fragment.contains(verb),
+                    "the generated repository interpolates `{verb}` into SQL: {line}"
+                );
+            }
+        }
     }
 }
 
@@ -520,4 +544,106 @@ fn seaorm_generation_succeeds_offline() {
         "generation needed the network, so `renvor new --orm seaorm` is not offline: {stderr}"
     );
     assert!(root.join("src/entity.rs").exists());
+}
+
+/// **FR-048.** The example domain is generated alongside the SeaORM sources, and compiles with them.
+///
+/// A review found this combination untested: the file-set test omitted `--example-domain`, and the
+/// only test that passed it did not pass `--orm seaorm`. `templates::select` chooses the two groups
+/// independently, so nothing exercised them together.
+#[test]
+fn the_example_domain_is_generated_alongside_the_seaorm_sources() {
+    let generated = generate_ok(&[
+        "--orm",
+        "seaorm",
+        "--database",
+        "postgres",
+        "--example-domain",
+        "--seed-data",
+    ]);
+    let files = generated.files();
+    for expected in [
+        "src/domain.rs",
+        "src/seed.rs",
+        "src/entity.rs",
+        "src/repository.rs",
+    ] {
+        assert!(
+            files.contains(&expected.to_owned()),
+            "`{expected}` is missing from --orm seaorm --example-domain --seed-data: {files:?}"
+        );
+    }
+
+    // **FR-052.** The domain layer names no persistence technology at all. This is the file the
+    // requirement is about, and until this test it was not even generated on the SeaORM path.
+    let domain = generated.read("src/domain.rs");
+    for forbidden in [
+        "sea_orm",
+        "sea-orm",
+        "sqlx",
+        "axum",
+        "renvor_http",
+        "ConnectionTrait",
+    ] {
+        assert!(
+            !domain.contains(forbidden),
+            "the domain layer names `{forbidden}`, which the dependency rule forbids"
+        );
+    }
+    // CONTROL: the repository — the layer that IS allowed to know — does name SeaORM. Without
+    // this, the absences above would also pass against an empty file.
+    assert!(
+        generated.read("src/repository.rs").contains("sea_orm"),
+        "the persistence adapter does not name SeaORM, so the domain absences prove nothing"
+    );
+}
+
+/// **FR-045.** `renvor routes` and `renvor openapi` behave IDENTICALLY on both persistence models.
+///
+/// # Not "succeed" — identical
+///
+/// Both refuse, and refusing is correct: a generated project declares no Renvor dependency, so it
+/// has no route registry to ask. Route inspection asks the application binary for its own registry
+/// rather than re-deriving one, and a project without the framework has none.
+///
+/// My first version of this test asserted success and failed, which was the test being wrong rather
+/// than the CLI. What FR-045 requires is that choosing SeaORM does not change these surfaces — so
+/// the assertion is that the exit code and the machine-readable reason match the SQLx project's,
+/// which is the property an operator actually depends on.
+#[test]
+fn routes_and_openapi_behave_identically_on_both_persistence_models() {
+    let sqlx = generate_ok(&["--orm", "sqlx", "--database", "postgres"]);
+    let seaorm = generate_ok(&["--orm", "seaorm", "--database", "postgres"]);
+
+    for command in ["routes", "openapi"] {
+        let (sqlx_code, _out, sqlx_err) = renvor(&[command], &sqlx.root, &[]);
+        let (seaorm_code, _out, seaorm_err) = renvor(&[command], &seaorm.root, &[]);
+
+        assert_eq!(
+            sqlx_code, seaorm_code,
+            "`renvor {command}` exits {sqlx_code} on the SQLx project and {seaorm_code} on the \
+             SeaORM one, so the ORM choice changed a transport surface"
+        );
+
+        // The machine-readable reason, not the prose — the prose is allowed to differ, the
+        // contract is not.
+        let reason = |text: &str| {
+            text.lines()
+                .find(|line| line.trim_start().starts_with("reason"))
+                .map(|line| line.trim().to_owned())
+        };
+        assert_eq!(
+            reason(&sqlx_err),
+            reason(&seaorm_err),
+            "`renvor {command}` reports a different reason for each ORM"
+        );
+
+        // CONTROL: there IS a reason to compare. Two `None`s would compare equal and prove
+        // nothing.
+        assert!(
+            reason(&sqlx_err).is_some(),
+            "`renvor {command}` reported no machine-readable reason, so the equality above is \
+             vacuous"
+        );
+    }
 }

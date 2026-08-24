@@ -23,8 +23,14 @@
 //!    is still bound**;
 //! 3. a database-specific module, when the two engines genuinely differ.
 //!
-//! `execute_unprepared` is not a rung. It binds nothing, so a caller-controlled value reaching it
-//! is an injection.
+//! Two things are NOT rungs, and both are easy to reach for:
+//!
+//! - `execute_unprepared` binds nothing, so a caller-controlled value reaching it is an injection.
+//!   It also accepts **multiple statements separated by semicolons** on both PostgreSQL and MySQL,
+//!   so the blast radius is arbitrary stacked DDL and DML rather than one rewritten query.
+//! - `Statement::from_string` is the constructor that carries SQL with **no values at all**. It
+//!   looks like rung 2 and behaves like `execute_unprepared`. If you have a value, use
+//!   `Statement::from_sql_and_values`.
 
 use sea_orm::{
     ActiveModelTrait as _, ActiveValue, ColumnTrait as _, ConnectionTrait, DbErr, EntityTrait as _,
