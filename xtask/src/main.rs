@@ -2031,13 +2031,14 @@ mod tests {
         let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
             .expect("every publishable package satisfies the metadata contract");
 
-        // TEN since Phase 006: `renvor-database` and `renvor-sqlx` joined the eight that Phase 005
-        // left. The number is asserted rather than inferred so that adding a publishable package
-        // without adding it to the release ordering fails here — which is exactly what happened
-        // when this count was five and three packages had just been added, and again at Phase 006.
+        // ELEVEN since Phase 007: `renvor-seaorm` joined the ten Phase 006 left. The number is
+        // asserted rather than inferred so that adding a publishable package without adding it to
+        // the release ordering fails here — which is exactly what happened when this count was
+        // five and three packages had just been added, again at Phase 006, and again here: this
+        // assertion is what first reported the new crate, before any manual list was touched.
         assert_eq!(
-            examined, 10,
-            "the workspace publishes ten packages; the scan examined {examined}"
+            examined, 11,
+            "the workspace publishes eleven packages; the scan examined {examined}"
         );
     }
 
@@ -2058,15 +2059,19 @@ mod tests {
         let root = super::workspace_root();
         let ledger = std::fs::read_to_string(root.join("governance/waivers.md"))
             .expect("the waiver ledger is readable");
-        let governance = std::fs::read_to_string(root.join("GOVERNANCE.md"))
-            .expect("GOVERNANCE.md is readable");
+        let governance =
+            std::fs::read_to_string(root.join("GOVERNANCE.md")).expect("GOVERNANCE.md is readable");
 
         /// Every distinct `W-###` that opens a table row in `text`.
         fn identifiers(text: &str) -> Vec<String> {
             let mut found: Vec<String> = text
                 .lines()
                 .filter_map(|line| {
-                    let trimmed = line.trim_start().strip_prefix('|')?.trim().trim_matches('*');
+                    let trimmed = line
+                        .trim_start()
+                        .strip_prefix('|')?
+                        .trim()
+                        .trim_matches('*');
                     trimmed
                         .starts_with("W-")
                         .then(|| trimmed.chars().take(5).collect::<String>())
@@ -2110,9 +2115,27 @@ mod tests {
         }
 
         let words = [
-            "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-            "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen",
-            "Eighteen", "Nineteen", "Twenty",
+            "Zero",
+            "One",
+            "Two",
+            "Three",
+            "Four",
+            "Five",
+            "Six",
+            "Seven",
+            "Eight",
+            "Nine",
+            "Ten",
+            "Eleven",
+            "Twelve",
+            "Thirteen",
+            "Fourteen",
+            "Fifteen",
+            "Sixteen",
+            "Seventeen",
+            "Eighteen",
+            "Nineteen",
+            "Twenty",
         ];
         let spelled = words
             .get(granted.len())
