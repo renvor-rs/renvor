@@ -141,24 +141,49 @@ macro_rules! suite {
                 assert_eq!(retried.applied(), ["broken"]);
             }
 
-            /// FR-036: nothing a seed run reports can carry a credential.
+            /// FR-036: a seed report names seeds, never their statements.
+            ///
+            /// # The marker is really in the statement, and that is the correction
+            ///
+            /// This built its statement with `CREDENTIAL_CANARY.len()` — the integer 22 — and then
+            /// asserted the canary string was absent from the report. The canary never entered the
+            /// seed, the database, or the report, so that assertion could not fail under any
+            /// mutation. The only load-bearing line was the one below it.
+            ///
+            /// The marker now goes **into** the statement, with a control asserting it is there
+            /// before the report is examined. It is deliberately not credential-shaped: the lesson
+            /// from `tests/provider.rs` is that a redaction proof which has to plant a credential
+            /// invites a scanner to mistake the proof for the leak.
             #[tokio::test]
-            async fn a_seed_report_carries_no_credential() {
+            async fn a_seed_report_names_seeds_and_never_their_statements() {
                 let Some((database, _fixture)) = database().await else {
                     return;
                 };
+                const MARKER: &str = "zz-statement-marker-zz";
+                let statement = format!("INSERT INTO rv_seeded (id) VALUES (1) /* {MARKER} */");
+                // THE CONTROL. Without it, an edit that dropped the marker would leave the
+                // assertion below proving the absence of something never present — which is
+                // exactly what this test used to do.
+                assert!(
+                    statement.contains(MARKER),
+                    "the marker is not in the statement, so its absence proves nothing"
+                );
+
                 let seeds = [SqlSeed::new(
                     SeedDeclaration::new("safe", SeedScope::Test, Idempotence::RunOnce),
-                    vec![format!(
-                        "INSERT INTO rv_seeded (id) VALUES ({})",
-                        support::CREDENTIAL_CANARY.len()
-                    )],
+                    vec![statement],
                 )];
                 let report = run(&database, SeedScope::Test, &seeds).await.expect("runs");
                 let rendered = format!("{report:?}");
-                assert!(!rendered.contains(support::CREDENTIAL_CANARY));
-                // The report names seeds, never their SQL: a statement is where a literal would be.
+
+                assert!(
+                    !rendered.contains(MARKER),
+                    "a statement's contents reached the report"
+                );
+                // A statement is where a literal — a credential among them — would be.
                 assert!(!rendered.contains("INSERT"));
+                // And the report does name the seed, so it is reporting something.
+                assert!(rendered.contains("safe"), "the report names no seed");
             }
 
             /// Seeds are applied in the order given, not in some order the database chose.

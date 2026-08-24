@@ -158,16 +158,61 @@ macro_rules! suite {
                 assert_eq!(provider.provides()[0].as_str(), "database");
             }
 
-            /// A provider's `Debug` must not carry a connection string.
+            /// A provider's `Debug` renders exactly the fields it declares, and nothing else.
+            ///
+            /// # Why this is not the canary test it replaces
+            ///
+            /// That test planted a fake password in a DSN and asserted the password was absent
+            /// from the rendering. It worked, and it had two problems.
+            ///
+            /// The smaller one: it proved the absence of **one string somebody thought of**. A
+            /// field added later that leaked the host, the port, or the database name would have
+            /// passed it.
+            ///
+            /// The larger one: CodeQL read `format!("{provider:?}")` on a value built from
+            /// something named `CREDENTIAL_CANARY` and raised two high-severity
+            /// `rust/cleartext-logging` alerts — on the line that *proves* nothing leaks. It was a
+            /// false positive, and the honest fix is not to dismiss it but to stop writing a
+            /// redaction proof that requires planting a credential to make its point.
+            ///
+            /// So: the DSN below carries no password at all, and the assertion is **structural**.
+            /// `SqlxProvider`'s `Debug` declares four fields; this asserts the rendering carries
+            /// those four and no fifth. A new field that carried the connection string fails here
+            /// without anyone having to guess which substring to search for.
             #[tokio::test]
-            async fn the_provider_debug_carries_no_credential() {
-                let provider = provider(ConnectionString::new(format!(
-                    "postgres://user:{}@db.internal:5432/app",
-                    support::CREDENTIAL_CANARY
-                )));
+            async fn the_provider_debug_renders_only_its_declared_fields() {
+                // Distinctive components, none of them credential-shaped. The property under test
+                // is that the DSN does not appear at all — a password is simply one part of a
+                // thing that is wholly absent.
+                let provider = provider(ConnectionString::new(
+                    "postgres://host-marker-zz:5432/name-marker-zz",
+                ));
                 let rendered = format!("{provider:?}");
-                assert!(!rendered.contains(support::CREDENTIAL_CANARY));
-                assert!(!rendered.contains("db.internal"));
+
+                // THE STRUCTURAL HALF. `debug_struct` renders `field: value` per entry, so the
+                // count of separators is the count of fields.
+                const DECLARED: [&str; 4] = ["id: ", "kind: ", "booted: ", "migrates_on_boot: "];
+                for field in DECLARED {
+                    assert_eq!(
+                        rendered.matches(field).count(),
+                        1,
+                        "the provider's Debug no longer renders a field it declares"
+                    );
+                }
+                assert_eq!(
+                    rendered.matches(": ").count(),
+                    DECLARED.len(),
+                    "the provider's Debug grew a field, and a new field is how a connection \
+                     string reaches a diagnostic"
+                );
+
+                // THE ABSENCE HALF, on the DSN's own components rather than on a planted secret.
+                for marker in ["host-marker-zz", "name-marker-zz", "5432", "postgres://"] {
+                    assert!(
+                        !rendered.contains(marker),
+                        "part of the connection string reached the provider's Debug"
+                    );
+                }
             }
         }
     };
