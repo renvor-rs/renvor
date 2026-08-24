@@ -27,7 +27,7 @@ use crate::migrate::Migrations;
 ///
 /// # Why the pool lives in a `OnceLock`
 ///
-/// [`Provider::initialise`] takes `&self`, because the kernel holds providers behind shared
+/// [`renvor_core::provider::registry::Provider::initialise`] takes `&self`, because the kernel holds providers behind shared
 /// references while it drives Boot. A `OnceLock` is the smallest thing that lets initialisation
 /// publish a value without a lock on the read path — and "written exactly once, by Boot" is
 /// precisely what a `OnceLock` promises, so the invariant is enforced by the type rather than by a
@@ -106,7 +106,7 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
     /// the policy at its default has not asked for schema change — which is the safe reading of an
     /// ambiguous configuration, and the reading the default was chosen to produce.
     ///
-    /// See [`Provider::initialise`] for when the recorded policy is acted on.
+    /// See [`renvor_core::provider::registry::Provider::initialise`] for when the recorded policy is acted on.
     #[must_use]
     pub fn with_migrations(mut self, migrations: Migrations) -> Self {
         self.migrations = Some(migrations);
@@ -117,7 +117,7 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
     ///
     /// Exposed so a deployment can read the decision back, rather than an operator having to infer
     /// it from two separate settings. `true` here means Boot **applies** migrations — see
-    /// [`Provider::initialise`].
+    /// [`renvor_core::provider::registry::Provider::initialise`].
     #[must_use]
     pub fn migrates_on_boot(&self) -> bool {
         self.migrations
@@ -130,7 +130,7 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
     /// # The kernel's default is shorter than the migration defaults, and that silently wins
     ///
     /// `renvor_core`'s `DEFAULT_PROVIDER_DEADLINE` is **30 seconds** and it wraps the whole of
-    /// [`Provider::initialise`]. The migration defaults are a **60-second** lock wait and a
+    /// [`renvor_core::provider::registry::Provider::initialise`]. The migration defaults are a **60-second** lock wait and a
     /// **300-second** run. With both at their defaults, the kernel drops this future long before
     /// either migration deadline can elapse, and three things follow:
     ///
@@ -190,7 +190,7 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
 ///
 /// [`Migrations::run_postgres`] and [`Migrations::run_mysql`] are driver-concrete, and a generic
 /// impl would have to reach them through a trait whose bound cannot be written: the boxed
-/// [`ProviderFuture`] erases every region, and `sqlx::Acquire` is implemented for one region at a
+/// [`renvor_core::provider::registry::ProviderFuture`] erases every region, and `sqlx::Acquire` is implemented for one region at a
 /// time. `migrate.rs` reaches for the same construction for the same reason, which is the
 /// strongest argument that it is the shape of the problem rather than a shortcut.
 macro_rules! provider_for {
@@ -222,14 +222,14 @@ macro_rules! provider_for {
             ///
             /// FR-021. Every failure above short-circuits **before** `self.database.set`, so a
             /// provider that did not finish migrating has no database to hand out and
-            /// [`ReadinessContributor::readiness`] answers `NotReady` for the only reason it can:
+            /// [`renvor_core::health::ReadinessContributor::readiness`] answers `NotReady` for the only reason it can:
             /// there is nothing there. A migration that ran *after* publication would leave a
             /// window in which the application is ready against a schema that does not exist yet,
             /// which is the failure this ordering exists to make unrepresentable.
             ///
             /// Connectivity is proved separately from connecting because opening a pool can
             /// succeed against a host that accepts TCP and serves nothing.
-            /// [`Database::check`] costs one round trip and closes that gap.
+            /// [`renvor_database::Database::check`] costs one round trip and closes that gap.
             ///
             /// # A failed boot closes the pool it opened
             ///
@@ -302,11 +302,11 @@ impl<DB: sqlx::Database> ReadinessContributor for SqlxProvider<DB> {
     ///
     /// # What this observes, and what it does not
     ///
-    /// It observes that the boot-time [`Database::check`] passed and that the pool has not been
+    /// It observes that the boot-time [`renvor_database::Database::check`] passed and that the pool has not been
     /// closed. It is **not** a continuous probe: a database that becomes unreachable after Boot
     /// does not flip this to `NotReady` on its own.
     ///
-    /// That is a limit of the trait rather than a choice — [`ReadinessContributor::readiness`] is
+    /// That is a limit of the trait rather than a choice — [`renvor_core::health::ReadinessContributor::readiness`] is
     /// synchronous, and a round trip is not. The alternatives were both worse: blocking a readiness
     /// probe on I/O makes the probe itself a failure mode, and a background task refreshing a
     /// cached verdict is the unbounded orphaned work principle VI prohibits. Stated here rather
