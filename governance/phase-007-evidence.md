@@ -304,6 +304,29 @@ to the general mapper. The distinction is deliberately the call site and not the
 an authorization error really is a rejected statement, so this is not folded into `classify_error`.
 Red-checked on both rows — `left: StatementRejected, right: ConnectFailed` before, green after.
 
+**G-3 (Low) — the link check enforces a post-merge invariant on a pre-merge tree.**
+Three links failed on the candidate head, all for the same reason: they point at files that exist
+only on this branch. Two were **authored** citations of ADR-0021 and ADR-0022 written as
+`blob/main/decisions/...`; one is **generated** — Docusaurus builds every page's *"Edit this page"*
+link from `editUrl`, so a page added by a pull request 404s its own source until that request merges.
+
+**Disposition: split by cause, following this repository's own two precedents.** The authored links
+were fixed at the source and are now repository paths in code form, which is what `lychee.toml`'s
+retired **EX-005** records as the right answer — an exemption for an authored link would enter
+`main` and permanently stop checking it. The generated link cannot be rewritten from inside the
+page, so it is exempted as **EX-006**, anchored at both ends to that one URL. That is **EX-004
+again**: the same exemption existed for `cli.mdx`, was added by PR #28, and was removed on
+2026-08-21 once the page reached `main`.
+
+The exclusion is measured rather than asserted: the run went from 40 excluded URLs to **41**, so
+exactly one link left the check, and every other page's edit link — `cli.mdx` included — is still
+required to answer 200.
+
+> **EX-006 is the first post-merge cleanup owed by this phase.** Its removal condition is
+> `docs/docs/persistence.mdx` resolving 200 on `main`, verified against a negative control. It is
+> recorded here so it is not carried by a comment in a config file alone — which is the specific
+> failure EX-005's own note warns about.
+
 ## 10. Limitations
 
 See `specs/007-seaorm-parity/evidence/fr-conformance.md` §Limitations. L-11 (no `TransactionTrait`,

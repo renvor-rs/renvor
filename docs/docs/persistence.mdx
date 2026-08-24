@@ -68,7 +68,7 @@ Renvor owns the pooled connection in both adapters rather than wrapping the driv
 type. For SeaORM that is a deliberate departure from the obvious implementation, and it is what lets
 Renvor promise that cancellation never costs the pool its configured capacity for longer than a
 bound you set. The reasoning, and the measurements behind it, are in
-[ADR-0021](https://github.com/renvor-rs/renvor/blob/main/decisions/0021-renvor-owns-the-seaorm-unit-of-work.md).
+ADR-0021 (`decisions/0021-renvor-owns-the-seaorm-unit-of-work.md`).
 
 **What is not promised:** a cancelled client cannot make the *server* abandon a statement already
 running. A connection cancelled mid-statement stays pinned server-side until that statement finishes.
@@ -84,7 +84,7 @@ and switching between them is not a re-migration.
 
 `sea-orm-migration` is deliberately not used. Its bookkeeping table has two columns, `version` and
 `applied_at`, and **no checksum**, so a migration edited after it was applied would be undetectable.
-See [ADR-0022](https://github.com/renvor-rs/renvor/blob/main/decisions/0022-one-migration-history-on-sqlx-engine.md).
+See ADR-0022 (`decisions/0022-one-migration-history-on-sqlx-engine.md`).
 
 The cost is stated rather than absorbed: you do not get SeaORM's Rust-authored `MigrationTrait`
 migrations.
