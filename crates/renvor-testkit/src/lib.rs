@@ -15,7 +15,9 @@
 pub mod clock;
 pub mod harness;
 pub mod injection;
+pub mod persistence;
 
 pub use clock::TestClock;
 pub use harness::{Harness, HarnessRun, Outcome};
 pub use injection::{Behaviour, FailureInjectionPoint};
+pub use persistence::PersistenceFixture;
