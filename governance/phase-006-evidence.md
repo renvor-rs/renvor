@@ -177,6 +177,48 @@ The FR-057 and FR-061 findings in that batch were already closed by §6a before 
 their independent confirmation of the gap is recorded because two audits reaching the same
 conclusion from different directions is worth more than one.
 
+### 6c. Two open CodeQL alerts, analysed and NOT dismissed
+
+CodeQL raised **two high-severity `rust/cleartext-logging` alerts** against this branch, both
+attributed to `crates/renvor-sqlx/tests/provider.rs` — the macro invocation lines, since CodeQL
+attributes expanded code to its call site. The operation is:
+
+```rust
+let provider = provider(ConnectionString::new(format!(
+    "postgres://user:{}@db.internal:5432/app",
+    support::CREDENTIAL_CANARY
+)));
+let rendered = format!("{provider:?}");
+assert!(!rendered.contains(support::CREDENTIAL_CANARY));
+```
+
+The alert says *"This operation writes secret to a log file."* Four facts, each checked rather than
+asserted:
+
+1. **It writes to no log.** The test contains zero `println!`, `eprintln!`, `tracing::` or `log::`
+   calls. `format!` returns a local `String`.
+2. **The file is not shipped.** The published `renvor-sqlx` crate is `src/*.rs`, two licences and a
+   README — thirteen files, confirmed against the built `.crate` archive. `tests/` is excluded by
+   the `include` list.
+3. **The value is not a credential.** It is a hardcoded canary chosen to be unmistakable.
+4. **The flagged operation is the verification of the property CodeQL is worried about.** The next
+   line asserts the canary is *absent* from the rendered output. The test exists to prove that a
+   provider's `Debug` cannot carry a DSN.
+
+So it is a false positive on unshipped test code, where the flagged line is the proof rather than
+the leak.
+
+**It has NOT been dismissed.** Dismissing a high-severity security alert is a change to this
+repository's security record, and it is the maintainer's decision rather than an author's — the
+more so when the author is also the person the alert is about. CodeQL is not among the required
+status checks (`verify (1.94.0)`, `verify (stable)`, `security`, `docs`), so the alert does not
+block the merge and nothing was weakened to make it pass.
+
+The precedent for handling a scanner false positive in this repository is `.gitleaks.toml`, whose
+policy requires every allowlist entry to be **narrow and individually justified**, naming the rule,
+the exact location, why the match is not a secret, and what would make the entry removable. The
+paragraphs above are that justification; the entry itself is the maintainer's to make.
+
 **Automated review is not independent review.** Constitution §Development and Phase Workflow #4 and
 `PLAN.md` §6.1 step 10 require a review by a qualified person other than the author. No such review
 has occurred. The reviews recorded below were performed by automated agents, are **advisory**, and
