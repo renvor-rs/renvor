@@ -18,7 +18,7 @@
 
 use serde::Serialize;
 
-use crate::config::model::{Answers, ProjectConfiguration};
+use crate::config::model::{Answers, Orm, ProjectConfiguration};
 use crate::config::prompts;
 use crate::exit::{CliError, Exit};
 use crate::generate::manifest::FileManifest;
@@ -63,6 +63,12 @@ struct Context {
     /// Pre-computed so the template never joins `"db-"` to a value — a template that builds a
     /// feature name can build one that does not exist.
     driver_feature: String,
+    /// The `sea-orm` feature that resolves the same driver, or empty.
+    ///
+    /// A SECOND name for the same engine, because the two crates spell it differently:
+    /// `renvor-seaorm` takes `db-postgres`, `sea-orm` takes `sqlx-postgres`. A generated manifest
+    /// that guessed one from the other would name a feature that does not exist.
+    seaorm_driver_feature: String,
     generator_version: String,
     template_version: String,
     /// The `mod` block for `src/main.rs`, **pre-rendered**.
@@ -208,12 +214,16 @@ impl Context {
                 .database()
                 .map(driver_feature)
                 .unwrap_or_default(),
+            seaorm_driver_feature: configuration
+                .database()
+                .map(seaorm_driver_feature)
+                .unwrap_or_default(),
             generator_version: env!("CARGO_PKG_VERSION").to_owned(),
             template_version: templates::VERSION.to_owned(),
             modules: module_block(
                 configuration.example_domain(),
                 configuration.seed_data(),
-                configuration.database().is_some(),
+                configuration.orm(),
             ),
 
             container_database: database.is_some(),
@@ -332,13 +342,26 @@ fn warnings_for(configuration: &ProjectConfiguration) -> Vec<String> {
 }
 
 /// Builds the `mod` block. See [`Context::modules`].
-fn module_block(example_domain: bool, seed_data: bool, persistence: bool) -> String {
+///
+/// The persistence modules differ by ORM, and the SeaORM path declares none — see the match arm.
+fn module_block(
+    example_domain: bool,
+    seed_data: bool,
+    orm: Option<crate::config::model::Orm>,
+) -> String {
     let mut modules = Vec::new();
     if example_domain {
         modules.push("mod domain;");
     }
-    if persistence {
-        modules.push("mod persistence;");
+    match orm {
+        Some(Orm::Sqlx) => modules.push("mod persistence;"),
+        // DELIBERATELY NOT DECLARED. `src/entity.rs` and `src/repository.rs` are generated in
+        // full, but they need `sea-orm`, and the generated manifest declares no dependencies —
+        // because generation runs the project's own `cargo build` before placing it, and a real
+        // dependency would make `renvor new` need the network. Declaring modules that cannot
+        // compile would emit a project that does not build, which is the one thing a generator
+        // must never do. `README.md` says what to add and what to declare.
+        Some(Orm::SeaOrm) | None => {}
     }
     if seed_data {
         modules.push("mod seed;");
@@ -348,6 +371,22 @@ fn module_block(example_domain: bool, seed_data: bool, persistence: bool) -> Str
     } else {
         format!("\n{}\n", modules.join("\n"))
     }
+}
+
+/// The `sea-orm` feature that resolves a database's driver.
+///
+/// A match rather than an interpolation, for the reason [`driver_feature`] gives: the names happen
+/// to be derivable today and there is no reason they must stay so.
+fn seaorm_driver_feature(kind: renvor_database::DatabaseKind) -> String {
+    match kind {
+        renvor_database::DatabaseKind::Postgres => "sqlx-postgres",
+        renvor_database::DatabaseKind::MySql => "sqlx-mysql",
+        // `DatabaseKind` is `#[non_exhaustive]`, so this arm is required by the language rather
+        // than chosen. `every_database_has_a_seaorm_driver_feature` enumerates `DatabaseKind::ALL`
+        // and fails the moment a kind reaches it, so an empty string cannot ship silently.
+        _ => "",
+    }
+    .to_owned()
 }
 
 /// The `renvor-sqlx` feature that resolves a database's driver.
@@ -607,13 +646,49 @@ mod tests {
         }
     }
 
+    /// The same guarantee for the SECOND spelling of the same engine.
+    ///
+    /// Two functions, two catch-all arms, two ways for a database added later to generate a
+    /// manifest naming a feature that does not exist. Both are enumerated.
+    #[test]
+    fn every_database_has_a_seaorm_driver_feature() {
+        for kind in renvor_database::DatabaseKind::ALL {
+            let feature = seaorm_driver_feature(kind);
+            assert!(
+                !feature.is_empty(),
+                "`{}` reached the catch-all arm, so a generated manifest would name no driver",
+                kind.as_str()
+            );
+            assert!(
+                feature.starts_with("sqlx-"),
+                "`{feature}` is not a `sea-orm` driver feature"
+            );
+        }
+    }
+
+    /// The two spellings must never be the same string.
+    ///
+    /// If they were, one of the two manifests below would be naming the other crate's feature —
+    /// which compiles as a manifest and fails at the operator's `cargo build`.
+    #[test]
+    fn the_two_driver_feature_spellings_are_distinct() {
+        for kind in renvor_database::DatabaseKind::ALL {
+            assert_ne!(
+                driver_feature(kind),
+                seaorm_driver_feature(kind),
+                "`{}` spells its renvor-seaorm and sea-orm features identically",
+                kind.as_str()
+            );
+        }
+    }
+
     /// The persistence module is declared when, and only when, a database was chosen.
     #[test]
     fn the_persistence_module_follows_the_database_choice() {
-        assert!(!module_block(false, false, false).contains("mod persistence;"));
-        assert!(module_block(false, false, true).contains("mod persistence;"));
+        assert!(!module_block(false, false, None).contains("mod persistence;"));
+        assert!(module_block(false, false, Some(Orm::Sqlx)).contains("mod persistence;"));
         // Ordering matters for `cargo fmt --check`, which the pre-placement verification runs.
-        let all = module_block(true, true, true);
+        let all = module_block(true, true, Some(Orm::Sqlx));
         let domain = all.find("mod domain;").expect("domain");
         let persistence = all.find("mod persistence;").expect("persistence");
         let seed = all.find("mod seed;").expect("seed");
@@ -663,12 +738,9 @@ mod tests {
         // The exact strings, because one extra newline here is a `cargo fmt --check` failure in
         // every generated project — which is the acceptance criterion "the generated skeleton
         // formats". Found by running rustfmt over the output, not by inspection.
-        assert_eq!(module_block(false, false, false), "");
-        assert_eq!(module_block(true, false, false), "\nmod domain;\n");
-        assert_eq!(
-            module_block(true, true, false),
-            "\nmod domain;\nmod seed;\n"
-        );
+        assert_eq!(module_block(false, false, None), "");
+        assert_eq!(module_block(true, false, None), "\nmod domain;\n");
+        assert_eq!(module_block(true, true, None), "\nmod domain;\nmod seed;\n");
     }
 
     #[test]
