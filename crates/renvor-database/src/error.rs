@@ -53,6 +53,34 @@ pub enum DatabaseErrorKind {
     UniqueViolation,
     /// A foreign-key constraint was violated.
     ForeignKeyViolation,
+    /// A not-null constraint was violated.
+    ///
+    /// Both drivers already distinguish this from a generic rejection — `sqlx-postgres` from
+    /// SQLSTATE `23502`, `sqlx-mysql` from error number `1048` — so folding it into
+    /// [`DatabaseErrorKind::StatementRejected`] would discard information the driver had already
+    /// recovered.
+    NotNullViolation,
+    /// A check constraint was violated.
+    ///
+    /// # MySQL reports this outside the integrity class
+    ///
+    /// PostgreSQL gives check violations SQLSTATE `23514`, inside class 23. MySQL reports error
+    /// `3819` with SQLSTATE **`HY000`**, the general-error class. Both were measured against the
+    /// pinned images. That asymmetry is why classification reads the driver's error *number* rather
+    /// than SQLSTATE — SQLSTATE cannot see this condition on MySQL at all.
+    CheckViolation,
+    /// The transaction lost a concurrency conflict and may be retried.
+    ///
+    /// Covers a serialization failure and a deadlock, which both engines report as SQLSTATE `40001`
+    /// — PostgreSQL adds `40P01` for a deadlock specifically. Measured: a crossed-lock deadlock on
+    /// `mysql:8.4.11` returns `ERROR 1213 (40001)` to exactly one of the two sessions while the
+    /// other commits.
+    ///
+    /// **A lock-wait timeout is deliberately NOT this kind.** MySQL reports that as `1205` with
+    /// SQLSTATE `HY000`: the server resolves a deadlock instantly by choosing a victim, whereas a
+    /// lock-wait timeout means something held a lock for the whole timeout, which usually wants an
+    /// operator rather than an automatic retry.
+    TransactionConflict,
     /// The row a query required was absent.
     NotFound,
     /// A transaction could not be committed.
@@ -91,7 +119,7 @@ impl DatabaseErrorKind {
     /// The length assertion below moves with this array, so an edit that adds a variant without
     /// updating the contract still fails loudly — the same mechanism `renvor-error`'s registry and
     /// `renvor-core`'s `ErrorCategory::ALL` already use.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::AcquireTimeout,
         Self::ConnectFailed,
         Self::Cancelled,
@@ -99,6 +127,9 @@ impl DatabaseErrorKind {
         Self::StatementRejected,
         Self::UniqueViolation,
         Self::ForeignKeyViolation,
+        Self::NotNullViolation,
+        Self::CheckViolation,
+        Self::TransactionConflict,
         Self::NotFound,
         Self::CommitFailed,
         Self::RollbackFailed,
@@ -124,6 +155,9 @@ impl DatabaseErrorKind {
             Self::StatementRejected => "statement_rejected",
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
+            Self::NotNullViolation => "not_null_violation",
+            Self::CheckViolation => "check_violation",
+            Self::TransactionConflict => "transaction_conflict",
             Self::NotFound => "not_found",
             Self::CommitFailed => "commit_failed",
             Self::RollbackFailed => "rollback_failed",
@@ -156,6 +190,11 @@ impl DatabaseErrorKind {
             Self::StatementRejected => "The database rejected the statement.",
             Self::UniqueViolation => "A value already exists that must be unique.",
             Self::ForeignKeyViolation => "A referenced row does not exist.",
+            Self::NotNullViolation => "A required value was absent.",
+            Self::CheckViolation => "A value failed a constraint the schema declares.",
+            Self::TransactionConflict => {
+                "The transaction conflicted with another and was not committed."
+            }
             Self::NotFound => "The requested row does not exist.",
             Self::CommitFailed => "The transaction could not be committed.",
             Self::RollbackFailed => "The transaction could not be rolled back.",
@@ -190,6 +229,10 @@ impl DatabaseErrorKind {
                 | Self::DeadlineExceeded
                 | Self::MigrationLockTimeout
                 | Self::NotReady
+                // The server itself says so: MySQL's text for 1213 is literally "try restarting
+                // transaction". A lost conflict is the one rejection that is transient BY
+                // CONSTRUCTION — nothing about the statement was wrong.
+                | Self::TransactionConflict
         )
     }
 
