@@ -360,9 +360,15 @@ executes the runtime path against a real engine rather than repeating the claim.
 
 ## 13. Post-merge correction — 2026-08-25
 
-Recorded after Phase 007 merged as `ed6f26287c5198ca402fb73939560fc07d9bf888`. **Everything above
-this heading is the pre-merge account and is left exactly as it was written.** This section is what
+Recorded after Phase 007 merged as `ed6f26287c5198ca402fb73939560fc07d9bf888`. This section is what
 changed afterwards.
+
+**The pre-merge account above is left as it was written, with exactly one addition: the L-13
+paragraph in §10**, which marks itself a post-merge correction in its first words and points here.
+An earlier draft of this heading claimed nothing above it had changed at all, which a review
+correctly called false — the §10 paragraph is above it. Naming the one exception is the honest form
+of the claim; deleting the §10 paragraph to make the absolute version true would have left the
+narrowed limitation stated only in a section a reader of §10 has no reason to reach.
 
 ### EX-006 was satisfied, and retired
 
@@ -413,10 +419,12 @@ project's own documentation described the wrong persistence model on the SeaORM 
   exists, and the real one is
   `the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version`.
 
-Why the gates missed it: every generated-project test asserted on **file sets, manifests and source
-code**, and none asserted on the prose. `cargo fmt`, `clippy` and the generated project's own build
-cannot read a comment, and the SeaORM sources they would have read are the two files nothing
-compiles.
+Why the gates missed it: nothing asserted on the generated **persistence** prose. Generated prose is
+not unasserted in general — `the_manifest_resolves_only_the_selected_driver` reads the generated
+`Cargo.toml`'s comment and `the_cache_says_it_is_not_wired_into_the_application` reads the generated
+`README.md` — but every persistence test asserted on file sets, manifest fields, and source code
+instead. `cargo fmt`, `clippy` and the generated project's own build cannot read a comment, and the
+SeaORM sources they would have read are the two files nothing compiles.
 
 ### What the follow-up changed, and what it did not
 
@@ -429,8 +437,26 @@ names `renvor-sqlx` or `src/persistence.rs`, and states the compilation boundary
 negative-control mutated and observed to fail before being accepted.
 
 **No runtime behaviour changed and no Phase 007 acceptance result changed.** No adapter, kernel, or
-CLI code path was touched; the generated file **sets** are identical; the direct-SQLx `README.md` is
-byte-identical to Phase 006's, which a test now holds. The whole difference in a generated tree is
+CLI code path was touched; the generated file **sets** are identical; the direct-SQLx `README.md`'s
+persistence section is byte-identical to Phase 006's, which `the_sqlx_readme_is_unchanged_by_the_seaorm_split` now compares literally rather than by a memorable substring. The whole difference in a generated tree is
 `renvor.toml`: its recorded version, and a comment that now names the files that are there.
 
 L-13 is narrowed accordingly — see §10.
+
+### The follow-up's own review — 5 findings, all confirmed and fixed
+
+A focused review of the correction PR found five defects **in the correction itself**. All five were
+verified against the code and fixed; none was waived.
+
+| Severity | Finding | Disposition |
+|---|---|---|
+| High | The new SeaORM README section claimed "every sortable column is on an allowlist", an unknown-field refusal, and "`id` is in the allowlist as a tiebreaker" — all three carried over from the SQLx bullets. `page_after` takes **no sort field at all** and always orders by `id` ascending. | Rewritten to describe what the code does. `the_seaorm_readme_does_not_claim_a_sort_api_the_repository_lacks` now pins it, asserting the repository's lack of a sort surface as its premise and using the SQLx README as a control. |
+| High | `the_sqlx_readme_is_unchanged_by_the_seaorm_split` asserted one paragraph was **present**, while `templates.rs` and this document described it as holding byte identity. Every other byte of the section could be rewritten and it still passed. | The test now compares the **whole persistence section** with `assert_eq!`. Red-checked by changing one hyphen in the section's last bullet — the exact byte the old form missed. |
+| High | §13 opened by claiming everything above it was unchanged, while §10 had gained a post-merge L-13 paragraph. | The claim now names its one exception. The §10 paragraph was kept rather than deleted: a narrowed limitation belongs where a reader of §10 will find it. |
+| Medium | The SeaORM README said the two files' "formatting is checked on every run", which a reader takes to mean their own `renvor new` or `cargo` run. The check is a test in **Renvor's** repository, and it returns without checking when `rustfmt` cannot start. | Reworded to say where the check lives and what it does not cover. |
+| Medium | This section said no generated-project test asserted on prose. Two did — `the_manifest_resolves_only_the_selected_driver` reads the generated `Cargo.toml`'s comment, and `the_cache_says_it_is_not_wired_into_the_application` reads the generated `README.md`. | Narrowed to the persistence prose, naming both counterexamples. |
+
+The first finding is the one worth recording plainly: a pull request written to delete false claims
+about generated files **introduced two new ones**, by copying bullets from the branch it was
+splitting. The lesson is the one the phase already learned once — prose is not checked by the
+compiler, and a claim moved between contexts stops being true without changing a character.
