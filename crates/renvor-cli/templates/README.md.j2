@@ -68,9 +68,11 @@ offline. One ORM choice is not a reason to withdraw that guarantee.
 
 The files are nonetheless real code rather than illustration: they were compiled successfully
 against **SeaORM 2.0.2**, with the dependency and the two module declarations added by hand, during
-Phase 007 verification. What is missing is an automated compile gate, not the compilability. Their
-formatting is checked on every run, because the generator's own `cargo fmt` gate cannot see a file
-no module declares.
+Phase 007 verification. What is missing is an automated compile gate, not the compilability.
+
+Renvor's own test suite runs `rustfmt --check` over these two files, because the generator's `cargo
+fmt` gate cannot see a file no module declares. That check lives in Renvor's repository, not in this
+project and not in `renvor new` — nothing here re-checks them after you edit them.
 
 ### Compiling them
 
@@ -94,12 +96,16 @@ is published it takes `{{ driver_feature }}` for the same engine. Two names, one
 ### What is already correct in `src/repository.rs`
 
 - **Every value is bound, never interpolated.** No `execute_unprepared`, no `Statement::from_string`,
-  and no SQL verb assembled with `format!` or `push_str`.
-- **Every sortable column is on an allowlist.** A column name cannot be a bound parameter, so the
-  only safe construction is one where every possible value is written in the source. An unknown
-  sort field maps to no column and the sort is refused — not silently replaced with a default.
-- **Ordering is total.** `id` is in the allowlist as a tiebreaker, because a cursor built on an
-  order the database may vary between calls silently skips or repeats rows.
+  and no SQL verb assembled with `format!` or `push_str`. Columns are typed constants from the
+  derive, so neither half of a comparison is a string a caller could influence.
+- **There is no sort parameter, so there is no allowlist to get wrong.** `page_after` always orders
+  by `id` ascending; a caller cannot name a column at all. That is a narrower feature than the
+  direct-SQLx module's sort allowlist and a stronger guarantee than one — there is no untrusted
+  column name to check.
+- **Ordering is total**, because `id` is unique. A cursor built on an order the database may vary
+  between calls silently skips or repeats rows.
+- **Pagination is keyset, not `OFFSET`.** `OFFSET` re-reads every row it skips and shifts every
+  later page when a row is inserted between two requests. The cursor is a bound value.
 {% else %}generation acted on both: `src/persistence.rs` holds the statements and the sort allowlist, and
 `migrations/` holds a reversible `0001_create_item` pair.
 

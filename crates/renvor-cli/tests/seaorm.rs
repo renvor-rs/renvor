@@ -295,8 +295,11 @@ fn a_database_without_an_orm_still_means_sqlx() {
 
 /// **FR-043.** The direct-SQLx tree is byte-identical to the one Phase 006 generated, module
 /// declarations and all — apart from `renvor.toml`, which records the template version and, since
-/// version 6, names its persistence file conditionally. Every other file, `README.md` included, is
-/// unchanged byte for byte; `the_sqlx_readme_is_unchanged_by_the_seaorm_split` is what holds that.
+/// version 6, names its persistence file conditionally.
+///
+/// `README.md` is the one other file the version-6 split could have disturbed, and
+/// `the_sqlx_readme_is_unchanged_by_the_seaorm_split` compares its **persistence section** byte for
+/// byte. No test compares the remaining files byte for byte; this one asserts the file **set**.
 #[test]
 fn the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version() {
     let generated = generate_ok(&["--database", "postgres", "--example-domain", "--seed-data"]);
@@ -742,21 +745,67 @@ fn the_sqlx_readme_documents_the_sqlx_path_only() {
     }
 }
 
-/// **FR-043's other half.** The SeaORM split changed the SQLx README not at all.
+/// **FR-043's other half.** The SeaORM split changed the SQLx persistence section not at all.
 ///
-/// The file-set test pins which files exist; this pins that one of them still says what it said in
-/// Phase 006. Splitting a shared template by branch is the exact edit that rewords the branch
-/// nobody was looking at.
+/// # What this holds, exactly
+///
+/// The **whole persistence section**, byte for byte — from its heading to the start of
+/// `### Applying the migrations` — not a sentence from it. An earlier version of this test asserted
+/// one paragraph was present, and a review pointed out that every other byte of the section could
+/// then be rewritten while it still passed. It does **not** hold the rest of the file: the sections
+/// above and below are shared by both ORMs and are not what a persistence split can break.
+///
+/// Splitting a shared template by branch is the exact edit that rewords the branch nobody was
+/// looking at, which is why the comparison is literal rather than a `contains` of something
+/// memorable.
 #[test]
 fn the_sqlx_readme_is_unchanged_by_the_seaorm_split() {
+    /// The Phase 006 persistence section, verbatim. Every byte, including the blank lines and the
+    /// line breaks — a reflow is a change and this is the test that says so.
+    const PHASE_006_PERSISTENCE: &str = "\
+## Persistence
+
+This project records `database = \"postgres\"` and `orm = \"sqlx\"` in `renvor.toml`, and
+generation acted on both: `src/persistence.rs` holds the statements and the sort allowlist, and
+`migrations/` holds a reversible `0001_create_item` pair.
+
+For the reason above, `Cargo.toml` declares no driver yet. When the crates are published, add:
+
+```toml
+[dependencies]
+renvor-sqlx = { version = \"<the published version>\", features = [\"db-postgres\"] }
+```
+
+`db-postgres` resolves the postgres driver and **only** that driver — selecting one
+database does not build the other.
+
+### What is already correct in `src/persistence.rs`
+
+- **Every value is bound, never interpolated.** The statements are constants; the data arrives
+  beside them as parameters.
+- **Every sortable column is on an allowlist.** A column name cannot be a bound parameter, so the
+  only safe construction is one where every possible value is written in the source. An unknown
+  sort field maps to no column and the sort is refused — not silently replaced with a default.
+- **Ordering is total.** `id` is in the allowlist as a tiebreaker, because a cursor built on an
+  order the database may vary between calls silently skips or repeats rows.
+
+";
+
     let readme = generate_ok(&["--database", "postgres"]).read("README.md");
-    // The Phase 006 sentence, verbatim, including its line break.
-    assert!(
-        readme.contains(
-            "generation acted on both: `src/persistence.rs` holds the statements and the sort \
-             allowlist, and\n`migrations/` holds a reversible `0001_create_item` pair."
-        ),
-        "the direct-SQLx persistence paragraph was reworded:\n{readme}"
+
+    let start = readme
+        .find("## Persistence")
+        .expect("the direct-SQLx README has a persistence section");
+    let end = readme[start..]
+        .find("### Applying the migrations")
+        .map(|at| start + at)
+        .expect("the persistence section is followed by the migrations subsection");
+    let section = &readme[start..end];
+
+    assert_eq!(
+        section, PHASE_006_PERSISTENCE,
+        "the direct-SQLx persistence section changed. FR-043 requires the Phase 006 tree back \
+         byte for byte apart from `renvor.toml`."
     );
 }
 
@@ -808,4 +857,54 @@ fn the_seaorm_readme_states_the_compilation_boundary() {
             "the SeaORM README does not state that {claim} — `{phrase}` is absent:\n{readme}"
         );
     }
+}
+
+/// The SeaORM README must not claim the direct-SQLx module's sort allowlist.
+///
+/// # The defect this exists for
+///
+/// The version-6 split gave the SeaORM path its own README section, and its first draft carried
+/// the SQLx bullets across unchanged: "every sortable column is on an allowlist", "an unknown sort
+/// field is refused", "`id` is in the allowlist as a tiebreaker". `page_after` takes **no sort
+/// field at all** — it always orders by `id` ascending — so all three described an API and a
+/// failure path the reader's project does not have.
+///
+/// That is the same defect the split was written to remove, reintroduced one branch over. A review
+/// caught it; this is what catches it next time.
+#[test]
+fn the_seaorm_readme_does_not_claim_a_sort_api_the_repository_lacks() {
+    let generated = generate_ok(&["--orm", "seaorm", "--database", "postgres"]);
+    let repository = generated.read("src/repository.rs");
+    let readme = generated.read("README.md");
+
+    // THE PREMISE, ASSERTED RATHER THAN ASSUMED. Everything below is only correct while the
+    // repository really does take no sort field. If a later phase adds one, this fails first and
+    // the README claims get rewritten — instead of the absences below quietly becoming true for a
+    // reason nobody checked.
+    assert!(
+        !repository.to_ascii_lowercase().contains("sort"),
+        "the generated SeaORM repository now has a sort surface, so the README's description of \
+         sorting has to be rewritten rather than left absent"
+    );
+
+    for borrowed in [
+        "sortable column is on an allowlist",
+        "sort field maps to no column",
+        "in the allowlist as a tiebreaker",
+    ] {
+        assert!(
+            !readme.contains(borrowed),
+            "the SeaORM README claims `{borrowed}`, which describes `src/persistence.rs` on the \
+             direct-SQLx path. This project's `page_after` takes no sort field."
+        );
+    }
+
+    // CONTROL: the SQLx README *does* carry those sentences, so their absence above is a property
+    // of the SeaORM branch and not of the needles being unfindable.
+    let sqlx = generate_ok(&["--orm", "sqlx", "--database", "postgres"]).read("README.md");
+    assert!(
+        sqlx.contains("sortable column is on an allowlist"),
+        "the direct-SQLx README lost the allowlist description, so the SeaORM absences prove \
+         nothing"
+    );
 }
