@@ -73,10 +73,46 @@ fn classify(error: &sqlx::Error) -> DatabaseErrorKind {
         sqlx::Error::Database(inner) => match inner.kind() {
             ErrorKind::UniqueViolation => DatabaseErrorKind::UniqueViolation,
             ErrorKind::ForeignKeyViolation => DatabaseErrorKind::ForeignKeyViolation,
-            _ => DatabaseErrorKind::StatementRejected,
+            ErrorKind::NotNullViolation => DatabaseErrorKind::NotNullViolation,
+            ErrorKind::CheckViolation => DatabaseErrorKind::CheckViolation,
+            _ => conflict_or_rejected(inner.as_ref()),
         },
         sqlx::Error::Migrate(inner) => migrate_kind(inner),
         _ => DatabaseErrorKind::Unclassified,
+    }
+}
+
+/// Separates a lost concurrency conflict from an ordinary rejection, by SQLSTATE.
+///
+/// # Why this one condition is keyed on SQLSTATE when the others are not
+///
+/// The constraint violations above are keyed on the driver's `kind()`, which reads the server's
+/// error **number**, because SQLSTATE cannot distinguish them on MySQL: it reports unique,
+/// foreign-key and not-null all as the generic `23000`, and a check violation as `HY000`, outside
+/// the integrity class entirely.
+///
+/// A lost conflict is the mirror image. Neither driver offers an `ErrorKind` for it — the string
+/// `40001` appears nowhere in `sqlx-postgres` or `sqlx-mysql` — so `kind()` returns
+/// `ErrorKind::Other` and carries no information. SQLSTATE, however, agrees across both engines
+/// here: PostgreSQL raises `40001` for a serialization failure and `40P01` for a deadlock, and
+/// MySQL raises `40001` for a deadlock. Measured against `mysql:8.4.11`: a crossed-lock deadlock
+/// returns `ERROR 1213 (40001)` to exactly one of two sessions while the other commits.
+///
+/// # What is deliberately excluded
+///
+/// **MySQL's lock-wait timeout** — error `1205`, SQLSTATE `HY000` — is not folded in. The server
+/// resolves a deadlock instantly by choosing a victim, so retrying is the correct response. A
+/// lock-wait timeout means something held a lock for the full `innodb_lock_wait_timeout` (50s on
+/// the pinned image); retrying that automatically re-queues behind the same holder.
+///
+/// **PostgreSQL's exclusion violation** (`ErrorKind::ExclusionViolation`) also lands here and stays
+/// `StatementRejected`. It has no MySQL equivalent, so promoting it to a kind of its own would put
+/// a PostgreSQL-only concept into a vocabulary shared by both engines.
+fn conflict_or_rejected(inner: &dyn sqlx::error::DatabaseError) -> DatabaseErrorKind {
+    match inner.code().as_deref() {
+        // 40001 serialization_failure (both engines) | 40P01 deadlock_detected (PostgreSQL).
+        Some("40001" | "40P01") => DatabaseErrorKind::TransactionConflict,
+        _ => DatabaseErrorKind::StatementRejected,
     }
 }
 
