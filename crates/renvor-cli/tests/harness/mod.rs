@@ -498,9 +498,9 @@ impl Terminal {
     /// Everything else `console`'s one-key read changes is left exactly as the child set it. That
     /// read clears `ECHO`, `ECHONL`, `ICANON`, `ISIG` and `IEXTEN` from `c_lflag`; `ECHOE` is not
     /// among them. It changes no output flag at all in the mode it installs: `make_raw` clears
-    /// `OPOST`, and the caller then copies the original `c_oflag` back over it before the
-    /// `tcsetattr`, so `OPOST` is never off in the mode the child runs under and there is nothing
-    /// here to put back.
+    /// `OPOST`, and the caller then assigns the original `c_oflag` back over the whole field
+    /// before the `tcsetattr`, so the mode the child runs under carries whatever output flags it
+    /// already had and there is nothing here to put back.
     ///
     /// What that leaves is the mode that decides the property under test, not a faithful copy of
     /// the child's inter-frame state — and describing it as one would be the same kind of
