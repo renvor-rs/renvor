@@ -223,13 +223,17 @@ jobs:
           # The schedule is unchanged: sixty attempts, two seconds apart, so the SLEEPING
           # still totals 120 seconds. That was never a wall-clock ceiling and is not one
           # now — each attempt also costs a connection. `--connect-timeout` and
-          # `PGCONNECT_TIMEOUT` cap that at five seconds, which is STRICTER than what was
-          # here before: both clients default to no connect timeout at all, so the old
-          # probes could block for longer. A fully failing block therefore gives up
-          # somewhere north of 120s, as it always could, with `timeout-minutes: 45` as the
-          # real outer bound. Tightening it to a true 120s deadline is deliberately NOT
-          # done here: main has never enforced one, and inventing a stricter limit inside
-          # a flake fix is how you trade one flake for another on a slow runner.
+          # `PGCONNECT_TIMEOUT` cap that at five seconds, and the two engines moved in
+          # OPPOSITE directions from the probes they replace. Measured in all four pinned
+          # images: MySQL got STRICTER, because `mysqladmin` defaults to
+          # `connect-timeout 43200`, so a five-second cap is far tighter than it was.
+          # PostgreSQL got LOOSER, because `pg_isready` defaults to `--timeout 3`, so a
+          # five-second cap allows each attempt two seconds more than it used to. A fully
+          # failing block therefore gives up somewhere north of 120s, as it always could,
+          # with `timeout-minutes: 45` as the real outer bound. Tightening it to a true
+          # 120s deadline is deliberately NOT done here: main has never enforced one, and
+          # inventing a stricter limit inside a flake fix is how you trade one flake for
+          # another on a slow runner.
           postgres_ready=""
           for _ in $(seq 1 60); do
             if docker exec -e PGPASSWORD="$password" -e PGCONNECT_TIMEOUT=5 rv-postgres \
