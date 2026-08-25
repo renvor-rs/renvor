@@ -530,10 +530,11 @@ fn escape_at_a_prompt_is_a_cancellation() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
-    // NOT the same race as the Ctrl-C test above, and saying so was wrong. `ESC` is none of the
-    // line discipline's signal characters — `VINTR` is `\x03`, `VQUIT` is `\x1c`, `VSUSP` is
-    // `\x1a` — so it can never become a signal, whatever mode the terminal is in. That much is a
-    // property of POSIX.
+    // NOT the same race as the Ctrl-C test above, and saying so was wrong. `ESC` is none of this
+    // terminal's signal characters: `VINTR`, `VQUIT` and `VSUSP` are `c_cc` entries, and on a
+    // freshly opened pty they hold their conventional `\x03`, `\x1c` and `\x1a`. They are
+    // configurable rather than fixed by POSIX, so this is a property of the terminal these tests
+    // create — not a guarantee about every terminal everywhere. Nothing here reassigns them.
     //
     // What happens to an `ESC` that arrives while the terminal is still canonical is NOT: POSIX
     // leaves the disposition of already-queued input undefined when `ICANON` changes. On Linux and
@@ -656,13 +657,14 @@ fn the_readiness_barrier_survives_a_window_wide_enough_to_lose() {
     // known point rather than from whatever the scheduler left behind.
     terminal.await_input_readiness();
 
-    let closing = terminal.widen_the_readiness_window(std::time::Duration::from_millis(250));
+    // A guard rather than a handle to join by hand: the join then happens on the panicking path
+    // too, and a restoring thread can never outlive the terminal it was given.
+    let _closing = terminal.widen_the_readiness_window(std::time::Duration::from_millis(250));
 
     // THE BARRIER UNDER TEST. It must not return while a keypress would become a signal.
     terminal.await_input_readiness();
     terminal.key("\u{3}");
     let code = terminal.wait();
-    closing.join().expect("the restoring thread finishes");
 
     assert!(
         !terminal.was_signalled(),
@@ -705,8 +707,19 @@ fn a_barrier_may_not_be_satisfied_by_output_that_already_arrived() {
          measuring something else and its conclusion does not follow"
     );
 
+    // Everything `wizard` consumed, including the first copy of the question — which sits earlier
+    // in the frame than the placeholder `wizard` matched last.
+    let consumed = terminal.matched_offset();
+
     // THE FIX, ASSERTED. Typing redraws the frame, so the question is written a second time — and
     // only a barrier with a cursor can be waiting for *that* copy.
+    //
+    // The readiness wait is not decoration. Without it this test would type into a terminal it has
+    // only seen *rendered*, which is the exact thing this PR says proves nothing — and an `r` that
+    // lands while `ICANON` is still set sits in a queue whose disposition across the mode change
+    // POSIX does not define. If it were dropped there would be no redraw and this test would hang
+    // for the full expectation timeout.
+    terminal.await_input_readiness();
     terminal.key("r");
     terminal.expect_new("Project name");
     assert!(
@@ -714,14 +727,23 @@ fn a_barrier_may_not_be_satisfied_by_output_that_already_arrived() {
         "`expect_new` returned without reading anything new, so it is matching the same stale \
          output `expect` did"
     );
+    // AND THE STRONGER HALF. Bytes arriving is not the property — matching a *later* occurrence
+    // is. An implementation that drained one byte and then searched from the start of the
+    // transcript would satisfy the assertion above while still matching the first copy, and this
+    // is what separates the two.
+    assert!(
+        terminal.matched_offset() > consumed,
+        "`expect_new` matched at {}, which is inside output `wizard` had already consumed (up to \
+         {consumed}) — so it found the first copy of the question, not the redraw's",
+        terminal.matched_offset()
+    );
 
     // Escape rather than Ctrl-C, and the choice is not arbitrary. This test is about `expect_new`,
     // which is platform-independent, so it is not `#[cfg(unix)]` — and on Windows
     // `await_input_readiness` is a documented no-op. Ending with `\x03` there would add a second
     // test carrying the residual Ctrl-C exposure that only `control_c_at_a_prompt_is_a_cancellation`
-    // carries today. `ESC` cannot become a signal on any platform, so it cancels without adding to
-    // that surface.
-    terminal.await_input_readiness();
+    // carries today. `ESC` is not one of this terminal's `c_cc` signal characters, so it cancels
+    // without adding to that surface.
     terminal.escape();
     assert_eq!(terminal.wait(), 4, "{}", terminal.outcome());
     assert!(!destination.exists());
