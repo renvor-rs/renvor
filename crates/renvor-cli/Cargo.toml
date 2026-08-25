@@ -257,5 +257,31 @@ portable-pty = { version = "0.9.0", default-features = false }
 # on every unrelated edit or notices neither.
 insta = { version = "1.48.0", default-features = false, features = ["json"] }
 
+# THE PSEUDO-TERMINAL'S OWN MODE, WHICH IS THE ONLY DETERMINISTIC READINESS SIGNAL A PROMPT TEST HAS.
+#
+# `console` puts the terminal into raw mode INSIDE its one-key read and restores it on the way out,
+# so "the prompt is drawn" is written before raw mode begins rather than after. Waiting on drawn
+# text therefore proves nothing about whether Ctrl-C will arrive as a key or as a SIGINT, which is
+# what made `control_c_at_a_prompt_is_a_cancellation` flake on three separate CI runs.
+#
+# A pty's `termios` is one kernel object shared by both ends, so the master end can ask what mode
+# the slave is in. `portable-pty` already exposes that as `MasterPty::get_termios`, and it hands
+# back `nix`'s own type — so the version here is PINNED TO THE ONE `portable-pty` 0.9.0 depends on.
+# A different major would compile as a second, unrelated `Termios` and the flag sets would not
+# match.
+#
+# `libc` was tried first and rejected: this workspace builds with `-F unsafe-code`, and every
+# `tcgetattr`/`tcsetattr` in `libc` needs an `unsafe` block. `nix` wraps the same calls safely.
+#
+# # Why it is target-gated
+#
+# `termios` is POSIX. `MasterPty::get_termios` is itself `#[cfg(unix)]`, and so is every caller in
+# `tests/harness/mod.rs`, so on Windows this crate would be compiled for nothing. The readiness
+# probe has no Windows counterpart — ConPTY exposes the console mode to the child, not to whoever
+# holds the other end — and `Terminal::await_input_readiness` records that gap rather than hiding
+# it.
+[target.'cfg(unix)'.dev-dependencies]
+nix = { version = "0.28.0", default-features = false, features = ["term"] }
+
 [lints]
 workspace = true
