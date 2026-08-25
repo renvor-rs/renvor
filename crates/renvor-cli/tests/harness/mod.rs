@@ -492,21 +492,26 @@ impl Terminal {
     /// it is a test that fails to catch it almost every time. This widens it to the width of a
     /// test instead.
     ///
-    /// It restores **exactly the two flags that decide whether an interrupt character becomes a
-    /// signal**, and deliberately not the rest. `cfmakeraw` also clears `ECHO`, `ECHOE`, `IEXTEN`,
-    /// `ICRNL`, `IXON` and `OPOST`, and this leaves every one of them as the child set them — so
-    /// the resulting mode is the one that matters for the property under test, not a faithful copy
-    /// of the child's inter-frame state. Saying otherwise would be the same kind of confident
-    /// half-truth that cost this test three CI runs.
+    /// It restores **`ISIG`** — the flag that decides whether the line discipline turns an
+    /// interrupt character into a signal — along with `ICANON`, and deliberately nothing else.
+    ///
+    /// Everything else `console`'s one-key read changes is left exactly as the child set it. That
+    /// read clears `ECHO`, `ECHONL`, `ICANON`, `ISIG` and `IEXTEN` from `c_lflag`; `ECHOE` is not
+    /// among them. It changes no output flag at all in the mode it installs: `make_raw` clears
+    /// `OPOST`, and the caller then copies the original `c_oflag` back over it before the
+    /// `tcsetattr`, so `OPOST` is never off in the mode the child runs under and there is nothing
+    /// here to put back.
+    ///
+    /// What that leaves is the mode that decides the property under test, not a faithful copy of
+    /// the child's inter-frame state — and describing it as one would be the same kind of
+    /// confident half-truth that cost this test three CI runs.
     ///
     /// It touches only this test's own pty, and it changes nothing about the program under test —
     /// no delay is inserted into it, and it is not told it is being tested. That is the whole
     /// reason it is preferred to a hook or a sleep.
     ///
-    /// `O_NOCTTY` is not optional. A session leader that opens a terminal without it **acquires
-    /// that terminal as its controlling terminal**, and a test binary on CI can be a session
-    /// leader with no controlling terminal of its own. Without the flag this call could point the
-    /// test runner's own job control at the pty it is meant to be inspecting.
+    /// The slave end is opened through [`open_slave`], which records what `O_NOCTTY` does and does
+    /// not buy here rather than repeating it.
     #[cfg(unix)]
     pub fn force_canonical_mode(&mut self) {
         let name = self
