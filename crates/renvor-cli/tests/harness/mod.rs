@@ -378,6 +378,15 @@ impl Terminal {
         }
     }
 
+    /// How far [`Terminal::expect_new`] has matched, as an offset into [`Terminal::visible`].
+    ///
+    /// Exposed so a test can assert **which** occurrence of a needle was matched, rather than only
+    /// that some bytes arrived. See
+    /// `terminal.rs::a_barrier_may_not_be_satisfied_by_output_that_already_arrived`.
+    pub fn matched_offset(&self) -> usize {
+        self.matched
+    }
+
     /// Blocks until the terminal is in a mode where a keypress is **data**, not a signal.
     ///
     /// # This is a state probe, and every text-based barrier before it was a guess
@@ -403,8 +412,16 @@ impl Terminal {
     /// what mode the slave is in. That is a fact about state rather than an inference from output,
     /// and it is why this cannot be fooled by stale bytes the way a transcript match can.
     ///
-    /// Once `ISIG` is observed clear the child is blocked in `read`, and it cannot restore
-    /// canonical mode until that read returns — which needs a byte to arrive.
+    /// **What it establishes is `ISIG` clear, which is narrower than "raw mode".** `ISIG` is the
+    /// flag that decides whether the line discipline converts a control character into a signal,
+    /// and it is the only one this test needs. `console` also clears `ECHO`, `ECHONL`, `ICANON`
+    /// and `IEXTEN` in the same call, and restores `c_oflag` untouched — so `OPOST` is never off.
+    /// None of that is asserted here, because none of it decides the outcome.
+    ///
+    /// Observing `ISIG` clear places the child between its `tcsetattr` and its `read`, which is at
+    /// or just before the read rather than provably inside it. The guarantee that matters survives
+    /// either way: nothing between those two points changes the mode again, and the read cannot
+    /// return until a byte arrives.
     ///
     /// **That is a precondition on the caller, not a law.** It holds while the pty's input queue
     /// is empty, which is the case whenever the previous key has already been consumed. Every
@@ -496,7 +513,8 @@ impl Terminal {
             .master
             .tty_name()
             .expect("the pty knows its slave's name");
-        set_signal_generation(&name, true);
+        let tty = open_slave(&name);
+        set_signal_generation(&tty, true);
     }
 
     /// Widens the render-to-readiness window to `window`, and lets it close on its own.
@@ -513,20 +531,36 @@ impl Terminal {
     /// and one that does not wait fails whatever the number is. Nothing is inserted into the
     /// program under test — this changes the mode of the test's own pty and nothing else.
     ///
-    /// The returned handle must be joined, so the restoring thread cannot outlive the test that
-    /// started it.
+    /// # The restoring thread holds a descriptor, not a pathname
+    ///
+    /// It would be natural to let the thread reopen the slave by name when it wakes. That is a
+    /// **cross-test hazard**: if the test panics before the returned guard is dropped, the
+    /// `Terminal` is dropped first, the pty closes, and `/dev/pts/N` becomes available again — to
+    /// one of the other [`CONCURRENT_TERMINALS`] running alongside. The sleeping thread would then
+    /// reopen that name and clear `ISIG` on **somebody else's terminal**, turning one failure into
+    /// a second, unrelated, and much harder one.
+    ///
+    /// Opening once and moving the descriptor in removes the possibility: the thread can only ever
+    /// affect the terminal it was given, and if that terminal has since closed the restore fails
+    /// harmlessly instead of finding a new victim.
     #[cfg(unix)]
-    #[must_use = "join the handle, or the restoring thread outlives the test"]
-    pub fn widen_the_readiness_window(&mut self, window: Duration) -> std::thread::JoinHandle<()> {
+    #[must_use = "the guard joins the restoring thread; dropping it immediately defeats that"]
+    pub fn widen_the_readiness_window(&mut self, window: Duration) -> ClosingWindow {
         let name = self
             .master
             .tty_name()
             .expect("the pty knows its slave's name");
-        set_signal_generation(&name, true);
-        std::thread::spawn(move || {
+        let tty = open_slave(&name);
+        set_signal_generation(&tty, true);
+        ClosingWindow(Some(std::thread::spawn(move || {
             std::thread::sleep(window);
-            set_signal_generation(&name, false);
-        })
+            // Best effort, and deliberately so. If the test has already failed its `Terminal` may
+            // be gone and this descriptor dead; panicking here would report a second failure from
+            // a thread nobody is watching. It cannot hide a real problem: a restore that silently
+            // failed during a healthy run leaves the child waiting for a key it can never receive,
+            // and `Terminal::wait` names that as a hang against its own deadline.
+            let _ = try_set_signal_generation(&tty, false);
+        })))
     }
 
     /// Whether a signal killed the child. Meaningful only after [`Terminal::wait`].
@@ -786,39 +820,82 @@ impl Terminal {
     }
 }
 
-/// Turns the line discipline's signal generation on or off for the pty named by `name`.
+/// Opens the slave end of a pty by name, for reading and changing its mode.
 ///
-/// `on` is the canonical, ordinary-shell state, where the driver converts an interrupt character
-/// into `SIGINT` as it arrives. `off` is what the prompt library establishes for the duration of
-/// each one-key read, where the same byte is delivered as input.
+/// # `O_NOCTTY`, and an honest account of what it buys
 ///
-/// # `O_NOCTTY` is not optional
+/// A session leader with no controlling terminal that opens a terminal **acquires it** as its
+/// controlling terminal. In this harness that acquisition cannot actually happen: `portable-pty`
+/// makes the child a session leader and claims the slave with `TIOCSCTTY` before any of this runs,
+/// so the terminal already belongs to a session and is not available to be claimed again.
 ///
-/// A session leader that opens a terminal without it **acquires that terminal as its controlling
-/// terminal**, and a test binary on CI can be a session leader with no controlling terminal of its
-/// own. Without the flag this would point the test runner's own job control at the pty it is meant
-/// to be inspecting.
+/// The flag is kept because the alternative is a test helper whose safety depends on a spawn
+/// detail in another crate, and because a test binary on CI genuinely can be a session leader with
+/// no controlling terminal of its own. It is defensive rather than load-bearing, which is a
+/// smaller claim than the one this comment used to make.
 #[cfg(unix)]
-fn set_signal_generation(name: &Path, on: bool) {
+fn open_slave(name: &Path) -> std::fs::File {
     use std::os::unix::fs::OpenOptionsExt;
 
     use nix::fcntl::OFlag;
-    use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
 
-    let tty = std::fs::OpenOptions::new()
+    std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .custom_flags(OFlag::O_NOCTTY.bits())
         .open(name)
-        .unwrap_or_else(|error| panic!("the slave end {name:?} can be opened: {error}"));
-    let mut termios = tcgetattr(&tty).expect("the terminal's mode can be read");
+        .unwrap_or_else(|error| panic!("the slave end {name:?} can be opened: {error}"))
+}
+
+/// Turns the line discipline's signal generation on or off for an already-open terminal.
+///
+/// `on` is the canonical, ordinary-shell state, where the driver converts the `VINTR` character
+/// into `SIGINT` as it arrives. `off` is what the prompt library establishes for the duration of
+/// each one-key read, where the same byte is delivered as input.
+///
+/// This toggles `ISIG` and `ICANON` and **nothing else** — not a reconstruction of the child's
+/// inter-frame mode, which also has `ECHO`, `ECHONL` and `IEXTEN` set. Those two are the flags
+/// that decide whether an interrupt character becomes a signal or a byte, which is the only
+/// property the tests using this care about.
+#[cfg(unix)]
+fn set_signal_generation(tty: &std::fs::File, on: bool) {
+    try_set_signal_generation(tty, on).expect("the terminal's mode can be changed");
+}
+
+/// [`set_signal_generation`] without the panic, for the one caller that runs after a test may
+/// already have failed. See [`Terminal::widen_the_readiness_window`].
+#[cfg(unix)]
+fn try_set_signal_generation(tty: &std::fs::File, on: bool) -> nix::Result<()> {
+    use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
+
+    let mut termios = tcgetattr(tty)?;
     let flags = LocalFlags::ISIG | LocalFlags::ICANON;
     if on {
         termios.local_flags.insert(flags);
     } else {
         termios.local_flags.remove(flags);
     }
-    tcsetattr(&tty, SetArg::TCSANOW, &termios).expect("the terminal's mode can be set");
+    tcsetattr(tty, SetArg::TCSANOW, &termios)
+}
+
+/// Joins the thread that closes a widened readiness window.
+///
+/// Exists so the join happens on **every** path out of a test, including a panicking one — a
+/// detached thread that outlives its `Terminal` is the hazard described on
+/// [`Terminal::widen_the_readiness_window`].
+#[cfg(unix)]
+pub struct ClosingWindow(Option<std::thread::JoinHandle<()>>);
+
+#[cfg(unix)]
+impl Drop for ClosingWindow {
+    fn drop(&mut self) {
+        if let Some(handle) = self.0.take() {
+            // The result is discarded on purpose: this runs during unwinding when a test has
+            // failed, and panicking while panicking aborts the process, which would replace a
+            // named test failure with no diagnosis at all.
+            let _ = handle.join();
+        }
+    }
 }
 
 impl Drop for Terminal {
