@@ -379,6 +379,18 @@ for both. The active exclusion is removed from `lychee.toml` and **no replacemen
 added** — that page's edit link is checked again like every other page's. EX-006 is recorded under
 retired exclusions so the number is never reused, alongside EX-004 and EX-005.
 
+The removal is measured the way §9 measured the addition, and is its mirror image. Adding EX-006
+took the run from 40 excluded URLs to **41**; retiring it takes the run back to **40**, on both
+toolchains:
+
+```
+388 Total  100 Unique  348 OK  0 Errors  40 Excluded  7 Redirects
+```
+
+Exactly one URL left the exclusion list and re-entered the check, and it answered — `0 Errors`. A
+retirement that had quietly broken the gate would show an error here, and one that had exempted
+something else in its place would not show 40.
+
 This was the first post-merge cleanup this phase owed, and §9 named it so it would not be carried by
 a comment in a config file alone. It was not.
 
