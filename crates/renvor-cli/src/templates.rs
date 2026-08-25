@@ -125,9 +125,26 @@ const PERSISTENCE_SQLX: &[TemplateEntry] = &[TemplateEntry {
 
 /// Added by `--orm seaorm`.
 ///
-/// These two **compile**, unlike the direct-SQLx module, because an entity and a repository need
-/// `sea-orm` — which is published — and nothing from Renvor. Emitting them as inert text would
-/// have made "generated code uses SeaORM idiomatically" a claim about a comment.
+/// # Emitted, and NOT compiled by the project that receives them
+///
+/// `src/main.rs` declares neither module and `Cargo.toml` declares no dependency, so `cargo build`
+/// in a generated project builds neither file. That is the shipped behaviour, and stating it here
+/// is the point: the earlier wording claimed these two "compile", which described a design that was
+/// **considered and rejected** rather than the one that ships.
+///
+/// It was rejected because generation runs the staged project's own `cargo fmt`, `clippy`, `build`,
+/// `test` and `run` before placing it. A real `sea-orm` dependency therefore puts a registry fetch
+/// and a multi-minute compile inside `renvor new`, and Renvor guarantees offline generation —
+/// pinned by `seaorm_generation_succeeds_offline` with `CARGO_NET_OFFLINE=true`.
+///
+/// # The evidence that they are code rather than decoration
+///
+/// They were compiled successfully against real `sea-orm 2.0.2` during Phase 007 verification, with
+/// the dependency and the two `mod` declarations added by hand. That is a **manual result recorded
+/// as evidence**, not something the generator does or a gate that runs in CI; L-13 in
+/// `governance/phase-007-evidence.md` states it in those terms. What runs automatically is
+/// `the_uncompiled_seaorm_sources_are_still_rustfmt_clean`, because the generator's own formatting
+/// gate cannot see a file no module declares.
 const PERSISTENCE_SEAORM: &[TemplateEntry] = &[
     TemplateEntry {
         path: "src/entity.rs",
