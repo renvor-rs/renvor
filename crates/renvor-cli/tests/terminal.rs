@@ -458,21 +458,22 @@ fn wizard(root: &std::path::Path, destination: &std::path::Path) -> Terminal {
         root,
         &[],
     );
-    terminal.expect("Project name");
-    // WAIT FOR THE INPUT LINE, NOT JUST THE QUESTION — AND THE REASON IS A RACE.
+    // `expect_new` rather than `expect`, throughout. `expect` searches the transcript from its
+    // first byte, so once a needle has appeared, every later wait for it returns at once. That is
+    // right for "did this ever appear" and useless as a barrier — see `Terminal::expect_new`,
+    // which records the measurement that made this concrete.
+    terminal.expect_new("Project name");
+    // The placeholder is the last text the first frame contains, so this waits for the whole of
+    // it rather than for its opening line.
     //
-    // The question is written early in the prompt's first render; the placeholder is written at
-    // the end of it, immediately before the library starts reading keys. Between those two points
-    // the terminal is still in canonical mode, where the driver turns an interrupt character into
-    // a **signal** as it enters the input queue rather than delivering it as a byte — so a Ctrl-C
-    // sent after the question but before the read gets a different outcome from the one a person
-    // pressing the key would get.
-    //
-    // That is not hypothetical: `control_c_at_a_prompt_is_a_cancellation` exited 1 instead of 4 on
-    // one CI leg while passing on two others in the same run. Waiting for the last thing the
-    // render writes closes almost all of the window; what remains is microseconds against a write
-    // that has to cross the kernel.
-    terminal.expect("ASCII letters");
+    // WHAT THIS DOES **NOT** PROVE, AND THE PREVIOUS COMMENT HERE CLAIMED IT DID: that the program
+    // is ready to receive a keypress. The frame is one `write_all`, so its first byte and its last
+    // arrive together, and both are written **before** the library asks for a key — which is the
+    // call that puts the terminal into raw mode. Ordering a test against this text orders it
+    // against the right *prompt*, which is necessary; it does not order it against the right
+    // *terminal mode*, which is what a cancellation test needs. That is what
+    // `Terminal::await_input_readiness` is for, and why the tests below call it.
+    terminal.expect_new("ASCII letters");
     terminal
 }
 
@@ -485,26 +486,34 @@ fn control_c_at_a_prompt_is_a_cancellation() {
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
 
-    // WAIT FOR THE PROMPT TO BE DRAWN BEFORE SENDING THE KEY.
+    // WAIT FOR RAW MODE, NOT FOR RENDERED TEXT.
     //
-    // Without this the test races the child. The keypress is written the instant after `spawn`,
-    // and if it lands before the prompt library has put the pty into raw mode, the line discipline
-    // is still canonical — so Ctrl-C becomes SIGINT to the foreground process group rather than a
-    // byte the library reads, and the exit code is 1 instead of 4. The library enables raw mode
-    // before it draws, so waiting for the drawn prompt is what makes "raw mode is on" observable.
+    // This test flaked on three separate CI runs, each time as `left: 1, right: 4`, and each time
+    // it was rerun and passed. The barrier here used to be a second `expect("Project name")`,
+    // which was a no-op twice over: the text was already in the transcript, so it read no bytes
+    // and returned in 458ns — and even a wait that *had* blocked would have proven the wrong
+    // thing, because the prompt is written before the library switches the terminal into raw
+    // mode, not after.
     //
-    // Observed on CI 2026-08-23: `verify (stable)` failed here while `verify (1.94.0)` passed on
-    // the same commit, which is the signature of a race rather than a defect. The assertion below
-    // is unchanged — the exit code still has to be 4.
-    terminal.expect("Project name");
+    // What the failure actually was: with the terminal still canonical, `ISIG` turns `\x03` into
+    // `SIGINT` for the foreground process group as it arrives. `renvor` installs no handler, so
+    // it dies from the signal — and `portable-pty` reports a signalled child as code `1`, because
+    // `ExitStatus::code()` is `None` and its conversion falls back to `unwrap_or(1)`. The `1` was
+    // never `Code::Internal`; the program had not run far enough to classify anything.
+    //
+    // `await_input_readiness` asks the kernel instead of guessing from output, and once raw mode
+    // is observed the child is blocked in `read` and cannot leave it until this harness — the only
+    // writer — sends the byte below. See
+    // `a_key_that_arrives_before_raw_mode_is_delivered_as_a_signal` for the same window widened on
+    // purpose, which fails deterministically without this line.
+    terminal.await_input_readiness();
     terminal.key("\u{3}");
     let code = terminal.wait();
     assert_eq!(
         code,
         4,
-        "Ctrl-C must exit 4, got {code}. An exit of 1 means the prompt library reported an \
-         `ErrorKind` that is neither `Interrupted` nor `NotConnected`, which on this path almost \
-         always means the key arrived before the read began.\n{}",
+        "Ctrl-C must exit 4, got {code}. {}\n{}",
+        terminal.outcome(),
         terminal.visible()
     );
     assert!(
@@ -521,16 +530,186 @@ fn escape_at_a_prompt_is_a_cancellation() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
-    // Same race as the Ctrl-C test above, and the same fix. This one had not been observed
-    // failing, which is not the same as not racing.
-    terminal.expect("Project name");
+    // NOT the same race as the Ctrl-C test above, and saying so was wrong. Escape is not one of
+    // the line discipline's signal characters, so an ESC that arrives while the terminal is still
+    // canonical is merely **buffered** by `ICANON` and becomes readable the moment raw mode turns
+    // it off. Measured five times with the byte deliberately delivered before raw mode: exit 4
+    // every time.
+    //
+    // The readiness wait is kept anyway. It costs one `tcgetattr`, it makes this test deterministic
+    // against every other ordering rather than against the one that happens not to bite, and a
+    // reader comparing the two cancellation tests should not have to work out why only one of them
+    // waits.
+    terminal.await_input_readiness();
     terminal.escape();
     assert_eq!(
         terminal.wait(),
         4,
-        "Escape must exit 4\n{}",
+        "Escape must exit 4. {}\n{}",
+        terminal.outcome(),
         terminal.visible()
     );
+    assert!(!destination.exists());
+}
+
+/// The flake, on demand: a Ctrl-C that reaches a **drawn** prompt too early is a signal, not a key.
+///
+/// # Why this test asserts an exit code of 1
+///
+/// It is the positive control for [`harness::Terminal::await_input_readiness`], and without it
+/// that barrier could be deleted and this file would still pass — nearly always. The window it
+/// guards is microseconds wide, so a test that waits for it to bite is a test that reports success
+/// on a broken harness roughly nine hundred and ninety-nine times in a thousand. That is precisely
+/// how the defect survived: three CI failures, three green reruns, and no test that could tell the
+/// difference.
+///
+/// So the window is widened rather than waited for. `force_canonical_mode` puts the terminal into
+/// the mode the child is in between flushing its frame and asking for a key — nothing is injected
+/// into the program, no hook is added to it, and nothing sleeps. The key then meets exactly the
+/// line discipline it would have met in that window, and the outcome is the one CI saw, every
+/// time.
+///
+/// The `4` in `control_c_at_a_prompt_is_a_cancellation` is untouched and still required. This
+/// asserts the *other* side of the boundary, which is what makes that `4` mean something.
+#[cfg(unix)]
+#[test]
+fn a_key_that_arrives_before_raw_mode_is_delivered_as_a_signal() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = wizard(root.path(), &destination);
+
+    // The prompt is drawn — the old barrier is fully satisfied at this point, and so is the new
+    // one. Both halves are asserted, so a failure names which of them stopped being true.
+    terminal.await_input_readiness();
+    assert!(
+        !terminal.interrupts_are_signals(),
+        "the terminal should be in raw mode once the readiness probe returns"
+    );
+
+    terminal.force_canonical_mode();
+    assert!(
+        terminal.interrupts_are_signals(),
+        "the control did not take effect, so the assertion below would prove nothing"
+    );
+
+    terminal.key("\u{3}");
+    let code = terminal.wait();
+    assert!(
+        terminal.was_signalled(),
+        "a Ctrl-C arriving in canonical mode must be turned into a signal by the line \
+         discipline, but the child exited on its own with {code}\n{}",
+        terminal.visible()
+    );
+    assert_ne!(
+        code, 4,
+        "the key was somehow still delivered as input, which would mean this control no longer \
+         reproduces the window it exists to reproduce"
+    );
+    assert_eq!(
+        code,
+        1,
+        "this is the exact number three CI runs reported. It is `portable-pty` folding a \
+         signalled child into `unwrap_or(1)`, NOT `Code::Internal` — {}",
+        terminal.outcome()
+    );
+    // The one thing that is the same on both sides of the boundary: nothing is written.
+    assert!(
+        !destination.exists(),
+        "a cancelled run must leave the destination untouched however it was cancelled"
+    );
+}
+
+/// The regression: with the window widened, the old barrier loses the race and this one wins it.
+///
+/// # Why a control that only *widens* the window is the honest one
+///
+/// The real gap between the prompt's last byte and `tcsetattr(RAW)` is a few instructions. A test
+/// that tries to land inside it lands outside it almost always, which is the whole reason three
+/// CI failures each turned green on rerun and taught nothing. Widening it to a quarter of a second
+/// makes the outcome a property of the barrier rather than of the machine's mood.
+///
+/// The window still **closes on its own**, which is what separates this from
+/// `a_key_that_arrives_before_raw_mode_is_delivered_as_a_signal`. There, canonical mode is
+/// permanent and the correct behaviour is to refuse. Here it is temporary, exactly as in the
+/// program, so the correct behaviour is to wait and then succeed — and a barrier that does not
+/// wait sends `\x03` into a line discipline that turns it into `SIGINT`, and this test reports
+/// `1`.
+///
+/// Measured with the barrier replaced by the rendered-text wait it superseded: exit `1`, killed by
+/// `Interrupt: 2`. With the readiness probe: exit `4`. Nothing about the program under test
+/// differs between those two runs.
+#[cfg(unix)]
+#[test]
+fn the_readiness_barrier_survives_a_window_wide_enough_to_lose() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = wizard(root.path(), &destination);
+    // Start from the state the program actually reaches, so the widening below is a change from a
+    // known point rather than from whatever the scheduler left behind.
+    terminal.await_input_readiness();
+
+    let closing = terminal.widen_the_readiness_window(std::time::Duration::from_millis(250));
+
+    // THE BARRIER UNDER TEST. It must not return while a keypress would become a signal.
+    terminal.await_input_readiness();
+    terminal.key("\u{3}");
+    let code = terminal.wait();
+    closing.join().expect("the restoring thread finishes");
+
+    assert!(
+        !terminal.was_signalled(),
+        "the key was delivered to the line discipline instead of to the program, so the barrier \
+         returned before raw mode began\n{}",
+        terminal.visible()
+    );
+    assert_eq!(
+        code,
+        4,
+        "Ctrl-C must still exit 4 when the window it races is a quarter of a second wide. {}",
+        terminal.outcome()
+    );
+    assert!(!destination.exists());
+}
+
+/// `expect` matches text that arrived long ago; `expect_new` cannot.
+///
+/// # The defect this pins down was invisible because it *passed*
+///
+/// Every cancellation test used to place `expect("Project name")` before its keypress as a
+/// barrier, having already waited for that same text inside `wizard`. The call read nothing and
+/// returned immediately, so the tests were sending keys with no synchronisation at all while
+/// appearing to have some. This asserts the difference directly rather than describing it, so the
+/// barrier cannot quietly revert to a no-op.
+#[test]
+fn a_barrier_may_not_be_satisfied_by_output_that_already_arrived() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = wizard(root.path(), &destination);
+
+    // THE DEFECT, ASSERTED. `wizard` has already matched this text, so the old form of the barrier
+    // returns without reading a byte.
+    let before = terminal.transcript.len();
+    terminal.expect("Project name");
+    assert_eq!(
+        terminal.transcript.len(),
+        before,
+        "`expect` was supposed to match stale output here; if it now blocks, this test is \
+         measuring something else and its conclusion does not follow"
+    );
+
+    // THE FIX, ASSERTED. Typing redraws the frame, so the question is written a second time — and
+    // only a barrier with a cursor can be waiting for *that* copy.
+    terminal.key("r");
+    terminal.expect_new("Project name");
+    assert!(
+        terminal.transcript.len() > before,
+        "`expect_new` returned without reading anything new, so it is matching the same stale \
+         output `expect` did"
+    );
+
+    terminal.await_input_readiness();
+    terminal.key("\u{3}");
+    assert_eq!(terminal.wait(), 4, "{}", terminal.outcome());
     assert!(!destination.exists());
 }
 
