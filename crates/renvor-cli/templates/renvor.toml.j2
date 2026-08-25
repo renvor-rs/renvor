@@ -18,8 +18,11 @@ example_domain = {{ example_domain | toml_bool }}
 seed_data = {{ seed_data | toml_bool }}
 {% if database %}
 [persistence]
-# Recorded because generation ACTED on it: `src/persistence.rs` and `migrations/` exist.
-database = "{{ database }}"
+# Recorded because generation ACTED on it. WHICH files it acted on depends on the ORM, so this
+# comment does too: a fixed sentence here would name a file the other tree does not contain.
+{% if orm == "seaorm" %}# `--orm seaorm`: `src/entity.rs`, `src/repository.rs`, and `migrations/` exist.
+{% else %}# `--orm sqlx`: `src/persistence.rs` and `migrations/` exist.
+{% endif %}database = "{{ database }}"
 orm = "{{ orm }}"
 driver_feature = "{{ driver_feature }}"
 {% endif %}

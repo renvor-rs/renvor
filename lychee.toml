@@ -46,38 +46,6 @@ exclude = [
   # the removal condition remains future work.
   # REMOVE WHEN: `renvor` is first published to crates.io.
   '^https://docs\.rs/renvor',
-
-  # ---------------------------------------------------------------------------
-  # EX-006 — the "Edit this page" link of a docs page added by THIS pull request
-  # ---------------------------------------------------------------------------
-  # Rule        : generated link, not an authored one
-  # Location    : docs/build/docs/persistence/index.html
-  # URL         : https://github.com/renvor-rs/renvor/tree/main/docs/docs/persistence.mdx
-  #
-  # Docusaurus builds every page's edit link from `editUrl`
-  # (`.../tree/main/docs/`, docusaurus.config.js). For a page that does not exist
-  # on `main` yet, that URL is a 404 by construction, and it stays a 404 until this
-  # pull request merges. Nothing in the page can be rewritten to avoid it — unlike
-  # EX-005, whose links were AUTHORED and were therefore fixed at the source
-  # instead. The two ADR citations on this page were fixed that way in the same
-  # change and are deliberately not exempted here.
-  #
-  # This is EX-004 again, one page later: EX-004 covered `cli.mdx`'s edit link for
-  # exactly this reason, was added by PR #28, and was removed on 2026-08-21 once
-  # the page reached `main` and the URL returned 200 — verified with a negative
-  # control. This entry has the same shape and the same expected life.
-  #
-  # Scope: this ONE page's edit link, anchored at both ends. `cli.mdx` and every
-  # other page's edit link stay checked, which is the control that proves this
-  # exclusion is not quietly covering the whole site.
-  #
-  # REMOVE WHEN: `docs/docs/persistence.mdx` is present on `main` — measured by
-  # the URL above returning 200, against a negative control such as
-  # `.../tree/main/docs/docs/no-such-page.mdx` returning 404. That is the first
-  # post-merge cleanup for this phase, and it is recorded in
-  # `governance/phase-007-evidence.md` so it is not carried by this comment alone.
-  '^https://github\.com/renvor-rs/renvor/tree/main/docs/docs/persistence\.mdx$',
-
 ]
 
 # ---------------------------------------------------------------------------
@@ -100,6 +68,17 @@ exclude = [
 #   would have passed silently. Fixed at the source instead — the citations in
 #   `docs/docs/support-policy.mdx` are now repository paths in code form rather than
 #   `blob/main` hyperlinks, so there is nothing to exempt.
+#
+# EX-006 (`tree/main/docs/docs/persistence.mdx`) — REMOVED 2026-08-25. Its stated
+#   removal condition was "`docs/docs/persistence.mdx` is present on `main`,
+#   measured by the URL returning 200 against a negative control". PR #37 merged
+#   2026-08-24 as `ed6f26287c5198ca402fb73939560fc07d9bf888`, the page is present
+#   on `main`, and the URL resolves 200 with one redirect to `blob/main/...`. The
+#   negative control `.../tree/main/docs/docs/no-such-page.mdx` returned 404 with
+#   no redirect, proving the probe discriminates rather than accepting everything.
+#   The exemption was satisfied and therefore stale, and no replacement exemption
+#   was added in its place — this page's edit link is checked again like every
+#   other page's. Same shape and same life as EX-004, one page later.
 
 # ---------------------------------------------------------------------------
 # EX-003 — Docusaurus' bundled CSS, excluded from scanning
