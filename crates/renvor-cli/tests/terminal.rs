@@ -530,16 +530,24 @@ fn escape_at_a_prompt_is_a_cancellation() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
-    // NOT the same race as the Ctrl-C test above, and saying so was wrong. Escape is not one of
-    // the line discipline's signal characters, so an ESC that arrives while the terminal is still
-    // canonical is merely **buffered** by `ICANON` and becomes readable the moment raw mode turns
-    // it off. Measured five times with the byte deliberately delivered before raw mode: exit 4
-    // every time.
+    // NOT the same race as the Ctrl-C test above, and saying so was wrong. `ESC` is none of the
+    // line discipline's signal characters — `VINTR` is `\x03`, `VQUIT` is `\x1c`, `VSUSP` is
+    // `\x1a` — so it can never become a signal, whatever mode the terminal is in. That much is a
+    // property of POSIX.
     //
-    // The readiness wait is kept anyway. It costs one `tcgetattr`, it makes this test deterministic
-    // against every other ordering rather than against the one that happens not to bite, and a
-    // reader comparing the two cancellation tests should not have to work out why only one of them
-    // waits.
+    // What happens to an `ESC` that arrives while the terminal is still canonical is NOT: POSIX
+    // leaves the disposition of already-queued input undefined when `ICANON` changes. On Linux and
+    // macOS it is buffered and becomes readable when raw mode clears `ICANON`, which is what five
+    // measurements with the byte deliberately delivered before raw mode showed — exit 4 every
+    // time. It is also echoed, because `ECHO` is still on in that window. Both of those are
+    // observed behaviour on two platforms, not a guarantee.
+    //
+    // The readiness wait is kept anyway: it costs one `tcgetattr`, and it makes this test
+    // deterministic against that unspecified corner rather than reliant on it.
+    //
+    // It is deliberately NOT applied to the other six `escape()` call sites in this suite and in
+    // `parity.rs`, `transaction.rs` and `redaction.rs`. They are safe for the reason above, and
+    // fitting them all with a probe would be a refactor of tests that are not about cancellation.
     terminal.await_input_readiness();
     terminal.escape();
     assert_eq!(
@@ -707,8 +715,14 @@ fn a_barrier_may_not_be_satisfied_by_output_that_already_arrived() {
          output `expect` did"
     );
 
+    // Escape rather than Ctrl-C, and the choice is not arbitrary. This test is about `expect_new`,
+    // which is platform-independent, so it is not `#[cfg(unix)]` — and on Windows
+    // `await_input_readiness` is a documented no-op. Ending with `\x03` there would add a second
+    // test carrying the residual Ctrl-C exposure that only `control_c_at_a_prompt_is_a_cancellation`
+    // carries today. `ESC` cannot become a signal on any platform, so it cancels without adding to
+    // that surface.
     terminal.await_input_readiness();
-    terminal.key("\u{3}");
+    terminal.escape();
     assert_eq!(terminal.wait(), 4, "{}", terminal.outcome());
     assert!(!destination.exists());
 }
