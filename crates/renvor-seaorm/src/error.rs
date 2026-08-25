@@ -128,10 +128,35 @@ fn classify_sqlx(error: &sqlx::Error) -> DatabaseErrorKind {
         sqlx::Error::Database(inner) => match inner.kind() {
             ErrorKind::UniqueViolation => DatabaseErrorKind::UniqueViolation,
             ErrorKind::ForeignKeyViolation => DatabaseErrorKind::ForeignKeyViolation,
-            _ => DatabaseErrorKind::StatementRejected,
+            ErrorKind::NotNullViolation => DatabaseErrorKind::NotNullViolation,
+            ErrorKind::CheckViolation => DatabaseErrorKind::CheckViolation,
+            _ => conflict_or_rejected(inner.as_ref()),
         },
         sqlx::Error::Migrate(inner) => migrate_kind(inner),
         _ => DatabaseErrorKind::Unclassified,
+    }
+}
+
+/// Separates a lost concurrency conflict from an ordinary rejection, by SQLSTATE.
+///
+/// Mirrors `renvor-sqlx`'s function of the same name deliberately rather than sharing one: the
+/// shared crate is `renvor-database`, which may not name a driver, and neither adapter may depend
+/// on the other — the property `xtask` step 7 asserts.
+///
+/// Keyed on SQLSTATE because this is the one condition where SQLSTATE is the better key. Neither
+/// driver offers an `ErrorKind` for a lost conflict, so `kind()` returns `Other` and carries
+/// nothing; SQLSTATE meanwhile agrees across both engines — `40001` on either, plus `40P01` for a
+/// PostgreSQL deadlock. The constraint violations above are the reverse case, where MySQL collapses
+/// three conditions onto `23000` and puts check violations in `HY000`, so only the error number
+/// distinguishes them.
+///
+/// MySQL's lock-wait timeout (`1205`, SQLSTATE `HY000`) is deliberately excluded: a deadlock is
+/// resolved instantly by the server choosing a victim, whereas a lock-wait timeout means a lock was
+/// held for the full timeout and an automatic retry just re-queues behind the same holder.
+fn conflict_or_rejected(inner: &dyn sqlx::error::DatabaseError) -> DatabaseErrorKind {
+    match inner.code().as_deref() {
+        Some("40001" | "40P01") => DatabaseErrorKind::TransactionConflict,
+        _ => DatabaseErrorKind::StatementRejected,
     }
 }
 
@@ -139,11 +164,16 @@ fn classify_sqlx(error: &sqlx::Error) -> DatabaseErrorKind {
 fn migrate_kind(error: &sqlx::migrate::MigrateError) -> DatabaseErrorKind {
     use sqlx::migrate::MigrateError;
     match error {
-        MigrateError::VersionMismatch(_) | MigrateError::VersionNotPresent(_) => {
-            DatabaseErrorKind::MigrationChecksumMismatch
-        }
+        // All three are history-integrity failures: the applied history no longer agrees with the
+        // resolved set. `VersionMissing` is upstream's *"previously applied but is missing in the
+        // resolved migrations"*, which is the same class of problem as a changed checksum and is
+        // classified identically by `renvor-sqlx`. It is NOT `MigrationIrreversible` — that kind
+        // means a migration declares no rollback, and both adapters raise it directly from their
+        // own `migrate.rs` rather than by translating a driver error.
+        MigrateError::VersionMismatch(_)
+        | MigrateError::VersionNotPresent(_)
+        | MigrateError::VersionMissing(_) => DatabaseErrorKind::MigrationChecksumMismatch,
         MigrateError::Dirty(_) => DatabaseErrorKind::MigrationDirty,
-        MigrateError::VersionMissing(_) => DatabaseErrorKind::MigrationIrreversible,
         _ => DatabaseErrorKind::MigrationFailed,
     }
 }
@@ -176,8 +206,10 @@ mod tests {
             ),
             (MigrateError::Dirty(1), DatabaseErrorKind::MigrationDirty),
             (
+                // Corrected: this is a history mismatch, not an irreversible migration. See
+                // `a_missing_applied_migration_classifies_as_a_history_mismatch_in_both_adapters`.
                 MigrateError::VersionMissing(1),
-                DatabaseErrorKind::MigrationIrreversible,
+                DatabaseErrorKind::MigrationChecksumMismatch,
             ),
         ];
         for (index, (inner, expected)) in cases.into_iter().enumerate() {
@@ -218,6 +250,44 @@ mod tests {
         assert!(
             !rendered.contains("password"),
             "the driver's own wording survived translation into the classified error"
+        );
+    }
+
+    /// The same upstream variant must classify the same way in both adapters.
+    ///
+    /// # This is a cross-adapter consistency test, not a preference
+    ///
+    /// `MigrateError::VersionMissing` is documented upstream as *"migration {0} was previously
+    /// applied but is missing in the resolved migrations"* — a history-integrity failure. This
+    /// adapter mapped it to `MigrationIrreversible`, which means something else entirely: that a
+    /// migration declares no rollback. `renvor-sqlx` mapped the same variant to
+    /// `MigrationChecksumMismatch`.
+    ///
+    /// One upstream condition, two Renvor kinds, selected by which ORM the caller happened to
+    /// choose. An operator reading `migration_irreversible` would go looking for a missing `.down.`
+    /// file that has nothing to do with the actual problem.
+    #[test]
+    fn a_missing_applied_migration_classifies_as_a_history_mismatch_in_both_adapters() {
+        assert_eq!(
+            migrate_kind(&sqlx::migrate::MigrateError::VersionMissing(3)),
+            DatabaseErrorKind::MigrationChecksumMismatch,
+            "`VersionMissing` means the applied history no longer matches the resolved set, which \
+             is a checksum-class mismatch. `MigrationIrreversible` means a migration declares no \
+             rollback — a different condition, and the one `renvor-sqlx` correctly does not use \
+             here"
+        );
+    }
+
+    /// `MigrationIrreversible` still has a meaning, and it is not this one.
+    ///
+    /// A CONTROL. Without it, mapping every migration failure to `MigrationChecksumMismatch` would
+    /// satisfy the test above while destroying the distinction it exists to protect.
+    #[test]
+    fn an_irreversible_migration_is_still_reported_as_irreversible() {
+        assert_ne!(
+            migrate_kind(&sqlx::migrate::MigrateError::VersionMissing(3)),
+            migrate_kind(&sqlx::migrate::MigrateError::Dirty(3)),
+            "distinct upstream conditions must not collapse onto one kind"
         );
     }
 }
