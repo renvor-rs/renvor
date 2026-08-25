@@ -171,18 +171,89 @@ jobs:
             -e MYSQL_ROOT_HOST='%' \
             -p 3306:3306 "$mysql_image"
 
-          # Polled to a deadline rather than slept at. Both probes need no credentials, so
-          # neither can warm MySQL's password cache and hide an authentication problem.
+          # ── READINESS: A SOCKET PROBE IS NOT READINESS ─────────────────────────────────
+          #
+          # Both official entrypoints initialise a fresh database by starting a TEMPORARY
+          # server that listens on the UNIX SOCKET ONLY, then stopping it and `exec`ing the
+          # real one. MySQL's `docker_temp_server_start` passes `--skip-networking`;
+          # PostgreSQL's passes `-c listen_addresses=''`. So `mysqladmin ping` and
+          # `pg_isready` over the default socket answer YES to a server no test can reach,
+          # and keep answering yes right up until it is shut down.
+          #
+          # That is what broke run 32833303137. The old loop broke on the temporary server,
+          # and the UNREDIRECTED SECOND PROBE after it landed in the gap where the temporary
+          # server had stopped and the real one had not yet started. `--silent` suppresses
+          # the error text, so `set -e` failed the step with a bare `exit 1` and no
+          # diagnostic 4.2s in — nowhere near the 120s ceiling, which is why raising the
+          # ceiling would have fixed nothing.
+          #
+          # Measured locally against the pinned images with an initdb fixture holding the
+          # window open: the temporary server logs `ready for connections ... port: 0`, the
+          # real one follows with `port: 3306` about FIVE SECONDS later, and sampling the
+          # old probe across the handoff gives `.XXXXXXXXXXXXXXXXXXXXXXXX` — success, then
+          # sustained failure, then success. PostgreSQL shows the same shape (`.X.`) with a
+          # much narrower gap, which is why it has not fired yet rather than why it cannot.
+          #
+          # # Why TCP, and why a query rather than a ping
+          #
+          # TCP makes passing the temporary server IMPOSSIBLE rather than unlikely: it has
+          # no TCP listener at all, so there is no timing to get lucky with. Two weaker
+          # signals were rejected on evidence — grepping the log for `ready for connections`
+          # matches the TEMPORARY server too, and a bare TCP connect to the mapped port
+          # succeeds even when nothing is listening inside, because Docker's port proxy
+          # binds at container start.
+          #
+          # Authenticating and selecting `renvor_test` proves the rest of what the suites
+          # need: that the credential works and the database exists. This DOES reverse an
+          # earlier decision to keep the probes credential-free so they could not warm
+          # MySQL's `caching_sha2_password` cache. The trade is deliberate: a probe that
+          # authenticates cannot hide an authentication failure, it can only pre-pay the
+          # first handshake. What it does not prove is the host-to-container hop, since it
+          # runs inside the container — but that is fixed by `-p` at container start, and
+          # `RENVOR_TEST_REQUIRE_DATABASE=1` below turns any such failure into a loud one.
+          #
+          # There is NO second probe. Each loop records its own success in a flag, so there
+          # is no later moment to lose. Exhaustion is fail-closed: an explicit `::error::`,
+          # non-secret diagnostics, and a nonzero exit. Sixty attempts two seconds apart
+          # keeps the existing 120s ceiling, which measurement never came close to using.
+          postgres_ready=""
           for _ in $(seq 1 60); do
-            docker exec rv-postgres pg_isready -U postgres >/dev/null 2>&1 && break
+            if docker exec -e PGPASSWORD="$password" -e PGCONNECT_TIMEOUT=5 rv-postgres \
+                 psql --host=127.0.0.1 --port=5432 --username=postgres --dbname=renvor_test \
+                      --no-password --quiet --tuples-only --command='SELECT 1' >/dev/null 2>&1
+            then
+              postgres_ready=1
+              break
+            fi
             sleep 2
           done
-          docker exec rv-postgres pg_isready -U postgres
+          if [ -z "$postgres_ready" ]; then
+            echo "::error::PostgreSQL never accepted a TCP connection as postgres@renvor_test" \
+                 "within the 120s ceiling. The container's state and last 100 log lines follow." >&2
+            docker ps -a --filter name=rv-postgres --format '{{.Names}} {{.Status}} {{.Image}}'
+            docker logs --tail 100 rv-postgres || true
+            exit 1
+          fi
+
+          mysql_ready=""
           for _ in $(seq 1 60); do
-            docker exec rv-mysql mysqladmin ping --silent >/dev/null 2>&1 && break
+            if docker exec -e MYSQL_PWD="$password" rv-mysql \
+                 mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root \
+                       --database=renvor_test --connect-timeout=5 \
+                       --batch --skip-column-names --execute='SELECT 1' >/dev/null 2>&1
+            then
+              mysql_ready=1
+              break
+            fi
             sleep 2
           done
-          docker exec rv-mysql mysqladmin ping --silent
+          if [ -z "$mysql_ready" ]; then
+            echo "::error::MySQL never accepted a TCP connection as root@renvor_test within" \
+                 "the 120s ceiling. The container's state and last 100 log lines follow." >&2
+            docker ps -a --filter name=rv-mysql --format '{{.Names}} {{.Status}} {{.Image}}'
+            docker logs --tail 100 rv-mysql || true
+            exit 1
+          fi
 
           {
             echo "RENVOR_TEST_POSTGRES_URL=postgres://postgres:$password@127.0.0.1:5432/renvor_test"
