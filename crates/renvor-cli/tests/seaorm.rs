@@ -10,6 +10,12 @@ mod harness;
 
 use harness::renvor;
 
+/// The template version this file expects generation to record.
+///
+/// One constant rather than a literal per assertion: a bump has to be a deliberate edit in one
+/// place, and two assertions that disagree about the version would let one of them rot silently.
+const TEMPLATE_VERSION: &str = "6";
+
 struct Generated {
     code: i32,
     stdout: String,
@@ -232,7 +238,7 @@ fn the_manifest_records_the_orm() {
             recorded.contains(&format!("orm = \"{orm}\"")),
             "renvor.toml does not record `{orm}`"
         );
-        assert!(recorded.contains("template_version = \"5\""));
+        assert!(recorded.contains(&format!("template_version = \"{TEMPLATE_VERSION}\"")));
     }
 }
 
@@ -243,7 +249,7 @@ fn check_accepts_a_generated_seaorm_project() {
     let (code, stdout, stderr) = renvor(&["check"], &generated.root, &[]);
     assert_eq!(code, 0, "check refused a generated project: {stderr}");
     assert!(
-        stdout.contains('5'),
+        stdout.contains(TEMPLATE_VERSION),
         "check did not report the template version: {stdout}"
     );
 }

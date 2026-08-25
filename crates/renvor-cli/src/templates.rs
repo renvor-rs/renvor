@@ -21,11 +21,20 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
 ///
+/// **`5` → `6` (post-Phase-007 correction).** No behaviour changed and no file was added or
+/// removed. Two generated bodies did: `renvor.toml`'s `[persistence]` comment named
+/// `src/persistence.rs` on **both** paths, and `README.md`'s persistence section documented the
+/// direct-SQLx module and `renvor-sqlx` to a reader whose project contains neither. Both are now
+/// selected by ORM. A generated body changed, so the version does — that is the whole contract this
+/// constant carries, and exempting a comment from it would make the version mean "changed, unless
+/// we judged it cosmetic".
+///
 /// **`4` → `5` (Phase 007).** `--orm seaorm` is accepted, and it generates a different tree:
-/// `src/entity.rs` and `src/repository.rs` replace `src/persistence.rs`, and `Cargo.toml` declares
-/// a real `sea-orm` dependency so both compile. `--orm sqlx` is unchanged and still produces
-/// exactly the version-4 tree, which is what FR-043 requires and what
-/// `a_phase_006_project_still_generates_identically` asserts.
+/// `src/entity.rs` and `src/repository.rs` replace `src/persistence.rs`. `Cargo.toml` declares
+/// **nothing** on either path — see `PERSISTENCE_SEAORM` below for why a real `sea-orm` dependency
+/// was designed and then rejected. `--orm sqlx` is unchanged and still produces exactly the
+/// version-4 tree apart from this recorded version, which is what FR-043 requires and what
+/// `the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version` asserts.
 ///
 /// **`3` → `4` (Phase 006, container scope addition).** `--container` now generates a complete
 /// local Compose profile rather than two near-empty files: the selected database service with a
@@ -42,7 +51,7 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
 /// describing the dependency to add once the framework crates are published. `Cargo.toml` is
 /// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
-pub const VERSION: &str = "5";
+pub const VERSION: &str = "6";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[
