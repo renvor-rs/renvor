@@ -333,6 +333,13 @@ See `specs/007-seaorm-parity/evidence/fr-conformance.md` §Limitations. L-11 (no
 savepoints, or isolation levels), L-12 (SQL-file migrations only), L-13 (generated SeaORM sources
 uncompiled) are new; L-7 and L-10 are inherited from Phase 006.
 
+**L-13 is narrowed post-merge — see §13.** "Uncompiled" was true of the generator and false of the
+sources. The limitation is that nothing **automated** compiles them: not the offline generator, and
+not any generated-project gate in CI. They were compiled successfully against real `sea-orm 2.0.2`
+during post-merge tutorial verification, by hand. The pre-merge wording above is left standing
+because it is what this document said at merge; this paragraph is the correction, not a rewrite of
+it.
+
 ## 11. A Phase 006 claim corrected
 
 The Phase 006 closing summary reported the local blog cheat sheet as **1077 lines with all 28
@@ -350,3 +357,68 @@ executes the runtime path against a real engine rather than repeating the claim.
 - **No generic resource generator.** `renvor generate resource` does not exist; Phase 011 owns it.
 - **No cache, jobs, mail, or storage capability.** Phase 010.
 - **Phase 008 not started.**
+
+## 13. Post-merge correction — 2026-08-25
+
+Recorded after Phase 007 merged as `ed6f26287c5198ca402fb73939560fc07d9bf888`. **Everything above
+this heading is the pre-merge account and is left exactly as it was written.** This section is what
+changed afterwards.
+
+### EX-006 was satisfied, and retired
+
+Its removal condition was `docs/docs/persistence.mdx` resolving 200 on `main`, verified against a
+negative control. Measured 2026-08-25:
+
+| Probe | Result |
+| --- | --- |
+| `.../tree/main/docs/docs/persistence.mdx` | **200**, one redirect to `blob/main/...` |
+| `.../tree/main/docs/docs/no-such-page.mdx` (control) | **404**, no redirect |
+
+The control is what makes the 200 mean something: a probe that accepted everything would report 200
+for both. The active exclusion is removed from `lychee.toml` and **no replacement exemption was
+added** — that page's edit link is checked again like every other page's. EX-006 is recorded under
+retired exclusions so the number is never reused, alongside EX-004 and EX-005.
+
+This was the first post-merge cleanup this phase owed, and §9 named it so it would not be carried by
+a comment in a config file alone. It was not.
+
+### A documentation defect the phase's own gates could not see
+
+Found while executing the tutorial against the merged tree, not by a reviewer. The **generated**
+project's own documentation described the wrong persistence model on the SeaORM path:
+
+- `renvor.toml`'s `[persistence]` comment said "`src/persistence.rs` and `migrations/` exist" on
+  **both** ORM paths. On `--orm seaorm` that file does not exist; the tree holds `src/entity.rs`
+  and `src/repository.rs`. The manifest's own opening rule is *"A choice appears here only if a
+  generated file reflects it"* — broken in the one file whose entire purpose is to be believed.
+- `README.md`'s persistence section documented `src/persistence.rs`, its bound statements, and the
+  `renvor-sqlx` dependency to add — to a reader whose project contains none of them. Following it
+  produces a project that does not resolve.
+- `templates.rs` claimed the version-5 tree made `Cargo.toml` "declare a real `sea-orm` dependency
+  so both compile", and that the two SeaORM entries "**compile**". Both describe the design that §6
+  records as **designed, built, and withdrawn** — not the one that ships. The same doc comment cited
+  `a_phase_006_project_still_generates_identically` as the test holding FR-043; no test by that name
+  exists, and the real one is
+  `the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version`.
+
+Why the gates missed it: every generated-project test asserted on **file sets, manifests and source
+code**, and none asserted on the prose. `cargo fmt`, `clippy` and the generated project's own build
+cannot read a comment, and the SeaORM sources they would have read are the two files nothing
+compiles.
+
+### What the follow-up changed, and what it did not
+
+Corrected in one focused pull request: both generated bodies are now selected by ORM, the
+implementation documentation states the shipped behaviour, and the template version is **6**. Tests
+pin each branch — that the SQLx README still names `src/persistence.rs` and `renvor-sqlx` and never
+presents SeaORM steps; that the SeaORM README names `src/entity.rs` and `src/repository.rs`, never
+names `renvor-sqlx` or `src/persistence.rs`, and states the compilation boundary; and that every
+`src/…` path either rendered manifest names is a file that tree actually contains. Each was
+negative-control mutated and observed to fail before being accepted.
+
+**No runtime behaviour changed and no Phase 007 acceptance result changed.** No adapter, kernel, or
+CLI code path was touched; the generated file **sets** are identical; the direct-SQLx `README.md` is
+byte-identical to Phase 006's, which a test now holds. The whole difference in a generated tree is
+`renvor.toml`: its recorded version, and a comment that now names the files that are there.
+
+L-13 is narrowed accordingly — see §10.
