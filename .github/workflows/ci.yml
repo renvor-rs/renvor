@@ -184,8 +184,8 @@ jobs:
           # and the UNREDIRECTED SECOND PROBE after it landed in the gap where the temporary
           # server had stopped and the real one had not yet started. `--silent` suppresses
           # the error text, so `set -e` failed the step with a bare `exit 1` and no
-          # diagnostic 4.2s in — nowhere near the 120s ceiling, which is why raising the
-          # ceiling would have fixed nothing.
+          # diagnostic 4.2s in — after a single-digit number of attempts, nowhere near
+          # exhausting the retries, which is why raising any limit would have fixed nothing.
           #
           # Measured locally against the pinned images with an initdb fixture holding the
           # window open: the temporary server logs `ready for connections ... port: 0`, the
@@ -193,6 +193,8 @@ jobs:
           # old probe across the handoff gives `.XXXXXXXXXXXXXXXXXXXXXXXX` — success, then
           # sustained failure, then success. PostgreSQL shows the same shape (`.X.`) with a
           # much narrower gap, which is why it has not fired yet rather than why it cannot.
+          # Those samples are one machine's runs, not a repeatable in-repo fixture; the full
+          # record, including the mutation results, is on the pull request that landed this.
           #
           # # Why TCP, and why a query rather than a ping
           #
@@ -214,8 +216,20 @@ jobs:
           #
           # There is NO second probe. Each loop records its own success in a flag, so there
           # is no later moment to lose. Exhaustion is fail-closed: an explicit `::error::`,
-          # non-secret diagnostics, and a nonzero exit. Sixty attempts two seconds apart
-          # keeps the existing 120s ceiling, which measurement never came close to using.
+          # non-secret diagnostics, and a nonzero exit.
+          #
+          # # What the retry budget actually bounds
+          #
+          # The schedule is unchanged: sixty attempts, two seconds apart, so the SLEEPING
+          # still totals 120 seconds. That was never a wall-clock ceiling and is not one
+          # now — each attempt also costs a connection. `--connect-timeout` and
+          # `PGCONNECT_TIMEOUT` cap that at five seconds, which is STRICTER than what was
+          # here before: both clients default to no connect timeout at all, so the old
+          # probes could block for longer. A fully failing block therefore gives up
+          # somewhere north of 120s, as it always could, with `timeout-minutes: 45` as the
+          # real outer bound. Tightening it to a true 120s deadline is deliberately NOT
+          # done here: main has never enforced one, and inventing a stricter limit inside
+          # a flake fix is how you trade one flake for another on a slow runner.
           postgres_ready=""
           for _ in $(seq 1 60); do
             if docker exec -e PGPASSWORD="$password" -e PGCONNECT_TIMEOUT=5 rv-postgres \
@@ -229,7 +243,7 @@ jobs:
           done
           if [ -z "$postgres_ready" ]; then
             echo "::error::PostgreSQL never accepted a TCP connection as postgres@renvor_test" \
-                 "within the 120s ceiling. The container's state and last 100 log lines follow." >&2
+                 "in sixty attempts. The container's state and last 100 log lines follow." >&2
             docker ps -a --filter name=rv-postgres --format '{{.Names}} {{.Status}} {{.Image}}'
             docker logs --tail 100 rv-postgres || true
             exit 1
@@ -248,8 +262,8 @@ jobs:
             sleep 2
           done
           if [ -z "$mysql_ready" ]; then
-            echo "::error::MySQL never accepted a TCP connection as root@renvor_test within" \
-                 "the 120s ceiling. The container's state and last 100 log lines follow." >&2
+            echo "::error::MySQL never accepted a TCP connection as root@renvor_test in" \
+                 "sixty attempts. The container's state and last 100 log lines follow." >&2
             docker ps -a --filter name=rv-mysql --format '{{.Names}} {{.Status}} {{.Image}}'
             docker logs --tail 100 rv-mysql || true
             exit 1
