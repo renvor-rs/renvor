@@ -22,7 +22,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use portable_pty::{CommandBuilder, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 /// How long any single `expect` waits before declaring the program hung.
 ///
@@ -30,6 +30,21 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 /// `cargo test` on the generated project. A hang is still a failure rather than a timeout that
 /// gets retried — see the module note in `transaction.rs`.
 const EXPECT_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// How long [`Terminal::await_input_readiness`] waits for the child to put the terminal into raw
+/// mode.
+///
+/// Generous against a loaded CI runner and irrelevant in the ordinary case: the measured gap
+/// between the prompt's bytes arriving and `ISIG` clearing is **583ns**. What matters is that it
+/// is finite, and that running out is a named failure rather than a key sent into the dark.
+const READINESS_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How often [`Terminal::await_input_readiness`] asks the kernel.
+///
+/// A bare spin would burn a core while the child is doing real work; a millisecond would add a
+/// millisecond to every cancellation test. This is a `tcgetattr` — a cheap ioctl, not a syscall
+/// that sleeps — so the loop costs one of them per interval and nothing in between.
+const READINESS_POLL: Duration = Duration::from_micros(100);
 
 /// How many pseudo-terminals this test binary may hold open at once.
 ///
@@ -130,8 +145,20 @@ pub struct Terminal {
     /// `Arc`, so dropping the slave does not close it — but the ordering is load-bearing enough on
     /// both platforms that it is kept rather than relied upon.
     _slave: Box<dyn portable_pty::SlavePty + Send>,
+    /// The master end, kept so that [`Terminal::await_input_readiness`] can ask the kernel what
+    /// mode the terminal is in. Reading and writing go through the cloned handles above; this is
+    /// held for its `termios`, not for its bytes.
+    master: Box<dyn MasterPty + Send>,
     /// Everything read so far, with escape sequences intact.
     pub transcript: String,
+    /// How far [`Terminal::expect_new`] has already matched, as an offset into [`Terminal::visible`].
+    ///
+    /// Monotonic. This is the whole difference between `expect` and `expect_new`: without it, a
+    /// second expectation for text the transcript already contains returns immediately and
+    /// synchronises nothing. See [`Terminal::expect_new`] for the measurement.
+    matched: usize,
+    /// The signal that killed the child, if one did. Recorded by [`Terminal::wait`].
+    signal: Option<String>,
     /// Why the reader thread stopped, if it has. Used to make a timeout diagnostic rather than
     /// merely a timeout.
     reader_ended: std::sync::Arc<std::sync::Mutex<Option<String>>>,
@@ -246,7 +273,10 @@ impl Terminal {
             receiver,
             child,
             _slave: pty.slave,
+            master: pty.master,
             transcript: String::new(),
+            matched: 0,
+            signal: None,
             reader_ended,
             _permit: permit,
             reports_answered: 0,
@@ -286,6 +316,220 @@ impl Terminal {
         }
     }
 
+    /// Reads until `needle` appears in output that has **not already been matched**.
+    ///
+    /// # Why `expect` is not enough, with the measurement
+    ///
+    /// [`Terminal::expect`] searches the whole transcript from its first byte. That is right for
+    /// "has this ever appeared", and wrong for "has this appeared *now*" — and the cancellation
+    /// tests wanted the second. `wizard()` waited for `Project name`; each test then waited for
+    /// `Project name` again as its barrier before sending a key. The second wait was a **no-op**:
+    /// measured at 458ns having read **0 new bytes**, because the text it was waiting for had
+    /// arrived before the function was called. A barrier that cannot block is not a barrier.
+    ///
+    /// The cursor is an offset into [`Terminal::visible`] rather than into the raw transcript,
+    /// because that is the text callers match on. Escape stripping is left to right, so bytes
+    /// arriving later never change how earlier bytes were read, and the prefix behind the cursor
+    /// is stable.
+    pub fn expect_new(&mut self, needle: &str) {
+        let deadline = Instant::now() + EXPECT_TIMEOUT;
+        loop {
+            self.answer_status_reports();
+            let visible = self.visible();
+            if let Some(offset) = visible
+                .get(self.matched..)
+                .and_then(|rest| rest.find(needle))
+            {
+                self.matched += offset + needle.len();
+                return;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                let matched = self.matched;
+                panic!(
+                    "timed out waiting for {needle:?} in output after offset {matched}{}",
+                    self.diagnosis()
+                );
+            }
+            match self
+                .receiver
+                .recv_timeout(remaining.min(Duration::from_millis(250)))
+            {
+                Ok(byte) => self.transcript.push(byte as char),
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    let visible = self.visible();
+                    assert!(
+                        visible
+                            .get(self.matched..)
+                            .is_some_and(|rest| rest.contains(needle)),
+                        "the program exited before {needle:?} appeared{}",
+                        self.diagnosis()
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Blocks until the terminal is in a mode where a keypress is **data**, not a signal.
+    ///
+    /// # This is a state probe, and every text-based barrier before it was a guess
+    ///
+    /// The prompt library reads one key at a time through `console::Term::read_key_raw`, and that
+    /// function switches the terminal into raw mode **inside** the read: `tcsetattr(RAW)`, read
+    /// one key, `tcsetattr(original)`. The library's own loop renders, writes the frame, flushes,
+    /// and *then* calls it. So the order on the wire is
+    ///
+    /// ```text
+    ///   render → write → flush → [ tcsetattr(RAW) → read → tcsetattr(canonical) ]
+    ///                     ↑                ↑
+    ///          the prompt becomes     raw mode actually
+    ///          visible here           begins here
+    /// ```
+    ///
+    /// Waiting for the drawn prompt therefore lands a test at the **start** of the canonical
+    /// window, not past it. In that window `ISIG` is still set, so the line discipline turns
+    /// `\x03` into `SIGINT` for the foreground process group as the byte arrives — the program
+    /// never sees a key at all, and dies from the signal instead of exiting `4`.
+    ///
+    /// A pty's `termios` is one kernel object shared by both ends, so the master can simply ask
+    /// what mode the slave is in. That is a fact about state rather than an inference from output,
+    /// and it is why this cannot be fooled by stale bytes the way a transcript match can.
+    ///
+    /// Once `ISIG` is observed clear the child is blocked in `read`, and it cannot restore
+    /// canonical mode until that read returns — which needs a byte, and this harness is the only
+    /// writer. The observation therefore stays true until the caller acts on it.
+    ///
+    /// # Measured
+    ///
+    /// Ten runs waiting on this probe and then sending `\x03`: exit `4` every time. Ten runs with
+    /// the terminal forced back to canonical at the same point: exit `1` with `Interrupt: 2` every
+    /// time — the CI failure, on demand.
+    ///
+    /// # Panics
+    ///
+    /// If the mode cannot be read, or is still canonical at [`READINESS_TIMEOUT`]. Returning
+    /// quietly would put the guess back, which is the defect this replaces.
+    #[cfg(unix)]
+    pub fn await_input_readiness(&mut self) {
+        use nix::sys::termios::LocalFlags;
+
+        let deadline = Instant::now() + READINESS_TIMEOUT;
+        loop {
+            let Some(termios) = self.master.get_termios() else {
+                panic!(
+                    "the terminal's mode could not be read, so raw mode cannot be proven{}",
+                    self.diagnosis()
+                );
+            };
+            if !termios.local_flags.contains(LocalFlags::ISIG) {
+                return;
+            }
+            if Instant::now() >= deadline {
+                panic!(
+                    "the terminal was still in canonical mode ({}s) — a keypress sent now would \
+                     be delivered as a signal, not as input{}",
+                    READINESS_TIMEOUT.as_secs(),
+                    self.diagnosis()
+                );
+            }
+            std::thread::sleep(READINESS_POLL);
+        }
+    }
+
+    /// Whether the terminal is currently in a mode that delivers an interrupt character as a
+    /// **signal** rather than as input.
+    ///
+    /// Exists so that a test can assert the boundary rather than merely rely on it. See
+    /// `terminal.rs::a_key_that_arrives_before_raw_mode_is_delivered_as_a_signal`.
+    #[cfg(unix)]
+    pub fn interrupts_are_signals(&self) -> bool {
+        use nix::sys::termios::LocalFlags;
+
+        self.master
+            .get_termios()
+            .expect("the terminal's mode can be read")
+            .local_flags
+            .contains(LocalFlags::ISIG)
+    }
+
+    /// Puts the terminal back into the mode it occupies between the prompt's flush and the
+    /// library's `tcsetattr` — canonical, with signal generation on.
+    ///
+    /// # This is a control, and nothing else may call it
+    ///
+    /// The race this file exists to close is microseconds wide, so a test that tries to *catch*
+    /// it is a test that fails to catch it almost every time. This widens it to the width of a
+    /// test instead: the mode is exactly the mode the child is in during that window, so a key
+    /// sent afterwards meets exactly the line discipline it would have met there.
+    ///
+    /// It touches only this test's own pty, and it changes nothing about the program under test —
+    /// no delay is inserted into it, and it is not told it is being tested. That is the whole
+    /// reason it is preferred to a hook or a sleep.
+    ///
+    /// `O_NOCTTY` is not optional. A session leader that opens a terminal without it **acquires
+    /// that terminal as its controlling terminal**, and a test binary on CI can be a session
+    /// leader with no controlling terminal of its own. Without the flag this call could point the
+    /// test runner's own job control at the pty it is meant to be inspecting.
+    #[cfg(unix)]
+    pub fn force_canonical_mode(&mut self) {
+        let name = self
+            .master
+            .tty_name()
+            .expect("the pty knows its slave's name");
+        set_signal_generation(&name, true);
+    }
+
+    /// Widens the render-to-readiness window to `window`, and lets it close on its own.
+    ///
+    /// # This is the regression harness, and the duration is not load-bearing
+    ///
+    /// The real window is the handful of instructions between the prompt library's `flush` and
+    /// its `tcsetattr` — too narrow to lose against on purpose, which is exactly why the defect
+    /// survived three CI failures and three green reruns. This makes the *same* window wide
+    /// enough to lose against every time, and then closes it, so a barrier that genuinely waits
+    /// for raw mode still ends up sending its key into raw mode.
+    ///
+    /// The duration is a floor, not a timing assumption: a barrier that waits simply waits longer,
+    /// and one that does not wait fails whatever the number is. Nothing is inserted into the
+    /// program under test — this changes the mode of the test's own pty and nothing else.
+    ///
+    /// The returned handle must be joined, so the restoring thread cannot outlive the test that
+    /// started it.
+    #[cfg(unix)]
+    #[must_use = "join the handle, or the restoring thread outlives the test"]
+    pub fn widen_the_readiness_window(&mut self, window: Duration) -> std::thread::JoinHandle<()> {
+        let name = self
+            .master
+            .tty_name()
+            .expect("the pty knows its slave's name");
+        set_signal_generation(&name, true);
+        std::thread::spawn(move || {
+            std::thread::sleep(window);
+            set_signal_generation(&name, false);
+        })
+    }
+
+    /// Whether a signal killed the child. Meaningful only after [`Terminal::wait`].
+    pub fn was_signalled(&self) -> bool {
+        self.signal.is_some()
+    }
+
+    /// On Windows there is no `termios` to ask, and this is a **documented gap**, not a fix.
+    ///
+    /// `console` scopes the equivalent change — clearing `ENABLE_PROCESSED_INPUT` so that Ctrl-C
+    /// arrives as a key rather than as a console control event — to the same one-key read, so the
+    /// window exists here too. What does not exist is a way to observe it: ConPTY exposes the
+    /// child's console mode to the child, not to whoever holds the other end of the pipe.
+    ///
+    /// So Windows keeps exactly the barrier it had — the caller's wait for the drawn prompt — and
+    /// keeps its residual exposure with it. This returns rather than panicking because failing the
+    /// Windows leg outright would trade a rare flake for a certain failure, and it is named here
+    /// rather than left as a silent difference in behaviour between the legs.
+    #[cfg(not(unix))]
+    pub fn await_input_readiness(&mut self) {}
+
     /// Answers the terminal's cursor-position query (`ESC [ 6 n`).
     ///
     /// # Without this, the Windows leg deadlocks, and the reason is worth stating
@@ -320,6 +564,20 @@ impl Terminal {
         }
     }
 
+    /// How the child ended, in words rather than as a number.
+    ///
+    /// Empty until [`Terminal::wait`] has run. See the note there: an exit code alone cannot say
+    /// whether the program chose its exit or a signal chose it for the program.
+    pub fn outcome(&self) -> String {
+        match &self.signal {
+            Some(signal) => format!(
+                "the child was KILLED BY {signal} — it did not choose this exit, and \
+                 `portable-pty` reports a signalled child as code 1"
+            ),
+            None => "the child exited on its own".to_owned(),
+        }
+    }
+
     /// Everything known about why a wait failed.
     ///
     /// A bare "timed out waiting for X" with an empty transcript is the least useful failure a
@@ -343,8 +601,12 @@ impl Terminal {
             None => "reader still running".to_owned(),
         };
         let queries = self.transcript.matches("\u{1b}[6n").count();
+        let signal = match &self.signal {
+            Some(signal) => format!("killed by {signal}"),
+            None => "no signal recorded".to_owned(),
+        };
         format!(
-            "\n  platform: {}\n  {child}\n  {reader}\n  bytes received: {}\n  cursor-position queries seen: {queries}, answered: {}\n--- transcript ---\n{}",
+            "\n  platform: {}\n  {child}\n  {reader}\n  {signal}\n  bytes received: {}\n  cursor-position queries seen: {queries}, answered: {}\n--- transcript ---\n{}",
             std::env::consts::OS,
             self.transcript.len(),
             self.reports_answered,
@@ -489,12 +751,56 @@ impl Terminal {
             }
         }
         let status = self.child.wait().expect("the child is waitable");
+        // ── RECORD THE SIGNAL, BECAUSE DISCARDING IT COST THREE MISREADINGS. ────────────
+        //
+        // `portable-pty` reports a signalled child as `code: 1, signal: Some(..)`, because
+        // `std::process::ExitStatus::code()` is `None` for one and its `From` impl falls back to
+        // `unwrap_or(1)`. Returning only the code therefore turns "killed by SIGINT" into a bare
+        // `1` — indistinguishable from `Code::Internal`, which is how three CI failures of
+        // `control_c_at_a_prompt_is_a_cancellation` came to be read as a prompt-library
+        // classification bug when the program had never run far enough to classify anything.
+        self.signal = status.signal().map(str::to_owned);
         // Whatever is still in flight, so a failure message shows the final screen.
         while let Ok(byte) = self.receiver.recv_timeout(Duration::from_millis(200)) {
             self.transcript.push(byte as char);
         }
         i32::try_from(status.exit_code()).unwrap_or(-1)
     }
+}
+
+/// Turns the line discipline's signal generation on or off for the pty named by `name`.
+///
+/// `on` is the canonical, ordinary-shell state, where the driver converts an interrupt character
+/// into `SIGINT` as it arrives. `off` is what the prompt library establishes for the duration of
+/// each one-key read, where the same byte is delivered as input.
+///
+/// # `O_NOCTTY` is not optional
+///
+/// A session leader that opens a terminal without it **acquires that terminal as its controlling
+/// terminal**, and a test binary on CI can be a session leader with no controlling terminal of its
+/// own. Without the flag this would point the test runner's own job control at the pty it is meant
+/// to be inspecting.
+#[cfg(unix)]
+fn set_signal_generation(name: &Path, on: bool) {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    use nix::fcntl::OFlag;
+    use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
+
+    let tty = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(OFlag::O_NOCTTY.bits())
+        .open(name)
+        .unwrap_or_else(|error| panic!("the slave end {name:?} can be opened: {error}"));
+    let mut termios = tcgetattr(&tty).expect("the terminal's mode can be read");
+    let flags = LocalFlags::ISIG | LocalFlags::ICANON;
+    if on {
+        termios.local_flags.insert(flags);
+    } else {
+        termios.local_flags.remove(flags);
+    }
+    tcsetattr(&tty, SetArg::TCSANOW, &termios).expect("the terminal's mode can be set");
 }
 
 impl Drop for Terminal {
