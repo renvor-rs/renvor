@@ -359,13 +359,19 @@ impl Terminal {
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     let visible = self.visible();
-                    assert!(
-                        visible
-                            .get(self.matched..)
-                            .is_some_and(|rest| rest.contains(needle)),
-                        "the program exited before {needle:?} appeared{}",
-                        self.diagnosis()
-                    );
+                    let found = visible
+                        .get(self.matched..)
+                        .and_then(|rest| rest.find(needle));
+                    let Some(offset) = found else {
+                        panic!(
+                            "the program exited before {needle:?} appeared{}",
+                            self.diagnosis()
+                        );
+                    };
+                    // Advance here too. Returning without moving the cursor would make a second
+                    // wait for the same needle match the same text — which is precisely the
+                    // no-op this method exists to abolish, reintroduced on the exit path.
+                    self.matched += offset + needle.len();
                     return;
                 }
             }
@@ -398,8 +404,14 @@ impl Terminal {
     /// and it is why this cannot be fooled by stale bytes the way a transcript match can.
     ///
     /// Once `ISIG` is observed clear the child is blocked in `read`, and it cannot restore
-    /// canonical mode until that read returns — which needs a byte, and this harness is the only
-    /// writer. The observation therefore stays true until the caller acts on it.
+    /// canonical mode until that read returns — which needs a byte to arrive.
+    ///
+    /// **That is a precondition on the caller, not a law.** It holds while the pty's input queue
+    /// is empty, which is the case whenever the previous key has already been consumed. Every
+    /// caller here satisfies it: each either sends nothing before the probe, or waits with
+    /// [`Terminal::expect_new`] for the redraw that only happens *after* the library's read
+    /// returned. A caller that wrote a key and did not wait for its effect could observe raw mode
+    /// that is about to end.
     ///
     /// # Measured
     ///
@@ -461,8 +473,14 @@ impl Terminal {
     ///
     /// The race this file exists to close is microseconds wide, so a test that tries to *catch*
     /// it is a test that fails to catch it almost every time. This widens it to the width of a
-    /// test instead: the mode is exactly the mode the child is in during that window, so a key
-    /// sent afterwards meets exactly the line discipline it would have met there.
+    /// test instead.
+    ///
+    /// It restores **exactly the two flags that decide whether an interrupt character becomes a
+    /// signal**, and deliberately not the rest. `cfmakeraw` also clears `ECHO`, `ECHOE`, `IEXTEN`,
+    /// `ICRNL`, `IXON` and `OPOST`, and this leaves every one of them as the child set them — so
+    /// the resulting mode is the one that matters for the property under test, not a faithful copy
+    /// of the child's inter-frame state. Saying otherwise would be the same kind of confident
+    /// half-truth that cost this test three CI runs.
     ///
     /// It touches only this test's own pty, and it changes nothing about the program under test —
     /// no delay is inserted into it, and it is not told it is being tested. That is the whole
