@@ -294,7 +294,9 @@ fn a_database_without_an_orm_still_means_sqlx() {
 }
 
 /// **FR-043.** The direct-SQLx tree is byte-identical to the one Phase 006 generated, module
-/// declarations and all — apart from the template version, which is what a version is for.
+/// declarations and all — apart from `renvor.toml`, which records the template version and, since
+/// version 6, names its persistence file conditionally. Every other file, `README.md` included, is
+/// unchanged byte for byte; `the_sqlx_readme_is_unchanged_by_the_seaorm_split` is what holds that.
 #[test]
 fn the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version() {
     let generated = generate_ok(&["--database", "postgres", "--example-domain", "--seed-data"]);
@@ -650,6 +652,160 @@ fn routes_and_openapi_behave_identically_on_both_persistence_models() {
             reason(&sqlx_err).is_some(),
             "`renvor {command}` reported no machine-readable reason, so the equality above is \
              vacuous"
+        );
+    }
+}
+
+// ──────────────────────────────────── the generated documentation names the right files
+
+/// Collects every `src/…` path a generated file mentions.
+///
+/// Deliberately crude — it scans text rather than parsing TOML or Markdown, because the claims
+/// being checked live in **comments and prose**, which no parser reaches.
+fn source_paths_named_in(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("src/") {
+        let tail = &rest[at..];
+        let end = tail
+            .find(|c: char| !(c.is_ascii_lowercase() || c.is_ascii_digit() || "_/.".contains(c)))
+            .unwrap_or(tail.len());
+        let path = tail[..end].trim_end_matches('.').to_owned();
+        if path.ends_with(".rs") && !found.contains(&path) {
+            found.push(path);
+        }
+        rest = &tail[end.max(1)..];
+    }
+    found
+}
+
+/// **The defect this exists for.** `renvor.toml`'s `[persistence]` comment said "`src/persistence.rs`
+/// and `migrations/` exist" on **both** ORM paths. On `--orm seaorm` that file does not exist: the
+/// tree contains `src/entity.rs` and `src/repository.rs`.
+///
+/// The manifest's own opening rule is "A choice appears here only if a generated file reflects it".
+/// A comment naming a file the generator did not write breaks that rule in the one file whose
+/// entire purpose is to be believed about what was written.
+#[test]
+fn the_recorded_manifest_names_only_files_that_exist() {
+    for orm in ["sqlx", "seaorm"] {
+        let generated = generate_ok(&["--orm", orm, "--database", "postgres"]);
+        let recorded = generated.read("renvor.toml");
+        let named = source_paths_named_in(&recorded);
+
+        // CONTROL: the manifest names at least one source file. Zero would make every assertion
+        // below vacuously true, which is exactly how a scan stops scanning.
+        assert!(
+            !named.is_empty(),
+            "{orm}: the manifest names no `src/…` file, so this test proves nothing:\n{recorded}"
+        );
+
+        let present = generated.files();
+        for path in &named {
+            assert!(
+                present.contains(path),
+                "{orm}: `renvor.toml` names `{path}`, which generation did not write. The tree \
+                 is: {present:?}"
+            );
+        }
+        // And `migrations/`, which both comments also claim.
+        assert!(
+            present.iter().any(|file| file.starts_with("migrations/")),
+            "{orm}: the manifest claims `migrations/` exists and it does not"
+        );
+    }
+}
+
+/// The SQLx README documents the direct-SQLx path, and does not hand the reader SeaORM steps.
+#[test]
+fn the_sqlx_readme_documents_the_sqlx_path_only() {
+    let readme = generate_ok(&["--orm", "sqlx", "--database", "postgres"]).read("README.md");
+
+    for named in ["src/persistence.rs", "renvor-sqlx"] {
+        assert!(
+            readme.contains(named),
+            "the direct-SQLx README no longer names `{named}`"
+        );
+    }
+    for foreign in [
+        "src/entity.rs",
+        "src/repository.rs",
+        "sea-orm",
+        "SeaORM",
+        "mod entity;",
+    ] {
+        assert!(
+            !readme.contains(foreign),
+            "the direct-SQLx README names `{foreign}`, so it documents a file this project does \
+             not contain"
+        );
+    }
+}
+
+/// **FR-043's other half.** The SeaORM split changed the SQLx README not at all.
+///
+/// The file-set test pins which files exist; this pins that one of them still says what it said in
+/// Phase 006. Splitting a shared template by branch is the exact edit that rewords the branch
+/// nobody was looking at.
+#[test]
+fn the_sqlx_readme_is_unchanged_by_the_seaorm_split() {
+    let readme = generate_ok(&["--database", "postgres"]).read("README.md");
+    // The Phase 006 sentence, verbatim, including its line break.
+    assert!(
+        readme.contains(
+            "generation acted on both: `src/persistence.rs` holds the statements and the sort \
+             allowlist, and\n`migrations/` holds a reversible `0001_create_item` pair."
+        ),
+        "the direct-SQLx persistence paragraph was reworded:\n{readme}"
+    );
+}
+
+/// The SeaORM README documents the SeaORM path, and never sends the reader to the SQLx one.
+#[test]
+fn the_seaorm_readme_documents_the_seaorm_path_only() {
+    let readme = generate_ok(&["--orm", "seaorm", "--database", "postgres"]).read("README.md");
+
+    for named in ["src/entity.rs", "src/repository.rs", "migrations/"] {
+        assert!(
+            readme.contains(named),
+            "the SeaORM README does not name `{named}`"
+        );
+    }
+    // THE DEFECT. The shared section told a SeaORM reader to add `renvor-sqlx` and described a
+    // module their project does not have. Following it produced a project that does not resolve.
+    for wrong in ["renvor-sqlx", "src/persistence.rs"] {
+        assert!(
+            !readme.contains(wrong),
+            "the SeaORM README names `{wrong}`, which is the direct-SQLx path — following it is \
+             what the split exists to prevent"
+        );
+    }
+}
+
+/// The SeaORM README states the compilation boundary rather than leaving it to be assumed.
+///
+/// # Why prose is asserted here
+///
+/// The claim being protected is not structural — it is that a reader is TOLD the two generated
+/// files are not compiled by their project, and told what the SeaORM 2.0.2 compile actually was:
+/// a manual verification result, not something the generator or CI does. A test that only checked
+/// file names would pass against a README that quietly implied `cargo build` compiles them, which
+/// is the belief this whole change exists to correct.
+#[test]
+fn the_seaorm_readme_states_the_compilation_boundary() {
+    let readme = generate_ok(&["--orm", "seaorm", "--database", "postgres"]).read("README.md");
+
+    for (claim, phrase) in [
+        ("the modules are not declared", "does **not** declare"),
+        ("nothing here compiles them", "builds neither file"),
+        ("the manifest declares nothing", "declares no dependency"),
+        ("offline generation is the reason", "offline"),
+        ("the separate compile is named", "SeaORM 2.0.2"),
+        ("and is attributed to a person", "added by hand"),
+    ] {
+        assert!(
+            readme.contains(phrase),
+            "the SeaORM README does not state that {claim} — `{phrase}` is absent:\n{readme}"
         );
     }
 }
