@@ -52,67 +52,49 @@ use core::fmt;
 
 use crate::{DatabaseError, DatabaseErrorKind, DatabaseKind};
 
-/// Which Renvor persistence adapter was starting.
-///
-/// # A closed set, because the field it fills is rendered
-///
-/// The two variants are the two adapter crates this workspace ships. A caller cannot introduce a
-/// third, and — the point of the type — cannot introduce a *string*. See the module documentation
-/// for the `Box::leak` escape the previous `&'static str` field allowed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum DatabaseAdapter {
-    /// `renvor-sqlx` — the direct-SQLx adapter.
-    Sqlx,
-    /// `renvor-seaorm` — the SeaORM adapter.
-    SeaOrm,
-}
-
-impl DatabaseAdapter {
-    /// Every adapter, for exhaustive tests.
-    pub const ALL: [Self; 2] = [Self::Sqlx, Self::SeaOrm];
-
-    /// The adapter's crate name.
+crate::closed_named_enum! {
+    /// Which Renvor persistence adapter was starting.
     ///
-    /// The match has no catch-all arm and compiles, because `#[non_exhaustive]` does not apply
-    /// within the declaring crate. A third adapter therefore breaks this build until somebody
-    /// names it, rather than silently rendering as whatever a `_` arm chose.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Sqlx => "renvor-sqlx",
-            Self::SeaOrm => "renvor-seaorm",
-        }
+    /// # A closed set, because the field it fills is rendered
+    ///
+    /// The two variants are the two adapter crates this workspace ships. A caller cannot introduce
+    /// a third, and — the point of the type — cannot introduce a *string*. See the module
+    /// documentation for the `Box::leak` escape the previous `&'static str` field allowed.
+    ///
+    /// `as_str` returns the adapter's **crate name**.
+    ///
+    /// # Declared rather than written out
+    ///
+    /// The enum, [`ALL`](DatabaseAdapter::ALL) and [`as_str`](DatabaseAdapter::as_str) come from
+    /// one list, through [`closed_named_enum`](crate::closed_named_enum). They were three separate
+    /// authorities until a review found that a variant added to the enum and **omitted from
+    /// `ALL`** passed every test in this file — because every test reads `ALL`. That macro's
+    /// documentation carries the mutation and both of its controls.
+    pub enum DatabaseAdapter {
+        /// `renvor-sqlx` — the direct-SQLx adapter.
+        Sqlx => "renvor-sqlx",
+        /// `renvor-seaorm` — the SeaORM adapter.
+        SeaOrm => "renvor-seaorm",
     }
 }
 
-/// How far startup had got when it failed.
-///
-/// Three points, because they call for three different responses: an unreachable server, a server
-/// that answered but is not usable, and a schema change that did not apply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum StartupPhase {
-    /// Opening the pool.
-    Connect,
-    /// The readiness check, after the pool opened.
-    Readiness,
-    /// Applying migrations on boot.
-    Migration,
-}
-
-impl StartupPhase {
-    /// Every phase, for exhaustive tests.
-    pub const ALL: [Self; 3] = [Self::Connect, Self::Readiness, Self::Migration];
-
-    /// What was being attempted, as a clause.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Connect => "opening the connection pool",
-            Self::Readiness => "checking that the database was ready",
-            Self::Migration => "applying migrations on boot",
-        }
+crate::closed_named_enum! {
+    /// How far startup had got when it failed.
+    ///
+    /// Three points, because they call for three different responses: an unreachable server, a
+    /// server that answered but is not usable, and a schema change that did not apply.
+    ///
+    /// `as_str` returns what was being attempted, as a clause. Declared through
+    /// [`closed_named_enum`](crate::closed_named_enum) for the same reason as
+    /// [`DatabaseAdapter`]: this type is rendered into a diagnostic, so its variant list and its
+    /// rendered names must be one authority rather than two.
+    pub enum StartupPhase {
+        /// Opening the pool.
+        Connect => "opening the connection pool",
+        /// The readiness check, after the pool opened.
+        Readiness => "checking that the database was ready",
+        /// Applying migrations on boot.
+        Migration => "applying migrations on boot",
     }
 }
 
@@ -405,8 +387,24 @@ mod tests {
     /// string satisfied it. The enumeration then covered the new variant and found nothing,
     /// because the literal chosen was benign.
     ///
-    /// So this list is the specification the enum must satisfy. A genuine third adapter is one
-    /// reviewed line here; a variant that carries caller text cannot be made to pass at all.
+    /// # The claim that used to follow this was false, and a review caught it
+    ///
+    /// It said *"a variant that carries caller text cannot be made to pass at all"*. It could.
+    /// M-24 added `Custom(&'static str)` **to `ALL`**, which is what this test caught. The variant
+    /// of the mutation that **omits it from `ALL`** — **M-24b** — passed all fifty-nine tests in
+    /// this crate, because `ALL` was a hand-maintained restatement of the variant list and every
+    /// test here reads `ALL`. A variant absent from `ALL` was a variant no assertion could reach.
+    ///
+    /// The correction is in the declaration, not in this test:
+    /// [`closed_named_enum`](crate::closed_named_enum) generates the enum, `ALL` and `as_str` from
+    /// one list, so "present in the enum but absent from `ALL`" is no longer expressible and a
+    /// data-bearing variant is a macro error. Re-running M-24b against the declared form now fails
+    /// with *"no rules expected `(`"* before any test runs.
+    ///
+    /// This test still earns its place, and its job is now the one it can actually do: a genuine
+    /// third adapter — a **unit** variant, which the declaration does accept — reaches `ALL`
+    /// automatically and fails here until somebody reviews the name it renders. That is **M-24c**,
+    /// and it is killed by the assertions below.
     #[test]
     fn no_adapter_can_render_anything_but_its_own_crate_name() {
         const REVIEWED_NAMES: [&str; 2] = ["renvor-sqlx", "renvor-seaorm"];
