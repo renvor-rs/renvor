@@ -3148,6 +3148,57 @@ mod tests {
             granted.len(),
             "GOVERNANCE.md's waiver table has a different number of rows from the ledger's"
         );
+
+        // ── the prose counts, which the checks above do not reach ──────────────────────────
+        //
+        // The headline, the summary table and GOVERNANCE.md were all bound. The SENTENCE that
+        // states why the exceptions exist was not, and it said "All fourteen" while the set it
+        // names held fifteen. It had been wrong once before — it read "All eight" while listing
+        // ten — and was corrected by hand both times, which is the shape this repository treats as
+        // a defect rather than a typo.
+        //
+        // The exception set is every granted waiver except W-001, which is the approval gap and is
+        // counted separately by this ledger's own rules — the same exclusion the loop above makes.
+        let exceptions = granted.iter().filter(|id| *id != "W-001").count();
+        let spelled_exceptions = words
+            .get(exceptions)
+            .unwrap_or_else(|| panic!("no spelling for {exceptions}"));
+        assert!(
+            ledger.contains(&format!(
+                "**All {} exist for the same underlying reason",
+                spelled_exceptions.to_lowercase()
+            )),
+            "the ledger does not say `All {} exist for the same underlying reason`, which is what \
+             its own exception set holds",
+            spelled_exceptions.to_lowercase()
+        );
+
+        // ── nothing is described as granted before it is granted ───────────────────────────
+        //
+        // The W-017 scope section said Phase closure "is **W-018**, granted separately, on the
+        // same terms" while no W-018 existed, and a blockquote saying "Both were granted" sat
+        // directly under a section describing one. A ledger that names a waiver it has not issued
+        // reads, to anyone auditing it, as one that has.
+        //
+        // W-007 is the single exemption, and an explicit one: both documents record at length that
+        // it does not exist and that the identifier is permanently burned.
+        for (label, text) in [("ledger", &ledger), ("GOVERNANCE.md", &governance)] {
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("W-0") {
+                let identifier: String = rest[at..].chars().take(5).collect();
+                rest = &rest[at + 3..];
+                if identifier.len() != 5 || !identifier[2..].chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                if identifier == "W-007" {
+                    continue;
+                }
+                assert!(
+                    granted.contains(&identifier),
+                    "{label} refers to {identifier}, which its own table does not grant"
+                );
+            }
+        }
     }
 
     // ── published documentation agrees with the contracts it republishes ────────────────────
