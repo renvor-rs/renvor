@@ -8,7 +8,14 @@
 | **Review date** | 2026-08-26 |
 | **Superseded by** | *(not superseded)* |
 
-> **This record is `accepted` under W-017. The review behind it was NOT independent.**
+> **Two of this record's decisions were CORRECTED ON MEASUREMENT, 2026-08-27.** Sections 6 and 7
+> below carry dated amendments. The original decision text is quoted inside each, because a record
+> that silently acquired the right answer is not a record. The state is unchanged and this record is
+> **not** superseded — the corrections narrow two decisions, they do not replace the record — which
+> follows ADR-0005's precedent for a partial correction stated in place.
+>
+> **This record is `accepted` under W-017. The review behind it was NOT independent**, and neither
+> were the two amendments.
 >
 > No independent human review of this record has occurred, and none is claimed. Acceptance rests on
 > **[W-017](../governance/waivers.md)**, expiring **2027-02-11** or immediately when a qualified
@@ -152,8 +159,31 @@ from a different row on each engine — a **wrong answer**, not a slow one.
 
 **Measured.** `{"b":1,"a":2,"a":3}` becomes `{"a": 3, "b": 1}` on **both** `jsonb` and MySQL `JSON`
 — byte-identical, keys sorted, duplicates last-wins, whitespace discarded. PostgreSQL's `json`
-returns the text verbatim. This is the one topic of the seven with an exact portable answer, and it
-is asserted as a **byte equality**, with PostgreSQL's `json` as the control.
+returns the text verbatim.
+
+> #### Amended 2026-08-27 — the portable answer is a subset, not the topic
+>
+> **This section used to continue:** *"This is the one topic of the seven with an exact portable
+> answer, and it is asserted as a byte equality, with PostgreSQL's `json` as the control."*
+>
+> The claim rested on the single document above. A review found a counterexample — PostgreSQL text
+> cannot represent NUL, so `jsonb` **refuses** a string containing `\u0000` that MySQL stores — and
+> measuring the space to answer it found two more divergences the review had not named:
+>
+> | Document | PostgreSQL `jsonb` | MySQL `JSON` |
+> |---|---|---|
+> | `{"e":1E2}` | `100` | `100.0` |
+> | `{"n":1.50}` | `1.50` | `1.5` |
+> | `{"n":0.12345678901234567890123456789}` | exact | `0.12345678901234568` |
+>
+> The last is **data loss**: MySQL keeps non-integer JSON numbers as IEEE-754 doubles, PostgreSQL
+> keeps every JSON number as `numeric`. Integers within the signed 64-bit range are exact on both.
+>
+> **The decision is unchanged** — `jsonb` and `JSON`, `json` excluded. What is narrowed is the
+> guarantee attached to it: the byte equality holds over a **measured subset**, which C-16 1.2.0
+> states and `renvor_testkit::portability::JSON_PROBES` executes, exclusions included. The
+> alternatives below were weighed against the type, and remain correct as weighed; nothing here
+> would have made `json` or text columns the better choice.
 
 **Alternatives.**
 
@@ -165,14 +195,43 @@ is asserted as a **byte equality**, with PostgreSQL's `json` as the control.
 **Consequence.** An application that needs the exact bytes it was sent stores them as text and says
 so. It does not get that from a JSON column.
 
-### 7. Migration syntax — a migration is safe to resume, never to re-run from the start
+### 7. Migration syntax — one statement per migration, because a partial failure cannot be resumed
 
-**Decision.** A migration is safe to re-run after a partial failure by running the rest. One schema
-change per migration is preferred. A migration does not rely on rollback to undo earlier statements
-in the same file.
+**Decision.** A portable migration contains exactly one schema statement. A migration does not rely
+on rollback to undo earlier statements in the same file, and is not written expecting the framework
+to resume it.
 
 **Measured.** `BEGIN; CREATE TABLE …; ROLLBACK;` — the table is **gone** on PostgreSQL, because DDL
 is transactional; it **remains** on MySQL, because DDL forces an implicit commit.
+
+Separately measured, on both engines, by
+`a_partial_migration_is_refused_on_the_next_run_rather_than_resumed`: after a migration whose second
+statement fails, MySQL has the first statement committed **and** a `_sqlx_migrations` row marked
+`success = FALSE`, and the next run returns `MigrationDirty` without sending a statement.
+PostgreSQL has neither, and its next run retries from the start.
+
+> #### Amended 2026-08-27 — the original decision was false, and this is what replaced it
+>
+> **The heading used to read** *"a migration is safe to resume, never to re-run from the start"*,
+> **and the decision** *"A migration is safe to re-run after a partial failure by running the rest.
+> One schema change per migration is preferred."*
+>
+> A review found that wrong, and the measurement above settles it. SQLx writes the ledger row with
+> `success = FALSE` **before** running the migration body — its own comment says this is how the
+> MySQL case is detectable at all — and MySQL's implicit commit makes that row permanent. Every
+> later run consults `dirty_version` first and refuses. There is no "rest" to run, and a deploy
+> that retries loops.
+>
+> Two things changed as a consequence. One schema statement per migration is now **required**, not
+> preferred: it was the mitigation, and with resumption gone it is the whole guarantee. And the
+> recovery path is an explicit operator procedure, which C-16 1.2.0 states — verified against
+> sqlx 0.9.0 and sqlx-cli 0.9.0, where `migrate run`, `migrate revert` and `migrate override skip`
+> all call `dirty_version` and refuse, so **no SQLx command clears the row**.
+>
+> The alternatives below were weighed against *claiming atomicity* and against *owning a rollback
+> engine*, and both rejections stand — this correction makes the second stronger, since the case for
+> Renvor synthesising compensating statements was always the case for resuming, and resuming is not
+> available.
 
 **Alternatives.**
 
@@ -183,7 +242,8 @@ is transactional; it **remains** on MySQL, because DDL forces an implicit commit
 | One migration engine per engine | Explicitly the "two competing histories" case ADR-0022 rejected |
 
 **Consequence.** The recovery path after a failed migration differs by engine, and an operator must
-know which they are on. `MigrationPolicy` and the ledger are unaffected: both adapters migrate on
+know which they are on — on MySQL it is a manual repair with the framework refusing to help until
+the ledger and the schema agree. `MigrationPolicy` and the ledger are unaffected: both adapters migrate on
 SQLx's engine under ADR-0022, so both inherit the same behaviour on each engine.
 
 ## Alternatives to the whole approach

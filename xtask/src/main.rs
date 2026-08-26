@@ -2516,9 +2516,14 @@ mod tests {
     /// a loop with no exit.
     ///
     /// `a_partial_migration_is_refused_on_the_next_run_rather_than_resumed` proves the behaviour
-    /// against both engines. This proves the two documents still **describe** it — a test and the
+    /// against both engines. This proves the three documents still **describe** it — a test and the
     /// prose it backs can drift apart without either one failing, and that is exactly what
     /// happened.
+    ///
+    /// **The third document is ADR-0023**, which the contract names as its source of authority and
+    /// which carried the same false rule in its own decision text. It was found by a sweep rather
+    /// than by the review, which cited the contract and the guide. A contract corrected against a
+    /// record still stating the opposite is a contract with a citation that contradicts it.
     ///
     /// Whitespace is collapsed before searching, because both documents wrap: the phrase this
     /// guards against was split across two lines in the contract, which is why a plain `grep`
@@ -2534,18 +2539,30 @@ mod tests {
     /// instruction, or that carries it with no withdrawal at all, fails.
     #[test]
     fn the_partial_migration_guidance_matches_what_the_runner_does() {
-        const DOCUMENTS: [(&str, &str); 2] = [
+        /// `(name, source, the sentence that withdraws the instruction)`.
+        ///
+        /// The guide has **no** withdrawal marker on purpose: it is a working page rather than a
+        /// record, so it simply states the current behaviour. A resumption phrase appearing there
+        /// has nothing to be quoted by, and fails.
+        const DOCUMENTS: [(&str, &str, Option<&str>); 3] = [
             (
                 "contracts/database-portability.md",
                 include_str!("../../contracts/database-portability.md"),
+                Some("used to stand here was false"),
             ),
             (
                 "docs/docs/database-portability.mdx",
                 include_str!("../../docs/docs/database-portability.mdx"),
+                None,
+            ),
+            (
+                "decisions/0023-database-portability-across-the-four-rows.md",
+                include_str!("../../decisions/0023-database-portability-across-the-four-rows.md"),
+                Some("Amended 2026-08-27"),
             ),
         ];
 
-        for (name, markdown) in DOCUMENTS {
+        for (name, markdown, withdrawal) in DOCUMENTS {
             let flat = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
 
             // POSITIVE CONTROL, first: a document that stopped covering the subject would satisfy
@@ -2561,9 +2578,7 @@ mod tests {
                  procedure cannot be followed"
             );
 
-            // The sentence that withdraws the instruction. Searched for on its own, so that a
-            // document carrying the phrases with no withdrawal fails with a clear reason.
-            let withdrawal = flat.find("used to stand here was false");
+            let withdrawal = withdrawal.and_then(|marker| flat.find(marker));
 
             for resumption in [
                 "the recovery path is",
