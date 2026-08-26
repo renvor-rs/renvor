@@ -133,6 +133,12 @@ of them — kills, survivors, and one wrong hypothesis — are in
   passing text; nothing stopped a *maintainer* adding `Custom(&'static str)`. Every test passed
   with the hole reopened. It is killed now, by a test stating which crate names have actually been
   reviewed — but it is recorded as a survivor first, because that order is the evidence.
+- **M-24b** — the mutation M-24 did **not** run, found by the second review. Adding
+  `Custom(&'static str)` and **omitting it from `ALL`** survived **59 of 59** tests, because `ALL`
+  was a hand-maintained restatement of the variant list and every guard reads `ALL`. **This crate's
+  claim that M-24 was killed was therefore too broad**, and the correction is in the declaration:
+  `closed_named_enum!` generates the enum, `ALL` and `as_str` from one list, so M-24b now fails at
+  macro expansion. The overstated claim is left in the ledger with its correction beside it.
 
 ## 6a. The correction cycle — 2026-08-26
 
@@ -152,6 +158,36 @@ full table is in [`phase-008-review-record.md`](phase-008-review-record.md). The
   without auto-starting anything.
 - **C-16 had no decision record behind it.** **ADR-0023** now carries all seven decisions with
   alternatives and consequences, each bound to its four-row measurement.
+
+## 6b. The second correction round — 2026-08-26
+
+A second automated Codex review, run against the pushed head `0c88b39` **whose CI was 13/13 green**,
+returned **REQUEST CHANGES** with one P1 and five P2 findings. All six were reproduced against the
+tree before being accepted, and all six were dispositioned by change. The table is in
+[`phase-008-review-record.md`](phase-008-review-record.md).
+
+The consequential ones:
+
+- **Raw driver text was reaching telemetry, and the contract written in this cycle said it could.**
+  Both adapters emitted `driver_error = %error`; `contracts/error-taxonomy.md` 1.3.0 — text this
+  cycle added — defended it as reaching *"operators rather than callers"*. `CONSTITUTION.md`
+  principle VI names telemetry and exempts no consumer. The permission is **withdrawn at 1.4.0**,
+  every raw-error field is removed, and each adapter now has one `record(kind)` helper with no
+  parameter a driver message could arrive in. The mandated sweep found **five** such sites, not the
+  three cited.
+- **The M-24 kill claim was false.** See above. The evidence carrying it is corrected in place
+  rather than rewritten.
+- **Three documents stated things that were not true**: `xtask` still described the removed
+  skip behaviour, `contracts/verification-sequence.md` still defined exit 2 as toolchain-only, and
+  `governance/waivers.md` named an ungranted waiver, said *"Both were granted"* of one, and
+  undercounted its own exception set by one.
+- **W-017 counted two controls that PLAN §10.1 and FR-035 already mandate**, contrary to
+  `GOVERNANCE.md`'s own rule. Both moved to explicitly uncounted preconditions.
+
+**What this round says about the gates.** A 13/13 CI run and a first review round both passed a tree
+carrying a P1 constitutional violation. Green gates measure what they were written to measure —
+there was no test reading back what the adapters emitted, so nothing could notice. There is one now,
+in both adapters, and it is mutation-proven against silence as well as against leakage.
 
 ## 7. Failures that are part of this record
 
@@ -175,6 +211,12 @@ full table is in [`phase-008-review-record.md`](phase-008-review-record.md). The
   One of the two had been there since the module was written and only became an error when the
   import landed. Fixed by removing both explicit targets. **The failed run stays in this record**;
   the rerun passing is not a reason to delete it.
+- **The first review round and a fully green CI both passed a P1.** The tree at `0c88b39` had
+  13/13 CI checks green, ten round-one findings dispositioned, and both adapters copying driver
+  error text into telemetry against a constitutional prohibition. It is recorded here rather than
+  only in the review record because the lesson is about this evidence pack: a phase that reports
+  "all gates green" has reported what the gates cover, and this one did not cover telemetry output
+  until the second round forced it to.
 - The packaging rehearsal **FAILED twice with a cargo internal panic** on the first two gate runs,
   and the cause was **the gate, not the tree**. It had been written as `cargo package -p <crate>`
   per crate, which cannot work here: an unpublished path dependency has nothing to resolve against,

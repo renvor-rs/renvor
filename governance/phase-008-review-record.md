@@ -14,6 +14,7 @@ so a reviewer can fetch it from a clean index-only checkout.
 | Commissioned reviewer agent #1 | automated | **NOT PERFORMED** |
 | Commissioned reviewer agent #2 | automated | **NOT PERFORMED** |
 | Codex review of the reviewed head | automated, advisory, **not independent** | 10 findings, all dispositioned |
+| Codex review, round 2, of `0c88b39` | automated, advisory, **not independent** | **REQUEST CHANGES** — 1 P1 and 5 P2, all dispositioned |
 | Independent human requirements-and-security review | *required by PLAN §6.1 step 10* | **did not occur** — to be waived at closure, in the post-merge closure pull request |
 | Independent human review of ADR-0023 | *required by constitution §Development and Phase Workflow #4* | **did not occur** — waived by **W-017** |
 
@@ -62,6 +63,52 @@ were raised and all ten were dispositioned by change rather than by argument.
 | H | `PLAN.md` §7.4 listed `orm-sqlx` and `orm-seaorm`, features that were never implemented and that accepted ADR-0020 settled the other way | **FIXED.** Removed, with ADR-0020 quoted and the change recorded as reconciliation with an accepted decision rather than a new one. `db-postgres` and `db-mysql` are preserved |
 | I | C-16 made consequential normative choices that PLAN §10.1 required to be *measured* but did not itself decide | **FIXED.** **ADR-0023** records all seven decisions with alternatives and consequences, each bound to its four-row measurement; C-16 now cites PLAN §10.1 **and** ADR-0023 |
 | J | `006/L-7` and `007/L-11` were left targeted at a phase that did not close them | **FIXED.** Both retargeted to **Phase 013**, owner Ahmed Anbar, each with an implement-or-explicitly-exclude obligation. Closed phases' records are unchanged |
+
+## The second Codex round: REQUEST CHANGES, and what it found
+
+A second automated round was run against the pushed head `0c88b39`, whose CI was 13/13 green. It
+returned **REQUEST CHANGES — do not merge**, with one P1 and five P2 findings. **Every one was
+verified against the tree before being accepted**, in keeping with this phase's rule that a
+reviewer's assertion is not evidence; all six reproduced.
+
+The same exclusion applies as to round 1: **automated, advisory, and not independent.** It is
+counted as a compensating control under W-017 and never as the review W-017 waives.
+
+That a clean 13/13 CI run and a first review round both passed a tree carrying a P1 is itself the
+finding worth keeping: **green gates measure what they were written to measure.** Two of the six
+were false statements in documents this cycle had just written, and one was a false claim in this
+phase's own mutation evidence.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | **P1** | Both adapters emitted `driver_error = %error` to `tracing`, and `contracts/error-taxonomy.md` — text written **in this cycle** — explicitly permitted it. `CONSTITUTION.md` principle VI forbids secrets in telemetry and exempts no consumer | **FIXED.** Every raw-error field is removed. Each adapter has **one** `record(kind)` helper that all classification paths funnel through and that takes a `DatabaseErrorKind` and nothing else, so there is no parameter a driver message could arrive in. It emits `adapter` (closed enum), `database_error_kind`, and `transient`. C-E2 is corrected at **1.4.0**, withdrawing the permission. New `telemetry_redaction.rs` in both adapters installs a capturing subscriber and proves it. Mutations **M-30/31/32** |
+| 2 | **P2** | M-24 still survives: `ALL` is hand-written, so adding `Custom(&'static str)` while **omitting it from `ALL`** leaves every test green. The mutation-closure claim is false | **FIXED, and the false claim corrected rather than erased.** M-24b was re-run and **survived 59 of 59 tests**, confirming the reviewer. `closed_named_enum!` now declares the enum, `ALL` and `as_str` from one list for `DatabaseAdapter`, `StartupPhase` **and** `DatabaseKind`; M-24b now fails at macro expansion. Both mandated controls added — a `compile_fail` and its compiling twin differing in one token sequence |
+| 3 | **P2** | `xtask` still documented the removed *"reported as not-run … a usable `cargo xtask verify`"* behaviour | **FIXED.** The comment states the refusal, names exit 2, and records that it previously described behaviour that had been removed |
+| 4 | **P2** | W-017 counted controls that PLAN and ADR governance already mandate, contrary to `GOVERNANCE.md`'s own rule | **FIXED.** The four-row binding and the alternatives table are moved to **explicitly uncounted preconditions**, with the requirements that already mandate them named. Four genuinely specific controls remain, plus the advisory rounds themselves — labelled automated and non-independent |
+| 5 | **P2** | The ledger said *"Both were granted"* where one waiver exists, named a **W-018** that had not been granted, and said *"All fourteen"* against fifteen | **FIXED.** All three corrected, with what each said recorded. `the_active_waiver_counts_match_the_waiver_table` now also binds the prose count and **refuses any reference to a waiver its own table does not grant** (W-007, documented as permanently burned, is the one exemption). Mutations **M-28/M-29** |
+| 6 | **P2** | `contracts/verification-sequence.md` still defined exit 2 as toolchain-only | **FIXED at 1.2.1.** Exit 2 is a missing **mandatory verification prerequisite** — a tool *or* the four-row database environment. The fail-closed sample output was also stale and now matches what the command prints. A new test binds the contract, `CONTRIBUTING.md`, and `EXIT_TOOLING_MISSING`'s own doc comment |
+
+### What the second round did not cover, and what the sweep found anyway
+
+Finding 1 named three lines. **The mandated workspace sweep found five**, and the two the review did
+not name are the migration loaders — `renvor-sqlx/src/migrate.rs` and `renvor-seaorm/src/migrate.rs`
+both logged `migrate_error = %inner`, whose text names the migration directory the function's own
+contract promises not to carry. Both are fixed on the same helper.
+
+Two further sites were examined and are **out of scope, reported rather than left silent**:
+
+| Site | Finding |
+|---|---|
+| `crates/renvor-http/src/route/build.rs:831` — `reason = %error` | **Not equivalent.** The value is an `http::Error`, whose `Display` for every variant is a fixed string compiled into the `http` crate — `"failed to parse header value"` and siblings. Verified in `http-1.4.0`'s source. No caller, server, or configuration text can reach it |
+| `crates/renvor-http/src/route/build.rs:894` and `:901` — `detail = error.detail()` | **Equivalent in shape, different in provenance, and NOT fixed here.** `HttpError::new(kind, detail: impl Into<String>)` accepts an unbounded runtime `String` from the **application author**, and it is emitted to telemetry by design. An author writing `HttpError::new(kind, format!("could not reach {dsn}"))` puts a DSN into telemetry. This is a **Phase 004** design, stated in `contracts/problem-details.md` (*"the operator-facing detail goes to the telemetry record, which is a different consumer with different rights"*) and in `renvor-error/src/code.rs`. Changing it is a contract change outside the six findings and outside a database-scoped authority, so it is **raised for decision rather than altered** |
+
+A third observation, unrelated to telemetry: **`renvor-testkit` declares `tracing-subscriber` 0.3.23
+as a production dependency with the comment *"Capturing subscriber for assertions about emitted
+records"*, and nothing in the crate uses it.** `governance/phase-002-dependency-inventory.md`
+classifies it as a direct production dependency with transitive consequences, so removing it is a
+dependency-inventory change rather than a tidy-up. Not touched; recorded here. The capturing
+subscribers this round added are hand-written, following the precedent
+`crates/renvor-http/tests/telemetry.rs` set for exactly this reason.
 
 ### One correction to the review's own wording
 

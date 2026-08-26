@@ -115,6 +115,10 @@ run.
 Four mutations required by the correction authority: the startup enum boundary, the source chain,
 the census fail-closed behaviour, and the category removal.
 
+**M-24's result in this table is `SURVIVED, then KILLED`. That was an overstatement**, corrected
+below under §The kill claim above was too broad: the mutation was killed for the variant that was
+run and survives for the variant that was not.
+
 | # | Mutation | Result |
 |---|---|---|
 | M-24 | add `DatabaseAdapter::Custom(&'static str)`, a variant carrying caller text | **SURVIVED**, then **KILLED** — see below |
@@ -145,6 +149,58 @@ allowed to render"*.
 
 This is recorded as a survivor first and a kill second, in that order, because the order is the
 evidence: the mutation found something the correction had missed.
+
+### The kill claim above was too broad, and a review proved it — 2026-08-26
+
+**The paragraph above is left standing rather than rewritten, because it is the false claim and
+the record of it is the point.** What it got wrong is the sentence *"a variant that carries caller
+text cannot be made to pass"*.
+
+M-24 as run added `Custom(&'static str)` to the enum, **to `ALL`**, and to `as_str`. That is the
+variant `no_adapter_can_render_anything_but_its_own_crate_name` catches, because that test reads
+`ALL`. The mutation that **omits the variant from `ALL`** was never run, and it is the one that
+matters:
+
+| # | Mutation | Result |
+|---|---|---|
+| M-24b | add `DatabaseAdapter::Custom(&'static str)` and **omit it from `ALL`** | **SURVIVED** — 59 of 59 tests in `renvor-database` passed with a data-bearing variant present |
+| M-24c | add an unreviewed **unit** variant `Turso => "renvor-turso"` | **KILLED** — `the adapter at index 2 renders a name nobody reviewed` |
+
+M-24b survived for a structural reason, not a missing assertion: `ALL` was a **hand-maintained
+restatement** of the variant list, and every guard in the file reads `ALL`. A variant absent from
+`ALL` was a variant no assertion could reach. `as_str`'s catch-all-free match forces the author to
+*handle* the variant, not to handle it safely; `#[non_exhaustive]` does not apply within the
+declaring crate.
+
+**The correction is in the declaration, not in the test.** `closed_named_enum!` generates the enum,
+`ALL` and `as_str` from one list, so "present in the enum, absent from `ALL`" is no longer
+expressible, and a data-bearing variant does not match `$variant:ident`. `DatabaseAdapter`,
+`StartupPhase` and `DatabaseKind` — every rendered field of `StartupDiagnostic` — are declared
+through it.
+
+**Re-run against the declared form**, M-24b fails at macro expansion with *"no rules expected
+`(`"*, before any test runs. M-24c is still killed, and is now the mutation the guard test exists
+for: a genuine third adapter reaches `ALL` on its own and fails until somebody reviews the name.
+
+The lesson generalises past this variant. **A mutation that a guard catches does not license the
+claim that the guard catches the class.** M-24 was reported as closing the maintainer-reopens-it
+hole; it closed one instance of it, and the ledger stated the general form.
+
+## Second correction round — 2026-08-26
+
+Mutations run against the six findings of the second automated review.
+
+| # | Mutation | Result |
+|---|---|---|
+| M-28 | the ledger names a waiver identifier its own table does not grant | **KILLED** — `ledger refers to W-018, which its own table does not grant` |
+| M-29 | the exception-count sentence understates the set by one, as it did | **KILLED** — `the ledger does not say 'All fifteen exist for the same underlying reason'` |
+| M-30 | `renvor-sqlx::classify_error` emits `driver_error = %error` again | **KILLED** — `case 0 (classify_error/protocol) event 0 field 0 carried a planted secret into telemetry` |
+| M-31 | the safe `adapter` field is dropped from the telemetry record | **KILLED** — `case 0 (classify_error/protocol) emitted no 'adapter' field` |
+| M-32 | telemetry reports a kind other than the one returned | **KILLED** — `reported a kind in telemetry that differs from the one it returned` |
+
+M-31 and M-32 are the **anti-vacuity** pair. A redaction test that only asserts absence passes
+trivially against a function that emits nothing, and passes against one that emits a field
+unrelated to what it returned. Both had to fail for the absence assertions to mean anything.
 
 ### Where M-27b actually fired, which is not where it was expected to
 
