@@ -9,9 +9,19 @@
 //!
 //! That is deliberate and it costs something: a driver's own diagnostic is discarded at the
 //! boundary. It is discarded because the alternative is a type that *can* carry a connection
-//! string, and a guarantee that rests on nobody ever putting one there is not a guarantee. An
-//! operator who needs the driver's text gets it from tracing, which is a different consumer with
-//! different rights — the same split `renvor-error` already makes for HTTP problems.
+//! string, and a guarantee that rests on nobody ever putting one there is not a guarantee.
+//!
+//! # The cost is real, and it is not softened by telemetry
+//!
+//! This paragraph said an operator *"gets it from tracing, which is a different consumer with
+//! different rights"*. **That is no longer true, and it should never have been offered as
+//! consolation.** `CONSTITUTION.md` principle VI names telemetry among the places a secret may not
+//! go and exempts no consumer, so both adapters now emit closed fields only — the adapter, the
+//! kind, and whether it is retryable. See `renvor_sqlx::error` and `renvor_seaorm::error`.
+//!
+//! An operator who needs the untruncated driver message reads the **database server's own log**,
+//! under that server's access controls, correlating on the kind and the time. The text is not
+//! preserved by Renvor anywhere.
 //!
 //! [`renvor_error::ApiErrorCode::detail`]: https://docs.rs/renvor-error
 

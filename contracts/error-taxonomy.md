@@ -1,7 +1,7 @@
 ---
 description: "Phase 002 contract — kernel error categories, causal chaining, and redaction guarantees"
-version: "1.3.0"
-status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise. 1.3.0 (2026-08-26) scopes C-E1's category table to kernel errors and states what C-E2 requires at a third-party boundary; no category was added, removed, or renamed"
+version: "1.4.0"
+status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise. 1.4.0 (2026-08-26) WITHDRAWS the permission 1.3.0 granted to emit a third-party driver error through `tracing` at `debug`. That permission contradicted CONSTITUTION.md principle VI, which names telemetry and exempts no consumer; a review found it. This is a BEHAVIOUR change — both adapters now emit closed fields only — and it forbids something the previous version allowed. 1.3.0 (2026-08-26) scopes C-E1's category table to kernel errors and states what C-E2 requires at a third-party boundary; no category was added, removed, or renamed"
 ---
 
 # Contract: Error Taxonomy
@@ -129,9 +129,38 @@ and — for a connection failure — the host. A chain that reached it would sat
 violating C-E3, so the two are read together: **preserve every link you can vouch for, and stop
 at the first one you cannot.**
 
-The driver's own text is not destroyed. It is emitted through `tracing` at `debug`, which reaches
-operators rather than callers — the same split this contract already makes between a Problem
-Details document and a telemetry span.
+### The termination is total: neither chained NOR logged — corrected 2026-08-26
+
+This section shipped saying *"the driver's own text is not destroyed. It is emitted through
+`tracing` at `debug`, which reaches operators rather than callers"*, and both adapters did exactly
+that. **That sentence was wrong, and it is withdrawn.**
+
+`CONSTITUTION.md` principle VI forbids secrets in *"repositories, generated manifests, logs,
+**telemetry**, URLs, browser bundles, desktop resources, examples, fixtures, or snapshots"*.
+Telemetry is named. No consumer is exempt, and no severity is exempt — an operator is not a class
+of reader with a right to a credential, and `debug` is a level rather than a carve-out. A contract
+cannot grant a permission the constitution withholds; this one purported to, so it made a
+constitutional conflict look like a settled design.
+
+**A third-party error's text is therefore neither returned, nor chained, nor logged by Renvor.**
+Each adapter emits exactly one record per classified failure, built from closed values only:
+
+| Field | Type | Why it cannot carry a secret |
+|---|---|---|
+| `adapter` | `DatabaseAdapter` | a two-variant enum, declared in one place |
+| `database_error_kind` | `DatabaseErrorKind::as_str` | a discriminant of a closed enum |
+| `transient` | `bool` | whether the kind is retryable |
+
+**Where the raw text lives instead.** The database server writes its own log, under the server's
+own access controls and retention. An operator who needs the untruncated driver message reads it
+there, correlating on the kind and the time. That is the trade this contract now makes explicit:
+Renvor's telemetry becomes safe to ship anywhere, and the unsafe detail stays where it is already
+protected.
+
+Asserted by `telemetry_redaction.rs` in **both** adapters, which installs a capturing subscriber,
+drives every public classifier and the migration loader with credential-, host- and SQL-bearing
+inputs, and proves the planted strings appear in no captured field — with the safe fields required
+to be present, so a classifier that emitted nothing could not pass by silence.
 
 **Worked example, and the defect that produced this section.**
 `renvor_database::StartupDiagnostic` shipped in Phase 008 holding only a
