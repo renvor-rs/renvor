@@ -102,6 +102,30 @@ json   ->   {"b":1,"a":2,"a":3}                                        PostgreSQ
 Use `JSONB` and `JSON`. If you genuinely need the bytes you were sent, store them in a text column
 and be explicit about it — PostgreSQL's `json` type has no MySQL equivalent.
 
+### JSON: four things the two types do **not** agree about
+
+`JSONB` and `JSON` agree about far more than they disagree about, but "the same document round-trips
+the same way" is not true in general, and an application that assumes it will meet one of these:
+
+```
+{"z":"\u0000"}         jsonb  REFUSES it      MySQL JSON  stores it
+{"e":1E2}              jsonb  100             MySQL JSON  100.0
+{"n":1.50}             jsonb  1.50            MySQL JSON  1.5
+{"n":0.123456789012345678901}
+                       jsonb  exact           MySQL JSON  0.12345678901234568   <- rounded
+```
+
+The first is PostgreSQL's: its text type cannot hold a NUL, so `jsonb` rejects the escape outright.
+The last is the one to worry about — MySQL keeps non-integer JSON numbers as doubles, so it is
+**data loss**, not formatting. Integers are safe on both, right past 2^53.
+
+**Stay inside the portable subset:** objects, arrays, strings without `U+0000`, `true`/`false`/
+`null`, and plain integers. Validate anything that might fall outside it before you store it, or
+keep the original text in a column of its own and say that is what it is.
+
+And do not depend on what you sent coming back byte-for-byte. Both engines discard whitespace, sort
+keys and resolve duplicates. What is portable is the **value**.
+
 ## Writing migrations
 
 ### One schema change per migration
@@ -117,9 +141,40 @@ PostgreSQL   table is gone
 MySQL        table is still there
 ```
 
-A migration with one statement has no partial state to be in. If you must write several, order
-them so that a failure partway leaves a database the next run can continue from, and never rely on
-rollback to undo an earlier step.
+A migration with one statement has no partial state to be in. Write one, and never rely on rollback
+to undo an earlier step.
+
+### If a MySQL migration fails partway, the next run is refused
+
+This is the reason the rule above is a rule and not a preference. Renvor does **not** resume a
+half-applied migration, and neither does SQLx:
+
+```
+run #1   CREATE TABLE a;  CREATE TABLE b;  -- b fails
+         -> table a is committed. _sqlx_migrations holds the version with success = FALSE.
+
+run #2   -> MigrationDirty, before a single statement is sent.
+run #3   -> MigrationDirty.  Retrying is a loop, not a recovery.
+```
+
+No `sqlx migrate` command clears that row — `run`, `revert` and `override skip` all check for a
+dirty version first and refuse. Recovery is yours to do, in this order:
+
+1. **Look** at what committed: the version in `_sqlx_migrations`, the statements in the file before
+   the failure, and which of those objects the catalogue actually has.
+2. **Back up**, then bring the schema to one of two states: the migration fully applied, or fully
+   undone. Not somewhere in between — SQLx will validate against the checksum already in that row.
+3. **Match the ledger to the schema you just made**:
+   - fully applied → `UPDATE _sqlx_migrations SET success = TRUE WHERE version = <version>`
+   - fully undone → `DELETE FROM _sqlx_migrations WHERE version = <version>`
+4. **Run the migration again.**
+
+Do step 3 only after step 2. Editing the ledger to get a stuck deploy moving, before you know which
+state the schema is in, trades a stopped deploy for a schema the framework is wrong about — and the
+next migration will be written against that wrong belief.
+
+PostgreSQL never gets here: the ledger row and your statements share one transaction, so a failure
+removes both and the next run starts over on its own.
 
 ### Identifiers
 
@@ -194,5 +249,11 @@ adapters report identically.
 Each rule above is one assertion in `renvor_testkit::portability`, compiled once and executed
 against both engines through both adapters on every verification run. `xtask` requires all four
 rows to report in, so a row that stopped running fails the build rather than going quiet.
+
+The JSON boundary is a table of documents — the portable ones **and** the four excluded ones — with
+the answer each engine actually gave, so an engine that changes its mind about an exclusion fails
+the build just as loudly as one that breaks a guarantee. The dirty-ledger behaviour above has its
+own assertion in `renvor-sqlx/tests/migration.rs`, which builds a migration designed to fail and
+checks what the run after it does.
 
 When an engine changes its behaviour, that suite fails and this page is what gets corrected.
