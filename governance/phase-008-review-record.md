@@ -69,6 +69,55 @@ Finding J's premise described `L-11` as having been reused in *two* phases. It h
 **several**. The disposition uses the accurate wording; the phase-qualified citation rule is
 unchanged by the correction, and no closed evidence was rewritten to accommodate it.
 
+## The citation audit, and a pre-existing gap it found
+
+Finding G required that **every tracked citation resolve in a clean index-only checkout**. That was
+verified by extracting `git archive HEAD` into an empty directory — no working tree, no ignored
+files, no `specs/` — and resolving every relative link in `governance/`, `contracts/`, `decisions/`,
+`docs/docs/`, and the top-level documents.
+
+| Measure | Result |
+|---|---|
+| Relative links checked across all tracked documentation | **266** |
+| Genuinely broken | **0** |
+| Relative links inside Phase 008's own records | **15**, **0 broken** |
+| `specs/` present in the index-only extraction | **no** — `git ls-files specs` returns 0 |
+
+Six were reported by the audit and all six were confirmed **false positives**:
+
+- Three are in `governance/deferred-verification-work.md` lines 50–52, which is a table
+  *documenting exactly these naive-link-parser failure modes* — an escaped bracket, a destination
+  containing balanced parentheses, and an angle-bracket destination. The audit reproduced all three,
+  which is a control on the audit rather than a defect in the document.
+- Two are Docusaurus **site-absolute routes** in `docs/docs/persistence.mdx` (`/docs/...`), which
+  are not filesystem paths and are validated by verification step 9's build and step 10's link
+  check.
+- One is the `specs/` citation described below.
+
+### Pre-existing, out of scope, and stated rather than absorbed
+
+Seven backticked `specs/`-shaped paths appear in **tracked** text and **do not resolve** in an
+index-only checkout:
+
+| Record | Reference |
+|---|---|
+| `governance/phase-005-requirements-conformance.md` | `specs/005-validation-problem-openapi/spec.md` |
+| `governance/phase-006-evidence.md` | `specs/006-persistence-sqlx/evidence/fr-conformance.md` |
+| `governance/phase-007-evidence.md` | `specs/007-seaorm-parity/evidence/fr-conformance.md` |
+| `governance/waivers.md` (W-014's controls) | `specs/006-persistence-sqlx/evidence/fr-conformance.md` |
+| `decisions/0001`, `decisions/0003` | `specs/...` (elided, illustrative) |
+| `decisions/0011` | `specs/001-governance-foundation/checklists/governance.md` |
+
+**None was introduced by Phase 008, and none is corrected here.** They belong to closed phases'
+records, and the same authority that required this audit also required that closed evidence not be
+rewritten. W-016's own text already states the problem for Phase 007 — *"that record lives in
+`specs/`, which is deliberately untracked, so a reviewer cannot fetch it from the repository"* — so
+the condition is disclosed rather than newly discovered.
+
+It is named here so it is not mistaken for a clean result. **A reviewer of Phase 005, 006, or 007
+cannot fetch part of the evidence those phases cite.** Phase 008 fixed this for itself and for
+nothing else.
+
 ## What the review process did not establish
 
 An automated review reads a diff. It does not:
