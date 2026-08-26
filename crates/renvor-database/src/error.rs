@@ -17,8 +17,6 @@
 
 use core::fmt;
 
-use renvor_core::ErrorCategory;
-
 /// Every way a persistence operation can fail, as a closed set.
 ///
 /// # Closed, and why that is not a limitation
@@ -27,6 +25,44 @@ use renvor_core::ErrorCategory;
 /// Renvor's public contract, so swapping a driver would be a breaking change for every caller that
 /// matched on one. What a *caller* can act on is much smaller: retry, fix the input, fix the
 /// deployment, or give up. These variants are that set.
+///
+/// # There is deliberately no `category()` here
+///
+/// This enum had one, projecting each kind onto `renvor_core::ErrorCategory`. Its table named
+/// five kinds and sent the other seventeen through `_ => ErrorCategory::Internal`.
+///
+/// `contracts/error-taxonomy.md` C-E1 defines `Internal` as *"resolution work budget
+/// exhausted — a defect in the kernel"* and says plainly: *"If an author ever sees `Internal`,
+/// the kernel is wrong — not their graph."* A violated unique key, an absent row, and an
+/// edited migration are none of those. The projection made the taxonomy's one unambiguous
+/// category the routine answer for ordinary database outcomes, and no other category was
+/// closer — so the correct fix was to stop projecting, not to re-aim it.
+///
+/// **[`DatabaseErrorKind`] is the persistence domain's own programmatically matchable
+/// classification**, which is what C-E1 requires of an error: a category a caller can match
+/// on rather than a message it has to parse. C-E1's `ErrorCategory` table governs **kernel**
+/// errors. Two vocabularies with no lossy bridge between them is the honest arrangement; the
+/// bridge was the defect.
+///
+/// Removing it also removed this crate's `renvor-core` dependency, which nothing else used.
+/// `xtask` step 7 asserts the absence, with a control, so the coupling cannot return quietly.
+///
+/// The removal is enforced rather than described:
+///
+/// ```compile_fail
+/// use renvor_database::DatabaseErrorKind;
+///
+/// let _ = DatabaseErrorKind::UniqueViolation.category();
+/// ```
+///
+/// A `compile_fail` block passes when compilation fails for **any** reason. This one compiles,
+/// and differs only in the method:
+///
+/// ```
+/// use renvor_database::DatabaseErrorKind;
+///
+/// assert_eq!(DatabaseErrorKind::UniqueViolation.as_str(), "unique_violation");
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DatabaseErrorKind {
@@ -235,24 +271,6 @@ impl DatabaseErrorKind {
                 | Self::TransactionConflict
         )
     }
-
-    /// The kernel category this kind reports as.
-    ///
-    /// An explicit table rather than an implied identity, for the reason `renvor-error`'s
-    /// `mapping` module gives: two vocabularies that agree by coincidence drift the first time one
-    /// of them gains a member.
-    #[must_use]
-    pub const fn category(self) -> ErrorCategory {
-        match self {
-            Self::Cancelled => ErrorCategory::Cancelled,
-            Self::AcquireTimeout | Self::DeadlineExceeded | Self::MigrationLockTimeout => {
-                ErrorCategory::DeadlineExceeded
-            }
-            Self::ConnectFailed | Self::NotReady => ErrorCategory::ResourceUnavailable,
-            Self::PoolClosed => ErrorCategory::ShuttingDown,
-            _ => ErrorCategory::Internal,
-        }
-    }
 }
 
 impl fmt::Display for DatabaseErrorKind {
@@ -350,13 +368,5 @@ mod tests {
         assert!(DatabaseErrorKind::AcquireTimeout.is_transient());
         assert!(!DatabaseErrorKind::UniqueViolation.is_transient());
         assert!(!DatabaseErrorKind::MigrationChecksumMismatch.is_transient());
-    }
-
-    #[test]
-    fn cancellation_reports_as_cancellation_not_as_an_internal_defect() {
-        assert_eq!(
-            DatabaseErrorKind::Cancelled.category(),
-            ErrorCategory::Cancelled
-        );
     }
 }

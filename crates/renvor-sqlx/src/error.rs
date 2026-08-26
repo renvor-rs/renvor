@@ -150,14 +150,19 @@ mod tests {
         );
     }
 
+    /// A closed pool is its own kind, distinguishable from every other refusal.
+    ///
+    /// This test used to compare `kind.category()` against the same value reached through
+    /// `DatabaseError`, which asserted that a projection agreed with itself. The projection was
+    /// removed in Phase 008 — see `DatabaseErrorKind`'s own note on why `Internal` was the wrong
+    /// answer for a database outcome — and what remains is the claim the name makes: shutdown is
+    /// not folded into `StatementRejected` or `Unclassified`.
     #[test]
     fn a_closed_pool_reports_as_shutting_down_rather_than_as_a_defect() {
         let kind = classify(&sqlx::Error::PoolClosed);
         assert_eq!(kind, DatabaseErrorKind::PoolClosed);
-        assert_eq!(
-            kind.category(),
-            renvor_database::DatabaseError::new(kind).kind().category()
-        );
+        assert_ne!(kind, DatabaseErrorKind::Unclassified);
+        assert_ne!(kind, DatabaseErrorKind::StatementRejected);
     }
 
     #[test]
