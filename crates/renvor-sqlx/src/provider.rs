@@ -18,7 +18,15 @@ use renvor_core::provider::registry::{CapabilityId, ProviderId};
 use renvor_core::provider::registry::{InitContext, Provider, ProviderFuture};
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use renvor_database::Database;
-use renvor_database::{ConnectionString, DatabaseKind, PoolSettings};
+use renvor_database::{
+    ConnectionString, DatabaseKind, PoolSettings, StartupDiagnostic, StartupPhase,
+};
+
+/// This adapter's own crate name, as it appears in a startup diagnostic.
+///
+/// A literal rather than anything derived from configuration: `StartupDiagnostic` takes
+/// `&'static str` precisely so that the adapter cannot be named by a formatted string.
+const ADAPTER: &str = "renvor-sqlx";
 
 use crate::SqlxDatabase;
 use crate::migrate::Migrations;
@@ -241,11 +249,23 @@ macro_rules! provider_for {
                     let database =
                         SqlxDatabase::<$driver>::connect(&self.dsn, &self.settings, self.kind)
                             .await
-                            .map_err(|error| Box::new(error) as BoxedCause)?;
+                            .map_err(|error| {
+                                Box::new(StartupDiagnostic::new(
+                                    ADAPTER,
+                                    self.kind,
+                                    StartupPhase::Connect,
+                                    error.kind(),
+                                )) as BoxedCause
+                            })?;
 
                     if let Err(error) = database.check().await {
                         let _ = database.close().await;
-                        return Err(Box::new(error) as BoxedCause);
+                        return Err(Box::new(StartupDiagnostic::new(
+                            ADAPTER,
+                            self.kind,
+                            StartupPhase::Readiness,
+                            error.kind(),
+                        )) as BoxedCause);
                     }
 
                     // The two halves of FR-021 are checked together: migrations supplied, AND a
@@ -254,7 +274,12 @@ macro_rules! provider_for {
                         if migrations.settings().policy().runs_on_boot() {
                             if let Err(error) = migrations.$run(&database).await {
                                 let _ = database.close().await;
-                                return Err(Box::new(error) as BoxedCause);
+                                return Err(Box::new(StartupDiagnostic::new(
+                                    ADAPTER,
+                                    self.kind,
+                                    StartupPhase::Migration,
+                                    error.kind(),
+                                )) as BoxedCause);
                             }
                         }
                     }

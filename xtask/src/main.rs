@@ -501,6 +501,10 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !persistence_isolation_holds(root) {
         return false;
     }
+    if !adapters_compile_per_driver(root) {
+        return false;
+    }
+
     if !lean_facade_compiles(root) {
         return false;
     }
@@ -519,7 +523,8 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, transport and persistence isolation, facade isolation, lean compile, \
+        "crate DAG, transport and persistence isolation, per-driver adapter compiles, \
+         facade isolation, lean compile, \
          publishable dependencies, required package metadata, instability wording, and the \
          executable name all hold, each with a control",
     );
@@ -570,7 +575,7 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 5] = [
+    let checks: [IsolationCheck<'_>; 7] = [
         (
             "renvor-seaorm + db-postgres",
             &[
@@ -621,6 +626,49 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             &["-p", "renvor-seaorm", "--no-default-features"],
             &["sqlx-postgres", "sqlx-mysql", "sqlx-sqlite"],
             &["sea-orm", "sqlx"],
+        ),
+        // The direct-SQLx adapter had NO per-driver row until Phase 008. Its `--all-features`
+        // row below forbids the other ORM but permits both drivers, so nothing asserted that a
+        // project on direct SQLx and MySQL keeps PostgreSQL out of its graph — the very thing
+        // "no optional capability silently adds a second database" is about. The SeaORM adapter
+        // had these two rows from the start; this closes the asymmetry.
+        (
+            "renvor-sqlx + db-postgres",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &[
+                "sqlx-mysql",
+                "sqlx-sqlite",
+                "sea-orm",
+                "renvor-seaorm",
+                "rsa",
+                "webpki-roots",
+            ],
+            &["sqlx-postgres", "renvor-database"],
+        ),
+        (
+            "renvor-sqlx + db-mysql",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-mysql",
+            ],
+            &[
+                "sqlx-postgres",
+                "sqlx-sqlite",
+                "sea-orm",
+                "renvor-seaorm",
+                "rsa",
+                "webpki-roots",
+            ],
+            &["sqlx-mysql", "renvor-database"],
         ),
         (
             "renvor-sqlx (--all-features)",
@@ -765,6 +813,85 @@ fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
 /// `configuration` example used `renvor::config` with no `required-features` declaration, so
 /// `--no-default-features --all-targets` failed to compile while every tree query stayed green.
 /// Resolving a graph is not compiling against it.
+/// Step 7: every adapter **compiles** with each driver selected on its own.
+///
+/// # Resolving is not compiling, and the difference hid a real defect
+///
+/// `persistence_isolation_holds` reads `cargo tree`, which answers *what would be downloaded*. It
+/// cannot answer *does this build*, and the two came apart: `renvor-sqlx` resolved cleanly with
+/// only `db-mysql` and **failed to compile**, because a test helper named `sqlx::Postgres` from
+/// inside a module gated on `any(db-postgres, db-mysql)`. Every test in that module was already
+/// `db-postgres`-only, so with MySQL alone the module held a helper referring to a type that was
+/// not there.
+///
+/// A project generated for MySQL on direct SQLx would have hit that the first time it ran the
+/// adapter's own suite. Nothing detected it, because nothing had ever compiled that combination.
+///
+/// `--all-targets` is load-bearing here exactly as it is for the facade: the library alone
+/// compiled fine, and only the test target failed.
+fn adapters_compile_per_driver(root: &std::path::Path) -> bool {
+    const ROWS: [(&str, &str); 4] = [
+        ("renvor-sqlx", "db-postgres"),
+        ("renvor-sqlx", "db-mysql"),
+        ("renvor-seaorm", "db-postgres"),
+        ("renvor-seaorm", "db-mysql"),
+    ];
+
+    for (package, feature) in ROWS {
+        // CONTROL. `--all-targets` over a crate with no test targets compiles the library and
+        // reports success, which would make every row below pass for free. Deleting the suites is
+        // the way this gate goes quiet, so the gate says so.
+        let tests = root.join("crates").join(package).join("tests");
+        let populated = std::fs::read_dir(&tests).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "rs")
+            })
+        });
+        if !populated {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`crates/{package}/tests` holds no `.rs` target, so `--all-targets` below \
+                     would compile only the library and this gate would pass having checked \
+                     nothing"
+                ),
+            );
+            return false;
+        }
+
+        if !cargo_succeeds(
+            root,
+            &[
+                "check",
+                "--locked",
+                "-p",
+                package,
+                "--no-default-features",
+                "--features",
+                feature,
+                "--all-targets",
+            ],
+        ) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`cargo check --locked -p {package} --no-default-features --features \
+                     {feature} --all-targets` FAILED. The dependency graph for this row resolves \
+                     — `cargo tree` is satisfied — but the code does not build, so a project that \
+                     selected only `{feature}` could not compile this adapter's own targets"
+                ),
+            );
+            return false;
+        }
+    }
+    true
+}
+
 fn lean_facade_compiles(root: &std::path::Path) -> bool {
     // THE GATE. `--all-targets` is the load-bearing flag: without it, examples and tests are never
     // built and the whole failure mode is invisible.
@@ -1347,11 +1474,13 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// Every (row, suite) pair the persistence evidence rests on.
 ///
 /// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix, each measured
-/// by five suites: the shared **ports** contract, the shared **domain** example, the shared
-/// **concurrency and idempotency** contract, the shared **portability** contract, and the shared
-/// **upgrade path**. Twenty entries, and a missing one fails the gate whichever fifth it belongs
-/// to.
-const ROW_EVIDENCE: [(&str, &str, &str); 20] = [
+/// by six suites. Five are compiled once in `renvor-testkit` and called by every row — the
+/// **ports** contract, the **domain** example, **concurrency and idempotency**, **portability**,
+/// and the **upgrade path**. The sixth, the **startup diagnostic**, is per-adapter by necessity:
+/// it drives each adapter's own provider, which is the thing under test.
+///
+/// Twenty-four entries, and a missing one fails the gate whichever suite it belongs to.
+const ROW_EVIDENCE: [(&str, &str, &str); 24] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1440,6 +1569,26 @@ const ROW_EVIDENCE: [(&str, &str, &str); 20] = [
         "postgres::the_upgrade_path_holds",
     ),
     ("renvor-seaorm", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "postgres::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "mysql::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "postgres::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "mysql::a_failed_start_names_the_provider_and_what_to_do",
+    ),
 ];
 
 /// STEP 4, still: every one of the four rows reported in.
@@ -1557,7 +1706,7 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (4 rows x 5 shared suites)",
+            "all {} row-suite pairs reported in (4 rows x 6 suites)",
             ROW_EVIDENCE.len()
         ),
     );

@@ -237,7 +237,19 @@ suite!(
     DatabaseKind::MySql
 );
 
-#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+// GATED ON `db-postgres` ALONE, and it used to be `any(db-postgres, db-mysql)`.
+//
+// Every test in here is `db-postgres`-only and always was, but the module's helper returns
+// `SqlxProvider<sqlx::Postgres>` unconditionally. Under `--features db-mysql` on its own the
+// module therefore held a helper naming a type that was not compiled, and this crate did not
+// build — while `cargo tree` reported the driver isolation intact, because resolving and
+// compiling are different questions. `xtask`'s `adapters_compile_per_driver` now asks the second
+// one.
+//
+// The deadline arithmetic under test is engine-independent; the `Postgres` type parameter is
+// incidental to it. Gating the module the way its tests were already gated is the smallest change
+// that makes the file honest, and it removes no coverage — none of these ran under MySQL before.
+#[cfg(feature = "db-postgres")]
 mod boot_deadline {
     use std::time::Duration;
 
@@ -270,7 +282,6 @@ mod boot_deadline {
     /// either migration deadline can elapse — so `MigrationLockTimeout` and `DeadlineExceeded`
     /// become unreachable and the operator sees a kernel timeout that mentions neither migrations
     /// nor locks. This asserts the number that avoids it.
-    #[cfg(feature = "db-postgres")]
     #[test]
     fn migrating_on_boot_needs_more_than_the_kernels_default_deadline() {
         let on_boot =
@@ -285,7 +296,6 @@ mod boot_deadline {
     }
 
     /// A provider that does NOT migrate needs nothing extra.
-    #[cfg(feature = "db-postgres")]
     #[test]
     fn not_migrating_on_boot_needs_only_the_kernels_default() {
         let never = provider_with(MigrationSettings::default());
@@ -293,7 +303,6 @@ mod boot_deadline {
     }
 
     /// The answer tracks the configured bounds rather than the defaults.
-    #[cfg(feature = "db-postgres")]
     #[test]
     fn the_required_deadline_follows_the_configured_bounds() {
         let tight = MigrationSettings::default()

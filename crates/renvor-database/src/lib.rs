@@ -47,6 +47,7 @@ pub mod migrate;
 pub mod page;
 pub mod pool;
 pub mod seed;
+pub mod startup;
 
 pub use error::{DatabaseError, DatabaseErrorKind};
 pub use migrate::{
@@ -64,6 +65,7 @@ pub use renvor_validation::collection::Direction;
 pub use seed::{
     APPLIED, CREATE_LEDGER, Idempotence, SeedDeclaration, SeedReport, SeedScope, SqlSeed,
 };
+pub use startup::{StartupDiagnostic, StartupPhase};
 
 /// Which database an adapter is talking to.
 ///
