@@ -35,6 +35,7 @@ macro_rules! row {
             use renvor_seaorm::migrate::Migrations;
             use renvor_testkit::concurrency;
             use renvor_testkit::domain::{self, Widget, WidgetFixture};
+            use renvor_testkit::upgrade;
             use sea_orm::ConnectionTrait as _;
             use sqlx::AssertSqlSafe;
 
@@ -50,6 +51,12 @@ macro_rules! row {
                     .join("migrations")
             }
 
+            fn base_migrations_dir() -> PathBuf {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests")
+                    .join("migrations-upgrade-base")
+            }
+
             impl WidgetFixture for Fixture {
                 type Database = $alias;
 
@@ -62,6 +69,15 @@ macro_rules! row {
                     // one migration history. This is that path, not a SeaORM-specific one.
                     let migrations =
                         Migrations::load(&migrations_dir(), MigrationSettings::default()).await?;
+                    migrations.$run(&self.database).await.map(|r| r.applied())
+                }
+
+                async fn migrate_base(&self) -> Result<usize, DatabaseError> {
+                    // The SAME runner over the previous release's directory. A different code
+                    // path here would make the upgrade suite measure something no deployment does.
+                    let migrations =
+                        Migrations::load(&base_migrations_dir(), MigrationSettings::default())
+                            .await?;
                     migrations.$run(&self.database).await.map(|r| r.applied())
                 }
 
@@ -204,6 +220,15 @@ macro_rules! row {
                 };
                 let capacity = support::settings().max_connections() as usize;
                 concurrency::run_every_concurrency_assertion(&fixture, capacity).await;
+            }
+
+            /// The upgrade path, on this row.
+            #[tokio::test]
+            async fn the_upgrade_path_holds() {
+                let Some((fixture, _guard)) = fixture().await else {
+                    return;
+                };
+                upgrade::run_every_upgrade_assertion(&fixture).await;
             }
         }
     };

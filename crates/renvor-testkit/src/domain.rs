@@ -68,6 +68,16 @@ pub trait WidgetFixture: Sync {
     /// operations this example proves rather than a setup step it skips past.
     fn migrate(&self) -> impl Future<Output = Result<usize, DatabaseError>> + Send;
 
+    /// Applies only the migrations a **previous release** shipped.
+    ///
+    /// Backed by `tests/migrations-upgrade-base/`, whose files are byte-identical to the leading
+    /// migrations in the full set. The identity is what makes an upgrade over them legal: the
+    /// ledger stores a checksum, and a forward run over an edited file fails closed.
+    ///
+    /// Used by [`crate::upgrade`], which is the only suite that starts from a database somebody
+    /// else migrated.
+    fn migrate_base(&self) -> impl Future<Output = Result<usize, DatabaseError>> + Send;
+
     /// Removes the table and the migration ledger, so the next `migrate` starts from nothing.
     fn drop_schema(&self) -> impl Future<Output = ()> + Send;
 

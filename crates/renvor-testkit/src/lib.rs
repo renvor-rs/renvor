@@ -19,6 +19,7 @@ pub mod harness;
 pub mod injection;
 pub mod persistence;
 pub mod portability;
+pub mod upgrade;
 
 pub use clock::TestClock;
 pub use concurrency::{CONCURRENT_WRITERS, MAX_ATTEMPTS};

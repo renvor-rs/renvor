@@ -1347,10 +1347,11 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// Every (row, suite) pair the persistence evidence rests on.
 ///
 /// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix, each measured
-/// by four suites: the shared **ports** contract, the shared **domain** example, the shared
-/// **concurrency and idempotency** contract, and the shared **portability** contract. Sixteen
-/// entries, and a missing one fails the gate whichever quarter it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 16] = [
+/// by five suites: the shared **ports** contract, the shared **domain** example, the shared
+/// **concurrency and idempotency** contract, the shared **portability** contract, and the shared
+/// **upgrade path**. Twenty entries, and a missing one fails the gate whichever fifth it belongs
+/// to.
+const ROW_EVIDENCE: [(&str, &str, &str); 20] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1431,6 +1432,14 @@ const ROW_EVIDENCE: [(&str, &str, &str); 16] = [
         "portability",
         "mysql::the_portability_contract_holds",
     ),
+    ("renvor-sqlx", "domain", "postgres::the_upgrade_path_holds"),
+    ("renvor-sqlx", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-seaorm",
+        "domain",
+        "postgres::the_upgrade_path_holds",
+    ),
+    ("renvor-seaorm", "domain", "mysql::the_upgrade_path_holds"),
 ];
 
 /// STEP 4, still: every one of the four rows reported in.
@@ -1548,7 +1557,7 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (4 rows x 4 shared suites)",
+            "all {} row-suite pairs reported in (4 rows x 5 shared suites)",
             ROW_EVIDENCE.len()
         ),
     );
