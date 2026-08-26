@@ -193,6 +193,11 @@ fn verify() -> i32 {
     if !the_end_to_end_relay_ran(&root) {
         return EXIT_STEP_FAILED;
     }
+    // STILL STEP 4. Four rows are specified by `PLAN.md` §10.1; nothing until now asserted that
+    // four of them ran. See `the_four_rows_all_ran`.
+    if !the_four_rows_all_ran(&root) {
+        return EXIT_STEP_FAILED;
+    }
     // Warnings are denied via RUSTDOCFLAGS; a broken intra-doc link is a failure.
     if !run(
         5,
@@ -1336,6 +1341,148 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
     }
 
     step_ok(4, "tests (end-to-end route relay)", "passed");
+    true
+}
+
+/// The four persistence rows, and the test that measures each.
+///
+/// `(crate, test binary, test path)`. One entry per row of `PLAN.md` §10.1's backend matrix.
+const FOUR_ROWS: [(&str, &str, &str); 4] = [
+    (
+        "renvor-sqlx",
+        "shared_contract",
+        "postgres::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "shared_contract",
+        "mysql::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "contract",
+        "postgres::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "contract",
+        "mysql::the_shared_persistence_contract_holds",
+    ),
+];
+
+/// STEP 4, still: every one of the four rows reported in.
+///
+/// # `cargo test --workspace` cannot notice a missing row
+///
+/// Step 4 runs the whole workspace, so all four rows execute today. What it does not do — what
+/// nothing did before this — is state how many rows were *supposed* to run. Delete
+/// `crates/renvor-seaorm/tests/contract.rs` and `cargo test --workspace` runs fewer tests and
+/// reports success. A row can be removed, renamed, or feature-gated out of existence and the gate
+/// stays green, because a smaller test count is not a failure.
+///
+/// This is the same shape as two failures this repository has already been bitten by and fixed:
+/// the relay test above, which *"ran in NO automated gate until 2026-08-23"*, and the
+/// real-database suites that *"reported `ok` in CI having connected to nothing"*
+/// (`crates/renvor-sqlx/tests/support/mod.rs`). Both were closed by making the gate assert that
+/// the thing ran. This closes the third.
+///
+/// # Why `ok` here means the row genuinely reached a database
+///
+/// A test that skipped would also print `ok`. It cannot skip under this gate: `support::url`
+/// **panics** when `RENVOR_TEST_REQUIRE_DATABASE` is set and a URL is absent. So the census is
+/// mandatory exactly when that variable is set, and is reported as not-run when it is not — the
+/// same contract the test harness itself applies, so a contributor without local databases still
+/// gets a usable `cargo xtask verify`.
+///
+/// # It re-runs two test binaries
+///
+/// Deliberate, and it costs a couple of seconds. `run` streams its child's output to the operator
+/// rather than capturing it, which is the right behaviour for a step whose output a human is
+/// watching; capturing step 4 wholesale to satisfy this check would trade live test progress for a
+/// census. Two small binaries run twice is the cheaper trade.
+fn the_four_rows_all_ran(root: &Path) -> bool {
+    const TITLE: &str = "tests (four-row persistence census)";
+
+    if std::env::var_os("RENVOR_TEST_REQUIRE_DATABASE").is_none() {
+        step_ok(
+            4,
+            TITLE,
+            "NOT RUN — set RENVOR_TEST_REQUIRE_DATABASE with both database URLs to require it",
+        );
+        return true;
+    }
+
+    // Group the rows by the binary that carries them, so each binary runs once.
+    let mut binaries: Vec<(&str, &str)> = FOUR_ROWS
+        .iter()
+        .map(|(package, binary, _)| (*package, *binary))
+        .collect();
+    binaries.dedup();
+
+    for (package, binary) in binaries {
+        let output = Command::new("cargo")
+            .args([
+                "test",
+                "-p",
+                package,
+                "--features",
+                "db-postgres,db-mysql",
+                "--test",
+                binary,
+            ])
+            .current_dir(root)
+            .output();
+
+        let Ok(output) = output else {
+            step_fail(
+                4,
+                TITLE,
+                &format!("`{package}/{binary}` could not be executed"),
+            );
+            return false;
+        };
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !output.status.success() {
+            step_fail(
+                4,
+                TITLE,
+                &format!("`{package}/{binary}` failed:\n{combined}"),
+            );
+            return false;
+        }
+
+        for (expected_package, expected_binary, test) in FOUR_ROWS {
+            if expected_package != package || expected_binary != binary {
+                continue;
+            }
+            // The runner's own line for a test that RAN and passed. A row that was deleted,
+            // renamed, or compiled out produces no such line.
+            let evidence = format!("test {test} ... ok");
+            if !combined.contains(&evidence) {
+                step_fail(
+                    4,
+                    TITLE,
+                    &format!(
+                        "row `{package}::{test}` did not report in. Expected the line \
+                         `{evidence}` in the runner's output. The row was removed, renamed, or \
+                         feature-gated out — and without this census the workspace test run would \
+                         simply have executed one row fewer and reported success"
+                    ),
+                );
+                return false;
+            }
+        }
+    }
+
+    step_ok(
+        4,
+        TITLE,
+        &format!("all {} rows reported in", FOUR_ROWS.len()),
+    );
     true
 }
 
