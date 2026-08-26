@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.2.0"
-status: "normative — enforced executably by `xtask`. 1.2.0 (2026-08-26) makes step 1 refuse a run without the four-row database environment, correcting a step 4 that was conditional in a sequence this contract says has no conditional steps; it is a BEHAVIOUR change and the exit code it produces is the existing 2. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+version: "1.2.1"
+status: "normative — enforced executably by `xtask`. 1.2.1 (2026-08-26) corrects the exit-code table and the fail-closed sample output, which still described exit 2 as a toolchain-only condition and printed a message the command no longer emits; a review found the drift, and it is a DOCUMENTATION correction with no change to verification behaviour. 1.2.0 (2026-08-26) makes step 1 refuse a run without the four-row database environment, correcting a step 4 that was conditional in a sequence this contract says has no conditional steps; it is a BEHAVIOUR change and the exit code it produces is the existing 2. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -124,20 +124,34 @@ Two further properties worth knowing, both verified empirically at T013:
 
 **A check that cannot run is a failure, never a skip** (FR-023).
 
-Step 1 probes for every tool the sequence needs and exits non-zero if any is absent, naming what is missing and how to install it (FR-055). The observable contract:
+Step 1 probes for every **prerequisite** the sequence needs — each tool, and the database
+environment the four-row census runs against — and exits non-zero if any is absent, naming what is
+missing and what to do about each one (FR-055). The observable contract:
 
 ```
 $ cargo xtask verify
-error: verification cannot run — required tooling is missing
+error: verification cannot run — a required prerequisite is missing
 
-  missing: lychee (link checking, step 10)
+  missing tool: lychee (link checking, step 10)
     install: cargo install lychee --locked
 
-  missing: node (documentation site, step 9)
+  missing tool: node (documentation site, step 9)
     install: see .nvmrc for the required version
+
+  missing environment: RENVOR_TEST_POSTGRES_URL (the PostgreSQL half of the four-row census)
+    setup: export RENVOR_TEST_POSTGRES_URL=postgres://user:pass@127.0.0.1:5432/renvor_test
+
+The four rows of PLAN.md §10.1 are not optional, so neither is their evidence.
+This is a refusal to verify, not a verification that covered less. Nothing here
+starts a database for you: what runs is what you provided.
 
 no checks were run. verification did not pass.
 ```
+
+**One code for both conditions, deliberately.** A missing tool and a missing database environment
+are the same fact — *the machine cannot run this sequence* — and both stop the run before any step
+executes. Splitting them would imply a caller could usefully handle one and not the other, which is
+not true of a gate whose entire contract is that it ran everything.
 
 The last line matters. A partial run that reports success is the failure mode this contract exists to prevent — an exit code of 0 must mean every step ran and every step passed.
 
@@ -147,7 +161,7 @@ The last line matters. A partial run that reports success is the failure mode th
 |---|---|
 | 0 | Every step ran and passed |
 | 1 | A step ran and failed |
-| 2 | A required toolchain is missing; no steps ran |
+| 2 | A mandatory verification prerequisite is missing — a required tool, or the four-row database environment; no steps ran |
 | 3 | The working tree was dirty after a successful run (step 11) |
 
 ## Working-tree cleanliness

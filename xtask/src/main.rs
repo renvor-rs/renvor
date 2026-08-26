@@ -1764,10 +1764,18 @@ const ROW_EVIDENCE: [(&str, &str, &str); 28] = [
 /// # Why `ok` here means the row genuinely reached a database
 ///
 /// A test that skipped would also print `ok`. It cannot skip under this gate: `support::url`
-/// **panics** when `RENVOR_TEST_REQUIRE_DATABASE` is set and a URL is absent. So the census is
-/// mandatory exactly when that variable is set, and is reported as not-run when it is not — the
-/// same contract the test harness itself applies, so a contributor without local databases still
-/// gets a usable `cargo xtask verify`.
+/// **panics** when `RENVOR_TEST_REQUIRE_DATABASE` is set and a URL is absent.
+///
+/// And that variable is no longer optional. Step 1 refuses the whole sequence with
+/// [`EXIT_TOOLING_MISSING`] — exit **2**, before any step runs — unless all three of
+/// `RENVOR_TEST_POSTGRES_URL`, `RENVOR_TEST_MYSQL_URL` and `RENVOR_TEST_REQUIRE_DATABASE` are set
+/// and non-empty. So reaching this function at all means the census was mandatory.
+///
+/// **The paragraph that used to stand here said the opposite** — that the census *"is reported as
+/// not-run when it is not ... so a contributor without local databases still gets a usable
+/// `cargo xtask verify`"*. That was the behaviour this correction removed, and a review found the
+/// comment still describing it. A doc comment that survives the behaviour it documents is how the
+/// next reader concludes the skip is still available.
 ///
 /// # It re-runs two test binaries
 ///
@@ -2342,6 +2350,96 @@ mod tests {
             "the contract publishes {steps} steps but TOTAL_STEPS is {}. One of them was changed \
              without the other; they are the same promise stated twice.",
             super::TOTAL_STEPS
+        );
+    }
+
+    /// The published exit-code tables describe what the command actually does with exit 2.
+    ///
+    /// # The drift this catches
+    ///
+    /// `contracts/verification-sequence.md` described exit **2** as *"a required toolchain is
+    /// missing; no steps ran"*. Phase 008 widened the condition: step 1 now also refuses when the
+    /// four-row database environment is absent, and returns the same code. So the contract named
+    /// one of the two conditions that produce it, and a reader diagnosing a `2` had no reason to
+    /// look at their environment variables.
+    ///
+    /// The same code is published in three places — this contract, `CONTRIBUTING.md`, and the
+    /// doc comment on `EXIT_TOOLING_MISSING` — and nothing bound them together. Two of the three
+    /// were updated. This is what notices next time.
+    ///
+    /// **What this does not do.** It asserts the two conditions are *named*, not that the wording
+    /// is good. A table saying `2` means "tool or database" while the implementation returned it
+    /// for something else entirely would still pass; the behavioural proof is
+    /// `a_missing_database_prerequisite_can_never_yield_exit_zero`.
+    #[test]
+    fn the_published_exit_codes_describe_what_the_command_does() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+        const CONTRIBUTING: &str = include_str!("../../CONTRIBUTING.md");
+
+        /// The meaning column of the exit-code row for `code`.
+        ///
+        /// Keyed on the row having exactly TWO cells. Both documents carry other numbered tables —
+        /// the contract's step table has four columns and legitimately has a row numbered 2 — and
+        /// an earlier parser in this file was written after exactly that collision.
+        fn meaning_of(markdown: &str, code: u8) -> Option<String> {
+            markdown.lines().find_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+                    return None;
+                }
+                let cells: Vec<&str> = trimmed
+                    .trim_matches('|')
+                    .split('|')
+                    .map(str::trim)
+                    .collect();
+                if cells.len() != 2 {
+                    return None;
+                }
+                (cells[0].trim_matches('`').parse::<u8>().ok()? == code)
+                    .then(|| cells[1].to_owned())
+            })
+        }
+
+        // POSITIVE CONTROLS. A parser that matched nothing, or that matched the step table
+        // instead, would make every assertion below vacuous. Row 1 must be found in both, and it
+        // must be the exit-code row rather than the contract's step row named "Formatting".
+        for (label, markdown) in [("contract", CONTRACT), ("guide", CONTRIBUTING)] {
+            let one = meaning_of(markdown, 1)
+                .unwrap_or_else(|| panic!("the {label} exit-code table has no row for 1"));
+            assert!(
+                one.contains("failed"),
+                "the {label} row for 1 reads as the step table rather than the exit-code table"
+            );
+        }
+
+        for (label, markdown) in [("contract", CONTRACT), ("guide", CONTRIBUTING)] {
+            let two = meaning_of(markdown, 2)
+                .unwrap_or_else(|| panic!("the {label} exit-code table has no row for 2"));
+            let lowered = two.to_lowercase();
+            assert!(
+                lowered.contains("tool"),
+                "the {label} row for 2 does not name the missing-tooling condition"
+            );
+            assert!(
+                lowered.contains("database"),
+                "the {label} row for 2 names only the tooling condition, but \
+                 `missing_database_prerequisites` returns the same code for an absent four-row \
+                 environment"
+            );
+        }
+
+        // The third authority: the constant's own documentation, which an author reads before the
+        // published tables.
+        const SOURCE: &str = include_str!("main.rs");
+        let declaration = SOURCE
+            .lines()
+            .zip(SOURCE.lines().skip(1))
+            .find(|(_, next)| next.contains("const EXIT_TOOLING_MISSING"))
+            .map(|(doc, _)| doc.to_lowercase())
+            .expect("EXIT_TOOLING_MISSING is declared with a doc comment above it");
+        assert!(
+            declaration.contains("database"),
+            "EXIT_TOOLING_MISSING's own documentation names only the tooling condition"
         );
     }
 
