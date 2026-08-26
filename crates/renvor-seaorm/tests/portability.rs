@@ -35,7 +35,7 @@ macro_rules! engine {
             use renvor_database::{Database as _, PoolSettings, UnitOfWork as _};
             use renvor_seaorm::error::classify_db_error;
             use renvor_testkit::portability::{
-                self, OversizedIdentifier, PortabilityFixture, UnnamedKeyUpsert,
+                self, JsonRoundTrip, OversizedIdentifier, PortabilityFixture, UnnamedKeyUpsert,
             };
             use sea_orm::ConnectionTrait as _;
 
@@ -94,6 +94,35 @@ macro_rules! engine {
                         .expect("a row")
                         .try_get("", column)
                         .expect("decodes")
+                }
+
+                /// Offers one document to a JSON type and reports what the engine did with it.
+                ///
+                /// # The document is a BOUND VALUE, not text spliced into the statement
+                ///
+                /// `Statement::from_sql_and_values` rather than `from_string`, and for the same
+                /// reason the direct-SQLx twin binds: MySQL reads a backslash inside a string
+                /// literal as an escape and PostgreSQL does not, so an interpolated `u0000`
+                /// escape would reach the two engines as two different documents and the probe
+                /// would be comparing two different questions.
+                ///
+                /// A refusal is returned rather than unwrapped — several documents in the table
+                /// are expected to be refused, and that is the measurement.
+                async fn json(&self, sql: &str, document: &str) -> JsonRoundTrip {
+                    let connection = self.database.acquire().await.expect("acquires");
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        sql,
+                        [document.into()],
+                    );
+                    match connection.query_one_raw(statement).await {
+                        Ok(row) => JsonRoundTrip::Stored(
+                            row.expect("the JSON probe must return a row")
+                                .try_get("", "doc")
+                                .expect("decodes"),
+                        ),
+                        Err(error) => JsonRoundTrip::Refused(classify_db_error(&error).kind()),
+                    }
                 }
             }
 
@@ -235,13 +264,13 @@ macro_rules! engine {
                     }
                 }
 
-                async fn json_round_trip(&self) -> String {
-                    self.text($json_ok, "doc").await
+                async fn json_round_trip(&self, document: &str) -> JsonRoundTrip {
+                    self.json($json_ok, document).await
                 }
 
-                async fn json_round_trip_unadvised(&self) -> Option<String> {
+                async fn json_round_trip_unadvised(&self, document: &str) -> Option<JsonRoundTrip> {
                     let sql: Option<&str> = $json_bad;
-                    Some(self.text(sql?, "doc").await)
+                    Some(self.json(sql?, document).await)
                 }
             }
 
@@ -281,8 +310,10 @@ engine!(
      WHERE table_name = 'rv_pt_ts' AND column_name = 'a'",
     "INSERT INTO rv_pt_upsert VALUES (2, 'x', 9) ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v",
     "SELECT relname::text AS name FROM pg_class WHERE relname LIKE 'rv_pt_a%' LIMIT 1",
-    r#"SELECT ('{"b":1,"a":2,"a":3}'::jsonb)::text AS doc"#,
-    Some(r#"SELECT ('{"b":1,"a":2,"a":3}'::json)::text AS doc"#)
+    // `$1::text::jsonb`, not `$1::jsonb`: the second would have PostgreSQL infer the PARAMETER
+    // as `jsonb`, and the driver would then be asked to send a `jsonb` from a Rust `&str`.
+    "SELECT ($1::text::jsonb)::text AS doc",
+    Some("SELECT ($1::text::json)::text AS doc")
 );
 
 engine!(
@@ -301,6 +332,6 @@ engine!(
     "INSERT INTO rv_pt_upsert VALUES (2, 'x', 9) ON DUPLICATE KEY UPDATE v = 9",
     "SELECT table_name AS name FROM information_schema.tables \
      WHERE table_schema = DATABASE() AND table_name LIKE 'rv_pt_a%' LIMIT 1",
-    r#"SELECT CAST(CAST('{"b":1,"a":2,"a":3}' AS JSON) AS CHAR) AS doc"#,
+    "SELECT CAST(CAST(? AS JSON) AS CHAR) AS doc",
     None
 );

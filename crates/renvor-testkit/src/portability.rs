@@ -59,6 +59,169 @@ pub enum OversizedIdentifier {
     Truncated(String),
 }
 
+/// What an engine did with one JSON document offered to a JSON column type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum JsonRoundTrip {
+    /// Accepted, and read back as this text.
+    Stored(String),
+    /// Refused, with the kind Renvor classified the refusal as.
+    Refused(DatabaseErrorKind),
+}
+
+/// What the two engines are **measured** to do with one document.
+///
+/// # Every variant here was produced by running the document, not by reasoning about it
+///
+/// This enum is why the JSON section of `contracts/database-portability.md` can state a subset
+/// rather than a slogan. Each document below carries the answer both engines actually gave,
+/// including the three cases where they disagree — and a disagreement is asserted just as firmly
+/// as an agreement, so an engine that stopped disagreeing fails the build and sends someone back
+/// to re-measure the contract rather than letting it drift.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JsonExpectation {
+    /// Inside the portable subset: both engines accept it and return exactly this text.
+    Portable(&'static str),
+    /// Outside it because **both** engines refuse the document.
+    RefusedByBoth,
+    /// Outside it because PostgreSQL refuses what MySQL accepts.
+    ///
+    /// Carries MySQL's answer, so the case is a measurement on both sides rather than a
+    /// measurement on one and an absence on the other.
+    RefusedByPostgresOnly(&'static str),
+    /// Outside it because both accept the document and return **different** text.
+    Divergent {
+        /// PostgreSQL `jsonb`'s answer.
+        postgres: &'static str,
+        /// MySQL `JSON`'s answer.
+        mysql: &'static str,
+    },
+}
+
+/// One measured document: what is sent, what comes back, and what the case establishes.
+#[derive(Clone, Copy, Debug)]
+pub struct JsonProbe {
+    /// The document as an application would send it.
+    pub document: &'static str,
+    /// What each engine does with it.
+    pub expectation: JsonExpectation,
+    /// Why this row is in the table.
+    pub because: &'static str,
+}
+
+/// The measured JSON boundary between the two engines.
+///
+/// # The four exclusions are the point of the table
+///
+/// The contract used to say the two types accept "every same JSON document" and normalise
+/// identically, on the evidence of a single `{"b":1,"a":2,"a":3}` probe. A review found the first
+/// half false — PostgreSQL text cannot hold a NUL, so `jsonb` refuses the `u0000` escape where
+/// MySQL stores it — and measuring the rest of the space to answer that finding turned up two
+/// divergences the review had not named:
+///
+/// - a number written with an **exponent**, or with a **trailing zero**, comes back as different
+///   text from each engine: `1E2` is `100` on PostgreSQL and `100.0` on MySQL;
+/// - a non-integer number outside the exact range of an IEEE-754 double is kept exactly by
+///   PostgreSQL, whose `jsonb` numbers are `numeric`, and **rounded** by MySQL, whose non-integer
+///   JSON numbers are doubles. That one is silent data loss rather than a formatting difference.
+///
+/// Integers **within** the signed 64-bit range survive both engines exactly, which is why the
+/// portable subset admits those and nothing else numeric.
+///
+/// # Why the exclusions are asserted rather than merely written down
+///
+/// A contract that only lists what works cannot tell "this was never portable" from "this stopped
+/// being portable". Each excluded document below is executed on every run with its measured
+/// divergence as the expected answer, so the day an engine changes its mind the gate says so.
+pub const JSON_PROBES: &[JsonProbe] = &[
+    JsonProbe {
+        document: r#"{"b":1,"a":2,"a":3}"#,
+        expectation: JsonExpectation::Portable(r#"{"a": 3, "b": 1}"#),
+        because: "keys are sorted and duplicates resolved last-wins, identically",
+    },
+    JsonProbe {
+        document: r#"{  "a" : 1 ,  "b" : [ 1 , 2 ]  }"#,
+        expectation: JsonExpectation::Portable(r#"{"a": 1, "b": [1, 2]}"#),
+        because: "insignificant whitespace is discarded, identically",
+    },
+    JsonProbe {
+        document: r#"{"n":{"x":[1,2,{"y":null}]},"t":true,"f":false,"s":"plain"}"#,
+        expectation: JsonExpectation::Portable(
+            r#"{"f": false, "n": {"x": [1, 2, {"y": null}]}, "s": "plain", "t": true}"#,
+        ),
+        because: "nested objects, arrays and the three literals round-trip identically",
+    },
+    JsonProbe {
+        document: r#"{"u":"héllo → 😀"}"#,
+        expectation: JsonExpectation::Portable(r#"{"u": "héllo → 😀"}"#),
+        because: "non-ASCII text, including a character outside the basic plane, survives both",
+    },
+    JsonProbe {
+        document: r#"{"k":"a\tb \"q\" c\\d"}"#,
+        expectation: JsonExpectation::Portable(r#"{"k": "a\tb \"q\" c\\d"}"#),
+        because: "the string escapes both engines re-emit as escapes agree",
+    },
+    JsonProbe {
+        document: r#"{"k":"\u0001"}"#,
+        expectation: JsonExpectation::Portable(r#"{"k": "\u0001"}"#),
+        because: "a control character held as a six-character u-escape is re-emitted the same way",
+    },
+    JsonProbe {
+        document: r#"{"i":9007199254740993}"#,
+        expectation: JsonExpectation::Portable(r#"{"i": 9007199254740993}"#),
+        because: "an integer past 2^53 is exact on both: MySQL keeps JSON integers as integers",
+    },
+    JsonProbe {
+        document: r#"[1,2,3]"#,
+        expectation: JsonExpectation::Portable(r#"[1, 2, 3]"#),
+        because: "a top-level array is a whole document on both engines",
+    },
+    JsonProbe {
+        document: r#"null"#,
+        expectation: JsonExpectation::Portable(r#"null"#),
+        because: "a top-level literal is a document, and is not SQL NULL",
+    },
+    JsonProbe {
+        document: r#"{}"#,
+        expectation: JsonExpectation::Portable(r#"{}"#),
+        because: "the empty object is not a special case on either engine",
+    },
+    // ------------------------------------------------------------- the four measured exclusions
+    JsonProbe {
+        document: r#"{"z":"\u0000"}"#,
+        expectation: JsonExpectation::RefusedByPostgresOnly(r#"{"z": "\u0000"}"#),
+        because: "PostgreSQL text cannot represent NUL, so jsonb refuses what MySQL stores",
+    },
+    JsonProbe {
+        document: r#"{"e":1E2}"#,
+        expectation: JsonExpectation::Divergent {
+            postgres: r#"{"e": 100}"#,
+            mysql: r#"{"e": 100.0}"#,
+        },
+        because: "exponent notation is re-emitted differently, so the two texts stop matching",
+    },
+    JsonProbe {
+        document: r#"{"n":1.50}"#,
+        expectation: JsonExpectation::Divergent {
+            postgres: r#"{"n": 1.50}"#,
+            mysql: r#"{"n": 1.5}"#,
+        },
+        because: "PostgreSQL keeps the trailing zero, because its JSON numbers are numeric",
+    },
+    JsonProbe {
+        document: r#"{"n":0.12345678901234567890123456789}"#,
+        expectation: JsonExpectation::Divergent {
+            postgres: r#"{"n": 0.12345678901234567890123456789}"#,
+            mysql: r#"{"n": 0.12345678901234568}"#,
+        },
+        because: "MySQL rounds a non-integer to a double, which is LOSS and not formatting",
+    },
+    JsonProbe {
+        document: r#"{"s":"\ud800"}"#,
+        expectation: JsonExpectation::RefusedByBoth,
+        because: "an unpaired surrogate is refused by both, so it is not a portability difference",
+    },
+];
+
 /// The engine probes the portability contract needs.
 ///
 /// Every method is one measurement. They are deliberately *questions about the server* rather than
@@ -89,18 +252,26 @@ pub trait PortabilityFixture: Sync {
     /// What the engine does with an identifier one character past its limit.
     fn oversized_identifier(&self) -> impl Future<Output = OversizedIdentifier> + Send;
 
-    /// `{"b":1,"a":2,"a":3}` stored in the engine's **recommended** JSON type and read back.
+    /// `document` offered to the engine's **recommended** JSON type, and read back.
     ///
-    /// Recommended, not default: PostgreSQL offers two, and only one of them is portable. See
-    /// [`json_normalisation_agrees_across_engines`].
-    fn json_round_trip(&self) -> impl Future<Output = String> + Send;
+    /// Recommended, not default: PostgreSQL offers two, and only one of them is portable.
+    ///
+    /// # The probe reports a refusal rather than panicking on one
+    ///
+    /// Refusal is a measurement here, not a failure — [`JSON_PROBES`] contains documents one
+    /// engine is expected to reject. A fixture that unwrapped would turn the most interesting
+    /// half of the table into a crash.
+    fn json_round_trip(&self, document: &str) -> impl Future<Output = JsonRoundTrip> + Send;
 
-    /// The same document stored in a type the contract advises **against**, or `None` if the
+    /// The same document offered to a type the contract advises **against**, or `None` if the
     /// engine has no such type.
     ///
     /// The control. Without it, an assertion that the recommended types agree could be satisfied
     /// by an engine that had only one type and no choice to get wrong.
-    fn json_round_trip_unadvised(&self) -> impl Future<Output = Option<String>> + Send;
+    fn json_round_trip_unadvised(
+        &self,
+        document: &str,
+    ) -> impl Future<Output = Option<JsonRoundTrip>> + Send;
 }
 
 /// NULLs sort to opposite ends, and each engine is pinned to the end it actually uses.
@@ -293,34 +464,79 @@ pub async fn an_oversized_identifier_is_refused_or_shortened<F: PortabilityFixtu
     }
 }
 
-/// The recommended JSON type round-trips **identically** on both engines.
+/// The measured JSON boundary holds: the portable subset agrees exactly, and the exclusions do
+/// not.
 ///
-/// # A portable answer exists here, unlike everywhere else in this file
+/// # A portable answer exists here, but it is a subset and not the whole type
 ///
-/// MySQL's `JSON` normalises: keys sorted, duplicates resolved last-wins. PostgreSQL offers a type
-/// that does the same (`jsonb`) and one that does not (`json`, which keeps the received text
-/// verbatim, duplicates and all). Choosing `jsonb` makes the two engines agree exactly, which is
-/// why the contract requires it and why this assertion is an equality rather than a table.
+/// MySQL's `JSON` normalises: keys sorted, duplicates resolved last-wins, whitespace discarded.
+/// PostgreSQL offers a type that does the same (`jsonb`) and one that does not (`json`, which
+/// keeps the received text verbatim, duplicates and all). Choosing `jsonb` makes the two engines
+/// agree exactly **for the documents in [`JSON_PROBES`] marked portable** — and disagree, in three
+/// measured ways, for the rest.
 ///
-/// The unadvised type is measured as a **control**: if it produced the same string, this assertion
-/// would be passing for free.
+/// **The claim this replaced was that the two types accept every same document and normalise
+/// identically.** It rested on one probe. A review found the counterexample, and measuring the
+/// space turned up two more; the table now carries all of them, and every one of them executes.
+///
+/// The unadvised type is measured as a **control**: if it produced the same string as the
+/// recommended one, the recommendation would be passing for free.
 pub async fn json_normalisation_agrees_across_engines<F: PortabilityFixture>(fixture: &F) {
-    /// What both engines must return for `{"b":1,"a":2,"a":3}`: sorted, deduplicated, last wins.
-    const NORMALISED: &str = r#"{"a": 3, "b": 1}"#;
+    let kind = fixture.database().kind();
 
-    let observed = fixture.json_round_trip().await;
-    assert_eq!(
-        observed,
-        NORMALISED,
-        "the recommended JSON type on {:?} returned `{observed}`. Both engines must normalise to \
-         the same text, or a document written on one and compared on the other differs without \
-         its content having changed",
-        fixture.database().kind()
-    );
+    for probe in JSON_PROBES {
+        // What THIS engine is expected to do with this document, taken from the pair.
+        let expected: Option<&str> = match (probe.expectation, kind) {
+            (JsonExpectation::Portable(text), _) => Some(text),
+            (JsonExpectation::RefusedByBoth, _) => None,
+            (JsonExpectation::RefusedByPostgresOnly(_), DatabaseKind::Postgres) => None,
+            (JsonExpectation::RefusedByPostgresOnly(text), DatabaseKind::MySql) => Some(text),
+            (JsonExpectation::Divergent { postgres, .. }, DatabaseKind::Postgres) => Some(postgres),
+            (JsonExpectation::Divergent { mysql, .. }, DatabaseKind::MySql) => Some(mysql),
+            // `DatabaseKind` is `#[non_exhaustive]` on purpose. A third engine must be measured
+            // against every document in the table rather than inheriting one of these two.
+            (_, kind) => panic!(
+                "{kind:?} has never been measured against the JSON boundary. Run every document \
+                 in `JSON_PROBES` against it and record what it did"
+            ),
+        };
 
-    if let Some(unadvised) = fixture.json_round_trip_unadvised().await {
+        let observed = fixture.json_round_trip(probe.document).await;
+        match (expected, &observed) {
+            (Some(text), JsonRoundTrip::Stored(actual)) => assert_eq!(
+                actual, text,
+                "{kind:?} stored `{}` as `{actual}` and the contract records `{text}`. This \
+                 document is in the table because {}",
+                probe.document, probe.because
+            ),
+            (None, JsonRoundTrip::Refused(_)) => {}
+            (Some(text), JsonRoundTrip::Refused(refusal)) => panic!(
+                "{kind:?} REFUSED `{}` as {refusal:?}, and the contract records it storing \
+                 `{text}`. An engine that started refusing a document the portable subset admits \
+                 breaks applications that were told it was safe",
+                probe.document
+            ),
+            (None, JsonRoundTrip::Stored(actual)) => panic!(
+                "{kind:?} ACCEPTED `{}` and returned `{actual}`, and the contract records it \
+                 refusing. The exclusion may no longer be needed — but it must be re-measured on \
+                 BOTH engines and written down, not quietly dropped. It is in the table because {}",
+                probe.document, probe.because
+            ),
+        }
+    }
+
+    // THE CONTROL, on the document whose whole subject is normalisation.
+    let normalising = JSON_PROBES[0];
+    let JsonExpectation::Portable(normalised) = normalising.expectation else {
+        panic!("the control assumes the first probe is a portable one: {normalising:?}")
+    };
+    if let Some(unadvised) = fixture
+        .json_round_trip_unadvised(normalising.document)
+        .await
+    {
         assert_ne!(
-            unadvised, NORMALISED,
+            unadvised,
+            JsonRoundTrip::Stored(normalised.to_owned()),
             "the type this contract advises against produced the same text as the one it \
              recommends, so the recommendation is currently untested. Either the engine changed \
              or the probe is pointed at the wrong type"

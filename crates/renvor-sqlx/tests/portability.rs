@@ -32,7 +32,7 @@ macro_rules! engine {
         mod $module {
             use renvor_database::{Database as _, PoolSettings, UnitOfWork as _};
             use renvor_testkit::portability::{
-                self, OversizedIdentifier, PortabilityFixture, UnnamedKeyUpsert,
+                self, JsonRoundTrip, OversizedIdentifier, PortabilityFixture, UnnamedKeyUpsert,
             };
             use sqlx::AssertSqlSafe;
 
@@ -62,6 +62,32 @@ macro_rules! engine {
                         .fetch_one(self.database.pool())
                         .await
                         .expect("the probe's own query must be readable")
+                }
+
+                /// Offers one document to a JSON type and reports what the engine did with it.
+                ///
+                /// # The document is BOUND, never interpolated into the statement
+                ///
+                /// MySQL treats a backslash inside a string literal as an escape and PostgreSQL,
+                /// with `standard_conforming_strings` on, does not. The same JSON text written
+                /// into the two statements would therefore not be the same **document** — the
+                /// `u0000` escape would survive on one engine and be eaten on the other, and the
+                /// probe would be comparing two different questions. A parameter is the only way
+                /// to ask both engines the identical one.
+                ///
+                /// A refusal is returned rather than unwrapped: some documents in the table are
+                /// expected to be refused, and that is the measurement.
+                async fn json(&self, sql: &str, document: &str) -> JsonRoundTrip {
+                    match sqlx::query_scalar::<_, String>(AssertSqlSafe(sql.to_owned()))
+                        .bind(document)
+                        .fetch_one(self.database.pool())
+                        .await
+                    {
+                        Ok(text) => JsonRoundTrip::Stored(text),
+                        Err(error) => JsonRoundTrip::Refused(
+                            renvor_sqlx::error::classify_error(&error).kind(),
+                        ),
+                    }
                 }
             }
 
@@ -198,22 +224,13 @@ macro_rules! engine {
                     }
                 }
 
-                async fn json_round_trip(&self) -> String {
-                    sqlx::query_scalar(AssertSqlSafe($json_ok.to_owned()))
-                        .fetch_one(self.database.pool())
-                        .await
-                        .expect("the JSON probe must run")
+                async fn json_round_trip(&self, document: &str) -> JsonRoundTrip {
+                    self.json($json_ok, document).await
                 }
 
-                async fn json_round_trip_unadvised(&self) -> Option<String> {
+                async fn json_round_trip_unadvised(&self, document: &str) -> Option<JsonRoundTrip> {
                     let sql: Option<&str> = $json_bad;
-                    let sql = sql?;
-                    Some(
-                        sqlx::query_scalar(AssertSqlSafe(sql.to_owned()))
-                            .fetch_one(self.database.pool())
-                            .await
-                            .expect("the control probe must run"),
-                    )
+                    Some(self.json(sql?, document).await)
                 }
             }
 
@@ -254,9 +271,11 @@ engine!(
      WHERE table_name = 'rv_pt_ts' AND column_name = 'a'",
     "INSERT INTO rv_pt_upsert VALUES (2, 'x', 9) ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v",
     "SELECT relname::text FROM pg_class WHERE relname LIKE 'rv_pt_a%' LIMIT 1",
-    r#"SELECT ('{"b":1,"a":2,"a":3}'::jsonb)::text"#,
+    // `$1::text::jsonb`, not `$1::jsonb`: the second would have PostgreSQL infer the PARAMETER
+    // as `jsonb`, and the driver would then be asked to send a `jsonb` from a Rust `&str`.
+    "SELECT ($1::text::jsonb)::text",
     // PostgreSQL is the only engine here with a second, NON-portable JSON type.
-    Some(r#"SELECT ('{"b":1,"a":2,"a":3}'::json)::text"#)
+    Some("SELECT ($1::text::json)::text")
 );
 
 engine!(
@@ -276,7 +295,7 @@ engine!(
     "INSERT INTO rv_pt_upsert VALUES (2, 'x', 9) ON DUPLICATE KEY UPDATE v = 9",
     "SELECT table_name FROM information_schema.tables \
      WHERE table_schema = DATABASE() AND table_name LIKE 'rv_pt_a%' LIMIT 1",
-    r#"SELECT CAST(CAST('{"b":1,"a":2,"a":3}' AS JSON) AS CHAR)"#,
+    "SELECT CAST(CAST(? AS JSON) AS CHAR)",
     // MySQL has one JSON type, so there is no unadvised alternative to control against.
     None
 );
