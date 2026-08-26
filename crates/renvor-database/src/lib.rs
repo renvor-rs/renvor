@@ -84,7 +84,7 @@ crate::closed_named_enum! {
     ///
     /// # Declared rather than written out
     ///
-    /// Through [`closed_named_enum`](crate::closed_named_enum), for the same reason as
+    /// Through [`closed_named_enum`], for the same reason as
     /// [`DatabaseAdapter`]: this type is a rendered field of [`StartupDiagnostic`], so a variant
     /// that existed but was absent from `ALL` would be invisible to the exhaustive redaction
     /// enumeration that reads `ALL`.

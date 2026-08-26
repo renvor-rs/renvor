@@ -211,6 +211,27 @@ in both adapters, and it is mutation-proven against silence as well as against l
   One of the two had been there since the module was written and only became an error when the
   import landed. Fixed by removing both explicit targets. **The failed run stays in this record**;
   the rerun passing is not a reason to delete it.
+- **The second correction round's first gate run FAILED on both toolchains**, at two independent
+  gates, and both failures were in the files added to *fix* the P1:
+  - **Step 4 / `renvor-core`'s credential-diagnostics gate.** Both new
+    `telemetry_redaction.rs` files plant `hunter2CanaryDoNotLeak`, which puts them in the gate's
+    scope, and six of their assertion messages broke its rules — four interpolating `event_index`,
+    a name absent from the `PERMITTED` allowlist, and two using a **bare positional `{}`**, which
+    the gate always refuses because it reads text and cannot see what expression fills the slot.
+    **This is the THIRD time in this phase that this gate has caught this class**, and the first
+    time it caught the positional form. Fixed by renaming to `position` and naming the count.
+  - **Rustdoc, `-D warnings`.** `redundant explicit link target` at `lib.rs:87`. Removing the
+    explicit target everywhere then produced the opposite error — `unresolved link` — at
+    `startup.rs:69` and `:88`. The asymmetry is real: a doc comment passed **through a macro
+    invocation** resolves a bare `[`closed_named_enum`]` at the crate root but not in a submodule,
+    while an ordinary doc comment in the same submodule resolves it fine. The explicit path is kept
+    exactly where the expansion needs it and dropped where it is redundant.
+
+  **Both failures stay in this record.** The rerun on the corrected tree is reported separately;
+  the run that failed is not deleted because it passed the second time.
+- **One gate run was killed mid-step-4 by the harness and is DISCARDED, not reported.** Nothing was
+  edited and the tree was unchanged, so it is neither a pass nor a failure — it is an incomplete
+  measurement, and the same treatment M-27b's interrupted first attempt received.
 - **The first review round and a fully green CI both passed a P1.** The tree at `0c88b39` had
   13/13 CI checks green, ten round-one findings dispositioned, and both adapters copying driver
   error text into telemetry against a constitutional prohibition. It is recorded here rather than

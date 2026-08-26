@@ -396,7 +396,7 @@ mod tests {
     /// test here reads `ALL`. A variant absent from `ALL` was a variant no assertion could reach.
     ///
     /// The correction is in the declaration, not in this test:
-    /// [`closed_named_enum`](crate::closed_named_enum) generates the enum, `ALL` and `as_str` from
+    /// [`closed_named_enum`] generates the enum, `ALL` and `as_str` from
     /// one list, so "present in the enum but absent from `ALL`" is no longer expressible and a
     /// data-bearing variant is a macro error. Re-running M-24b against the declared form now fails
     /// with *"no rules expected `(`"* before any test runs.

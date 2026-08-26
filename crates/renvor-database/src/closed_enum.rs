@@ -1,6 +1,6 @@
 //! One declaration for a closed enum, its exhaustive list, and its rendered names.
 //!
-//! See [`closed_named_enum`](crate::closed_named_enum) for what it generates and why.
+//! See [`closed_named_enum`] for what it generates and why.
 
 /// Declares a fieldless enum together with `ALL` and `as_str`, from a single list.
 ///

@@ -201,10 +201,10 @@ fn no_public_classifier_puts_driver_text_into_telemetry() {
     let cases = cases();
 
     // POSITIVE CONTROL. An empty case list would make every assertion below vacuously true.
+    let count = cases.len();
     assert!(
-        cases.len() >= 6,
-        "the case list covers only {} classifier invocations; it is not exercising this crate",
-        cases.len()
+        count >= 6,
+        "the case list covers only {count} classifier invocations; it is not exercising this crate"
     );
 
     for (index, (label, run)) in cases.iter().enumerate() {
@@ -219,7 +219,7 @@ fn no_public_classifier_puts_driver_text_into_telemetry() {
              below would hold vacuously"
         );
 
-        for (event_index, fields) in events.iter().enumerate() {
+        for (position, fields) in events.iter().enumerate() {
             for (name, value) in fields {
                 for (needle_index, needle) in canaries().into_iter().enumerate() {
                     // Neither the field value nor the needle is interpolated. If this fails, the
@@ -227,7 +227,7 @@ fn no_public_classifier_puts_driver_text_into_telemetry() {
                     // the log of the failing run — the exact defect this file guards against.
                     assert!(
                         !value.contains(needle),
-                        "case {index} ({label}) event {event_index} field {needle_index} carried \
+                        "case {index} ({label}) event {position} field {needle_index} carried \
                          a planted secret into telemetry"
                     );
                 }
@@ -235,7 +235,7 @@ fn no_public_classifier_puts_driver_text_into_telemetry() {
                 // currently safe, because the name is the contract the next author reads.
                 assert!(
                     !name.contains("driver_error") && !name.contains("migrate_error"),
-                    "case {index} ({label}) event {event_index} still declares a raw-error field"
+                    "case {index} ({label}) event {position} still declares a raw-error field"
                 );
             }
         }
@@ -319,11 +319,11 @@ async fn a_migration_source_failure_does_not_put_the_path_into_telemetry() {
         "the migration failure emitted no telemetry, so the assertion below would hold vacuously"
     );
 
-    for (event_index, fields) in events.iter().enumerate() {
+    for (position, fields) in events.iter().enumerate() {
         for (_, value) in fields {
             assert!(
                 !value.contains(CREDENTIAL_CANARY),
-                "event {event_index} carried the migration source path into telemetry"
+                "event {position} carried the migration source path into telemetry"
             );
         }
     }
