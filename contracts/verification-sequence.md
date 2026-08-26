@@ -25,10 +25,10 @@ Executed in order. None is conditional. None is skipped.
 | 1 | Toolchain probe | — | Rust (pinned), Node LTS |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
-| 4 | Tests | `cargo test --workspace --all-features` | Rust |
+| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every (row, suite) pair must report in | Rust |
 | 5 | API documentation | `cargo doc --workspace --no-deps` with warnings denied | Rust |
 | 6 | Dependency and licence policy | `cargo deny check` | `cargo-deny` |
-| 7 | Architecture invariants | crate DAG, facade isolation, lean compile, publishable dependencies, instability wording, executable name — each with a control | Rust |
+| 7 | Architecture invariants | crate DAG, transport and persistence isolation, per-driver adapter compiles, facade isolation, lean compile, publishable dependencies, required package metadata, instability wording, executable name — each with a control | Rust |
 | 8 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
 | 9 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
 | 10 | Link check | `lychee` over the built documentation output | `lychee` |
@@ -38,6 +38,13 @@ Executed in order. None is conditional. None is skipped.
 The omission is recorded rather than quietly filled in, because a contract that under-describes
 what the command does is the same defect class as a command that under-performs what the contract
 promises.
+
+**Rows 4 and 7 under-described the command until Phase 008.** Step 4 had grown two sub-steps — the
+end-to-end relay, and the four-row persistence census — and step 7's list had never included
+transport and persistence isolation or required package metadata, both of which it had been
+running. Phase 008 added the per-driver adapter compile to step 7 and brought both rows into line
+with what `xtask` actually does. Recorded for the same reason as the paragraph above: the gap
+between the two is the defect, whichever side it opens on.
 
 ### There is no repository cross-reference step
 
