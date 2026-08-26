@@ -219,8 +219,6 @@ The initial feature vocabulary is:
 ```text
 transport-rest
 transport-graphql
-orm-sqlx
-orm-seaorm
 db-postgres
 db-mysql
 auth
@@ -230,6 +228,12 @@ capability-mail
 capability-storage
 observability-otel
 ```
+
+**Persistence model selection is not a feature flag.** `orm-sqlx` and `orm-seaorm` appeared in the list above until Phase 008 and were never implemented. Accepted **ADR-0020** settled the question the other way: *"A sibling crate. `renvor-seaorm` implements the same `renvor-database` ports that `renvor-sqlx` implements. Neither depends on the other."* A project selects its persistence model by depending on one adapter crate, and `xtask` step 7 asserts in both directions that neither adapter resolves the other.
+
+`db-postgres` and `db-mysql` remain features, and remain features **of each adapter** — they select a driver within a chosen crate, which is what a feature is for.
+
+This paragraph is a **reconciliation with an accepted decision, not a new one.** ADR-0020 was accepted in Phase 007; this list simply had not been brought into line with it, so two authorities described the same choice differently and the one nobody re-read was wrong.
 
 Frontend templates are CLI assets, not default dependencies of Rust runtime crates. The workspace must test minimal features, each supported feature, supported combinations, and `--all-features`. Mutually exclusive options produce compile-time or generation-time errors with corrective text.
 
