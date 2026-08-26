@@ -21,13 +21,30 @@
 //! # Synchronisation is a rendezvous, never a sleep
 //!
 //! A race arranged with `sleep` is not a race: it either passes because the timing happened to
-//! work on this machine, or it fails on a loaded runner and gets dismissed as flaky. Every writer
-//! below opens its transaction and then waits on a [`tokio::sync::Barrier`], so **all**
-//! transactions are open before **any** statement is sent. The barrier releases when the last
-//! writer arrives, which is a fact rather than a duration.
+//! work on this machine, or it fails on a loaded runner and gets dismissed as flaky. Every racing
+//! caller below waits on a [`tokio::sync::Barrier`] instead, which releases when the last of them
+//! arrives — a fact rather than a duration.
 //!
 //! There is no sleep anywhere in this module, and no retry backoff. A retry that waited would be
 //! measuring the wait.
+//!
+//! ## The two rendezvous are at different points, and the difference is the whole property
+//!
+//! [`race_for`] waits **after `begin` and before its insert**: what it measures is contention for
+//! a key, so what must be true at the barrier is that every transaction is already open.
+//!
+//! [`ensure`] waits **after its first `find` has missed**. That is later, and it has to be. An
+//! ensure's interesting path is *lose the race, then observe the winner*, and a caller only takes
+//! it if it looked for the row **before** anybody committed one. Rendezvous any earlier and the
+//! first caller may create and commit while the others are still queued behind it; they then find
+//! the row on their first look, return `Observed`, and the duplicate-and-retry path — the thing
+//! the deliverable is about — never executes.
+//!
+//! **This module used to drive the four ensures with a bare `tokio::join!` and no rendezvous at
+//! all**, and a review found that `join!` guarantees no such ordering: the assertions it made
+//! ("one creator, three observers, one row") are all satisfied by four callers running one after
+//! another. The correction is the barrier below, and the assertions that make a first-attempt
+//! `Observed` a failure rather than a pass.
 //!
 //! # This crate still names no driver
 //!
@@ -293,33 +310,95 @@ pub async fn a_failed_transaction_leaves_no_partial_rows<F: WidgetFixture>(fixtu
     clear(fixture, &[CONTROL]).await;
 }
 
+/// Everything one bounded `ensure` did, in enough detail to prove it took part in the race.
+///
+/// # Why the outcome alone is not enough
+///
+/// `Observed` means "the row was there when I looked". It does not say whether this caller ever
+/// contended for the identity, and a caller that simply arrived late looks identical to one that
+/// lost a genuine race. [`refusals`](Self::refusals) and [`attempt`](Self::attempt) are what
+/// separate them, so both are carried out of the loop rather than discarded inside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Ensure {
+    /// How this caller finished.
+    outcome: Ensured,
+    /// The attempt it finished on. `1` means it never went round the loop.
+    attempt: usize,
+    /// How many times this caller's own insert or commit was refused as a duplicate.
+    ///
+    /// Zero on a caller that reports `Observed` means the race never happened: it found a row
+    /// somebody else had already committed and returned without ever offering one of its own.
+    refusals: usize,
+}
+
 /// Ensures one widget exists, retrying a lost race up to [`MAX_ATTEMPTS`] times.
 ///
-/// Returns what happened and how many attempts it took, so the caller can assert the bound rather
-/// than trust it.
+/// # The rendezvous is after the first `find`, and that placement is the point
+///
+/// On attempt 1 this caller opens a transaction, looks for the row, and — having **missed** —
+/// waits at `gate` for every other caller to reach the same place. Only then does it insert. So
+/// when the barrier releases, all [`CONCURRENT_WRITERS`] callers have already established that the
+/// row was absent, and every insert that follows is a real bid for the same identity.
+///
+/// Waiting *before* the `find` would synchronise the wrong instant: the callers would agree on
+/// when to look, but the first one through could still create and commit before the others got
+/// their query away, and they would then observe the row on attempt 1 without ever having raced.
+///
+/// Later attempts do **not** wait. A loser retrying after the winner has already returned would
+/// block forever on a barrier no one else will reach.
 ///
 /// # There is no backoff, deliberately
 ///
 /// The only reason to retry here is that another writer committed the row, and after that commit
 /// the retry's `find` succeeds immediately. Waiting would add latency to a case that is already
 /// resolved, and would make this assertion measure a sleep.
-async fn ensure<F: WidgetFixture>(fixture: &F, id: i64, name: &str) -> (Ensured, usize) {
+async fn ensure<F: WidgetFixture>(
+    fixture: &F,
+    gate: &tokio::sync::Barrier,
+    id: i64,
+    name: &str,
+) -> Ensure {
+    let mut refusals = 0;
     for attempt in 1..=MAX_ATTEMPTS {
         let mut unit = fixture.database().begin().await.expect("begins");
+        let present = fixture.find(&mut unit, id).await.is_some();
 
-        if fixture.find(&mut unit, id).await.is_some() {
+        if attempt == 1 {
+            // Not a tolerated condition: the caller clears this identity first, so a row here
+            // means something outside this assertion is writing to the table — and every caller
+            // must reach the barrier, so returning early from this arm would hang the rest.
+            assert!(
+                !present,
+                "widget {id} already existed when the concurrent ensures began. The assertion \
+                 clears it first, so this run was not measuring a race"
+            );
+            gate.wait().await;
+        } else if present {
             unit.rollback().await.expect("rolls back");
-            return (Ensured::Observed, attempt);
+            return Ensure {
+                outcome: Ensured::Observed,
+                attempt,
+                refusals,
+            };
         }
 
         match fixture.insert(&mut unit, id, name).await {
             Ok(()) => match unit.commit().await {
-                Ok(()) => return (Ensured::Created, attempt),
-                Err(error) => assert_eq!(
-                    error.kind(),
-                    DatabaseErrorKind::UniqueViolation,
-                    "a commit failed for a reason this retry loop is not entitled to swallow"
-                ),
+                Ok(()) => {
+                    return Ensure {
+                        outcome: Ensured::Created,
+                        attempt,
+                        refusals,
+                    };
+                }
+                Err(error) => {
+                    assert_eq!(
+                        error.kind(),
+                        DatabaseErrorKind::UniqueViolation,
+                        "a commit failed for a reason this retry loop is not entitled to swallow"
+                    );
+                    refusals += 1;
+                }
             },
             Err(error) => {
                 assert_eq!(
@@ -329,11 +408,16 @@ async fn ensure<F: WidgetFixture>(fixture: &F, id: i64, name: &str) -> (Ensured,
                      fallback over a failure that needs reporting",
                     error.kind()
                 );
+                refusals += 1;
                 let _ = unit.rollback().await;
             }
         }
     }
-    (Ensured::Exhausted, MAX_ATTEMPTS)
+    Ensure {
+        outcome: Ensured::Exhausted,
+        attempt: MAX_ATTEMPTS,
+        refusals,
+    }
 }
 
 /// Every writer asking for the same widget converges on one row, within the retry bound.
@@ -343,6 +427,15 @@ async fn ensure<F: WidgetFixture>(fixture: &F, id: i64, name: &str) -> (Ensured,
 /// A caller that swallowed the duplicate and returned success would pass a test that only checked
 /// for the absence of an error. What is asserted instead is the **state**: one row, one creator,
 /// and every other caller having observed that same row rather than a second one.
+///
+/// # The state assertions are necessary and were never sufficient
+///
+/// "One creator, three observers, one row" is also what four callers running strictly one after
+/// another produce, and a review found that the previous bare `tokio::join!` permitted exactly
+/// that. So the state assertions below are now joined by three that describe the **path** each
+/// caller took: the winner created on its first attempt, every loser was refused at least once,
+/// and no loser reported `Observed` on attempt 1. The last is the load-bearing one — a caller that
+/// observes without racing is the outcome the rendezvous exists to make impossible.
 pub async fn concurrent_ensures_converge_on_one_row<F: WidgetFixture>(
     fixture: &F,
     capacity: usize,
@@ -354,17 +447,18 @@ pub async fn concurrent_ensures_converge_on_one_row<F: WidgetFixture>(
     clear(fixture, &[ID]).await;
 
     const _: () = assert!(CONCURRENT_WRITERS == 4);
+    let gate = tokio::sync::Barrier::new(CONCURRENT_WRITERS);
     let results = tokio::join!(
-        ensure(fixture, ID, NAME),
-        ensure(fixture, ID, NAME),
-        ensure(fixture, ID, NAME),
-        ensure(fixture, ID, NAME),
+        ensure(fixture, &gate, ID, NAME),
+        ensure(fixture, &gate, ID, NAME),
+        ensure(fixture, &gate, ID, NAME),
+        ensure(fixture, &gate, ID, NAME),
     );
     let results = [results.0, results.1, results.2, results.3];
 
     let created = results
         .iter()
-        .filter(|(e, _)| *e == Ensured::Created)
+        .filter(|r| r.outcome == Ensured::Created)
         .count();
     assert_eq!(
         created, 1,
@@ -374,17 +468,60 @@ pub async fn concurrent_ensures_converge_on_one_row<F: WidgetFixture>(
     assert_eq!(
         results
             .iter()
-            .filter(|(e, _)| *e == Ensured::Observed)
+            .filter(|r| r.outcome == Ensured::Observed)
             .count(),
         CONCURRENT_WRITERS - 1,
         "every caller that did not create the row must have OBSERVED it. A caller that neither \
          created nor observed gave up: {results:?}"
     );
-    for (caller, (_, attempts)) in results.iter().enumerate() {
+    for (caller, result) in results.iter().enumerate() {
         assert!(
-            *attempts <= MAX_ATTEMPTS,
-            "caller {caller} took {attempts} attempts, past the bound of {MAX_ATTEMPTS}"
+            result.attempt <= MAX_ATTEMPTS,
+            "caller {caller} took {} attempts, past the bound of {MAX_ATTEMPTS}",
+            result.attempt
         );
+
+        match result.outcome {
+            // The winner reached the barrier with everybody else and got its insert away first.
+            // A creation on any later attempt would mean it had been refused, and the refusal
+            // would have had to come from a row that no caller has yet been shown to create.
+            Ensured::Created => {
+                assert_eq!(
+                    result.attempt, 1,
+                    "the creating caller {caller} needed {} attempts. Every caller inserts \
+                     immediately after the rendezvous, so the one that succeeds succeeds first \
+                     time: {results:?}",
+                    result.attempt
+                );
+                assert_eq!(
+                    result.refusals, 0,
+                    "the creating caller {caller} was refused {} times before succeeding, which \
+                     means another writer held the identity and then gave it up: {results:?}",
+                    result.refusals
+                );
+            }
+            // THE ASSERTION THE RENDEZVOUS EXISTS FOR. A loser that never offered its own insert
+            // never contended for the identity; it read a row somebody else had already committed.
+            // Every state assertion above is satisfied by that, which is why this one is separate.
+            Ensured::Observed => {
+                assert!(
+                    result.attempt >= 2,
+                    "caller {caller} observed the row on attempt 1, so it never raced for it. \
+                     Every caller misses its first `find` before the barrier releases, so a \
+                     loser must be refused at least once and observe the winner on a LATER \
+                     attempt: {results:?}"
+                );
+                assert!(
+                    result.refusals >= 1,
+                    "caller {caller} observed the row without ever being refused, so its insert \
+                     never contended with the winner's: {results:?}"
+                );
+            }
+            Ensured::Exhausted => panic!(
+                "caller {caller} exhausted its {MAX_ATTEMPTS} attempts. A lost race resolves on \
+                 the next look, so reaching the ceiling here is a defect: {results:?}"
+            ),
+        }
     }
 
     // Exactly one row, with the agreed name, seen from outside every one of those transactions.
