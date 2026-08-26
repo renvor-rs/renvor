@@ -91,6 +91,34 @@ the reader to treat it as public. The two are consistent; neither closes the oth
 | `008/L-1` | Two documentation pages carry `custom_edit_url: null`, suppressing their "Edit this page" link, because the link check cannot pass a page that is not yet on `main` | **Removed in the post-merge closure pull request.** No lychee exclusion was created |
 | `008/L-2` | The portability contract is executed on the **engine** axis; the ORM axis is covered for reachability, not for independent engine facts | none — deliberate, argued in `renvor_testkit::portability` |
 | `008/L-3` | No supported engine **version range** is declared, so backup/restore guidance speaks only about the four pinned images | a phase that decides the support range (`F-2`) |
+| `008/L-4` | **Transaction-conflict classification is measured on the two direct-SQLx rows only.** `renvor-seaorm` has no deadlock test, so `TransactionConflict` is asserted for one adapter and inferred for the other | a follow-up that writes the SeaORM deadlock test |
+
+### `008/L-4` — the one place the cross-adapter parity claim is inferred rather than measured
+
+**Created by this phase's third correction round, and open.**
+
+| Field | Value |
+|---|---|
+| **Status** | **open** |
+| **Owner** | Ahmed Anbar |
+| **Target** | a follow-up that writes the test. Not closable by widening the claim |
+
+The error-classification suites exist to make one assertion checkable: that an application swapping
+`renvor-sqlx` for `renvor-seaorm` does not have to rewrite its error handling. For unique,
+foreign-key, not-null and check violations that assertion is **measured on all four rows** — the
+same `DatabaseErrorKind` constants, provoked against real servers through each adapter's own
+vocabulary.
+
+`TransactionConflict` is the exception. Provoking a deadlock takes two sessions holding two row
+locks in opposite orders, which `renvor-sqlx/tests/error_classification.rs` arranges directly over
+`sqlx::Pool`; the SeaORM suite has no equivalent, so the census carries **two** entries for it and
+not four.
+
+The inference is well-founded — a SeaORM deadlock reaches `DbErr::RuntimeErr(SqlxError)` and then
+the same driver-level mapping the direct rows exercise, because `SqlErr` has no variant for it —
+and it is still an inference. It is recorded here because the census's new entries make the
+asymmetry visible, and a reader counting eleven tests on one row and ten on another is entitled to
+know which test is missing and why rather than to discover it.
 
 `008/L-1` is deliberately **not** a waiver. Precedent (EX-004, EX-006) would have allowed a lychee
 exclusion; a permanent exclusion for a temporary condition is how a suppression outlives its reason,

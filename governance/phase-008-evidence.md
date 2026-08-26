@@ -49,17 +49,34 @@ still passed. Nothing stated how many rows *should* run.
 Step 4 now names every (row, suite) pair it requires and fails when one stops reporting:
 
 ```
-[4/11] tests (four-row persistence census): ok — all 28 row-suite pairs reported in (4 rows x 7 required tests)
+[4/11] tests (four-row persistence census): ok — all 42 row-suite pairs reported in (11 required tests on each direct-SQLx row, 10 on each SeaORM row)
 ```
 
 Five suites are compiled **once** in `renvor-testkit` and called by every row — ports contract,
-domain example, concurrency and idempotency, portability, upgrade path. The sixth, the startup
-diagnostic, is per-adapter by necessity — it drives each adapter's own provider — and carries
-**two** required tests: a refused socket and a refused credential, which reach different code.
+domain example, concurrency and idempotency, portability, upgrade path. Two are per-adapter by
+necessity, because they drive each adapter's own code: the startup diagnostic, which carries **two**
+required tests (a refused socket and a refused credential reach different code), and **error
+classification**.
 
-**The count was 24 when this phase was first presented.** The correction cycle added the
-server-side refusal row on finding C, so any earlier statement of "24 pairs" describes the reviewed
-head rather than the merged one. Stated rather than quietly reconciled.
+**The rows are not symmetric, and the asymmetry is measured rather than overlooked.** Each
+direct-SQLx row carries eleven required tests and each SeaORM row ten: provoking a deadlock needs
+two sessions taking two row locks in opposite orders, which the direct-SQLx suite arranges over
+`sqlx::Pool` and the SeaORM suite has no equivalent of. Two entries, therefore, and not four.
+Writing the missing pair is work, and it is recorded as absent in §8 rather than implied by a
+symmetrical-looking table.
+
+**The count has changed twice, and both statements of it are still findable.** It was **24** when
+this phase was first presented; the first correction cycle took it to **28** on finding C, adding
+the server-side refusal row; the third took it to **42**, adding the error-classification rows on
+the finding that `PLAN.md` §819's *"database error normalization"* deliverable had its only
+real-database coverage outside the census entirely. Any earlier statement of "24 pairs" or "28
+pairs" describes the head it was written against. Stated rather than quietly reconciled.
+
+**The entries are derived from the suites, not counted by hand.** A new `xtask` unit test,
+`every_error_classification_test_is_censused`, parses both `error_classification.rs` files and
+fails if a test has no census row, or if a row names a test that is not there. That closes the
+failure mode the census gap actually was: not a wrong number, but a table nothing compared against
+the code.
 
 **Step 1 now refuses a run without the databases.** The census used to print `ok — NOT RUN` when
 `RENVOR_TEST_REQUIRE_DATABASE` was absent and return success, so a full `cargo xtask verify` could
@@ -68,6 +85,19 @@ it has none. It is exit **2** with setup instructions now, and nothing is starte
 
 **Control.** With one row removed, `[4/11] tests: ok — passed` while
 `[4/11] tests (four-row persistence census): FAILED`. The census caught what the suite could not.
+
+**Re-run against the extended table** (M-38), with an error-classification row `cfg`-gated out of
+its binary:
+
+```text
+[4/11] tests: ok — passed
+[4/11] tests (four-row persistence census): FAILED — row
+`renvor-seaorm::postgres::a_violation_never_carries_the_seaorm_text` did not report in.
+```
+
+And with the same test **deleted** rather than gated (M-37),
+`cargo test -p renvor-seaorm --test error_classification` reports **`ok. 4 passed`** where it had
+reported 6 — the disappearance, reported as success, in the suites backing a named deliverable.
 
 ## 3. Defects found and fixed
 
@@ -91,11 +121,17 @@ inside the pinned images. The consequential ones:
   the statement never named. C-16 therefore requires a portable upsert to target a table with
   exactly one unique key.
 - **Migrations.** PostgreSQL rolls DDL back with the transaction; MySQL commits it implicitly. A
-  failed migration leaves a repairable database on one engine and a half-migrated one on the other.
+  failed migration leaves a repairable database on one engine and a half-migrated one on the other
+  — **and on MySQL every subsequent run is refused**, because SQLx writes its ledger row before the
+  body and the implicit commit makes that row permanent. C-16 1.2.0 states the manual repair;
+  §6c records why the instruction that stood there before was wrong.
 - **Pagination.** NULLs sort to opposite ends on the two engines, so a cursor over a nullable
   column resumes elsewhere.
-- **JSON.** One portable answer exists: PostgreSQL `jsonb` and MySQL `JSON` normalise to
-  **byte-identical** text. Asserted as an equality, with PostgreSQL's `json` as the control.
+- **JSON.** A portable answer exists **for a measured subset**, not for the type. Inside that
+  subset PostgreSQL `jsonb` and MySQL `JSON` normalise to **byte-identical** text, asserted as an
+  equality with PostgreSQL's `json` as the control. Outside it the two engines disagree in three
+  measured ways, one of which is silent data loss. C-16 1.2.0 carries the boundary; §6c records
+  how much of it the review found and how much the measurement did.
 
 ## 5. Startup diagnostics
 
@@ -188,6 +224,77 @@ The consequential ones:
 carrying a P1 constitutional violation. Green gates measure what they were written to measure —
 there was no test reading back what the adapters emitted, so nothing could notice. There is one now,
 in both adapters, and it is mutation-proven against silence as well as against leakage.
+
+## 6c. The third correction round — 2026-08-27
+
+The final permitted automated round, run against the pushed head `ca479fc` **whose CI was 13/13
+green**, returned **four P2 findings and no P1**. All four were reproduced before being accepted.
+**None of round 2's six was raised again.** The table is in
+[`phase-008-review-record.md`](phase-008-review-record.md).
+
+Three of the four are against phase work the round-2 cycle never touched — the review reads the
+whole branch diff — so they are findings about Phase 008 rather than regressions from correcting
+it. The fourth is an absence in a file that cycle did touch, and the absence predates it.
+
+### What the measurement found that the review did not
+
+The JSON finding named one counterexample: PostgreSQL `jsonb` refuses a NUL escape that MySQL
+stores. Answering it properly meant measuring the space rather than patching the sentence, so
+**fourteen documents were run against both engines**. The counterexample is confirmed, and **two
+further divergences appeared that the review had not named**:
+
+| Document | PostgreSQL `jsonb` | MySQL `JSON` |
+|---|---|---|
+| `{"e":1E2}` | `100` | `100.0` |
+| `{"n":1.50}` | `1.50` | `1.5` |
+| `{"n":0.12345678901234567890123456789}` | exact | `0.12345678901234568` |
+
+The third is **data loss**, not formatting: MySQL keeps non-integer JSON numbers as IEEE-754
+doubles and PostgreSQL keeps every JSON number as `numeric`. An application moving a decimal
+between the two supported engines gets a different number back, and the contract that this phase
+shipped said the two types were interchangeable.
+
+**Integers are exact on both**, right past 2^53 — measured, not assumed — which is why the portable
+subset admits them and nothing else numeric.
+
+The exclusions are asserted, not merely written down. `JSON_PROBES` executes every excluded
+document with its measured divergence as the expected answer, so an engine that stops diverging
+fails the gate and sends someone back to re-measure rather than leaving the contract quietly
+narrower than the engines require.
+
+### A test that passed for a reason other than the one it claimed
+
+The concurrency deliverable was proven by four `ensure` callers driven with `tokio::join!`, and
+`join!` orders nothing. The finding was that all four could return "found it" without any of them
+racing — and every assertion the suite made would still hold.
+
+That was reproduced as a fact rather than argued about. The four callers were run **strictly one
+after another**, which is a total order `join!` is free to produce, and the **pre-fix assertions
+passed 6 of 6 on both engines**: one creator, three observers, exactly one row, everyone inside the
+retry bound. The correction is a `tokio::sync::Barrier` taken *after* the first `find` misses — not
+before it, which would synchronise the wrong instant — plus three assertions about the **path** each
+caller took. Against the same mutation those fail on both engines, naming
+`[Created@1, Observed@1, Observed@1, Observed@1]` with zero refusals between them.
+
+### An absence has no line number
+
+`ROW_EVIDENCE` had no entry for either `error_classification` suite. Those suites are the only
+real-database coverage of `PLAN.md` §819's *"database error normalization"* deliverable — where
+not-null, check-violation and transaction-conflict classification are measured against servers
+rather than against a fabricated driver error — so the census that exists to stop a row
+disappearing did not cover the deliverable it was built for.
+
+Fourteen rows were added, taking the census from 28 pairs to **42**, and a new `xtask` unit test
+now derives the requirement from the suites themselves rather than from a number somebody typed.
+The asymmetry it exposes is documented as `008/L-4` rather than papered over.
+
+### What this round says about the gates, again
+
+Nineteen gates on two toolchains, and a 13/13 CI run, passed a tree containing all four. None of
+them is the kind of defect a gate catches: two are **false prose standing beside a passing test**,
+one is a test that passes for the wrong reason, and one is a gap. The guards added here — a prose
+guard, a probe table that executes its own exclusions, and a census derived from the code it
+censuses — are each narrower than the class they belong to, and are recorded as such.
 
 ## 7. Failures that are part of this record
 
@@ -310,6 +417,18 @@ REST 1.0:
 |---|---|
 | `006/L-7` | mixed-direction keyset pagination — lifting the refusal requires a public API change, because the binding count lives inside `seek_predicate`'s `String` |
 | `007/L-11` | `TransactionTrait`, savepoints, and isolation-level configuration are not exposed |
+
+A third is **created by this phase's final correction round and left open deliberately**:
+
+| Limitation | What is missing |
+|---|---|
+| `008/L-4` | **transaction-conflict classification is measured on the two direct-SQLx rows only.** `renvor-seaorm/tests/error_classification.rs` has no deadlock test, so `TransactionConflict` is asserted for the SQLx adapter and inferred for the SeaORM one. The census records two entries rather than four, and this records why |
+
+It is a limitation rather than a defect: the classification path a SeaORM deadlock takes is
+`DbErr` → `RuntimeErr::SqlxError` → the same driver-level mapping the direct rows exercise, so the
+inference is well-founded. It is nevertheless an inference, and the parity claim these suites exist
+to make is *measured* everywhere else. Owner **Ahmed Anbar**; to be closed by writing the test, not
+by widening the claim.
 
 `L-11` has been reused across **several** phases, not two. Each ledger is per-phase and internally
 unambiguous, so the ambiguity exists only in an unqualified citation — and the fix belongs to

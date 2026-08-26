@@ -20,7 +20,12 @@ A green suite is evidence that nothing is currently broken. It is **not** eviden
 would notice if something were. The only way to tell the two apart is to break something on purpose,
 and the only honest way to report it is to include the mutations that got away.
 
-Two of the twenty-seven below did.
+Two of the forty below did.
+
+**That count was stale.** It read *"twenty-seven"* — correct when M-27 was the highest —
+through the second correction round, which added five more without updating it. Corrected here
+rather than quietly, because a ledger whose own arithmetic drifts is the wrong place to learn
+that mutation counts are approximate.
 
 ---
 
@@ -219,6 +224,80 @@ first attempt did surface something real before it was discarded, and that findi
 `phase-008-evidence.md` §7: adding a password literal to a documentation example pulled
 `startup.rs` into the credential-handling scope, and ten of its assertion messages had to be
 rewritten to name an index instead of a rendering.
+
+
+## Third correction round — 2026-08-27
+
+Mutations run against the four findings of the third and final automated review.
+
+| # | Mutation | Result |
+|---|---|---|
+| M-33 | a portable JSON answer is changed — duplicate-key resolution reads `{"a": 2, ...}` | **KILLED** — both engines, `stored ... and the contract records` |
+| M-34 | the measured NUL exclusion is declared portable instead | **KILLED** — PostgreSQL row only: `REFUSED ... and the contract records it storing` |
+| M-35 | the `ensure` rendezvous is removed and the four callers serialised | **KILLED** — both engines, `caller 1 observed the row on attempt 1, so it never raced for it` |
+| M-36 | MySQL's run after a partial migration is declared retryable rather than dirty | **KILLED** — MySQL row only, `the run AFTER a partial failure reported` |
+| M-37 | a required error-classification test is **deleted** | **KILLED** — `renvor-seaorm carries the error-classification test ...` |
+| M-38 | a required error-classification row is **cfg-gated out** of its binary | **KILLED by the census alone** — step 4, `row ... did not report in` |
+| M-39 | the withdrawn resumption instruction is reinstated as live guidance | **KILLED** — `tells an operator a partial migration can be resumed` |
+| M-40 | a census row names a test the suite does not carry | **KILLED** — the count check, `A row names a test that is not there` |
+
+### M-34 and M-36 are killed on ONE engine each, and that is the correct result
+
+Both are mutations of a **difference**. M-34 declares the NUL escape portable; MySQL genuinely
+stores it, so the MySQL row must keep passing and only PostgreSQL's must fail. M-36 declares
+MySQL's post-failure run retryable; PostgreSQL's genuinely is, so only the MySQL row must fail. A
+mutation of either that failed on both rows would mean the assertion was not reading the engine at
+all.
+
+### M-35 is the RED evidence, and it is deterministic rather than probabilistic
+
+The finding was that `tokio::join!` **permits** an ordering in which one caller finishes before
+another looks. Removing the rendezvous and leaving `join!` in place does not demonstrate that: the
+ordering is then a scheduling accident, and a mutation whose result depends on scheduling is not a
+mutation result. Stated rather than papered over, and replaced with coordination that has no such
+dependency — the four callers are run **strictly one after another**, which is the total order
+`join!` is free to produce.
+
+The same mutation was then run against both assertion sets:
+
+| Run | Assertions | Result |
+|---|---|---|
+| A | the corrected set | **FAILED** on both engines: `[Created@1 refusals 0, Observed@1 refusals 0, Observed@1 refusals 0, Observed@1 refusals 0]` |
+| B | the pre-fix set, unchanged | **PASSED**, 6 of 6, both engines |
+
+Run B is the finding, reproduced as a fact. One creator, three observers, exactly one row, every
+caller inside the retry bound — every assertion the suite made before this round, satisfied by four
+callers that never contended for anything.
+
+### M-37 and M-38 are the two census controls, and they fail at different gates
+
+M-37 deletes the test. `cargo test -p renvor-seaorm --test error_classification` then reports
+**`ok. 4 passed`** where it had reported 6 — the disappearance, reported as success, which is the
+whole reason the census exists. The gate catches it, but at the **source-derived guard** added this
+round rather than at the census: the guard reads both suites and fails on a census row whose test
+is not there, and it runs in `cargo test --workspace` before step 4 ever reaches the census.
+
+M-38 therefore isolates the census. The row is removed with a `cfg` that is false inside a test
+binary, placed **above** `#[tokio::test]` so the source shape the guard parses is unchanged. The
+guard passes, step 4's workspace tests pass, and the census alone fails:
+
+```text
+[4/11] tests: ok — passed
+[4/11] tests (four-row persistence census): FAILED — row
+`renvor-seaorm::postgres::a_violation_never_carries_the_seaorm_text` did not report in.
+```
+
+Reported as two controls rather than one because they establish different things: M-37 that the
+deletion is invisible to the package's own test run, M-38 that the census — and not only the new
+guard — is what notices.
+
+### What these eight do not establish
+
+They establish that each corrected assertion is load-bearing. They do not establish that the
+findings were the only ones of their kind: findings 1 and 2 were **false prose beside a passing
+test**, and no mutation of the code can surface that class. What guards it here is a prose guard
+(M-39) and a table of measurements that executes its own exclusions (M-34) — both narrower than the
+class they belong to, and recorded as such rather than as closure of it.
 
 ### The `compile_fail` controls, and why each has a twin
 

@@ -15,6 +15,8 @@ so a reviewer can fetch it from a clean index-only checkout.
 | Commissioned reviewer agent #2 | automated | **NOT PERFORMED** |
 | Codex review of the reviewed head | automated, advisory, **not independent** | 10 findings, all dispositioned |
 | Codex review, round 2, of `0c88b39` | automated, advisory, **not independent** | **REQUEST CHANGES** — 1 P1 and 5 P2, all dispositioned |
+| Codex review, round 3, of `ca479fc` | automated, advisory, **not independent** | 4 P2, all dispositioned. **The review budget is exhausted; no fourth round was run** |
+| Validation-agent review of the round-3 corrections | automated | **NOT PERFORMED** — went idle twice without a report |
 | Independent human requirements-and-security review | *required by PLAN §6.1 step 10* | **did not occur** — to be waived at closure, in the post-merge closure pull request |
 | Independent human review of ADR-0023 | *required by constitution §Development and Phase Workflow #4* | **did not occur** — waived by **W-017** |
 
@@ -87,6 +89,81 @@ phase's own mutation evidence.
 | 4 | **P2** | W-017 counted controls that PLAN and ADR governance already mandate, contrary to `GOVERNANCE.md`'s own rule | **FIXED.** The four-row binding and the alternatives table are moved to **explicitly uncounted preconditions**, with the requirements that already mandate them named. Four genuinely specific controls remain, plus the advisory rounds themselves — labelled automated and non-independent |
 | 5 | **P2** | The ledger said *"Both were granted"* where one waiver exists, named a **W-018** that had not been granted, and said *"All fourteen"* against fifteen | **FIXED.** All three corrected, with what each said recorded. `the_active_waiver_counts_match_the_waiver_table` now also binds the prose count and **refuses any reference to a waiver its own table does not grant** (W-007, documented as permanently burned, is the one exemption). Mutations **M-28/M-29** |
 | 6 | **P2** | `contracts/verification-sequence.md` still defined exit 2 as toolchain-only | **FIXED at 1.2.1.** Exit 2 is a missing **mandatory verification prerequisite** — a tool *or* the four-row database environment. The fail-closed sample output was also stale and now matches what the command prints. A new test binds the contract, `CONTRIBUTING.md`, and `EXIT_TOOLING_MISSING`'s own doc comment |
+
+## The third Codex round: four P2 findings, and where they came from
+
+The final permitted round ran against the pushed head `ca479fc`, whose CI was 13/13 green. It
+returned **four P2 findings and no P1**. Each was verified against the tree before being accepted;
+all four reproduced.
+
+**None of the six findings from round 2 was raised again**, which is the most that round can be
+said to have established about them.
+
+Three of the four are against Phase 008 work that the **round-2 correction cycle never touched** —
+the review reads the whole branch diff, not the last commit range — so they are findings about the
+phase rather than regressions from fixing it. The fourth is a gap in a file that cycle did touch,
+and the gap predates it.
+
+| # | Severity | Finding | Disposition |
+|---|---|---|---|
+| 1 | **P2** | `contracts/database-portability.md` instructed operators that after a partial MySQL failure *"the recovery path is 'run the rest'"*. SQLx marks the ledger dirty and refuses every later run, so the instruction is a loop with no exit | **FIXED at C-16 1.2.0.** The claim is withdrawn and quoted rather than erased. The corrected section states the mechanism — ledger row written `success = FALSE` **before** the body, made permanent by MySQL's implicit commit, `dirty_version` consulted at the top of every run — and gives a four-step manual repair conditioned on establishing the schema state first. **Verified against sqlx 0.9.0 and sqlx-cli 0.9.0**: `migrate run`, `migrate revert` and `migrate override skip` all call `dirty_version` and refuse, so no SQLx command clears the row and the contract says so. New real-database test on **both** engines; new prose guard. Mutations **M-36, M-39** |
+| 2 | **P2** | The contract claimed `jsonb` and `JSON` accept every same document and normalise identically, on the evidence of one probe. PostgreSQL refuses a NUL escape MySQL stores | **FIXED at C-16 1.2.0, and the measurement found more than the review reported.** Fourteen documents were run against both engines. The review's counterexample is confirmed; **two further divergences it did not name** were found — exponent and trailing-zero notation re-emit differently (`1E2` → `100` / `100.0`), and a non-integer past double precision is exact on PostgreSQL and **rounded** on MySQL, which is data loss rather than formatting. The guarantee is now a measured subset, and `JSON_PROBES` executes the **exclusions** as well as the inclusions, so an engine that stops diverging fails the gate instead of leaving the contract silently narrow. Mutations **M-33, M-34** |
+| 3 | **P2** | `tokio::join!` does not order the four `ensure` callers, so all four could return `Observed` on attempt 1 and every assertion still pass — the concurrency deliverable proved by a test that need not exercise a race | **FIXED, with a deterministic control.** A `tokio::sync::Barrier` is taken **after** the first `find` misses, on attempt 1 only; retries do not wait. Three path assertions were added to the state assertions: the winner creates on attempt 1 with no refusals, every loser is refused at least once, and an `Observed` on attempt 1 **fails**. The finding was reproduced as a fact rather than a probability — see **M-35** |
+| 4 | **P2** | `ROW_EVIDENCE` had no entry for either `error_classification` suite, so the real-database coverage of `PLAN.md` §819's *"database error normalization"* deliverable could be deleted or gated out with both the workspace run and the census green | **FIXED.** Fourteen rows added, taking the census from 28 pairs to **42**. The entries are derived from the suites rather than counted: a new `xtask` unit test parses both files and fails if a test has no census row **or** a row names a test that is not there. The asymmetry is documented rather than invented — transaction-conflict coverage exists only on the two direct-SQLx rows, so there are two such entries and not four. Mutations **M-37, M-38, M-40** |
+
+### Why round 3 could see what rounds 1 and 2 did not
+
+All four findings were reachable in the tree that rounds 1 and 2 read. Findings 1 and 2 are false
+statements in **prose that a passing test suite was pointed at** — the JSON assertion really did
+run, and really did prove the one document it was given. Finding 3 is a test that passes for a
+reason other than the one it claims. Finding 4 is an absence, and an absence has no line number.
+
+None of them is the kind of defect a gate catches, and none was caught by nineteen gates run twice
+on two toolchains. That is the same lesson round 2 recorded, arriving from a different direction:
+**a green suite is evidence about the suite.**
+
+### What the sweep found that round 3 did not name
+
+The review cited the contract and the documentation page. A sweep of every tracked `.md`, `.mdx`
+and `.rs` file — with whitespace collapsed, because the phrase was **split across two lines** in the
+contract and a plain `grep` for it returns nothing — found a **third** document carrying the same
+false rule: **ADR-0023 §7**, whose heading read *"a migration is safe to resume, never to re-run
+from the start"* and whose decision text said so.
+
+That is the record C-16 names as its **source of authority**. Correcting the contract while leaving
+the decision behind it stating the opposite would have produced a citation that contradicts the
+thing citing it.
+
+ADR-0023 §6 and §7 are therefore **amended in place, dated, with the original decision text
+quoted** — following ADR-0005's precedent for a partial correction that does not supersede the
+record. The state is unchanged, and **no new ADR was created**, per the authority for this round.
+The amendments were not independently reviewed either, and the record's header now says so.
+
+The prose guard covers all three documents, with ADR-0023's own withdrawal marker.
+
+### The validation-agent review of these corrections
+
+A validation agent was commissioned against the four corrections and **nothing else** — read-only,
+with the requirement text for each finding and an instruction to be adversarial about the
+arithmetic and about prose the code does not back.
+
+**Result: NOT PERFORMED.**
+
+It ran for roughly nine minutes and then went idle **without returning a report**. Its report was
+requested once, explicitly, in the terms the authority for this round set out. It went idle again
+without returning one. Per that same authority it was **not respawned**, and this is recorded as
+NOT PERFORMED rather than as a silent absence or as a pass.
+
+**This is the third time in this phase.** Two reviewer agents were commissioned against the
+reviewed head and each returned twice with nothing; the summary table above has carried both as
+NOT PERFORMED since. The pattern is now consistent enough to be worth stating plainly: **agent
+review has produced no usable output for Phase 008 at any point**, and every finding this phase
+acted on came from either the Codex rounds or from measurement.
+
+**A reviewer that returns nothing is NOT a pass**, and no part of the four corrections rests on
+this one. What they rest on is stated in `phase-008-mutation-ledger.md`: eight mutations, each
+killed, including a deterministic RED/GREEN pair for the concurrency finding and two census
+controls that fail at different gates.
 
 ### What the second round did not cover, and what the sweep found anyway
 
