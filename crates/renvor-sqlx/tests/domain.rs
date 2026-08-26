@@ -32,6 +32,7 @@ macro_rules! row {
 
             use renvor_database::{DatabaseError, MigrationSettings};
             use renvor_sqlx::Migrations;
+            use renvor_testkit::concurrency;
             use renvor_testkit::domain::{self, Widget, WidgetFixture};
             use sqlx::AssertSqlSafe;
 
@@ -177,6 +178,20 @@ macro_rules! row {
                     return;
                 };
                 domain::run_every_domain_assertion(&fixture).await;
+            }
+
+            /// The concurrency and idempotency contract, on this row.
+            ///
+            /// Capacity is read back from the very settings the pool was built with, so a change
+            /// to `support::settings()` makes the race fail loudly rather than quietly turn into a
+            /// queue on the pool.
+            #[tokio::test]
+            async fn the_shared_concurrency_contract_holds() {
+                let Some((fixture, _guard)) = fixture().await else {
+                    return;
+                };
+                let capacity = support::settings().max_connections() as usize;
+                concurrency::run_every_concurrency_assertion(&fixture, capacity).await;
             }
         }
     };

@@ -13,12 +13,14 @@
 //! **This surface is explicitly unstable.** See the `renvor` facade documentation.
 
 pub mod clock;
+pub mod concurrency;
 pub mod domain;
 pub mod harness;
 pub mod injection;
 pub mod persistence;
 
 pub use clock::TestClock;
+pub use concurrency::{CONCURRENT_WRITERS, MAX_ATTEMPTS};
 pub use domain::{Widget, WidgetFixture};
 pub use harness::{Harness, HarnessRun, Outcome};
 pub use injection::{Behaviour, FailureInjectionPoint};

@@ -350,22 +350,15 @@ pub async fn cancellation_does_not_shrink_the_pool<F: PersistenceFixture>(
         })
         .await;
 
-        // Functional, not metric-based: `size` and `num_idle` read the same in the healthy and the
-        // stranded case, so only actually acquiring every slot proves capacity.
-        let mut held = Vec::new();
-        for slot in 0..capacity {
-            match fixture.database().begin().await {
-                Ok(unit) => held.push(unit),
-                Err(error) => panic!(
-                    "round {round}: the pool refused slot {slot} of {capacity} after a \
-                     cancellation ({:?}) — capacity was lost",
-                    error.kind()
-                ),
-            }
-        }
-        for unit in held {
-            let _ = unit.rollback().await;
-        }
+        // Functional, not metric-based. The probe is shared with the concurrency suite rather
+        // than copied — see `crate::concurrency::every_slot_is_available` for why a metric cannot
+        // tell a healthy pool from a stranded one.
+        crate::concurrency::every_slot_is_available(
+            fixture.database(),
+            capacity,
+            &format!("round {round}, after a cancellation"),
+        )
+        .await;
     }
 }
 
