@@ -19,14 +19,15 @@ use renvor_core::provider::registry::{InitContext, Provider, ProviderFuture};
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use renvor_database::Database;
 use renvor_database::{
-    ConnectionString, DatabaseKind, PoolSettings, StartupDiagnostic, StartupPhase,
+    ConnectionString, DatabaseAdapter, DatabaseKind, PoolSettings, StartupDiagnostic, StartupPhase,
 };
 
-/// This adapter's own crate name, as it appears in a startup diagnostic.
+/// This adapter, as it appears in a startup diagnostic.
 ///
-/// A literal rather than anything derived from configuration: `StartupDiagnostic` takes
-/// `&'static str` precisely so that the adapter cannot be named by a formatted string.
-const ADAPTER: &str = "renvor-sqlx";
+/// A [`DatabaseAdapter`] rather than a name: the diagnostic's adapter field is a closed enum
+/// precisely so that no value derived from configuration can reach it. A `&'static str` here
+/// would have been one `Box::leak` away from rendering a DSN.
+const ADAPTER: DatabaseAdapter = DatabaseAdapter::Sqlx;
 
 use crate::SqlxDatabase;
 use crate::migrate::Migrations;
@@ -254,7 +255,7 @@ macro_rules! provider_for {
                                     ADAPTER,
                                     self.kind,
                                     StartupPhase::Connect,
-                                    error.kind(),
+                                    error,
                                 )) as BoxedCause
                             })?;
 
@@ -264,7 +265,7 @@ macro_rules! provider_for {
                             ADAPTER,
                             self.kind,
                             StartupPhase::Readiness,
-                            error.kind(),
+                            error,
                         )) as BoxedCause);
                     }
 
@@ -278,7 +279,7 @@ macro_rules! provider_for {
                                     ADAPTER,
                                     self.kind,
                                     StartupPhase::Migration,
-                                    error.kind(),
+                                    error,
                                 )) as BoxedCause);
                             }
                         }

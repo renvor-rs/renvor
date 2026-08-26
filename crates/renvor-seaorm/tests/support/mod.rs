@@ -80,6 +80,31 @@ pub fn settings() -> PoolSettings {
 /// string chosen to be unmistakable, rather than the presence of a redaction marker.
 pub const CREDENTIAL_CANARY: &str = "hunter2CanaryDoNotLeak";
 
+/// The same server, reached with a password it will refuse.
+///
+/// # Why a server-side refusal is a different test from an unreachable port
+///
+/// Port 1 fails in the kernel: no database ever sees the attempt. That proves the diagnostic is
+/// produced when nothing answers — it proves nothing about the path taken when a server *does*
+/// answer and says no, which is the path [`renvor_sqlx::error::classify_connect_error`] exists for
+/// and the one an operator with a wrong credential actually hits.
+///
+/// The refused password is [`CREDENTIAL_CANARY`], so the value the server rejected is the same
+/// value the diagnostic must not repeat.
+///
+/// The DSN is split rather than parsed with a URL crate on purpose: this is a test helper in a
+/// dependency-sensitive workspace, and the shape it accepts is the shape CI writes.
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+pub fn with_rejected_password(dsn: &ConnectionString) -> ConnectionString {
+    let raw = dsn.expose();
+    let (scheme, rest) = raw.split_once("://").expect("a test DSN names a scheme");
+    let (userinfo, host) = rest
+        .split_once('@')
+        .expect("a test DSN carries credentials before the host");
+    let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
+    ConnectionString::new(format!("{scheme}://{user}:{CREDENTIAL_CANARY}@{host}"))
+}
+
 /// Drives one provider's `initialise` with a throwaway kernel context.
 ///
 /// A helper rather than six copies: building an `InitContext` needs five kernel values that have

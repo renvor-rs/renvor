@@ -65,7 +65,7 @@ pub use renvor_validation::collection::Direction;
 pub use seed::{
     APPLIED, CREATE_LEDGER, Idempotence, SeedDeclaration, SeedReport, SeedScope, SqlSeed,
 };
-pub use startup::{StartupDiagnostic, StartupPhase};
+pub use startup::{DatabaseAdapter, StartupDiagnostic, StartupPhase};
 
 /// Which database an adapter is talking to.
 ///
