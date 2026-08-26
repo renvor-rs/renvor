@@ -1596,22 +1596,44 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 
 /// Every (row, suite) pair the persistence evidence rests on.
 ///
-/// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix, each measured
-/// by **seven** required tests across six suites. Five suites are compiled once in
-/// `renvor-testkit` and called by every row — the **ports** contract, the **domain** example,
-/// **concurrency and idempotency**, **portability**, and the **upgrade path**. The sixth, the
-/// **startup diagnostic**, is per-adapter by necessity — it drives each adapter's own provider —
-/// and carries **two** required tests: a refused socket and a refused credential, which reach
-/// different code.
+/// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix. Five suites
+/// are compiled once in `renvor-testkit` and called by every row — the **ports** contract, the
+/// **domain** example, **concurrency and idempotency**, **portability**, and the **upgrade
+/// path**. Two more are per-adapter by necessity, because they drive each adapter's own code: the
+/// **startup diagnostic**, which carries two required tests (a refused socket and a refused
+/// credential reach different code), and **error classification**.
 ///
-/// **This was twenty-four until Phase 008's correction cycle**, when the server-side refusal test
-/// was added on the finding that `ConnectFailed`'s advice covered only one of the five causes it
-/// is returned for. The count is stated here rather than left implicit so that a reader comparing
-/// this against phase evidence written before the correction sees the change rather than a
-/// discrepancy.
+/// # The rows are not symmetric, and the asymmetry is real rather than an omission
 ///
-/// Twenty-eight entries, and a missing one fails the gate whichever suite it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 28] = [
+/// Each direct-SQLx row carries **eleven** required tests and each SeaORM row **ten**. The
+/// difference is the transaction-conflict test: a deadlock is provoked by two sessions taking two
+/// row locks in opposite orders, which `renvor-sqlx` does through `sqlx::Pool` directly.
+/// `renvor-seaorm`'s suite classifies a `DbErr` through the idiomatic `Statement` path and has no
+/// equivalent, so inventing two entries for tests that do not exist would fail the census on every
+/// run. Its three tests are enumerated; the fourth is recorded here as absent rather than assumed.
+///
+/// # Why error classification is here at all
+///
+/// **It was not, until a review found the gap.** `PLAN.md` §819 makes *"database error
+/// normalization"* a Phase 008 deliverable, and these suites are its only real-database coverage —
+/// they are where not-null, check-violation and transaction-conflict classification are measured
+/// against servers rather than against a fabricated driver error. With no entry here, deleting or
+/// feature-gating one of them left `cargo test --workspace` reporting fewer tests and succeeding,
+/// and the census green: exactly the disappearance the census exists to prevent, in the suites
+/// that back the deliverable it was built for.
+///
+/// The four-per-adapter enumeration is deliberate rather than a sample. A census that named only
+/// `each_constraint_violation_is_classified_as_itself` would leave its own control — the one
+/// asserting the four kinds do not collapse onto one — deletable without complaint.
+///
+/// **This was twenty-four before Phase 008's correction cycle**, then twenty-eight when the
+/// server-side refusal test was added on the finding that `ConnectFailed`'s advice covered only
+/// one of the five causes it is returned for. The counts are stated here rather than left implicit
+/// so that a reader comparing this against phase evidence written earlier sees the change rather
+/// than a discrepancy.
+///
+/// Forty-two entries, and a missing one fails the gate whichever suite it belongs to.
+const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1742,6 +1764,89 @@ const ROW_EVIDENCE: [(&str, &str, &str); 28] = [
         "renvor-seaorm",
         "startup_diagnostic",
         "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    // The error-classification rows, added by Phase 008's second correction cycle on the finding
+    // that `PLAN.md` §819's "database error normalization" deliverable had its real-database
+    // coverage outside the census entirely.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::each_constraint_violation_is_classified_as_itself",
+    ),
+    // The control for the four above. Without its own entry it could be deleted while the census
+    // stayed green, and a mapping that collapsed the four kinds onto one would then be caught by
+    // three assertions instead of by the property stated directly.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    // Transaction conflict: DIRECT-SQLX ROWS ONLY, and that is measured rather than overlooked.
+    // Provoking a deadlock takes two sessions holding two row locks in opposite orders, which the
+    // SQLx suite arranges over `sqlx::Pool`; `renvor-seaorm`'s suite has no such test, so there
+    // are two entries here and not four. Adding the missing pair means writing the tests first.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::a_lost_conflict_is_retryable_rather_than_a_rejection",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::a_lost_conflict_is_retryable_rather_than_a_rejection",
+    ),
+    // The redaction rows. Differently named per adapter because they defend against different
+    // text: the driver's message on one side, SeaORM's — which also carries the generated SQL —
+    // on the other. Both are the executable half of CONSTITUTION.md:107 for this path.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::a_violation_never_carries_the_server_text",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::a_violation_never_carries_the_server_text",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::a_violation_never_carries_the_seaorm_text",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::a_violation_never_carries_the_seaorm_text",
     ),
 ];
 
@@ -1881,7 +1986,8 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (4 rows x 7 required tests)",
+            "all {} row-suite pairs reported in (11 required tests on each direct-SQLx row, \
+             10 on each SeaORM row)",
             ROW_EVIDENCE.len()
         ),
     );
@@ -2286,7 +2392,7 @@ mod tests {
     /// RED (Correction E). `contracts/verification-sequence.md` says of this sequence: *"Executed
     /// in order. None is conditional. None is skipped."* Step 4's census is conditional on an
     /// environment variable, and when it is absent the census prints `ok — NOT RUN` and returns
-    /// success — so a full `cargo xtask verify` exits 0 having executed none of the 28 pairs.
+    /// success — so a full `cargo xtask verify` exits 0 having executed none of the census pairs.
     #[test]
     fn a_run_without_the_database_environment_cannot_report_the_census_as_ok() {
         let nothing = |_: &str| None;
@@ -2294,6 +2400,194 @@ mod tests {
             !super::the_four_rows_all_ran(std::path::Path::new("."), &nothing),
             "the census reported success without running"
         );
+    }
+
+    /// Every test in the two error-classification binaries has a census entry, and vice versa.
+    ///
+    /// # Derived from the suites rather than counted by hand
+    ///
+    /// The gap a review found here was not an arithmetic error. It was that an entire
+    /// deliverable's real-database coverage — `PLAN.md` §819's *"database error normalization"* —
+    /// had **no** entry in `ROW_EVIDENCE` at all, so deleting or feature-gating one of those
+    /// suites left `cargo test --workspace` reporting fewer tests and succeeding, and the census
+    /// green beside it. Nothing compared the table against the suites.
+    ///
+    /// This reads the suites. It fails in both directions: a test added to either file without
+    /// its pair of rows, and a row naming a test that is not there. Both are how the table drifts.
+    ///
+    /// The sources are `include_str!`d, so they resolve at COMPILE time — a moved or deleted
+    /// suite is a build failure rather than a silently skipped test.
+    #[test]
+    fn every_error_classification_test_is_censused() {
+        const SUITES: [(&str, &str); 2] = [
+            (
+                "renvor-sqlx",
+                include_str!("../../crates/renvor-sqlx/tests/error_classification.rs"),
+            ),
+            (
+                "renvor-seaorm",
+                include_str!("../../crates/renvor-seaorm/tests/error_classification.rs"),
+            ),
+        ];
+        /// Both suites are macro-generated, once per engine, from one `mod` body.
+        const ENGINES: [&str; 2] = ["postgres", "mysql"];
+
+        /// The name of every `#[tokio::test] async fn` in one suite.
+        ///
+        /// Keyed on the ATTRIBUTE rather than on `async fn` alone: each suite also declares
+        /// `fixture` and `refused` helpers, and a parser that took every `async fn` would demand
+        /// census rows for functions that are not tests.
+        fn tests_in(source: &str) -> Vec<&str> {
+            let mut names = Vec::new();
+            let mut is_test = false;
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if trimmed == "#[tokio::test]" {
+                    is_test = true;
+                } else if is_test {
+                    if let Some(rest) = trimmed.strip_prefix("async fn ") {
+                        names.push(rest.split('(').next().unwrap_or(rest));
+                    }
+                    is_test = false;
+                }
+            }
+            names
+        }
+
+        let censused: Vec<(&str, &str)> = super::ROW_EVIDENCE
+            .iter()
+            .filter(|(_, binary, _)| *binary == "error_classification")
+            .map(|(package, _, test)| (*package, *test))
+            .collect();
+
+        let mut expected = 0_usize;
+        for (package, source) in SUITES {
+            let names = tests_in(source);
+            // POSITIVE CONTROL. A parser that matched nothing would make every assertion below
+            // vacuous, and one that matched too much would name the helpers.
+            assert!(
+                names.len() >= 3,
+                "the parser found {} tests in {package}'s error-classification suite, which is \
+                 fewer than the suite is known to carry. It is matching the wrong thing",
+                names.len()
+            );
+            for helper in ["fixture", "refused"] {
+                assert!(
+                    !names.contains(&helper),
+                    "the parser counted `{helper}` as a test in {package}; it is a helper, and a \
+                     census row for it would never be satisfied"
+                );
+            }
+
+            for name in names {
+                for engine in ENGINES {
+                    let path = format!("{engine}::{name}");
+                    assert!(
+                        censused.contains(&(package, path.as_str())),
+                        "`{package}` carries the error-classification test `{path}`, and the \
+                         census does not require it. Add it to `ROW_EVIDENCE` — without a row, \
+                         deleting or feature-gating it leaves both the workspace test run and \
+                         this gate green"
+                    );
+                    expected += 1;
+                }
+            }
+        }
+
+        // THE OTHER DIRECTION. A row naming a test that does not exist fails the census on every
+        // run against a real database, which is a slow and confusing way to learn about a typo.
+        assert_eq!(
+            censused.len(),
+            expected,
+            "the census requires {} error-classification pairs and the suites carry {expected}. \
+             A row names a test that is not there: {censused:?}",
+            censused.len()
+        );
+    }
+
+    /// The recovery guidance for a partial MySQL migration describes what the runner does.
+    ///
+    /// # A guard for prose that was wrong until a review caught it
+    ///
+    /// `contracts/database-portability.md` instructed operators that after a partial MySQL failure
+    /// *"the recovery path is 'run the rest', not 'run it again from the start'"*, and the
+    /// documentation page said the same in its own words. SQLx refuses every subsequent run with
+    /// `MigrateError::Dirty` before sending a statement, so the instruction sent an operator round
+    /// a loop with no exit.
+    ///
+    /// `a_partial_migration_is_refused_on_the_next_run_rather_than_resumed` proves the behaviour
+    /// against both engines. This proves the two documents still **describe** it — a test and the
+    /// prose it backs can drift apart without either one failing, and that is exactly what
+    /// happened.
+    ///
+    /// Whitespace is collapsed before searching, because both documents wrap: the phrase this
+    /// guards against was split across two lines in the contract, which is why a plain `grep`
+    /// for it found nothing.
+    ///
+    /// # The false phrases still appear, and the test is built around that
+    ///
+    /// This repository corrects rather than erases: the contract QUOTES the instruction it
+    /// withdrew, so the reader can see what changed. A guard that simply forbade the words would
+    /// therefore fail on the fix, and the obvious way to make it pass would be to delete the
+    /// record of the mistake. So what is asserted is **order**: every occurrence of a resumption
+    /// phrase must come after the sentence that withdraws it. A document that reinstates the
+    /// instruction, or that carries it with no withdrawal at all, fails.
+    #[test]
+    fn the_partial_migration_guidance_matches_what_the_runner_does() {
+        const DOCUMENTS: [(&str, &str); 2] = [
+            (
+                "contracts/database-portability.md",
+                include_str!("../../contracts/database-portability.md"),
+            ),
+            (
+                "docs/docs/database-portability.mdx",
+                include_str!("../../docs/docs/database-portability.mdx"),
+            ),
+        ];
+
+        for (name, markdown) in DOCUMENTS {
+            let flat = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
+
+            // POSITIVE CONTROL, first: a document that stopped covering the subject would satisfy
+            // every "does not say" assertion below by saying nothing at all.
+            assert!(
+                flat.contains("MigrationDirty") || flat.contains("MigrationDirty`"),
+                "{name} no longer names the kind a run after a partial failure returns. The \
+                 guidance was removed rather than corrected"
+            );
+            assert!(
+                flat.contains("_sqlx_migrations"),
+                "{name} no longer names the ledger an operator has to reconcile, so its recovery \
+                 procedure cannot be followed"
+            );
+
+            // The sentence that withdraws the instruction. Searched for on its own, so that a
+            // document carrying the phrases with no withdrawal fails with a clear reason.
+            let withdrawal = flat.find("used to stand here was false");
+
+            for resumption in [
+                "the recovery path is",
+                "run the rest",
+                "safe to re-run after a partial failure",
+                "leaves a database the next run can continue from",
+            ] {
+                let Some(at) = flat.find(resumption) else {
+                    continue;
+                };
+                let Some(withdrawn_at) = withdrawal else {
+                    panic!(
+                        "{name} tells an operator a partial migration can be resumed \
+                         (`{resumption}`) and never withdraws it. It cannot be resumed: every \
+                         later run is refused before a statement is sent"
+                    )
+                };
+                assert!(
+                    at > withdrawn_at,
+                    "{name} states `{resumption}` BEFORE the sentence that withdraws it, so it \
+                     reads as live guidance rather than as the quoted mistake"
+                );
+            }
+        }
     }
 
     use super::scan_manifests;
