@@ -7,8 +7,21 @@
 //! [`DatabaseError`] has no field any of that can inhabit, so translating here is not lossy by
 //! accident; it is lossy on purpose, and this module is the single place the loss happens.
 //!
-//! The original text is not thrown away entirely. It is emitted through `tracing` at `debug`,
-//! which reaches operators rather than callers.
+//! # The original text is terminated here, not forwarded
+//!
+//! It used to be emitted through `tracing` at `debug`, defended as reaching *"operators rather
+//! than callers"*. `CONSTITUTION.md` principle VI forbids secrets in *"logs, telemetry"* and names
+//! no consumer who is exempt: an operator is not a class of reader with a right to a credential,
+//! and `debug` is a level rather than an exemption. A `DbErr`'s message is an unbounded string
+//! decided by SeaORM and the driver beneath it, so a field carrying one cannot be audited.
+//!
+//! What replaces it is a record built entirely from CLOSED values: the adapter as a
+//! [`DatabaseAdapter`] variant, the kind as a [`DatabaseErrorKind`] discriminant, and whether that
+//! kind is retryable. Every one is drawn from a set this workspace enumerates.
+//!
+//! **Where the raw text still lives.** The database server writes its own log, under its own
+//! access controls and retention. An operator who needs the untruncated message reads it there,
+//! correlating on the kind and the time.
 //!
 //! # Why this is not shared with `renvor-sqlx`
 //!
@@ -19,10 +32,41 @@
 //! shared crate is `renvor-database`, which may not name a driver. Neither adapter depends on the
 //! other, which is the property `xtask` step 7 asserts.
 
-use renvor_database::{DatabaseError, DatabaseErrorKind};
+use renvor_database::{DatabaseAdapter, DatabaseError, DatabaseErrorKind};
 use sea_orm::{DbErr, RuntimeErr, SqlErr};
 
-/// Translates a SeaORM error, recording the original for operators only.
+/// This crate's identity, in telemetry and in startup diagnostics.
+///
+/// A [`DatabaseAdapter`] rather than a name: both consumers' adapter fields are a closed enum
+/// precisely so that no value derived from configuration can reach them. A `&'static str` here
+/// would have been one `Box::leak` away from rendering a DSN.
+///
+/// Declared once for the whole crate rather than per module. `provider.rs` used to carry its own
+/// copy, which is a divergence vector of exactly the kind this module was corrected for: two
+/// constants naming the same adapter can disagree, and then a startup diagnostic and a telemetry
+/// record would attribute the same failure to different crates.
+pub(crate) const ADAPTER: DatabaseAdapter = DatabaseAdapter::SeaOrm;
+
+/// The ONLY place this crate emits telemetry about a database failure.
+///
+/// # Why one function rather than a macro at each site
+///
+/// Four entry points classify — the `DbErr` mapper, the driver mapper, the connect-time mapper,
+/// and the migration loader — and before this they diverged: three logged the raw error, one
+/// logged nothing. Funnelling them through a single function that takes a [`DatabaseErrorKind`]
+/// and NOTHING ELSE makes divergence unrepresentable. There is no parameter here a message could
+/// arrive in.
+pub(crate) fn record(kind: DatabaseErrorKind) -> DatabaseError {
+    tracing::debug!(
+        adapter = ADAPTER.as_str(),
+        database_error_kind = kind.as_str(),
+        transient = kind.is_transient(),
+        "database operation failed"
+    );
+    DatabaseError::new(kind)
+}
+
+/// Translates a SeaORM error into the redacted vocabulary.
 ///
 /// # Why this is public
 ///
@@ -32,15 +76,12 @@ use sea_orm::{DbErr, RuntimeErr, SqlErr};
 /// SeaORM's text — and therefore a value, a table name, generated SQL, or a host — into something
 /// a caller receives.
 pub fn classify_db_error(error: &DbErr) -> DatabaseError {
-    // The original text goes to telemetry. It never reaches the returned value.
-    tracing::debug!(driver_error = %error, "database operation failed");
-    DatabaseError::new(classify_db(error))
+    record(classify_db(error))
 }
 
 /// Translates a driver error raised by this adapter's own connection handling.
 pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
-    tracing::debug!(driver_error = %error, "database operation failed");
-    DatabaseError::new(classify_sqlx(error))
+    record(classify_sqlx(error))
 }
 
 /// Classifies a failure to **establish** a connection.
@@ -57,7 +98,10 @@ pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
 /// a rejected statement, so this is deliberately not folded into [`classify_error`].
 pub fn classify_connect_error(error: &sqlx::Error) -> DatabaseError {
     match error {
-        sqlx::Error::Database(_) => DatabaseError::new(DatabaseErrorKind::ConnectFailed),
+        // Through `record` rather than `DatabaseError::new`: this arm used to be the one path that
+        // emitted no telemetry at all, so a refused handshake was invisible where every other
+        // failure was recorded.
+        sqlx::Error::Database(_) => record(DatabaseErrorKind::ConnectFailed),
         other => classify_error(other),
     }
 }

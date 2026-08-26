@@ -7,14 +7,58 @@
 //! field any of that can inhabit, so translating here is not lossy by accident; it is lossy on
 //! purpose, and this module is the single place the loss happens.
 //!
-//! The driver's own text is not thrown away entirely. It is emitted through `tracing` at `debug`,
-//! which reaches operators rather than callers — the same split `renvor-error` already makes
-//! between a Problem Details document and a telemetry span.
+//! # The driver's text is terminated here, not forwarded
+//!
+//! It used to be emitted through `tracing` at `debug`, defended as reaching *"operators rather
+//! than callers"*. `CONSTITUTION.md` principle VI forbids secrets in *"logs, telemetry"* and names
+//! no consumer who is exempt: an operator is not a class of reader with a right to a credential,
+//! and `debug` is a level rather than an exemption. A driver message is an unbounded third-party
+//! string, so a field carrying one cannot be audited — its contents are decided upstream.
+//!
+//! What replaces it is a record built entirely from CLOSED values: the adapter as a
+//! [`DatabaseAdapter`] variant, the kind as a [`DatabaseErrorKind`] discriminant, and whether that
+//! kind is retryable. Every one of those is drawn from a set this workspace enumerates, so no
+//! caller-, server-, or value-derived text can inhabit them.
+//!
+//! **Where the raw text still lives.** The database server writes its own log, under the server's
+//! own access controls and retention. An operator who needs the untruncated message reads it
+//! there, correlating on the kind and the time. That is a deliberate trade: Renvor's telemetry
+//! becomes safe to ship anywhere, and the unsafe detail stays where it is already protected.
 
-use renvor_database::{DatabaseError, DatabaseErrorKind};
+use renvor_database::{DatabaseAdapter, DatabaseError, DatabaseErrorKind};
 use sqlx::error::ErrorKind;
 
-/// Translates a driver error, recording the original for operators only.
+/// This crate's identity, in telemetry and in startup diagnostics.
+///
+/// A [`DatabaseAdapter`] rather than a name: both consumers' adapter fields are a closed enum
+/// precisely so that no value derived from configuration can reach them. A `&'static str` here
+/// would have been one `Box::leak` away from rendering a DSN.
+///
+/// Declared once for the whole crate rather than per module. `provider.rs` used to carry its own
+/// copy, which is a divergence vector of exactly the kind this module was corrected for: two
+/// constants naming the same adapter can disagree, and then a startup diagnostic and a telemetry
+/// record would attribute the same failure to different crates.
+pub(crate) const ADAPTER: DatabaseAdapter = DatabaseAdapter::Sqlx;
+
+/// The ONLY place this crate emits telemetry about a database failure.
+///
+/// # Why one function rather than a macro at each site
+///
+/// Three public entry points classify — the general mapper, the connect-time mapper, and the
+/// migration loader — and before this they diverged: two logged the raw error, one logged nothing.
+/// Funnelling them through a single function that takes a [`DatabaseErrorKind`] and NOTHING ELSE
+/// makes divergence unrepresentable. There is no parameter here a driver message could arrive in.
+pub(crate) fn record(kind: DatabaseErrorKind) -> DatabaseError {
+    tracing::debug!(
+        adapter = ADAPTER.as_str(),
+        database_error_kind = kind.as_str(),
+        transient = kind.is_transient(),
+        "database operation failed"
+    );
+    DatabaseError::new(kind)
+}
+
+/// Translates a driver error into the redacted vocabulary.
 ///
 /// # Why this is public
 ///
@@ -23,15 +67,14 @@ use sqlx::error::ErrorKind;
 /// mapping, and each one would be a fresh opportunity to put the driver's text — and therefore a
 /// value, a table name, or a host — into something a caller receives.
 ///
-/// # Why the original is logged rather than returned
+/// # Why the original is neither returned nor logged
 ///
 /// A caller that received the driver's text would be receiving a string this crate cannot bound,
-/// cannot redact, and does not control the shape of. An operator reading a span is a different
-/// consumer with different rights.
+/// cannot redact, and does not control the shape of. Neither can a telemetry sink, which is why
+/// the earlier version of this function — which logged it at `debug` — was a leak with a level
+/// attached rather than a compromise. See this module's own note on where the raw text does live.
 pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
-    // The driver's text goes to telemetry. It never reaches the returned value.
-    tracing::debug!(driver_error = %error, "database operation failed");
-    DatabaseError::new(classify(error))
+    record(classify(error))
 }
 
 /// Classifies a failure to **establish** a connection.
@@ -48,7 +91,10 @@ pub fn classify_error(error: &sqlx::Error) -> DatabaseError {
 /// a rejected statement, so this is deliberately not folded into [`classify_error`].
 pub fn classify_connect_error(error: &sqlx::Error) -> DatabaseError {
     match error {
-        sqlx::Error::Database(_) => DatabaseError::new(DatabaseErrorKind::ConnectFailed),
+        // Through `record` rather than `DatabaseError::new`: this arm used to be the one path that
+        // emitted no telemetry at all, so a refused handshake was invisible where every other
+        // failure was recorded.
+        sqlx::Error::Database(_) => record(DatabaseErrorKind::ConnectFailed),
         other => classify_error(other),
     }
 }

@@ -18,15 +18,13 @@ use renvor_core::provider::registry::{InitContext, Provider, ProviderFuture};
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 use renvor_database::Database;
 use renvor_database::{
-    ConnectionString, DatabaseAdapter, DatabaseKind, PoolSettings, StartupDiagnostic, StartupPhase,
+    ConnectionString, DatabaseKind, PoolSettings, StartupDiagnostic, StartupPhase,
 };
 
-/// This adapter, as it appears in a startup diagnostic.
-///
-/// A [`DatabaseAdapter`] rather than a name: the diagnostic's adapter field is a closed enum
-/// precisely so that no value derived from configuration can reach it. A `&'static str` here
-/// would have been one `Box::leak` away from rendering a DSN.
-const ADAPTER: DatabaseAdapter = DatabaseAdapter::SeaOrm;
+// This adapter's identity, for the startup diagnostics below. Imported rather than redeclared:
+// `error.rs` owns the one constant, so a diagnostic and a telemetry record cannot name different
+// crates for the same failure. See its declaration for why it is an enum and not a `&'static str`.
+use crate::error::ADAPTER;
 
 use crate::SeaOrmDatabase;
 use crate::migrate::Migrations;
