@@ -175,6 +175,14 @@ full table is in [`phase-008-review-record.md`](phase-008-review-record.md). The
   One of the two had been there since the module was written and only became an error when the
   import landed. Fixed by removing both explicit targets. **The failed run stays in this record**;
   the rerun passing is not a reason to delete it.
+- The packaging rehearsal **FAILED twice with a cargo internal panic** on the first two gate runs,
+  and the cause was **the gate, not the tree**. It had been written as `cargo package -p <crate>`
+  per crate, which cannot work here: an unpublished path dependency has nothing to resolve against,
+  and `release-dry-run.yml` had already recorded exactly that — *"`cargo publish -p renvor
+  --dry-run` fails with no matching package"*. The failed per-crate attempts then left conflicting
+  artifacts in `target/package`, and the corrected workspace-form command panicked on **them**.
+  From a cleared `target/package` the workspace forms exit **0** on both toolchains. Recorded
+  because a reader comparing run logs would otherwise see two unexplained `101`s.
 - `renvor-cli/tests/tls_consent.rs` failed once and passed unchanged on rerun (**F-3**). Out of
   scope, **unresolved**, and **the rerun does not close it**. It now has an owner (Ahmed Anbar), a
   target (a dedicated follow-up before Phase 009), and a deadline (**2026-09-02**); the test
@@ -182,6 +190,34 @@ full table is in [`phase-008-review-record.md`](phase-008-review-record.md). The
   [`phase-008-limitations.md`](phase-008-limitations.md).
 - One earlier attempt at gate-level red evidence was **abandoned rather than reported**, because
   sources were edited while it ran.
+
+## 7a. Pre-merge gates, both toolchains
+
+Run on **rustc 1.94.0** (the MSRV floor) and **rustc 1.97.1** (stable at the time of the run),
+against the two pinned images `postgres:17.11-trixie` and `mysql:8.4.11`.
+
+| Gate | 1.94.0 | stable |
+|---|---|---|
+| focused tests for every correction | pass | pass |
+| `cargo test -p xtask` | pass | pass |
+| full workspace tests, all features | **99 suites, 1442 passed, 0 failed** | **99 suites, 1442 passed, 0 failed** |
+| serial workspace tests (`--test-threads=1`) | pass | pass |
+| no-default / default / all-features checks | pass | pass |
+| per-driver adapter compiles (4 combinations) | pass | pass |
+| rustdoc, warnings denied | pass | pass |
+| `cargo deny check` | advisories, bans, licenses, sources all ok | same |
+| package + publish rehearsal, **no publication** | pass | pass |
+| `git diff --check` (tree and index) | pass | pass |
+| `cargo xtask verify`, real four-row environment | **all 11 steps ran and passed** | **all 11 steps ran and passed** |
+
+The census line, from the verify run on each toolchain:
+
+```
+[4/11] tests (four-row persistence census): ok — all 28 row-suite pairs reported in (4 rows x 7 required tests)
+```
+
+The previous head reported **98 suites / 1428 passed**; the corrections added fourteen tests, four
+of them the new server-side refusal rows.
 
 ## 8. Limitations and inherited work
 
