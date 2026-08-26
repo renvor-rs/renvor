@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.1.2"
-status: "normative — enforced executably by `xtask`. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+version: "1.2.0"
+status: "normative — enforced executably by `xtask`. 1.2.0 (2026-08-26) makes step 1 refuse a run without the four-row database environment, correcting a step 4 that was conditional in a sequence this contract says has no conditional steps; it is a BEHAVIOUR change and the exit code it produces is the existing 2. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -22,10 +22,10 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Toolchain probe | — | Rust (pinned), Node LTS |
+| 1 | Prerequisite probe | — | Rust (pinned), Node LTS, **and a PostgreSQL and MySQL the census can reach** |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
-| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every (row, suite) pair must report in | Rust |
+| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 28 required (row, test) pairs must report in | Rust, both databases |
 | 5 | API documentation | `cargo doc --workspace --no-deps` with warnings denied | Rust |
 | 6 | Dependency and licence policy | `cargo deny check` | `cargo-deny` |
 | 7 | Architecture invariants | crate DAG, transport and persistence isolation, per-driver adapter compiles, facade isolation, lean compile, publishable dependencies, required package metadata, instability wording, executable name — each with a control | Rust |
@@ -33,6 +33,33 @@ Executed in order. None is conditional. None is skipped.
 | 9 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
 | 10 | Link check | `lychee` over the built documentation output | `lychee` |
 | 11 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+
+### Step 1 refuses a run without the database environment — added 2026-08-26
+
+`cargo xtask verify` exits **2** — *"a required tool or the database environment is missing; no
+steps ran"* — unless all three of `RENVOR_TEST_POSTGRES_URL`, `RENVOR_TEST_MYSQL_URL`, and
+`RENVOR_TEST_REQUIRE_DATABASE` are set and non-empty.
+
+**This corrects a step that contradicted this contract's own opening rule.** The table below says
+*"Executed in order. None is conditional. None is skipped."* Step 4's four-row census was
+conditional on `RENVOR_TEST_REQUIRE_DATABASE`: without it the census printed
+`ok — NOT RUN` and **returned success**, so a full `cargo xtask verify` could exit **0** having
+executed none of the row-suite pairs. The four rows of `PLAN.md` §10.1 are not optional, so their
+evidence is not optional either.
+
+The remedy is a refusal, not a smaller verification, and specifically **not** an automatic one:
+
+- Missing prerequisites are reported in step 1, alongside missing tools, with the setup each needs.
+- **Nothing is started for the operator.** A gate that provisions its own dependencies says nothing
+  about the machine it ran on.
+- The census keeps its own check as defence in depth. Reaching it with the environment incomplete
+  now **fails** rather than reporting `ok`.
+- CI is unaffected: the `verify` job already exports all three variables before invoking this
+  command, and still requires all four rows.
+
+Asserted by three tests in `xtask`, including the negative one this correction exists for — a
+missing prerequisite cannot yield exit 0 or a success marker — and a positive control proving a
+complete environment still lets the sequence proceed.
 
 **Step 7 was missing from this table until 2026-08-20.** It has run in `xtask` since Phase 002.
 The omission is recorded rather than quietly filled in, because a contract that under-describes

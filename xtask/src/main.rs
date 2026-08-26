@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 const EXIT_OK: i32 = 0;
 /// A step ran and failed.
 const EXIT_STEP_FAILED: i32 = 1;
-/// A required toolchain is missing; no steps ran.
+/// A required toolchain or database prerequisite is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
 /// The working tree was dirty after an otherwise successful run (step 11).
 const EXIT_DIRTY_TREE: i32 = 3;
@@ -43,6 +43,61 @@ struct Tool {
     /// The exact command that installs it.
     install: &'static str,
 }
+
+/// An environment prerequisite step 4's four-row census cannot run without.
+///
+/// Separate from [`Tool`] because the remedy is different in kind: a missing tool is installed
+/// once, and a missing database has to be started and pointed at. Reported in the same step-1
+/// block, with the same exit code, because from the operator's side both are the same sentence —
+/// *verification cannot run yet, and here is exactly what is absent*.
+struct Prerequisite {
+    /// The environment variable that must be set and non-empty.
+    variable: &'static str,
+    /// Which step needs it, so the operator knows what is at stake.
+    purpose: &'static str,
+    /// What to do about it. Never a value, and never a DSN: an example connection string in this
+    /// file would be an example credential in this file.
+    setup: &'static str,
+}
+
+/// The database environment step 4's census requires.
+///
+/// # Why this is a prerequisite rather than a condition
+///
+/// `contracts/verification-sequence.md` states of this sequence: *"Executed in order. None is
+/// conditional. None is skipped."* Until Phase 008's correction cycle the census contradicted it —
+/// with these variables absent it printed `ok — NOT RUN` and returned success, so a full
+/// `cargo xtask verify` could exit **0** having executed none of the row-suite pairs. That is the
+/// precise shape of the failure this repository has already been bitten by three times: a check
+/// that did not run, reported as a check that passed.
+///
+/// The four rows of `PLAN.md` §10.1 are not optional, so their evidence is not optional either.
+/// A contributor without databases now gets exit **2** and instructions, which is a refusal to
+/// verify rather than a verification that quietly covered less.
+///
+/// **Nothing here starts a service.** Exit 2 names what is missing; it does not go and fix it.
+/// A gate that silently provisions its own dependencies is a gate whose passing says nothing
+/// about the machine it ran on.
+const DATABASE_REQUIRED: &[Prerequisite] = &[
+    Prerequisite {
+        variable: "RENVOR_TEST_POSTGRES_URL",
+        purpose: "the four-row persistence census, step 4",
+        setup: "start a PostgreSQL the suite may create and drop tables in, and set this to its \
+                connection string — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_MYSQL_URL",
+        purpose: "the four-row persistence census, step 4",
+        setup: "start a MySQL the suite may create and drop tables in, and set this to its \
+                connection string — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_REQUIRE_DATABASE",
+        purpose: "turns a skipped real-database test into a failure, steps 4 and 7",
+        setup: "set it to `1`. Without it the test harness SKIPS every real-database test and \
+                still prints `ok`, which is the condition this variable exists to end",
+    },
+];
 
 /// Everything step 1 probes for. Order matches the step that consumes each tool.
 const REQUIRED: &[Tool] = &[
@@ -126,21 +181,31 @@ fn usage() {
     eprintln!("Runs the full verification sequence. Exit codes:");
     eprintln!("  0  every step ran and passed");
     eprintln!("  1  a step ran and failed");
-    eprintln!("  2  required tooling is missing; no steps ran");
+    eprintln!("  2  a required tool or the database environment is missing; no steps ran");
     eprintln!("  3  the working tree was dirty after a successful run");
 }
 
 /// Runs the sequence and returns the process exit code.
 fn verify() -> i32 {
     let root = workspace_root();
+    let environment = |name: &str| std::env::var_os(name);
 
-    // ---- Step 1: toolchain probe. Fail closed, before anything else runs. ----
-    let missing = probe_tooling();
-    if !missing.is_empty() {
-        report_missing(&missing);
-        return EXIT_TOOLING_MISSING;
+    // ---- Step 1: prerequisite probe. Fail closed, before anything else runs. ----
+    //
+    // Tools AND the database environment. The second half was added in Phase 008's correction
+    // cycle: step 4's census used to report `ok — NOT RUN` without it and let the whole sequence
+    // exit 0, which is a conditional step in a sequence whose contract says it has none.
+    let missing_tools = probe_tooling();
+    let missing_databases = missing_database_prerequisites(&environment);
+    if let Some(code) = prerequisites_gate(&missing_tools, &missing_databases) {
+        report_missing(&missing_tools, &missing_databases);
+        return code;
     }
-    step_ok(1, "toolchain probe", "all required tooling present");
+    step_ok(
+        1,
+        "prerequisite probe",
+        "all required tooling present, and the four-row database environment is set",
+    );
 
     // ---- Steps 2-5: Rust ----
     if !run(
@@ -195,7 +260,7 @@ fn verify() -> i32 {
     }
     // STILL STEP 4. Four rows are specified by `PLAN.md` §10.1; nothing until now asserted that
     // four of them ran. See `the_four_rows_all_ran`.
-    if !the_four_rows_all_ran(&root) {
+    if !the_four_rows_all_ran(&root, &environment) {
         return EXIT_STEP_FAILED;
     }
     // Warnings are denied via RUSTDOCFLAGS; a broken intra-doc link is a failure.
@@ -373,6 +438,31 @@ fn probe_tooling() -> Vec<&'static Tool> {
     REQUIRED.iter().filter(|t| !present(t)).collect()
 }
 
+/// Returns the database prerequisites that are absent or empty.
+///
+/// Takes the lookup rather than reading the process environment, so the decision this makes is
+/// testable without a test mutating global state that its neighbours are reading concurrently.
+fn missing_database_prerequisites(
+    env: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Vec<&'static Prerequisite> {
+    DATABASE_REQUIRED
+        .iter()
+        .filter(|p| env(p.variable).is_none_or(|value| value.is_empty()))
+        .collect()
+}
+
+/// The step-1 verdict: `None` to proceed, or the exit code to return without running anything.
+///
+/// A named function rather than an inline `if`, so that *"a missing prerequisite is never exit 0"*
+/// is a claim a test can hold rather than a shape a reader has to trust.
+fn prerequisites_gate(tools: &[&Tool], databases: &[&Prerequisite]) -> Option<i32> {
+    if tools.is_empty() && databases.is_empty() {
+        None
+    } else {
+        Some(EXIT_TOOLING_MISSING)
+    }
+}
+
 fn present(tool: &Tool) -> bool {
     Command::new(tool.program)
         .args(tool.probe)
@@ -387,12 +477,28 @@ fn present(tool: &Tool) -> bool {
 ///
 /// The final line is the point of this function. A partial run that reports success is
 /// the failure mode the fail-closed rule exists to prevent.
-fn report_missing(missing: &[&Tool]) {
-    eprintln!("error: verification cannot run — required tooling is missing");
+fn report_missing(tools: &[&Tool], databases: &[&Prerequisite]) {
+    eprintln!("error: verification cannot run — a required prerequisite is missing");
     eprintln!();
-    for tool in missing {
-        eprintln!("  missing: {} ({})", tool.name, tool.purpose);
+    for tool in tools {
+        eprintln!("  missing tool: {} ({})", tool.name, tool.purpose);
         eprintln!("    install: {}", tool.install);
+        eprintln!();
+    }
+    for prerequisite in databases {
+        eprintln!(
+            "  missing environment: {} ({})",
+            prerequisite.variable, prerequisite.purpose
+        );
+        eprintln!("    setup: {}", prerequisite.setup);
+        eprintln!();
+    }
+    if !databases.is_empty() {
+        eprintln!("The four rows of PLAN.md §10.1 are not optional, so neither is their evidence.");
+        eprintln!(
+            "This is a refusal to verify, not a verification that covered less. Nothing here"
+        );
+        eprintln!("starts a database for you: what runs is what you provided.");
         eprintln!();
     }
     eprintln!("no checks were run. verification did not pass.");
@@ -676,11 +782,28 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             &["sea-orm", "renvor-seaorm"],
             &["sqlx", "renvor-database"],
         ),
+        // `renvor-core` joined this row's forbidden list in Phase 008's correction cycle. The
+        // ports crate depended on the kernel for exactly one thing — projecting
+        // `DatabaseErrorKind` onto `ErrorCategory` — and that projection reported ordinary
+        // database outcomes as `Internal`, which C-E1 reserves for a kernel defect. Removing it
+        // left the dependency unused, and an unused edge between two crates is an edge somebody
+        // eventually uses.
+        //
+        // The controls are `renvor-validation` and `renvor-error`, which this crate really does
+        // resolve. The row previously controlled on `renvor-database` itself — the ROOT of its own
+        // tree — which is present in every possible output and therefore proves nothing about
+        // whether the walk can see a dependency.
         (
             "renvor-database (--all-features)",
             &["-p", "renvor-database", "--all-features"],
-            &["sea-orm", "sqlx", "renvor-seaorm", "renvor-sqlx"],
-            &["renvor-database"],
+            &[
+                "sea-orm",
+                "sqlx",
+                "renvor-seaorm",
+                "renvor-sqlx",
+                "renvor-core",
+            ],
+            &["renvor-validation", "renvor-error"],
         ),
     ];
 
@@ -1474,13 +1597,21 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// Every (row, suite) pair the persistence evidence rests on.
 ///
 /// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix, each measured
-/// by six suites. Five are compiled once in `renvor-testkit` and called by every row — the
-/// **ports** contract, the **domain** example, **concurrency and idempotency**, **portability**,
-/// and the **upgrade path**. The sixth, the **startup diagnostic**, is per-adapter by necessity:
-/// it drives each adapter's own provider, which is the thing under test.
+/// by **seven** required tests across six suites. Five suites are compiled once in
+/// `renvor-testkit` and called by every row — the **ports** contract, the **domain** example,
+/// **concurrency and idempotency**, **portability**, and the **upgrade path**. The sixth, the
+/// **startup diagnostic**, is per-adapter by necessity — it drives each adapter's own provider —
+/// and carries **two** required tests: a refused socket and a refused credential, which reach
+/// different code.
 ///
-/// Twenty-four entries, and a missing one fails the gate whichever suite it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 24] = [
+/// **This was twenty-four until Phase 008's correction cycle**, when the server-side refusal test
+/// was added on the finding that `ConnectFailed`'s advice covered only one of the five causes it
+/// is returned for. The count is stated here rather than left implicit so that a reader comparing
+/// this against phase evidence written before the correction sees the change rather than a
+/// discrepancy.
+///
+/// Twenty-eight entries, and a missing one fails the gate whichever suite it belongs to.
+const ROW_EVIDENCE: [(&str, &str, &str); 28] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1589,6 +1720,29 @@ const ROW_EVIDENCE: [(&str, &str, &str); 24] = [
         "startup_diagnostic",
         "mysql::a_failed_start_names_the_provider_and_what_to_do",
     ),
+    // The server-side refusal rows, added by Phase 008's correction cycle. A refused socket and a
+    // refused credential reach different code — the I/O arm and `classify_connect_error` — so a
+    // census that required only the first would let the second be deleted silently.
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
 ];
 
 /// STEP 4, still: every one of the four rows reported in.
@@ -1621,16 +1775,29 @@ const ROW_EVIDENCE: [(&str, &str, &str); 24] = [
 /// rather than capturing it, which is the right behaviour for a step whose output a human is
 /// watching; capturing step 4 wholesale to satisfy this check would trade live test progress for a
 /// census. Two small binaries run twice is the cheaper trade.
-fn the_four_rows_all_ran(root: &Path) -> bool {
+fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> bool {
     const TITLE: &str = "tests (four-row persistence census)";
 
-    if std::env::var_os("RENVOR_TEST_REQUIRE_DATABASE").is_none() {
-        step_ok(
+    // Defence in depth. Step 1 already refuses the run without these, so reaching here with one
+    // absent means the environment changed mid-sequence. Either way the answer is the same: a
+    // census that did not run is not a census that passed.
+    let absent = missing_database_prerequisites(env);
+    if !absent.is_empty() {
+        step_fail(
             4,
             TITLE,
-            "NOT RUN — set RENVOR_TEST_REQUIRE_DATABASE with both database URLs to require it",
+            &format!(
+                "the database environment is incomplete — {} of {} variables are absent or \
+                 empty, so none of the {} row-suite pairs could run. This is a FAILURE rather \
+                 than a skip: `contracts/verification-sequence.md` states that no step in this \
+                 sequence is conditional. Run `cargo xtask verify` again with the environment \
+                 CONTRIBUTING.md describes",
+                absent.len(),
+                DATABASE_REQUIRED.len(),
+                ROW_EVIDENCE.len()
+            ),
         );
-        return true;
+        return false;
     }
 
     // Group the rows by the binary that carries them, so each binary runs once.
@@ -1706,7 +1873,7 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (4 rows x 6 suites)",
+            "all {} row-suite pairs reported in (4 rows x 7 required tests)",
             ROW_EVIDENCE.len()
         ),
     );
@@ -2057,6 +2224,70 @@ const SC022_REQUIRED_OCCURRENCES: usize = 1;
 
 #[cfg(test)]
 mod tests {
+    /// A missing database prerequisite can only produce the missing-prerequisite code.
+    ///
+    /// Stated as three separate claims rather than one, because the failure being guarded against
+    /// is a gate returning **success**, and `assert_eq!(.., Some(2))` alone would still pass if
+    /// someone later made `EXIT_TOOLING_MISSING` equal `EXIT_OK`.
+    #[test]
+    fn a_missing_database_prerequisite_can_never_yield_exit_zero() {
+        let nothing = |_: &str| None;
+        let databases = super::missing_database_prerequisites(&nothing);
+        assert_eq!(
+            databases.len(),
+            super::DATABASE_REQUIRED.len(),
+            "the probe did not see the absent variables"
+        );
+
+        let verdict = super::prerequisites_gate(&[], &databases);
+        assert_eq!(verdict, Some(super::EXIT_TOOLING_MISSING));
+        assert_ne!(verdict, Some(super::EXIT_OK));
+        assert_ne!(
+            verdict, None,
+            "`None` means the sequence proceeds and can pass"
+        );
+    }
+
+    /// CONTROL: with the environment complete, the gate lets the run proceed.
+    ///
+    /// Without this the test above would pass against a gate that refused everything
+    /// unconditionally, which is a different defect wearing the same green tick.
+    #[test]
+    fn a_complete_environment_lets_verification_proceed() {
+        let everything = |_: &str| Some(std::ffi::OsString::from("set"));
+        let databases = super::missing_database_prerequisites(&everything);
+        assert!(
+            databases.is_empty(),
+            "the probe reported a variable that was set"
+        );
+        assert_eq!(super::prerequisites_gate(&[], &databases), None);
+    }
+
+    /// An empty value is absence. CI writes these variables from shell expansion, and an
+    /// expansion that produced nothing would otherwise satisfy a presence check while naming no
+    /// database at all.
+    #[test]
+    fn an_empty_variable_counts_as_missing() {
+        let empty = |_: &str| Some(std::ffi::OsString::new());
+        assert_eq!(
+            super::missing_database_prerequisites(&empty).len(),
+            super::DATABASE_REQUIRED.len()
+        );
+    }
+
+    /// RED (Correction E). `contracts/verification-sequence.md` says of this sequence: *"Executed
+    /// in order. None is conditional. None is skipped."* Step 4's census is conditional on an
+    /// environment variable, and when it is absent the census prints `ok — NOT RUN` and returns
+    /// success — so a full `cargo xtask verify` exits 0 having executed none of the 28 pairs.
+    #[test]
+    fn a_run_without_the_database_environment_cannot_report_the_census_as_ok() {
+        let nothing = |_: &str| None;
+        assert!(
+            !super::the_four_rows_all_ran(std::path::Path::new("."), &nothing),
+            "the census reported success without running"
+        );
+    }
+
     use super::scan_manifests;
 
     /// `TOTAL_STEPS` equals the number of steps the published contract lists.
