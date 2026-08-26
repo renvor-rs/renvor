@@ -1,7 +1,7 @@
 ---
 description: "Contract C-16 — what PostgreSQL and MySQL are permitted to disagree about, and what an application may assume across both"
-version: "1.0.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
+version: "1.1.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-08-26) cites ADR-0023 alongside PLAN §10.1 as source of authority; no rule changed. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
 ---
 
 # Contract C-16 — Database portability
@@ -9,10 +9,20 @@ status: "normative — public contract from the first release that ships it; not
 **Status**: defined against measurements, per constitution principle V.
 **Applies to**: `renvor-database`, `renvor-sqlx`, `renvor-seaorm`, and every application schema
 generated or migrated by them.
-**Source of authority**: `PLAN.md` §10.1, which requires that *"identifiers, timestamps, isolation
-levels, upserts, pagination order, JSON capabilities, and migration syntax require cross-database
-contract tests"*. This contract is those seven topics; it adds no requirement PLAN does not already
-place, and it settles each one against a measurement rather than a reading of the manuals.
+**Source of authority**: `PLAN.md` §10.1 **and** [ADR-0023](../decisions/0023-database-portability-across-the-four-rows.md).
+
+PLAN §10.1 requires that *"identifiers, timestamps, isolation levels, upserts, pagination order,
+JSON capabilities, and migration syntax require cross-database contract tests"*. It names the seven
+topics and requires them to be measured; it does not decide what the answers are.
+
+**Those decisions are ADR-0023's, and this contract states them.** The distinction is not
+bookkeeping: the rules below are normative — they forbid constructs that compile and run — and each
+was reversible when it was made. A contract records a rule; it does not record the alternatives that
+were rejected or the cost of the one taken. Read this document for what is required, and ADR-0023
+for why, what else was considered, and what each choice costs.
+
+This contract adds no requirement PLAN does not already place, and it settles each topic against a
+measurement rather than a reading of the manuals.
 
 > **Numbering.** C-6 and C-7 are unassigned in this repository. This contract takes **C-16**,
 > the next number after the highest in use, rather than filling a gap whose history is not

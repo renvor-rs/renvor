@@ -36,6 +36,10 @@ The **rules** are contract C-16 (`contracts/database-portability.md`), and every
 attached to a test that runs against both engines on every verification. This page is the working
 guide to applying them.
 
+The **reasoning** — what else was considered for each of the seven topics, and what the choice
+costs — is decision record ADR-0023. Read it when a rule below looks arbitrary: three of the seven
+differences cannot be removed by any adapter, and the record says which and why.
+
 :::tip The short version
 
 Lowercase identifiers under 63 bytes · `DATETIME(6)`/`TIMESTAMP(6)` storing UTC · one unique key per
