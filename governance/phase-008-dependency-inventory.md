@@ -16,6 +16,22 @@
 
 **None.** Phase 008 added no development dependency to any crate.
 
+## 2a. Removed — one internal edge
+
+| Removed from | Dependency | Why |
+|---|---|---|
+| `renvor-database` | `renvor-core` | It existed for exactly one thing: projecting `DatabaseErrorKind` onto the kernel's `ErrorCategory`. That projection reported ordinary database outcomes — a violated unique key, an absent row, an edited migration — as `Internal`, which C-E1 reserves for a **kernel defect**. The projection was removed, and nothing else in the crate used the kernel |
+
+This makes `renvor-database`'s only Renvor dependency `renvor-validation`, which is
+transport-independent. **An unused edge between two crates is an edge somebody eventually uses**, so
+the absence is asserted against the resolved graph by `xtask` step 7 rather than left to review, with
+`renvor-validation` and `renvor-error` as positive controls. Mutation **M-27b** re-introduced the
+edge and the step failed.
+
+The row it was added to previously controlled on `renvor-database` itself — the **root** of its own
+tree, present in every possible output, and therefore proof of nothing. That is corrected in the same
+change.
+
 ## 3. Where one was considered and not taken
 
 | Candidate | For | Why not |
