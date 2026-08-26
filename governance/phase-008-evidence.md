@@ -168,6 +168,13 @@ full table is in [`phase-008-review-record.md`](phase-008-review-record.md). The
   assertion messages interpolated the rendering they were asserting about. Ten diagnostics were
   rewritten to name an index. **The gate caught the same class of mistake twice in one phase**,
   which is the gate working.
+- The first pre-merge gate run of the correction cycle **FAILED at rustdoc** (`-D warnings`):
+  `redundant explicit link target` in `crates/renvor-database/src/startup.rs`, twice. Importing
+  `DatabaseError` into that module — which correction B required, so the diagnostic could hold its
+  cause — put the type in scope, and `[`DatabaseError`](crate::DatabaseError)` became redundant.
+  One of the two had been there since the module was written and only became an error when the
+  import landed. Fixed by removing both explicit targets. **The failed run stays in this record**;
+  the rerun passing is not a reason to delete it.
 - `renvor-cli/tests/tls_consent.rs` failed once and passed unchanged on rerun (**F-3**). Out of
   scope, **unresolved**, and **the rerun does not close it**. It now has an owner (Ahmed Anbar), a
   target (a dedicated follow-up before Phase 009), and a deadline (**2026-09-02**); the test
