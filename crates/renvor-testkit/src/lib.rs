@@ -18,6 +18,7 @@ pub mod domain;
 pub mod harness;
 pub mod injection;
 pub mod persistence;
+pub mod portability;
 
 pub use clock::TestClock;
 pub use concurrency::{CONCURRENT_WRITERS, MAX_ATTEMPTS};
@@ -25,3 +26,4 @@ pub use domain::{Widget, WidgetFixture};
 pub use harness::{Harness, HarnessRun, Outcome};
 pub use injection::{Behaviour, FailureInjectionPoint};
 pub use persistence::PersistenceFixture;
+pub use portability::PortabilityFixture;

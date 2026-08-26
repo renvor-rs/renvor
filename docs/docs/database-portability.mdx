@@ -1,0 +1,194 @@
+---
+sidebar_position: 7
+title: Data types and migration portability
+description: Choosing column types and writing migrations that behave the same on PostgreSQL and MySQL.
+# No "Edit this page" link WHILE THIS PAGE IS UNMERGED.
+#
+# Docusaurus builds that link from `editUrl`, which points at `tree/main/docs/`. For a page that
+# does not exist on `main` yet the link 404s, and verification step 10 checks the built site — so
+# a new documentation page cannot pass the link check before the commit that adds it is merged.
+#
+# Previous phases resolved this with a temporary `lychee.toml` exclusion (EX-004, EX-006), each
+# removed after its pull request merged. This suppresses the link at its source instead, which
+# needs no exemption and leaves nothing in a shared config to remember.
+#
+# REMOVE THIS LINE once this page is on `main`, and the edit link returns like every other page's.
+custom_edit_url: null
+---
+
+import Stamp from './_stamp.mdx';
+
+# Data types and migration portability
+
+<Stamp />
+
+:::danger Nothing is published
+
+None of the crates below are on crates.io. This page documents contracts that are implemented and
+tested, not software you can install.
+
+:::
+
+All four persistence rows — direct SQLx and SeaORM, each on PostgreSQL and MySQL — are first-class.
+That means your schema has to be one both engines agree about. This page is how to write one.
+
+The **rules** are contract C-16 (`contracts/database-portability.md`), and every rule there is
+attached to a test that runs against both engines on every verification. This page is the working
+guide to applying them.
+
+:::tip The short version
+
+Lowercase identifiers under 63 bytes · `DATETIME(6)`/`TIMESTAMP(6)` storing UTC · one unique key per
+upsert target · order by a non-nullable unique key · `jsonb` and `JSON` · one schema change per
+migration.
+
+:::
+
+## Choosing column types
+
+| You want | PostgreSQL | MySQL | Watch for |
+|---|---|---|---|
+| Identity | `BIGINT` / `BIGSERIAL` | `BIGINT` / `AUTO_INCREMENT` | — |
+| Short text | `VARCHAR(n)` | `VARCHAR(n)` | MySQL counts characters; index prefix limits apply |
+| Long text | `TEXT` | `TEXT` / `LONGTEXT` | MySQL `TEXT` caps at 65 535 **bytes** |
+| Instant | `TIMESTAMPTZ` | `DATETIME(6)` | see below |
+| Boolean | `BOOLEAN` | `BOOLEAN` (alias of `TINYINT(1)`) | MySQL returns `0`/`1` |
+| Exact decimal | `NUMERIC(p,s)` | `DECIMAL(p,s)` | never `FLOAT` for money |
+| Document | `JSONB` | `JSON` | not PostgreSQL `JSON` — see below |
+| Binary | `BYTEA` | `BLOB` / `LONGBLOB` | MySQL `BLOB` caps at 65 535 bytes |
+
+### Timestamps are the trap
+
+Two independent problems, and both bite silently.
+
+**Precision.** A column written as `TIMESTAMP` or `DATETIME` with no precision keeps
+**microseconds on PostgreSQL and whole seconds on MySQL**. Nothing errors; the fractional part is
+simply gone.
+
+```sql
+-- Wrong: the same DDL means two different things
+created_at DATETIME NOT NULL
+
+-- Right: the precision is stated, so both engines store the same thing
+created_at DATETIME(6) NOT NULL
+```
+
+**Range.** MySQL's `TIMESTAMP` type ends at **2038-01-19**. A subscription that renews in 2039 is
+rejected outright:
+
+```
+ERROR 1292 (22007): Incorrect datetime value: '2039-01-01 00:00:00'
+```
+
+Use `DATETIME(6)` on MySQL and store UTC. MySQL's `TIMESTAMP` also converts on read using the
+*session* time zone, so two sessions reading one row can see two different values.
+
+### JSON: pick the normalising type
+
+MySQL has one JSON type and it normalises — keys sorted, duplicate keys resolved last-wins,
+whitespace discarded. PostgreSQL has two, and only `jsonb` does the same:
+
+```
+input       {"b":1,"a":2,"a":3}
+
+jsonb  ->   {"a": 3, "b": 1}      MySQL JSON ->  {"a": 3, "b": 1}      identical
+json   ->   {"b":1,"a":2,"a":3}                                        PostgreSQL only
+```
+
+Use `JSONB` and `JSON`. If you genuinely need the bytes you were sent, store them in a text column
+and be explicit about it — PostgreSQL's `json` type has no MySQL equivalent.
+
+## Writing migrations
+
+### One schema change per migration
+
+PostgreSQL runs DDL inside your transaction, so a failed migration leaves nothing behind. **MySQL
+does not** — DDL forces an implicit commit, so every statement before the failure is already
+permanent and no rollback can reach it.
+
+```
+BEGIN; CREATE TABLE t (...); ROLLBACK;
+
+PostgreSQL   table is gone
+MySQL        table is still there
+```
+
+A migration with one statement has no partial state to be in. If you must write several, order
+them so that a failure partway leaves a database the next run can continue from, and never rely on
+rollback to undo an earlier step.
+
+### Identifiers
+
+Lowercase, at most 63 bytes, no quoting required. The limit is PostgreSQL's, and it is the
+dangerous one: past 63 bytes PostgreSQL **truncates and succeeds**, creating the table under a name
+you did not write, while MySQL refuses at 65 characters. The refusal is the better outcome.
+
+```
+CREATE TABLE rv_pt_aaaa…(65 chars)
+
+PostgreSQL   NOTICE: identifier will be truncated   -> created as 63 characters
+MySQL        ERROR 1059: Identifier name is too long
+```
+
+### Upserts target exactly one unique key
+
+MySQL's `ON DUPLICATE KEY UPDATE` cannot be scoped to a particular key. On a table with a second
+unique constraint, this happens:
+
+```sql
+-- table w(id PRIMARY KEY, tag UNIQUE, v), already holding (1, 'x', 1)
+INSERT INTO w VALUES (2, 'x', 9) ...   -- scoped to id
+
+PostgreSQL   ERROR: duplicate key value violates unique constraint "w_tag_key"
+MySQL        succeeds — and updates row id = 1, which the statement never named
+```
+
+So: upsert against the primary key of a table that has no other unique constraint. And do not read
+insert-versus-update out of the affected-row count — MySQL reports **2** for an update and **0**
+when the values were already correct.
+
+## Reading and paging
+
+### NULLs sort to opposite ends
+
+| | `ORDER BY v ASC` |
+|---|---|
+| PostgreSQL | `1, 2, NULL` |
+| MySQL | `NULL, 1, 2` |
+
+Page on a **non-nullable unique key**. A cursor over a nullable column resumes from a different row
+on each engine — a wrong answer, not a slow one. If a nullable column has to participate, put it
+before the unique tiebreaker and state its NULL placement explicitly.
+
+### Do not depend on the default isolation level
+
+PostgreSQL defaults to `READ COMMITTED`, MySQL to `REPEATABLE READ`. With a transaction open and
+one read taken, a second read of the same table sees another session's commit on PostgreSQL and
+does not on MySQL.
+
+Renvor exposes no isolation-level setter, so a read-modify-write that must be atomic has to say so
+in SQL — lock the row you read, or write a condition that fails if it changed since.
+
+## A schema that satisfies all of it
+
+```sql
+CREATE TABLE account (
+  id          BIGINT       NOT NULL PRIMARY KEY,
+  email       VARCHAR(320) NOT NULL UNIQUE,
+  profile     JSON         NOT NULL,        -- JSONB on PostgreSQL
+  created_at  DATETIME(6)  NOT NULL,        -- TIMESTAMPTZ on PostgreSQL; UTC either way
+  balance     DECIMAL(19,4) NOT NULL
+);
+```
+
+`email` is a second unique key, so `account` is **not** a portable upsert target. That is a real
+constraint, not an oversight: insert and handle the `UniqueViolation`, which both engines and both
+adapters report identically.
+
+## How this is kept true
+
+Each rule above is one assertion in `renvor_testkit::portability`, compiled once and executed
+against both engines through both adapters on every verification run. `xtask` requires all four
+rows to report in, so a row that stopped running fails the build rather than going quiet.
+
+When an engine changes its behaviour, that suite fails and this page is what gets corrected.

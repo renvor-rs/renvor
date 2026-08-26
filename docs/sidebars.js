@@ -19,6 +19,7 @@ const sidebars = {
     },
     'cli',
     'persistence',
+    'database-portability',
     'api-reference',
   ],
 };
