@@ -1344,10 +1344,12 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
     true
 }
 
-/// The four persistence rows, and the test that measures each.
+/// Every (row, suite) pair the persistence evidence rests on.
 ///
-/// `(crate, test binary, test path)`. One entry per row of `PLAN.md` §10.1's backend matrix.
-const FOUR_ROWS: [(&str, &str, &str); 4] = [
+/// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix, each measured
+/// by two suites: the shared **ports** contract and the shared **domain** example. Eight entries,
+/// and a missing one fails the gate whichever half it belongs to.
+const ROW_EVIDENCE: [(&str, &str, &str); 8] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1367,6 +1369,26 @@ const FOUR_ROWS: [(&str, &str, &str); 4] = [
         "renvor-seaorm",
         "contract",
         "mysql::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "postgres::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "mysql::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "postgres::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "mysql::the_shared_domain_example_holds",
     ),
 ];
 
@@ -1413,10 +1435,13 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
     }
 
     // Group the rows by the binary that carries them, so each binary runs once.
-    let mut binaries: Vec<(&str, &str)> = FOUR_ROWS
+    let mut binaries: Vec<(&str, &str)> = ROW_EVIDENCE
         .iter()
         .map(|(package, binary, _)| (*package, *binary))
         .collect();
+    // Sorted before `dedup`, which only removes ADJACENT duplicates. Unsorted, a binary named
+    // again later in the table would be run twice.
+    binaries.sort_unstable();
     binaries.dedup();
 
     for (package, binary) in binaries {
@@ -1455,7 +1480,7 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
             return false;
         }
 
-        for (expected_package, expected_binary, test) in FOUR_ROWS {
+        for (expected_package, expected_binary, test) in ROW_EVIDENCE {
             if expected_package != package || expected_binary != binary {
                 continue;
             }
@@ -1481,7 +1506,10 @@ fn the_four_rows_all_ran(root: &Path) -> bool {
     step_ok(
         4,
         TITLE,
-        &format!("all {} rows reported in", FOUR_ROWS.len()),
+        &format!(
+            "all {} row-suite pairs reported in (4 rows x 2 shared suites)",
+            ROW_EVIDENCE.len()
+        ),
     );
     true
 }
