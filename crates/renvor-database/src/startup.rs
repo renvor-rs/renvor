@@ -2,7 +2,7 @@
 //!
 //! # The problem this solves
 //!
-//! A provider that fails at boot used to return its [`DatabaseError`](crate::DatabaseError)
+//! A provider that fails at boot used to return its [`DatabaseError`]
 //! unchanged. That error is safe — it carries a kind and nothing else — but it is not a
 //! *diagnostic*: it does not say **which** database failed, at **which** point, or what the
 //! operator should do next. On a machine running one PostgreSQL and one MySQL, "the connection
@@ -21,7 +21,7 @@
 //! | `adapter` | [`DatabaseAdapter`] | a two-variant enum |
 //! | `database` | [`DatabaseKind`] | a two-variant enum |
 //! | `phase` | [`StartupPhase`] | a three-variant enum |
-//! | `cause` | [`DatabaseError`](crate::DatabaseError) | one fieldless-enum field, and nothing else |
+//! | `cause` | [`DatabaseError`] | one fieldless-enum field, and nothing else |
 //!
 //! There is no `String` and no constructor that accepts one. A DSN, a password, a token, a SQL
 //! statement, and the name of a credential-bearing environment variable are all *unrepresentable*
