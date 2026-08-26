@@ -10,15 +10,24 @@
 mod support;
 
 macro_rules! migration_suite {
-    ($module:ident, $feature:literal, $driver:ty, $connect:path, $run:ident, $url:expr) => {
+    (
+        $module:ident,
+        $feature:literal,
+        $driver:ty,
+        $connect:path,
+        $run:ident,
+        $url:expr,
+        $partial_exists:literal,
+        $dirty_rows:literal
+    ) => {
         #[cfg(feature = $feature)]
         mod $module {
             use std::path::{Path, PathBuf};
             use std::time::Duration;
 
             use renvor_database::{
-                Database, DatabaseErrorKind, MigrationOutcome, MigrationPolicy, MigrationSettings,
-                Reversibility,
+                Database, DatabaseErrorKind, DatabaseKind, MigrationOutcome, MigrationPolicy,
+                MigrationSettings, Reversibility,
             };
             use renvor_sqlx::Migrations;
             use sqlx::AssertSqlSafe;
@@ -101,6 +110,149 @@ macro_rules! migration_suite {
                         .all(|s| s.outcome() == MigrationOutcome::AlreadyApplied)
                 );
 
+                database.close().await.expect("closes");
+            }
+
+            // -------------------------------------------------- partial failure, dirty ledger
+
+            /// A migration set whose single migration fails **after** an earlier statement.
+            ///
+            /// Two `CREATE TABLE`s for the same name in one file: the first succeeds, the second
+            /// is refused because the object now exists. Whether the first survives is the
+            /// engine's decision, and it is the decision the whole recovery procedure turns on.
+            ///
+            /// Built in a temporary directory rather than committed, for the reason the checksum
+            /// test gives: `xtask` step 11 treats a dirty tree as a failure, and a migration set
+            /// that is *designed* to fail has no business in the repository's own fixtures.
+            fn partial_set() -> PathBuf {
+                let directory = std::env::temp_dir().join(format!(
+                    "renvor-partial-{}-{}",
+                    stringify!($module),
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_dir_all(&directory);
+                std::fs::create_dir_all(&directory).expect("creates");
+                std::fs::write(
+                    directory.join("20260101000001_partial.up.sql"),
+                    "CREATE TABLE rv_partial (id BIGINT PRIMARY KEY);\n\
+                     CREATE TABLE rv_partial (id BIGINT PRIMARY KEY);\n",
+                )
+                .expect("writes");
+                std::fs::write(
+                    directory.join("20260101000001_partial.down.sql"),
+                    "DROP TABLE IF EXISTS rv_partial;\n",
+                )
+                .expect("writes");
+                directory
+            }
+
+            /// After a partial failure the next run is **refused**, not resumed.
+            ///
+            /// # This test exists because the portability contract said the opposite
+            ///
+            /// `contracts/database-portability.md` used to instruct operators that after a
+            /// partial MySQL failure *"the recovery path is 'run the rest', not 'run it again
+            /// from the start'"*. A review found that false, and this is the measurement that
+            /// settles it: SQLx writes its ledger row with `success = FALSE` **before** running
+            /// the migration, MySQL's implicit commit makes that row permanent the moment the
+            /// first DDL statement executes, and every later run sees a dirty version and returns
+            /// [`DatabaseErrorKind::MigrationDirty`] without executing anything at all. There is
+            /// no "rest" to run.
+            ///
+            /// # Both engines are asserted, because the contrast is the contract
+            ///
+            /// PostgreSQL wraps the ledger row and the migration in one transaction, so a failure
+            /// rolls back both: no table, no dirty row, and the next run genuinely retries from
+            /// the start. Asserting only MySQL would leave the PostgreSQL half of the contract
+            /// resting on the same reasoning that produced the wrong MySQL half.
+            #[tokio::test]
+            async fn a_partial_migration_is_refused_on_the_next_run_rather_than_resumed() {
+                let Some((database, _fixture)) = blank().await else {
+                    return;
+                };
+                let clean = |sql: &'static str| {
+                    let pool = database.pool().clone();
+                    async move {
+                        sqlx::query(AssertSqlSafe(sql.to_owned()))
+                            .execute(&pool)
+                            .await
+                            .expect("cleans");
+                    }
+                };
+                clean("DROP TABLE IF EXISTS rv_partial").await;
+
+                let directory = partial_set();
+                let migrations = Migrations::load(&directory, MigrationSettings::default())
+                    .await
+                    .expect("loads");
+
+                let failure = migrations
+                    .$run(&database)
+                    .await
+                    .expect_err("the second CREATE TABLE must be refused");
+                assert_eq!(
+                    failure.kind(),
+                    DatabaseErrorKind::MigrationFailed,
+                    "the FIRST run fails on the statement, not on the ledger"
+                );
+
+                // Did the statement BEFORE the failure survive its transaction?
+                let survived: i64 = sqlx::query_scalar(AssertSqlSafe($partial_exists.to_owned()))
+                    .fetch_one(database.pool())
+                    .await
+                    .expect("reads the catalogue");
+                // And did SQLx leave a version marked unsuccessful behind?
+                let dirty: i64 = sqlx::query_scalar(AssertSqlSafe($dirty_rows.to_owned()))
+                    .fetch_one(database.pool())
+                    .await
+                    .expect("reads the ledger");
+
+                let (expected_survived, expected_dirty, expected_second) =
+                    match database.kind() {
+                        // Transactional DDL: the ledger row and the table go back together.
+                        DatabaseKind::Postgres => (0, 0, DatabaseErrorKind::MigrationFailed),
+                        // An implicit commit made both permanent before the failure was raised.
+                        DatabaseKind::MySql => (1, 1, DatabaseErrorKind::MigrationDirty),
+                        kind => panic!(
+                            "{kind:?} has never been measured against a partial migration. Record \
+                             what it does with the ledger before this contract claims to cover it"
+                        ),
+                    };
+
+                assert_eq!(
+                    survived,
+                    expected_survived,
+                    "on {:?} the statement before the failure {} committed. That is what decides \
+                     whether an operator has a half-migrated schema to repair",
+                    database.kind(),
+                    if survived == 1 { "HAD" } else { "had not" }
+                );
+                assert_eq!(
+                    dirty,
+                    expected_dirty,
+                    "on {:?} the ledger held {dirty} unsuccessful row(s) after the failure",
+                    database.kind()
+                );
+
+                // THE FINDING: what the NEXT run does.
+                let second = migrations
+                    .$run(&database)
+                    .await
+                    .expect_err("a second run must not succeed either");
+                assert_eq!(
+                    second.kind(),
+                    expected_second,
+                    "on {:?} the run AFTER a partial failure reported {:?}. On MySQL it must be \
+                     `MigrationDirty` — refused before any statement is sent, so no operator can \
+                     recover by re-running — and on PostgreSQL it must be the original \
+                     `MigrationFailed`, because there is nothing partial to be blocked by",
+                    database.kind(),
+                    second.kind()
+                );
+
+                clean("DROP TABLE IF EXISTS rv_partial").await;
+                clean("DROP TABLE IF EXISTS _sqlx_migrations").await;
+                let _ = std::fs::remove_dir_all(&directory);
                 database.close().await.expect("closes");
             }
 
@@ -389,7 +541,9 @@ migration_suite!(
     sqlx::Postgres,
     renvor_sqlx::connect_postgres,
     run_postgres,
-    support::POSTGRES_URL
+    support::POSTGRES_URL,
+    "SELECT (CASE WHEN to_regclass('rv_partial') IS NULL THEN 0 ELSE 1 END)::bigint",
+    "SELECT COUNT(*)::bigint FROM _sqlx_migrations WHERE success = FALSE"
 );
 migration_suite!(
     mysql,
@@ -397,5 +551,8 @@ migration_suite!(
     sqlx::MySql,
     renvor_sqlx::connect_mysql,
     run_mysql,
-    support::MYSQL_URL
+    support::MYSQL_URL,
+    "SELECT CAST(COUNT(*) AS SIGNED) FROM information_schema.tables \
+     WHERE table_schema = DATABASE() AND table_name = 'rv_partial'",
+    "SELECT CAST(COUNT(*) AS SIGNED) FROM _sqlx_migrations WHERE success = FALSE"
 );
