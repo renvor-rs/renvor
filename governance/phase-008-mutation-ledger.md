@@ -122,7 +122,7 @@ the census fail-closed behaviour, and the category removal.
 | M-26a | the census's environment guard is disabled, so it reports `ok` without running | **KILLED** — `the census reported success without running` |
 | M-26b | `prerequisites_gate` always returns `None`, so step 1 never refuses | **KILLED** — `a_missing_database_prerequisite_can_never_yield_exit_zero` |
 | M-27a | `DatabaseErrorKind::category()` is restored | **KILLED** — the `compile_fail` documentation test compiles and therefore fails |
-| M-27b | `renvor-database` depends on `renvor-core` again, method absent | **KILLED at step 7** — the resolved-graph check |
+| M-27b | `renvor-database` depends on `renvor-core` again, method absent | **KILLED** — `renvor-database (--all-features) resolves \`renvor-core\`, which persistence feature isolation forbids` |
 
 ### M-24 survived, and closing it is the finding
 
@@ -145,6 +145,24 @@ allowed to render"*.
 
 This is recorded as a survivor first and a kill second, in that order, because the order is the
 evidence: the mutation found something the correction had missed.
+
+### Where M-27b actually fired, which is not where it was expected to
+
+M-27b was predicted to fail **step 7**. It failed **step 4**, and the distinction is worth
+recording: the resolved-graph check has an `xtask` unit test of its own, so `cargo test --workspace`
+runs it before the sequence ever reaches step 7. The step-7 message was printed from inside step 4.
+
+The mutation is killed either way, and killed **earlier** than predicted, which is the better
+outcome. It is recorded as a corrected prediction rather than silently reported as the step-7 kill
+it was expected to be.
+
+**M-27b's first attempt is discarded, not reported.** Files were edited while it ran, so it was no
+longer testing the tree it started on — the same mistake M-21's first attempt made, made again in
+the same phase. It was re-run on a committed, unchanging tree and is reported from that run. That
+first attempt did surface something real before it was discarded, and that finding is in
+`phase-008-evidence.md` §7: adding a password literal to a documentation example pulled
+`startup.rs` into the credential-handling scope, and ten of its assertion messages had to be
+rewritten to name an index instead of a rendering.
 
 ### The `compile_fail` controls, and why each has a twin
 
