@@ -229,6 +229,22 @@ in both adapters, and it is mutation-proven against silence as well as against l
 
   **Both failures stay in this record.** The rerun on the corrected tree is reported separately;
   the run that failed is not deleted because it passed the second time.
+- **The second gate attempt FAILED at step 4 for reasons that were entirely the test ENVIRONMENT**,
+  and it is recorded because a reader comparing logs would otherwise see an unexplained red run:
+  - Eight MySQL migration tests reported `ConnectFailed`. The suites `CREATE DATABASE` per test,
+    and the container had been started with the official image's `MYSQL_USER`, which holds rights
+    on `MYSQL_DATABASE` only. The create was refused and the connect to the absent database is what
+    surfaced.
+  - `postgres::a_failed_boot_publishes_nothing_and_leaks_no_credential` reported *"the password
+    reached a diagnostic"* — and **nothing had leaked.** The container password was `renvor`, the
+    test extracts the real password from the DSN and substring-searches the rendered diagnostic,
+    and that diagnostic legitimately renders `renvor-seaorm`. A false positive, and the test is
+    right to fail closed on it: a substring search cannot distinguish a leak from a password that
+    happens to be a substring of a safe token.
+
+  **Neither was a defect in the tree**, and both are now documented in `CONTRIBUTING.md` so the
+  next person setting up the four rows does not spend a gate run rediscovering them. The run is
+  reported as failed rather than quietly rerun.
 - **One gate run was killed mid-step-4 by the harness and is DISCARDED, not reported.** Nothing was
   edited and the tree was unchanged, so it is neither a pass nor a failure — it is an incomplete
   measurement, and the same treatment M-27b's interrupted first attempt received.

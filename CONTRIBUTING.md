@@ -72,6 +72,21 @@ locally means a portability difference fails on your machine rather than in revi
 Use a throwaway database. The suite creates and drops its own tables, and the upgrade suite
 deliberately migrates a schema from a previous release.
 
+**Two properties of these URLs are not obvious, and each one costs a full gate run to discover.**
+
+1. **The user needs `CREATE DATABASE` globally**, not just rights on the named database. The
+   suites create a fresh database per test rather than sharing one. In the official MySQL image the
+   `MYSQL_USER` account is granted rights on `MYSQL_DATABASE` **only**, so a URL using it fails
+   every migration test with `ConnectFailed` — the create is refused, and the connection to the
+   database that was never created is what actually reports. Use an account with global rights.
+2. **The password must not be a substring of `renvor-sqlx`, `renvor-seaorm`, `postgres` or
+   `mysql`.** `a_failed_boot_publishes_nothing_and_leaks_no_credential` extracts the real password
+   from your URL and asserts it does not appear in a rendered startup diagnostic. That diagnostic
+   legitimately names the adapter crate, so a password of `renvor` matches inside `renvor-seaorm`
+   and the test reports *"the password reached a diagnostic"* when nothing leaked. The test is
+   right to fail closed on a substring match; pick a password that shares no substring with the
+   safe tokens.
+
 **Why this is a refusal rather than a skip.** Until Phase 008 the census printed `ok — NOT RUN`
 without these and the whole sequence still exited 0 — a check that did not run, reported as a check
 that passed. That is the third time this repository has been bitten by that exact shape. The third
