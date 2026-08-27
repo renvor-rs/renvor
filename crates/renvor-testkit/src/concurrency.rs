@@ -30,10 +30,12 @@
 //!
 //! ## The two rendezvous are at different points, and the difference is the whole property
 //!
-//! [`race_for`] waits **after `begin` and before its insert**: what it measures is contention for
-//! a key, so what must be true at the barrier is that every transaction is already open.
+//! The racing writers behind [`one_identity_admits_exactly_one_writer`] wait **after `begin` and
+//! before the insert**: what they measure is contention for a key, so what must be true at the
+//! barrier is that every transaction is already open.
 //!
-//! [`ensure`] waits **after its first `find` has missed**. That is later, and it has to be. An
+//! The callers behind [`concurrent_ensures_converge_on_one_row`] wait **after the first `find` has
+//! missed** — `ensure` in this module, which is private. That is later, and it has to be. An
 //! ensure's interesting path is *lose the race, then observe the winner*, and a caller only takes
 //! it if it looked for the row **before** anybody committed one. Rendezvous any earlier and the
 //! first caller may create and commit while the others are still queued behind it; they then find
