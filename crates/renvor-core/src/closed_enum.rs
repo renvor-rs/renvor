@@ -32,7 +32,7 @@
 ///
 /// # Why `renvor-http` needs it
 ///
-/// [`HttpErrorDetail`](crate::closed_enum) is not declared here — it belongs to the transport — but
+/// `renvor_http::HttpErrorDetail` is not declared here — it belongs to the transport — but
 /// the property it needs is exactly this one. `HttpError::new` used to take
 /// `detail: impl Into<String>`, so an application author could write
 /// `HttpError::new(kind, format!("could not reach {dsn}"))` and put a DSN into telemetry by design.
