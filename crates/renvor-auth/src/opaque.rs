@@ -195,6 +195,19 @@ impl SecretDigest {
         self.0.ct_eq(&other.0).into()
     }
 
+    /// Rebuilds a digest from stored bytes.
+    ///
+    /// # Why this exists and why it is not a hole
+    ///
+    /// A persistence adapter reads `token_hash` back out of a row and must return it through a
+    /// port typed on this. Safe because **a digest is not a secret**: holding one lets you look a
+    /// row up, which is what the adapter already did to obtain it. The constructor that would be a
+    /// hole is one for [`Opaque`], and that is [`Opaque::from_wire`], which validates.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+
     /// The stored form.
     #[must_use]
     pub const fn as_bytes(&self) -> &[u8; 32] {

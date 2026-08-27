@@ -216,7 +216,7 @@ pub fn issue(token: &Opaque, policy: CookiePolicy, max_age: chrono::Duration) ->
 /// Writes the `Set-Cookie` value that expires the session cookie in the client.
 ///
 /// **This is not logout.** Expiring the client's copy proves nothing about the server's row; see
-/// `crate::session`, where revocation happens first and this is emitted only afterwards.
+/// [`crate::session`], where revocation happens first and this is emitted only afterwards.
 ///
 /// Carries `Max-Age=0` **and** a past `Expires`: `Max-Age` is relative, so client clock skew
 /// cannot revive the cookie, and `Expires` covers a user agent that does not implement `Max-Age`.

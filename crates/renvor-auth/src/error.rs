@@ -58,6 +58,14 @@ pub enum AuthError {
     #[error("the password does not meet policy")]
     PasswordRejected,
 
+    /// A policy was configured outside the bounds this crate enforces.
+    ///
+    /// Configuration-time only — it never reaches a requester. A distinct variant rather than a
+    /// reuse of [`Self::PasswordRejected`]: a session-window refusal reading as "the password does
+    /// not meet policy" in an operator's log is a wrong answer to the question they asked.
+    #[error("the configured policy is out of bounds")]
+    PolicyMisconfigured,
+
     /// Randomness was unavailable, so no credential could be generated.
     ///
     /// **There is no fallback.** `renvor_core::observe::entropy` refuses to substitute a weaker

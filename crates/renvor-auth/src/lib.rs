@@ -28,6 +28,7 @@ pub mod opaque;
 pub mod password;
 pub mod repository;
 pub mod service;
+pub mod session;
 pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
@@ -41,4 +42,8 @@ pub use repository::{
     UserRepository,
 };
 pub use service::{Authenticated, AuthenticationService, ServiceError};
+pub use session::{
+    Established, LogoutOutcome, SessionOutcome, SessionPolicy, SessionRecord, SessionRejection,
+    SessionRepository, SessionService,
+};
 pub use subject::{AuthenticatedSubject, Subject, UserId};
