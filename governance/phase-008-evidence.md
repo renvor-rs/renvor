@@ -376,6 +376,50 @@ each macro offers. Stated in both files.
 | the source chain terminates and adds nothing | `the_error_chain_terminates_and_adds_nothing`; **M-45** |
 | the response body echoes nothing the caller supplied | `a_refusal_body_carries_nothing_the_caller_supplied` |
 
+### Gates for this correction
+
+Run against head `015950a` on **rustc 1.94.0** and **rustc 1.97.1**, sequentially, with the real
+four-row database environment.
+
+**21 of 22 gates passed. One failed, and it is F-3.**
+
+| Gate | 1.94.0 | stable |
+|---|---|---|
+| `cargo xtask verify` | **11/11** | **11/11** |
+| workspace tests, all features | **102 suites, 1459 passed, 0 failed** | **102 suites, 1459 passed, 0 failed** |
+| serial workspace tests | **FAILED — F-3** | **102 suites, 1459 passed, 0 failed** |
+| no-default / default / all-features | pass | pass |
+| rustdoc, warnings denied | pass | pass |
+| `cargo deny check` | ok | ok |
+| package + publish rehearsal, **no publication** | pass | pass |
+| `git diff --check` | pass | pass |
+
+The census reports **42 row-suite pairs** on both toolchains, unchanged by this correction.
+
+**The one failure is `no_command_in_this_phase_modifies_the_trust_store`** — the open defect **F-3**,
+in `renvor-cli`'s trust-store snapshot, with nothing to do with `HttpError`. The stable leg ran the
+same test on the same machine and passed it. The recurrence is recorded in
+[`phase-008-limitations.md`](phase-008-limitations.md); F-3 stays open with its 2026-09-02 deadline,
+and **this evidence reports 21 of 22 rather than rounding it up to green.**
+
+### An earlier gate run failed, and it changed the design
+
+The first attempt reported **14 of 22**, with `verify`, `rustdoc`, `package` and `publish` failing
+on both toolchains. Two distinct causes, both real:
+
+- a doc link in the kernel macro pointed at a private module — rustdoc's
+  `private_intra_doc_links` under `-D warnings`, fixed;
+- the cross-crate macro did not resolve in the packaging rehearsal, which is what moved the
+  declaration into `renvor-http`. The investigation is above.
+
+**The test counts moved with that decision**, and the difference is accounted for rather than left
+to look like drift: the exported version added three doctests to `renvor-core` (a syntax example
+and the two controls), so the workspace read 103 suites / 1462 tests. Making the macro private
+removed them — doctests do not run for private items — giving 102 / 1459. The compiling control was
+re-added as a unit test, `a_unit_variant_reaches_all_on_its_own`, and the failing control is **M-41**
+in the ledger. Neither half of the pair was dropped; one of them stopped being automatic, and that
+is stated on the macro itself.
+
 ### Two things found on the way, both reported rather than absorbed
 
 **A 404 emits no telemetry at all.** `not_found` answers through `problem::from_http_error` and is

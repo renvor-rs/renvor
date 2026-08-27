@@ -148,6 +148,30 @@ panicked at crates/renvor-cli/tests/tls_consent.rs:154:5
 test result: FAILED. 8 passed; 1 failed
 ```
 
+### It recurred on 2026-08-27, and the recurrence is recorded rather than absorbed
+
+The HttpError correction's gate suite hit it again, on the same test and the same line:
+
+```text
+GATE FAIL [1.94.0 serial tests]
+test no_command_in_this_phase_modifies_the_trust_store ... FAILED
+panicked at crates/renvor-cli/tests/tls_consent.rs:154:5
+test result: FAILED. 8 passed; 1 failed
+```
+
+**The stable-toolchain serial run, on the same machine, passed the same test** — 102 suites, 1459
+passed, 0 failed, with the trust-store test present and passing. Two runs disagreeing about an
+unchanged tree is the shape this entry already describes.
+
+The trigger is very likely this session's own: two Docker containers were running throughout, for
+the four-row database environment, and Docker Desktop is named below as one of the processes that
+writes the login keychain. That **strengthens** the diagnosis rather than excusing the failure —
+the test asserts a property of Renvor and is being decided by something else on the machine.
+
+**Nothing about F-3 changes.** It is not fixed, not waived, not quarantined, and the deadline is
+unmoved at **2026-09-02**. The failed run is part of the HttpError correction's evidence, which
+reports **21 of 22** gates rather than 22, and neither run is used to close this defect.
+
 An **unchanged rerun passed**. That is recorded as a fact about the second run and **not** as a
 resolution: an unchanged rerun passing is the definition of a flake, not evidence against one, and
 `PLAN.md` §17.2 treats a flaky test as a defect. The failed first run stays in this record.

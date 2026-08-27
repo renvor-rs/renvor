@@ -64,7 +64,26 @@ use core::fmt;
 /// Written once here, a **unit** variant is added in one reviewed line, and a **data-bearing**
 /// variant does not match `$variant:ident` and is a macro error before it is anything else. That
 /// is what stops the next maintainer re-opening the channel `HttpError::new`'s signature closes.
-/// **M-41** is that mutation, run against this declaration.
+///
+/// # The two controls, and why one of them is a ledger entry rather than a doctest
+///
+/// `renvor-database`'s copy carries its controls as a `compile_fail` doctest paired with a
+/// compiling twin. **That is not available here**: this macro is private — deliberately, because
+/// the exported version did not survive `cargo package --workspace` verification — and doctests do
+/// not run for private items.
+///
+/// So the pair is split, and neither half is dropped:
+///
+/// - the **compiling** control is [`a_unit_variant_reaches_all_on_its_own`], a real unit test that
+///   runs on every build;
+/// - the **failing** control is **M-41** in `governance/phase-008-mutation-ledger.md`: adding
+///   `Custom(&'static str) => "custom"` to the declaration below fails at macro expansion with
+///   `no rules expected `(``, before anything compiles. It is one edit and one `cargo check` to
+///   reproduce.
+///
+/// The asymmetry is stated rather than hidden. A `compile_fail` block passes when compilation
+/// fails for **any** reason, which is why its twin exists at all; here the twin runs automatically
+/// and the failing half is a recorded, reproducible mutation instead of an automated one.
 macro_rules! closed_named_enum {
     (
         $(#[$enum_meta:meta])*
@@ -402,6 +421,44 @@ mod tests {
             count >= 13,
             "the enum lost variants; {count} remain and every refusal site in this crate needs one"
         );
+    }
+
+    /// CONTROL. A unit variant added in one line reaches `ALL` and `as_str` on its own.
+    ///
+    /// This is the compiling half of the pair described on `closed_named_enum`. It is the property
+    /// the hand-written form did not have and that M-24b exploited against `DatabaseAdapter`:
+    /// there, `ALL` was a separate restatement of the variant list, so a variant could exist
+    /// without any test being able to reach it.
+    ///
+    /// Declaring a throwaway enum rather than asserting over `HttpErrorDetail` is the point — what
+    /// is under test is the **generator**, not the enum it happened to generate.
+    #[test]
+    fn a_unit_variant_reaches_all_on_its_own() {
+        closed_named_enum! {
+            /// Three reviewed reasons, the third added the way a genuine new one arrives.
+            pub enum Control {
+                /// The first.
+                First => "first",
+                /// The second.
+                Second => "second",
+                /// The third.
+                Third => "third",
+            }
+        }
+
+        assert_eq!(
+            Control::ALL.len(),
+            3,
+            "a variant was declared and did not reach `ALL`, which is the divergence this macro \
+             exists to make impossible"
+        );
+        assert_eq!(Control::ALL[2].as_str(), "third");
+        assert_eq!(Control::ALL[2], Control::Third);
+
+        // Every variant renders its own literal, so `as_str` cannot be a constant function of
+        // anything but the variant.
+        let rendered: Vec<&str> = Control::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(rendered, vec!["first", "second", "third"]);
     }
 
     /// The error source chain ends here and carries nothing of its own.
