@@ -169,8 +169,12 @@ writes the login keychain. That **strengthens** the diagnosis rather than excusi
 the test asserts a property of Renvor and is being decided by something else on the machine.
 
 **Nothing about F-3 changes.** It is not fixed, not waived, not quarantined, and the deadline is
-unmoved at **2026-09-02**. The failed run is part of the HttpError correction's evidence, which
-reports **21 of 22** gates rather than 22, and neither run is used to close this defect.
+unmoved at **2026-09-02**. The failed run is part of the HttpError correction's evidence.
+
+That correction's tree then changed — a control was added — and the full suite was re-run on the
+final head, where **both** serial legs passed the trust-store test. That is now three passing runs
+against one failure, and it closes nothing: an unchanged rerun passing is the definition of a
+flake. The failure is retained, the deadline is unmoved, and no run is offered as a resolution.
 
 An **unchanged rerun passed**. That is recorded as a fact about the second run and **not** as a
 resolution: an unchanged rerun passing is the definition of a flake, not evidence against one, and

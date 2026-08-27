@@ -378,29 +378,47 @@ each macro offers. Stated in both files.
 
 ### Gates for this correction
 
-Run against head `015950a` on **rustc 1.94.0** and **rustc 1.97.1**, sequentially, with the real
-four-row database environment.
+Run against the final head `3e101b0` on **rustc 1.94.0** and **rustc 1.97.1**, sequentially, with
+the real four-row database environment.
 
-**21 of 22 gates passed. One failed, and it is F-3.**
+**22 gates, 22 passed, 0 failed.**
 
 | Gate | 1.94.0 | stable |
 |---|---|---|
 | `cargo xtask verify` | **11/11** | **11/11** |
-| workspace tests, all features | **102 suites, 1459 passed, 0 failed** | **102 suites, 1459 passed, 0 failed** |
-| serial workspace tests | **FAILED — F-3** | **102 suites, 1459 passed, 0 failed** |
+| workspace tests, all features | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
+| serial workspace tests | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
 | no-default / default / all-features | pass | pass |
 | rustdoc, warnings denied | pass | pass |
 | `cargo deny check` | ok | ok |
-| package + publish rehearsal, **no publication** | pass | pass |
+| package + publish rehearsal, **no publication** | 11 uploads, **11 dry-run aborts** | 11 uploads, **11 dry-run aborts** |
 | `git diff --check` | pass | pass |
 
 The census reports **42 row-suite pairs** on both toolchains, unchanged by this correction.
 
-**The one failure is `no_command_in_this_phase_modifies_the_trust_store`** — the open defect **F-3**,
-in `renvor-cli`'s trust-store snapshot, with nothing to do with `HttpError`. The stable leg ran the
-same test on the same machine and passed it. The recurrence is recorded in
-[`phase-008-limitations.md`](phase-008-limitations.md); F-3 stays open with its 2026-09-02 deadline,
-and **this evidence reports 21 of 22 rather than rounding it up to green.**
+#### The run before it reported 21 of 22, and that run is not erased
+
+Head `015950a` — the same tree without the compiling control — failed one gate:
+
+```text
+GATE FAIL [1.94.0 serial tests]
+test no_command_in_this_phase_modifies_the_trust_store ... FAILED
+panicked at crates/renvor-cli/tests/tls_consent.rs:154:5
+test result: FAILED. 8 passed; 1 failed
+```
+
+That is **F-3**, the open defect in `renvor-cli`'s trust-store snapshot, with nothing to do with
+`HttpError`. Its stable leg passed the same test on the same machine, and both serial legs of the
+final run passed it too — the trust-store test is present and `ok` in all of them.
+
+**Three passing runs do not close F-3, and none is offered as doing so.** This phase's rule is that
+an unchanged rerun passing is the definition of a flake rather than evidence against one. F-3 stays
+open, unwaived, un-quarantined, with its **2026-09-02** deadline unmoved, and the recurrence is
+recorded in [`phase-008-limitations.md`](phase-008-limitations.md).
+
+The rerun happened because the tree **changed** — the compiling control was added after the first
+run — so reporting the first run's numbers for the final head would have been reporting a
+source-modified run. It is the added test that makes the count 1460 rather than 1459.
 
 ### An earlier gate run failed, and it changed the design
 
