@@ -699,6 +699,30 @@ stated rather than glossed: what a reviewer can fetch from a clean checkout is t
 waiver ledger, the mutation ledger, the limitations ledger and the review record, and those are
 what Phase 008's completion rests on.
 
+### Closure gates
+
+Run against head `ffe9600` on **rustc 1.94.0** and **rustc 1.97.1**, sequentially, with the real
+four-row database environment. **22 gates, 22 passed, 0 failed.**
+
+| Gate | 1.94.0 | stable |
+|---|---|---|
+| `cargo xtask verify` | **11/11** | **11/11** |
+| workspace tests, all features | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
+| serial workspace tests | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
+| no-default / default / all-features | pass | pass |
+| rustdoc, warnings denied | pass | pass |
+| `cargo deny check` | ok | ok |
+| package + publish rehearsal, **no publication** | 11 uploads, **11 dry-run aborts** | 11 uploads, **11 dry-run aborts** |
+| `git diff --check` | pass | pass |
+
+**Step 10's link check is the one that matters for this pull request.** It passed on both
+toolchains *with the suppressions removed* — which is what makes the removal safe rather than
+merely tidy. While `custom_edit_url: null` was in place, the check never saw those two links; it
+sees them now, and they resolve. The negative control confirms it would have failed if they did
+not: a nonexistent page under the same path returns **404** where both real pages return **200**.
+
+The census is unchanged at **42 row-suite pairs** on both toolchains.
+
 ### What is closed, and what is carried forward
 
 **Closed by this phase:** `008/L-1` — both edit-link suppressions removed, both links verified to
