@@ -346,4 +346,3 @@ here rather than left to be discovered.
 **Enabled on every platform**, not ignored, skipped, or quarantined. The suite grew from **9 tests
 to 14**. The pre-existing non-vacuity control `the_snapshot_sees_something_real` is preserved and
 strengthened; `the_snapshot_can_detect_a_change` is unchanged.
-

@@ -773,4 +773,3 @@ reproduction attempt that did **not** work — is in
 [`phase-008-limitations.md`](phase-008-limitations.md#closure--2026-08-27).
 
 The trust-store test remains enabled on every platform and grew from **9 tests to 14**.
-
