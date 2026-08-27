@@ -21,6 +21,7 @@
 //!   instead of waiting for it, and production reads the real clock through the same trait.
 
 pub mod clock;
+pub mod cookie;
 pub mod error;
 pub mod mail;
 pub mod opaque;
@@ -30,6 +31,7 @@ pub mod service;
 pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
+pub use cookie::{CookiePolicy, CookieRejection, SameSiteChoice, SetCookie};
 pub use error::AuthError;
 pub use mail::{MailError, MailKind, MailPort, OutgoingMail, RecordingMailSink};
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};

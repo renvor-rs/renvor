@@ -104,6 +104,20 @@ unicode-normalization = { version = "0.1.25", default-features = false, features
 # `cargo tree -i sha2@0.11.0` rather than assumed.
 sha2 = { version = "0.11.0", default-features = false }
 
+# RFC 6265 cookie construction and `Cookie:` header parsing. **Default features off**: the
+# `signed`/`private` features want `hmac 0.12` + `sha2 0.10`, and this crate already has `sha2 0.11`
+# — so the signing below is done with `hmac 0.13` instead and the duplicate never appears. Verified
+# on crates.io rather than assumed: `0.18.2`, released 2026-08-08, `MIT OR Apache-2.0`,
+# `rust-version = 1.56`. `percent-encode` is also off: a session identifier is 64 lowercase hex
+# characters, every one of which is a bare `cookie-octet`, so nothing needs encoding — and on the
+# READ side that means a percent escape stays literal and fails the hex check rather than decoding
+# into something that passes it.
+cookie = { version = "0.18.2", default-features = false }
+
+# HMAC-SHA256 for the CSRF token. `0.13.0` pairs with the `sha2 0.11` already above; `cookie`'s
+# signing feature would have forced `hmac 0.12` beside it. Already present in `Cargo.lock`.
+hmac = { version = "0.13.0", default-features = false }
+
 thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 
 [lints]
