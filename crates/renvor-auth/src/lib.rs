@@ -23,9 +23,11 @@
 pub mod clock;
 pub mod error;
 pub mod opaque;
+pub mod password;
 pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use error::AuthError;
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};
+pub use password::{PasswordHash, PasswordPolicy, PasswordService};
 pub use subject::{AuthenticatedSubject, Subject, UserId};

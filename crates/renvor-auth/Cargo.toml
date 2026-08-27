@@ -73,6 +73,26 @@ chrono = { version = "0.4.45", default-features = false, features = ["std", "clo
 # because a secret comparison that is not constant-time is a defect, not a style choice.
 subtle = { version = "2.6.1", default-features = false }
 
+# Argon2id, at the newest STABLE version. `0.6.0-rc.8` exists and is deliberately not taken: a
+# release candidate is not something a framework pins its password hashing to. Verified from
+# crates.io rather than assumed — `0.5.3`, `MIT OR Apache-2.0`, `rust-version = 1.65` (well under
+# this workspace's 1.94.0 floor), and **no RustSec advisory** (checked with a positive control:
+# `openssl`, `time` and `smallvec` all return 200 from the advisory database where this returns 404).
+#
+# `rand` is deliberately NOT enabled. Salts come from `renvor-core`'s entropy port, so this crate
+# keeps ONE randomness site rather than two — the same argument `run_id` makes about having a single
+# generation site.
+argon2 = { version = "0.5.3", default-features = false, features = [
+    "alloc",
+    "password-hash",
+    "std",
+    "zeroize",
+] }
+
+# NFC normalization, which NIST SP 800-63B-4 §3.1.1.2 recommends by name. Already in `Cargo.lock`
+# at this exact version, so it adds an edge and no new package.
+unicode-normalization = { version = "0.1.25", default-features = false, features = ["std"] }
+
 # SHA-256, for the digests stored in a secret's place. **Already a direct dependency of
 # `renvor-cli` at this exact version**, so this adds an edge and no new package — checked with
 # `cargo tree -i sha2@0.11.0` rather than assumed.
