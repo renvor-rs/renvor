@@ -660,18 +660,94 @@ allowed was avoided by fixing the link at its source, and the temporary suppress
 the post-merge closure pull request. `git ls-files specs` returns zero. **Phase 009 has not
 started.**
 
-**One waiver has been granted so far**, by explicit authority and narrowly:
+**Two waivers have been granted**, by explicit authority and each narrowly:
 
 | Waiver | Waives | Does **not** |
 |---|---|---|
 | **W-017** | the independent-human-review requirement for accepting **ADR-0023** | close Phase 008 |
+| **W-018** | the independent requirements-and-security review required to **close Phase 008** | cover ADR-0023, or any defect, failed check, or missing acceptance criterion |
 
-It expires **2027-02-11**, or immediately when a qualified independent human reviewer becomes
+Both expire **2027-02-11**, or immediately when a qualified independent human reviewer becomes
 available — whichever comes first.
 
-**Phase 008 is not closed by this pull request.** Closing it requires a second, phase-level waiver,
-which is granted in the post-merge closure pull request alongside the removal of the two temporary
-edit-link suppressions. That will take Phase 008 to **exactly two** reviewed exceptions — this
-ledger's stated maximum — and will be the **eighth consecutive** phase-level waiver of the same
-rule for the same reason. **RO-001's 2026-11-19 review date is unchanged, and no recruitment
-progress of any kind has occurred.**
+That is **exactly two** reviewed exceptions for Phase 008 — this ledger's stated maximum, at the
+limit and not over it — and W-018 is the **eighth consecutive** phase-level waiver of the same rule
+for the same reason. **RO-001's 2026-11-19 review date is unchanged, and no recruitment progress of
+any kind has occurred.**
+
+The two temporary edit-link suppressions are removed in the same closure pull request, and both
+pages' edit links were verified to resolve with a nonexistent-page negative control. **No lychee
+exclusion was ever created for them**, which is what the suppression existed to avoid.
+
+## 10. Closure
+
+Phase 008 is closed by this pull request, under **W-017** and **W-018**, with everything below
+already true on live `main`.
+
+| Deliverable (`PLAN.md` §819) | Where it is |
+|---|---|
+| full four-row compatibility workflow | census, 42 pairs, derived from the suites it censuses |
+| data-type and migration portability guide | C-16 **1.2.0**, ADR-0023 amended, `docs/docs/database-portability.mdx` |
+| concurrency/idempotency tests | `renvor_testkit::concurrency`, rendezvous after the first miss |
+| backup/restore test guidance | `docs/docs/backup-restore.mdx` |
+| database error normalization | both `error_classification` suites, now censused |
+| upgrade test fixtures | `renvor_testkit::upgrade`, four rows |
+
+**Task status is not tracked in this repository.** It lived in an MCP task tracker that is not
+reachable from the session that closed the phase, so there is no tracked artefact to mark. That is
+stated rather than glossed: what a reviewer can fetch from a clean checkout is this record, the
+waiver ledger, the mutation ledger, the limitations ledger and the review record, and those are
+what Phase 008's completion rests on.
+
+### Closure gates
+
+Run against head `ffe9600` on **rustc 1.94.0** and **rustc 1.97.1**, sequentially, with the real
+four-row database environment. **22 gates, 22 passed, 0 failed.**
+
+| Gate | 1.94.0 | stable |
+|---|---|---|
+| `cargo xtask verify` | **11/11** | **11/11** |
+| workspace tests, all features | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
+| serial workspace tests | **102 suites, 1460 passed, 0 failed** | **102 suites, 1460 passed, 0 failed** |
+| no-default / default / all-features | pass | pass |
+| rustdoc, warnings denied | pass | pass |
+| `cargo deny check` | ok | ok |
+| package + publish rehearsal, **no publication** | 11 uploads, **11 dry-run aborts** | 11 uploads, **11 dry-run aborts** |
+| `git diff --check` | pass | pass |
+
+**Step 10's link check is the one that matters for this pull request.** It passed on both
+toolchains *with the suppressions removed* — which is what makes the removal safe rather than
+merely tidy. While `custom_edit_url: null` was in place, the check never saw those two links; it
+sees them now, and they resolve. The negative control confirms it would have failed if they did
+not: a nonexistent page under the same path returns **404** where both real pages return **200**.
+
+The census is unchanged at **42 row-suite pairs** on both toolchains.
+
+### What is closed, and what is carried forward
+
+**Closed by this phase:** `008/L-1` — both edit-link suppressions removed, both links verified to
+resolve, negative control 404s, and no lychee exclusion was ever created.
+
+**Open and carried forward, each with an owner:**
+
+| Item | State |
+|---|---|
+| `008/L-2`, `008/L-3` | deliberate, argued in place |
+| `008/L-4` | transaction-conflict classification measured on the two direct-SQLx rows only |
+| `006/L-7`, `007/L-11` | inherited, retargeted to Phase 013 |
+| **F-3** | **open defect**, deadline **2026-09-02**, test enabled, recurred once during this phase's final gate runs |
+| **RO-001** | **no recruitment progress of any kind**, first review date unchanged at **2026-11-19** |
+
+### The honest summary
+
+Phase 008 obtained three automated review rounds and **no independent human review**. Twenty
+findings were raised and all twenty were dispositioned by change. Among them: a constitutional
+violation that had passed a full CI run and a review round, two false published safety claims, a
+mutation this project had recorded as killed that had survived, a concurrency test that passed
+without racing, and a census that did not cover the deliverable it was built for.
+
+Forty-five mutations were run; two survived and are recorded as survivors. Twenty-two gates pass on
+two toolchains against a real four-row database environment. **None of that is the independent
+review W-018 waives**, and the findings above are the reason that waiver is a gap rather than a
+formality.
+
