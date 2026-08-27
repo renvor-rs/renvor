@@ -2744,6 +2744,8 @@ name = "renvor-seaorm"
 version = "0.0.0"
 dependencies = [
  "async-trait",
+ "chrono",
+ "renvor-auth",
  "renvor-core",
  "renvor-database",
  "renvor-testkit",

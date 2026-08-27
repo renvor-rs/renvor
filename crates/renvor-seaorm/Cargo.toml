@@ -36,6 +36,11 @@ include = [
 ]
 
 [dependencies]
+# The authentication DOMAIN — its ports and value types, and no driver of its own. This adapter
+# implements the ports. The direction is adapter -> domain, matching `renvor-database`, and it is
+# the SAME set of ports `renvor-sqlx` implements: that is what makes "all four rows pass the same
+# auth contract" a fact about the build rather than two suites that agree by inspection.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
@@ -85,6 +90,10 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 
 async-trait = { version = "0.1.92", default-features = false }
+
+# The instant type. `sea-orm`'s `with-chrono` feature is already enabled below, so this names the
+# crate this adapter is already bound to rather than adding a second time library.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros", "sync"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 

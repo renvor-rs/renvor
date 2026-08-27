@@ -38,6 +38,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
+pub mod auth;
 pub mod error;
 pub mod migrate;
 pub mod page;

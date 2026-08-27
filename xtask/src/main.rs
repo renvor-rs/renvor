@@ -1633,7 +1633,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// than a discrepancy.
 ///
 /// Forty-two entries, and a missing one fails the gate whichever suite it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
+const ROW_EVIDENCE: [(&str, &str, &str); 46] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1847,6 +1847,32 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-seaorm",
         "error_classification",
         "mysql::a_violation_never_carries_the_seaorm_text",
+    ),
+    // ---- PHASE 009: the authentication rows ----
+    //
+    // Four entries, one per row, all naming the SAME test — because the assertion is that the four
+    // rows agree, and a census that named a different test per adapter could not tell agreement
+    // from coincidence. `renvor-auth` itself resolves no driver, so these suites are the only place
+    // its ports meet a real server.
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
     ),
 ];
 
