@@ -48,7 +48,6 @@ compile_error!(
 );
 
 pub mod cancel;
-mod closed_enum;
 pub mod config_port;
 pub mod error;
 pub mod health;
