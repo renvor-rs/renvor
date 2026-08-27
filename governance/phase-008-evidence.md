@@ -678,3 +678,52 @@ any kind has occurred.**
 The two temporary edit-link suppressions are removed in the same closure pull request, and both
 pages' edit links were verified to resolve with a nonexistent-page negative control. **No lychee
 exclusion was ever created for them**, which is what the suppression existed to avoid.
+
+## 10. Closure
+
+Phase 008 is closed by this pull request, under **W-017** and **W-018**, with everything below
+already true on live `main`.
+
+| Deliverable (`PLAN.md` §819) | Where it is |
+|---|---|
+| full four-row compatibility workflow | census, 42 pairs, derived from the suites it censuses |
+| data-type and migration portability guide | C-16 **1.2.0**, ADR-0023 amended, `docs/docs/database-portability.mdx` |
+| concurrency/idempotency tests | `renvor_testkit::concurrency`, rendezvous after the first miss |
+| backup/restore test guidance | `docs/docs/backup-restore.mdx` |
+| database error normalization | both `error_classification` suites, now censused |
+| upgrade test fixtures | `renvor_testkit::upgrade`, four rows |
+
+**Task status is not tracked in this repository.** It lived in an MCP task tracker that is not
+reachable from the session that closed the phase, so there is no tracked artefact to mark. That is
+stated rather than glossed: what a reviewer can fetch from a clean checkout is this record, the
+waiver ledger, the mutation ledger, the limitations ledger and the review record, and those are
+what Phase 008's completion rests on.
+
+### What is closed, and what is carried forward
+
+**Closed by this phase:** `008/L-1` — both edit-link suppressions removed, both links verified to
+resolve, negative control 404s, and no lychee exclusion was ever created.
+
+**Open and carried forward, each with an owner:**
+
+| Item | State |
+|---|---|
+| `008/L-2`, `008/L-3` | deliberate, argued in place |
+| `008/L-4` | transaction-conflict classification measured on the two direct-SQLx rows only |
+| `006/L-7`, `007/L-11` | inherited, retargeted to Phase 013 |
+| **F-3** | **open defect**, deadline **2026-09-02**, test enabled, recurred once during this phase's final gate runs |
+| **RO-001** | **no recruitment progress of any kind**, first review date unchanged at **2026-11-19** |
+
+### The honest summary
+
+Phase 008 obtained three automated review rounds and **no independent human review**. Twenty
+findings were raised and all twenty were dispositioned by change. Among them: a constitutional
+violation that had passed a full CI run and a review round, two false published safety claims, a
+mutation this project had recorded as killed that had survived, a concurrency test that passed
+without racing, and a census that did not cover the deliverable it was built for.
+
+Forty-five mutations were run; two survived and are recorded as survivors. Twenty-two gates pass on
+two toolchains against a real four-row database environment. **None of that is the independent
+review W-018 waives**, and the findings above are the reason that waiver is a gap rather than a
+formality.
+
