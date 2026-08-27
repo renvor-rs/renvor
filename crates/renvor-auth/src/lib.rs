@@ -25,6 +25,7 @@ pub mod error;
 pub mod opaque;
 pub mod password;
 pub mod repository;
+pub mod service;
 pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
@@ -35,4 +36,5 @@ pub use repository::{
     CredentialRecord, CredentialRepository, Registration, SingleUseTokenRepository, UserRecord,
     UserRepository,
 };
+pub use service::{Authenticated, AuthenticationService, ServiceError};
 pub use subject::{AuthenticatedSubject, Subject, UserId};

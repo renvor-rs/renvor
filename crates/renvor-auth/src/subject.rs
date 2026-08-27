@@ -65,28 +65,16 @@ impl AuthenticatedSubject {
     ///
     /// `pub(crate)` on purpose — see the type documentation.
     ///
-    /// # Why this is `expect(dead_code)` and not `allow(dead_code)`
+    /// # The suppression that used to stand here is gone, and it removed itself
     ///
-    /// Nothing in this crate **produces** an authenticated subject yet, because the login
-    /// operation that would is batch D's. Making the constructor `pub` to silence the lint would
-    /// destroy the guarantee the type exists for: an `AuthenticatedSubject` a transport adapter
-    /// could mint from a header makes FR-061 unenforceable.
+    /// Until batch D nothing **produced** an authenticated subject, so this carried an
+    /// `expect(dead_code)` whose reason read *"batch D's login operation is the first producer;
+    /// expect fails when it lands"*.
     ///
-    /// `expect` rather than `allow` because `expect` **fails once the constructor is used**, so
-    /// this suppression cannot outlive its reason — the same argument `008/L-1` makes about a
-    /// lychee exclusion: "a permanent exclusion for a temporary condition is how a suppression
-    /// outlives its reason".
-    /// Scoped to `not(test)` because the constructor is **alive** in a test build — this module's
-    /// own tests use it — so an unconditional `expect` is itself unfulfilled there, which
-    /// `-D warnings` reports. The suppression therefore covers exactly the build in which the
-    /// function really is unused, and no other.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "batch D's login operation is the first producer; expect fails when it lands"
-        )
-    )]
+    /// `expect` rather than `allow`, deliberately: `expect` **fails once the lint stops firing**.
+    /// When `AuthenticationService::log_in` landed, `-D warnings` reported *"this lint expectation
+    /// is unfulfilled"* and the annotation had to go. A suppression that cannot outlive its reason
+    /// is the argument `008/L-1` makes about lychee exclusions — working, rather than asserted.
     pub(crate) const fn new(user_id: UserId) -> Self {
         Self { user_id }
     }

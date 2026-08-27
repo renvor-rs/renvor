@@ -108,3 +108,8 @@ thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The async test harness. `renvor-auth` itself is runtime-agnostic — it has no `tokio` in
+# `[dependencies]` — so this is a test-only edge and does not reach a consumer's graph.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
