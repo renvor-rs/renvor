@@ -9,15 +9,23 @@
 //!
 //! That is deliberate and it costs something: a driver's own diagnostic is discarded at the
 //! boundary. It is discarded because the alternative is a type that *can* carry a connection
-//! string, and a guarantee that rests on nobody ever putting one there is not a guarantee. An
-//! operator who needs the driver's text gets it from tracing, which is a different consumer with
-//! different rights — the same split `renvor-error` already makes for HTTP problems.
+//! string, and a guarantee that rests on nobody ever putting one there is not a guarantee.
+//!
+//! # The cost is real, and it is not softened by telemetry
+//!
+//! This paragraph said an operator *"gets it from tracing, which is a different consumer with
+//! different rights"*. **That is no longer true, and it should never have been offered as
+//! consolation.** `CONSTITUTION.md` principle VI names telemetry among the places a secret may not
+//! go and exempts no consumer, so both adapters now emit closed fields only — the adapter, the
+//! kind, and whether it is retryable. See `renvor_sqlx::error` and `renvor_seaorm::error`.
+//!
+//! An operator who needs the untruncated driver message reads the **database server's own log**,
+//! under that server's access controls, correlating on the kind and the time. The text is not
+//! preserved by Renvor anywhere.
 //!
 //! [`renvor_error::ApiErrorCode::detail`]: https://docs.rs/renvor-error
 
 use core::fmt;
-
-use renvor_core::ErrorCategory;
 
 /// Every way a persistence operation can fail, as a closed set.
 ///
@@ -27,6 +35,44 @@ use renvor_core::ErrorCategory;
 /// Renvor's public contract, so swapping a driver would be a breaking change for every caller that
 /// matched on one. What a *caller* can act on is much smaller: retry, fix the input, fix the
 /// deployment, or give up. These variants are that set.
+///
+/// # There is deliberately no `category()` here
+///
+/// This enum had one, projecting each kind onto `renvor_core::ErrorCategory`. Its table named
+/// five kinds and sent the other seventeen through `_ => ErrorCategory::Internal`.
+///
+/// `contracts/error-taxonomy.md` C-E1 defines `Internal` as *"resolution work budget
+/// exhausted — a defect in the kernel"* and says plainly: *"If an author ever sees `Internal`,
+/// the kernel is wrong — not their graph."* A violated unique key, an absent row, and an
+/// edited migration are none of those. The projection made the taxonomy's one unambiguous
+/// category the routine answer for ordinary database outcomes, and no other category was
+/// closer — so the correct fix was to stop projecting, not to re-aim it.
+///
+/// **[`DatabaseErrorKind`] is the persistence domain's own programmatically matchable
+/// classification**, which is what C-E1 requires of an error: a category a caller can match
+/// on rather than a message it has to parse. C-E1's `ErrorCategory` table governs **kernel**
+/// errors. Two vocabularies with no lossy bridge between them is the honest arrangement; the
+/// bridge was the defect.
+///
+/// Removing it also removed this crate's `renvor-core` dependency, which nothing else used.
+/// `xtask` step 7 asserts the absence, with a control, so the coupling cannot return quietly.
+///
+/// The removal is enforced rather than described:
+///
+/// ```compile_fail
+/// use renvor_database::DatabaseErrorKind;
+///
+/// let _ = DatabaseErrorKind::UniqueViolation.category();
+/// ```
+///
+/// A `compile_fail` block passes when compilation fails for **any** reason. This one compiles,
+/// and differs only in the method:
+///
+/// ```
+/// use renvor_database::DatabaseErrorKind;
+///
+/// assert_eq!(DatabaseErrorKind::UniqueViolation.as_str(), "unique_violation");
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum DatabaseErrorKind {
@@ -53,6 +99,34 @@ pub enum DatabaseErrorKind {
     UniqueViolation,
     /// A foreign-key constraint was violated.
     ForeignKeyViolation,
+    /// A not-null constraint was violated.
+    ///
+    /// Both drivers already distinguish this from a generic rejection — `sqlx-postgres` from
+    /// SQLSTATE `23502`, `sqlx-mysql` from error number `1048` — so folding it into
+    /// [`DatabaseErrorKind::StatementRejected`] would discard information the driver had already
+    /// recovered.
+    NotNullViolation,
+    /// A check constraint was violated.
+    ///
+    /// # MySQL reports this outside the integrity class
+    ///
+    /// PostgreSQL gives check violations SQLSTATE `23514`, inside class 23. MySQL reports error
+    /// `3819` with SQLSTATE **`HY000`**, the general-error class. Both were measured against the
+    /// pinned images. That asymmetry is why classification reads the driver's error *number* rather
+    /// than SQLSTATE — SQLSTATE cannot see this condition on MySQL at all.
+    CheckViolation,
+    /// The transaction lost a concurrency conflict and may be retried.
+    ///
+    /// Covers a serialization failure and a deadlock, which both engines report as SQLSTATE `40001`
+    /// — PostgreSQL adds `40P01` for a deadlock specifically. Measured: a crossed-lock deadlock on
+    /// `mysql:8.4.11` returns `ERROR 1213 (40001)` to exactly one of the two sessions while the
+    /// other commits.
+    ///
+    /// **A lock-wait timeout is deliberately NOT this kind.** MySQL reports that as `1205` with
+    /// SQLSTATE `HY000`: the server resolves a deadlock instantly by choosing a victim, whereas a
+    /// lock-wait timeout means something held a lock for the whole timeout, which usually wants an
+    /// operator rather than an automatic retry.
+    TransactionConflict,
     /// The row a query required was absent.
     NotFound,
     /// A transaction could not be committed.
@@ -91,7 +165,7 @@ impl DatabaseErrorKind {
     /// The length assertion below moves with this array, so an edit that adds a variant without
     /// updating the contract still fails loudly — the same mechanism `renvor-error`'s registry and
     /// `renvor-core`'s `ErrorCategory::ALL` already use.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 22] = [
         Self::AcquireTimeout,
         Self::ConnectFailed,
         Self::Cancelled,
@@ -99,6 +173,9 @@ impl DatabaseErrorKind {
         Self::StatementRejected,
         Self::UniqueViolation,
         Self::ForeignKeyViolation,
+        Self::NotNullViolation,
+        Self::CheckViolation,
+        Self::TransactionConflict,
         Self::NotFound,
         Self::CommitFailed,
         Self::RollbackFailed,
@@ -124,6 +201,9 @@ impl DatabaseErrorKind {
             Self::StatementRejected => "statement_rejected",
             Self::UniqueViolation => "unique_violation",
             Self::ForeignKeyViolation => "foreign_key_violation",
+            Self::NotNullViolation => "not_null_violation",
+            Self::CheckViolation => "check_violation",
+            Self::TransactionConflict => "transaction_conflict",
             Self::NotFound => "not_found",
             Self::CommitFailed => "commit_failed",
             Self::RollbackFailed => "rollback_failed",
@@ -156,6 +236,11 @@ impl DatabaseErrorKind {
             Self::StatementRejected => "The database rejected the statement.",
             Self::UniqueViolation => "A value already exists that must be unique.",
             Self::ForeignKeyViolation => "A referenced row does not exist.",
+            Self::NotNullViolation => "A required value was absent.",
+            Self::CheckViolation => "A value failed a constraint the schema declares.",
+            Self::TransactionConflict => {
+                "The transaction conflicted with another and was not committed."
+            }
             Self::NotFound => "The requested row does not exist.",
             Self::CommitFailed => "The transaction could not be committed.",
             Self::RollbackFailed => "The transaction could not be rolled back.",
@@ -190,25 +275,11 @@ impl DatabaseErrorKind {
                 | Self::DeadlineExceeded
                 | Self::MigrationLockTimeout
                 | Self::NotReady
+                // The server itself says so: MySQL's text for 1213 is literally "try restarting
+                // transaction". A lost conflict is the one rejection that is transient BY
+                // CONSTRUCTION — nothing about the statement was wrong.
+                | Self::TransactionConflict
         )
-    }
-
-    /// The kernel category this kind reports as.
-    ///
-    /// An explicit table rather than an implied identity, for the reason `renvor-error`'s
-    /// `mapping` module gives: two vocabularies that agree by coincidence drift the first time one
-    /// of them gains a member.
-    #[must_use]
-    pub const fn category(self) -> ErrorCategory {
-        match self {
-            Self::Cancelled => ErrorCategory::Cancelled,
-            Self::AcquireTimeout | Self::DeadlineExceeded | Self::MigrationLockTimeout => {
-                ErrorCategory::DeadlineExceeded
-            }
-            Self::ConnectFailed | Self::NotReady => ErrorCategory::ResourceUnavailable,
-            Self::PoolClosed => ErrorCategory::ShuttingDown,
-            _ => ErrorCategory::Internal,
-        }
     }
 }
 
@@ -307,13 +378,5 @@ mod tests {
         assert!(DatabaseErrorKind::AcquireTimeout.is_transient());
         assert!(!DatabaseErrorKind::UniqueViolation.is_transient());
         assert!(!DatabaseErrorKind::MigrationChecksumMismatch.is_transient());
-    }
-
-    #[test]
-    fn cancellation_reports_as_cancellation_not_as_an_internal_defect() {
-        assert_eq!(
-            DatabaseErrorKind::Cancelled.category(),
-            ErrorCategory::Cancelled
-        );
     }
 }

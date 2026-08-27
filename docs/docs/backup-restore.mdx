@@ -1,0 +1,160 @@
+---
+sidebar_position: 8
+title: Testing backup and restore
+description: Which tools are actually in the pinned images, how to invoke them without leaking a password, and what a restore test has to assert.
+# No "Edit this page" link WHILE THIS PAGE IS UNMERGED — see database-portability.mdx for the full
+# reason. Docusaurus builds that link from `editUrl`, which points at `tree/main/docs/`; for a page
+# not yet on `main` it 404s and fails verification step 10.
+# REMOVE THIS LINE once this page is on `main`.
+custom_edit_url: null
+---
+
+import Stamp from './_stamp.mdx';
+
+# Testing backup and restore
+
+<Stamp />
+
+:::danger Nothing is published
+
+None of the crates below are on crates.io. This page documents contracts that are implemented and
+tested, not software you can install.
+
+:::
+
+A backup you have never restored is a hypothesis. This page is how to turn it into a test.
+
+Everything here was established by running the images this project pins, not by reading manuals.
+
+## What is actually in the images
+
+| Tool | `postgres:17.11` | `postgres:18.6` | `mysql:8.4.11` | `mysql:9.7.2` |
+|---|---|---|---|---|
+| `pg_dump`, `pg_restore`, `pg_dumpall`, `psql` | ✅ | ✅ | — | — |
+| `mysqldump`, `mysql`, `mysqladmin`, `mysqlsh` | — | — | ✅ | ✅ |
+| `mysqlpump` | — | — | **absent** | **absent** |
+
+:::warning `mysqlpump` is gone
+
+It was deprecated in MySQL 8.0 and is **not present** in either pinned image. Guidance that names
+it sends an operator to a binary that does not exist. Use `mysqldump`, or `mysqlsh`'s dump
+utilities, both of which are present.
+
+:::
+
+Everything the recipes below need is already inside the containers, so nothing has to be installed
+on the host and the commands are runnable by anyone who can start the project's database.
+
+## Never put a password on a command line
+
+A password in `argv` is visible to every process on the machine via `ps`, lands in shell history,
+and is echoed into CI logs. There is no situation in which `-p"$PASSWORD"` is acceptable.
+
+**And a password passed at container-create time is permanently readable.** Measured on this
+project's own test container:
+
+```console
+$ docker inspect rv-p8-my --format '{{json .Config.Env}}'
+[... "MYSQL_ROOT_PASSWORD=<19 characters, in full>" ...]
+```
+
+`docker run -e SECRET=…` writes the value into the container's stored configuration, where
+`docker inspect` hands it back verbatim to anyone who can talk to the daemon. `docker exec -e` does
+**not** — it applies to that one process and is never persisted.
+
+So:
+
+- For a throwaway test container, treat the create-time password as public. Make it a random value
+  used nowhere else, and never reuse a real one.
+- For anything else, pass secrets through a file with mode `0600`, or a secrets manager.
+
+### PostgreSQL, without leaking
+
+Run the tool **inside** the container and let it read the variable that is already there, so the
+secret never appears in your command at all:
+
+```bash
+docker exec rv-p8-pg sh -c \
+  'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U postgres -Fc renvor_test' > backup.dump
+```
+
+On a host with `psql` installed, prefer a `~/.pgpass` file over `PGPASSWORD`: an environment
+variable is readable from `/proc/<pid>/environ` by the same user and by root, a `0600` file is not.
+
+```
+# ~/.pgpass — chmod 0600
+hostname:5432:renvor_test:renvor:the-password
+```
+
+### MySQL, without leaking
+
+`MYSQL_PWD` works and is better than `argv`, but MySQL's own documentation calls it insecure for
+the `/proc` reason above. An **option file** is the safe form:
+
+```ini
+# ~/.my-backup.cnf — chmod 0600
+[client]
+user = renvor
+password = the-password
+```
+
+```bash
+mysqldump --defaults-extra-file=~/.my-backup.cnf \
+          --single-transaction --routines --events \
+          renvor_test > backup.sql
+```
+
+`--single-transaction` is not optional for InnoDB: without it `mysqldump` takes table locks, and
+with it you get a consistent snapshot without blocking writers. It does **not** protect you from
+concurrent DDL — MySQL commits DDL implicitly, so a migration running during a dump can still tear
+it. Do not back up and migrate at the same time.
+
+## What a restore test must assert
+
+Exit status zero means the tool ran. It does not mean your data came back.
+
+A restore test that is worth having restores into a **fresh, empty database** — never over the live
+one — and then asserts all of:
+
+1. **Row counts match**, per table.
+2. **Content matches** — a checksum or an ordered digest, not just a count. A restore that produced
+   the right number of wrong rows passes a count check.
+3. **The migration ledger survived.** `_sqlx_migrations` must contain the same versions *and the
+   same checksums*. A restore that lost it turns the next boot into a re-run of every migration;
+   one that restored it with different checksums fails closed on the next boot, which is better but
+   still broken.
+4. **Constraints and indexes exist.** Ask the catalogue — `information_schema` — rather than
+   inferring from a successful insert.
+5. **The restored database accepts the next migration.** This is the assertion most restore tests
+   omit, and it is the one that proves the database is usable rather than merely populated.
+
+```
+seed → dump → drop → restore into a fresh database → assert 1-5
+```
+
+Step 3 is where the engines differ in a way worth knowing: `mysqldump` writes the ledger table as
+ordinary data, and `pg_dump -Fc` does too. Neither treats it specially, so neither will warn you if
+you excluded it with a table filter.
+
+## Restoring
+
+```bash
+# PostgreSQL — into a database you just created, not over a live one
+docker exec -i rv-p8-pg sh -c \
+  'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore -U postgres -d renvor_restore_check' < backup.dump
+
+# MySQL
+mysql --defaults-extra-file=~/.my-backup.cnf renvor_restore_check < backup.sql
+```
+
+`pg_restore --clean` drops objects before recreating them, which is a *destructive* flag pointed at
+whatever database you named. Restoring into a fresh database instead means a mistyped name creates
+a mess rather than destroying production.
+
+## What this page does not claim
+
+It documents the tools in **the images this project pins** — `postgres:17.11`, `postgres:18.6`,
+`mysql:8.4.11`, `mysql:9.7.2`. Renvor does not currently declare a supported engine version range,
+so nothing here should be read as a statement about other versions. `mysqlpump` disappearing
+between MySQL 8.0 and 8.4 is exactly the kind of change that makes a broader claim unsafe to make
+without testing it.

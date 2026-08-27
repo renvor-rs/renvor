@@ -2641,7 +2641,6 @@ dependencies = [
 name = "renvor-database"
 version = "0.0.0"
 dependencies = [
- "renvor-core",
  "renvor-validation",
  "tokio",
 ]

@@ -42,11 +42,16 @@
 
 use core::future::Future;
 
+// The closed-enum declaration macro. Private module; `#[macro_export]` publishes the macro
+// itself at the crate root, which is where `closed_named_enum!` is documented.
+mod closed_enum;
+
 pub mod error;
 pub mod migrate;
 pub mod page;
 pub mod pool;
 pub mod seed;
+pub mod startup;
 
 pub use error::{DatabaseError, DatabaseErrorKind};
 pub use migrate::{
@@ -64,36 +69,34 @@ pub use renvor_validation::collection::Direction;
 pub use seed::{
     APPLIED, CREATE_LEDGER, Idempotence, SeedDeclaration, SeedReport, SeedScope, SqlSeed,
 };
+pub use startup::{DatabaseAdapter, StartupDiagnostic, StartupPhase};
 
-/// Which database an adapter is talking to.
-///
-/// # Safe to report, unlike everything else about a connection
-///
-/// A diagnostic needs to say *something*. The database **kind** identifies the driver without
-/// naming a host, a user, or a password, so it is the one connection fact that may appear in an
-/// error. See [`ConnectionString`] for why the rest may not.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[non_exhaustive]
-pub enum DatabaseKind {
-    /// PostgreSQL.
-    Postgres,
-    /// MySQL.
-    MySql,
+crate::closed_named_enum! {
+    /// Which database an adapter is talking to.
+    ///
+    /// # Safe to report, unlike everything else about a connection
+    ///
+    /// A diagnostic needs to say *something*. The database **kind** identifies the driver without
+    /// naming a host, a user, or a password, so it is the one connection fact that may appear in
+    /// an error. See [`ConnectionString`] for why the rest may not.
+    ///
+    /// `as_str` returns the stable name, as it appears in a project manifest and in CLI output.
+    ///
+    /// # Declared rather than written out
+    ///
+    /// Through [`closed_named_enum`], for the same reason as
+    /// [`DatabaseAdapter`]: this type is a rendered field of [`StartupDiagnostic`], so a variant
+    /// that existed but was absent from `ALL` would be invisible to the exhaustive redaction
+    /// enumeration that reads `ALL`.
+    pub enum DatabaseKind {
+        /// PostgreSQL.
+        Postgres => "postgres",
+        /// MySQL.
+        MySql => "mysql",
+    }
 }
 
 impl DatabaseKind {
-    /// Every kind Phase 006 supports.
-    pub const ALL: [Self; 2] = [Self::Postgres, Self::MySql];
-
-    /// The stable name, as it appears in a project manifest and in CLI output.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Postgres => "postgres",
-            Self::MySql => "mysql",
-        }
-    }
-
     /// Parses a kind name.
     ///
     /// Returns `None` rather than defaulting. A misspelled database name that silently became

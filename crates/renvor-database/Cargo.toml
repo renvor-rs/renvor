@@ -33,9 +33,13 @@ include = [
 ]
 
 [dependencies]
-# The kernel, for the error category vocabulary and the readiness contract. This is the ONLY
-# Renvor dependency, and it points inward.
-renvor-core = { path = "../renvor-core", version = "0.0.0" }
+# `renvor-core` is deliberately ABSENT. It was here for one reason — projecting
+# `DatabaseErrorKind` onto the kernel's `ErrorCategory` — and that projection was removed in
+# Phase 008 because it reported ordinary database outcomes as `Internal`, which C-E1 reserves for
+# a kernel defect. Nothing else in this crate used the kernel, so the dependency went with it.
+#
+# `xtask` step 7 asserts the absence against the RESOLVED graph, with a positive control, so a
+# re-introduction fails the gate rather than being noticed in review.
 
 # Contract C-15's cursor, sort plan, and page bounds. `contracts/collection-reads.md` states that
 # "Phase 006 connects that shape to storage" — so this crate REUSES that contract rather than

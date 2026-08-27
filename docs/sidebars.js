@@ -19,6 +19,8 @@ const sidebars = {
     },
     'cli',
     'persistence',
+    'database-portability',
+    'backup-restore',
     'api-reference',
   ],
 };

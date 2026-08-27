@@ -1,7 +1,7 @@
 ---
 description: "Phase 002 contract — kernel error categories, causal chaining, and redaction guarantees"
-version: "1.2.0"
-status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise"
+version: "1.4.0"
+status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise. 1.4.0 (2026-08-26) WITHDRAWS the permission 1.3.0 granted to emit a third-party driver error through `tracing` at `debug`. That permission contradicted CONSTITUTION.md principle VI, which names telemetry and exempts no consumer; a review found it. This is a BEHAVIOUR change — both adapters now emit closed fields only — and it forbids something the previous version allowed. 1.3.0 (2026-08-26) scopes C-E1's category table to kernel errors and states what C-E2 requires at a third-party boundary; no category was added, removed, or renamed"
 ---
 
 # Contract: Error Taxonomy
@@ -35,6 +35,30 @@ a message string is not an API; it is a defect waiting for a rewording.
 | `ShuttingDown` | work submitted after shutdown began | the rejected operation |
 | `ResourceUnavailable` | the host refused a resource the kernel asked for | the resource, the operation, the host's own reason |
 | `Internal` | **resolution work budget exhausted** — a defect in the kernel | the counters observed |
+
+### This table governs KERNEL errors — added 2026-08-26
+
+`ErrorCategory` is the **kernel's** vocabulary. A crate outside the kernel that has its own closed,
+programmatically matchable classification satisfies C-E1 with that classification; it is **not**
+required to project onto this table, and **MUST NOT** project onto it lossily.
+
+`renvor_database::DatabaseErrorKind` is the worked example. It carried a `category()` method whose
+table named five kinds and sent the other seventeen through `_ => ErrorCategory::Internal` — so a
+violated unique key, an absent row, and an edited migration all reported as a **kernel defect**.
+This contract says of that category: *"If an author ever sees `Internal`, the kernel is wrong — not
+their graph."* The projection made the taxonomy's one unambiguous category the routine answer for
+ordinary database outcomes.
+
+No other category was closer. `StatementRejected` is not a `Configuration` error, a
+`DependencyMissing`, or a `LimitExceeded`, and re-aiming the arm at one of those to keep the method
+would have been the same defect with a quieter symptom. The projection was **removed**, along with
+`renvor-database`'s dependency on `renvor-core`, which nothing else used.
+
+`DatabaseErrorKind` remains what C-E1 actually asks for: a category a caller matches on rather than
+a message it parses. Two vocabularies with no bridge between them is the honest arrangement — the
+bridge was the defect. Enforced twice: a `compile_fail` documentation test proves the method is
+gone, and `xtask` step 7 asserts against the resolved graph that the crate dependency is gone, each
+with a control.
 
 ### Revision 1.2.0 — `ResourceUnavailable` added
 
@@ -89,6 +113,67 @@ an author ever sees `Internal`, the kernel is wrong — not their graph.
 
 Every error preserves its cause, and each link is attributable. Flattening a chain into a single
 message destroys the only information that makes a nested failure diagnosable.
+
+### What "preserved" means at a third-party boundary — added 2026-08-26
+
+A chain has two kinds of link, and this contract requires opposite things of them.
+
+| Link | Requirement |
+|---|---|
+| A **Renvor** cause — an error this workspace constructed, whose fields it controls | **MUST** be preserved and reachable through `Error::source` |
+| A **third-party driver's** error, carrying text this workspace neither bounds nor redacts | **MUST NOT** be reachable. The chain terminates at the last safe link |
+
+The second is not an exception to the first. C-E3 forbids emitting a secret through **0** error
+output forms, and a driver message routinely contains the offending value, the table and column,
+and — for a connection failure — the host. A chain that reached it would satisfy C-E2 by
+violating C-E3, so the two are read together: **preserve every link you can vouch for, and stop
+at the first one you cannot.**
+
+### The termination is total: neither chained NOR logged — corrected 2026-08-26
+
+This section shipped saying *"the driver's own text is not destroyed. It is emitted through
+`tracing` at `debug`, which reaches operators rather than callers"*, and both adapters did exactly
+that. **That sentence was wrong, and it is withdrawn.**
+
+`CONSTITUTION.md` principle VI forbids secrets in *"repositories, generated manifests, logs,
+**telemetry**, URLs, browser bundles, desktop resources, examples, fixtures, or snapshots"*.
+Telemetry is named. No consumer is exempt, and no severity is exempt — an operator is not a class
+of reader with a right to a credential, and `debug` is a level rather than a carve-out. A contract
+cannot grant a permission the constitution withholds; this one purported to, so it made a
+constitutional conflict look like a settled design.
+
+**A third-party error's text is therefore neither returned, nor chained, nor logged by Renvor.**
+Each adapter emits exactly one record per classified failure, built from closed values only:
+
+| Field | Type | Why it cannot carry a secret |
+|---|---|---|
+| `adapter` | `DatabaseAdapter` | a two-variant enum, declared in one place |
+| `database_error_kind` | `DatabaseErrorKind::as_str` | a discriminant of a closed enum |
+| `transient` | `bool` | whether the kind is retryable |
+
+**Where the raw text lives instead.** The database server writes its own log, under the server's
+own access controls and retention. An operator who needs the untruncated driver message reads it
+there, correlating on the kind and the time. That is the trade this contract now makes explicit:
+Renvor's telemetry becomes safe to ship anywhere, and the unsafe detail stays where it is already
+protected.
+
+Asserted by `telemetry_redaction.rs` in **both** adapters, which installs a capturing subscriber,
+drives every public classifier and the migration loader with credential-, host- and SQL-bearing
+inputs, and proves the planted strings appear in no captured field — with the safe fields required
+to be present, so a classifier that emitted nothing could not pass by silence.
+
+**Worked example, and the defect that produced this section.**
+`renvor_database::StartupDiagnostic` shipped in Phase 008 holding only a
+`DatabaseErrorKind` — it discarded the `DatabaseError` the provider had actually failed with, so
+`source` answered `None` and the diagnostic was the whole story. That is a flattened chain, which
+this contract forbids, and it was flattened one link **too early**: `DatabaseError` is a Renvor
+type holding a single fieldless enum, so nothing about preserving it risks a secret.
+
+It now stores that error, returns it from `source`, and stops there — `DatabaseError` implements
+no `source` of its own, so the termination is structural rather than a policy someone applies.
+Both halves are asserted: `no_diagnostic_can_render_a_secret` walks the whole chain for every one
+of the renderable diagnostics, and asserts the chain is **exactly one link long**, so a `source`
+that quietly started answering `None` again would fail rather than making the walk vacuous.
 
 ## C-E3 — Redaction is total
 

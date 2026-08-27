@@ -102,10 +102,13 @@ impl Migrations {
         directory: &Path,
         settings: MigrationSettings,
     ) -> Result<Self, DatabaseError> {
-        let migrator = Migrator::new(directory).await.map_err(|inner| {
-            tracing::debug!(migrate_error = %inner, "migration source could not be loaded");
-            DatabaseError::new(DatabaseErrorKind::MigrationFailed)
-        })?;
+        // The error is DISCARDED rather than logged. `MigrateError`'s text names the directory it
+        // could not read, and this function's own contract above says the path is not carried —
+        // a promise the previous `migrate_error = %inner` field broke in telemetry while keeping
+        // it in the returned value.
+        let migrator = Migrator::new(directory)
+            .await
+            .map_err(|_| crate::error::record(DatabaseErrorKind::MigrationFailed))?;
         Ok(Self::from_migrator(migrator, settings))
     }
 

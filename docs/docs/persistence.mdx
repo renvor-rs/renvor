@@ -132,6 +132,20 @@ project's own `cargo fmt`, `clippy`, `build`, `test` and `run` before placing it
 dependency would make `renvor new` need the registry. Offline generation is a guarantee Renvor keeps.
 `Cargo.toml` names the lines to add and the declarations to make.
 
+## Both databases, one schema
+
+All four rows are first-class, which puts the burden of agreement on your schema rather than on
+Renvor. Two pages cover what that takes:
+
+- **[Data types and migration portability](/docs/database-portability)** — column types, identifier
+  rules, upserts, pagination order, and why a migration should make one change. Backed by contract
+  C-16, and by assertions that run against both engines on every verification.
+- **[Testing backup and restore](/docs/backup-restore)** — which tools are actually in the pinned
+  images, how to invoke them without leaking a password, and what a restore test has to assert.
+
+The differences that cannot be removed are named rather than hidden. MySQL's `TIMESTAMP` ends in
+2038; no adapter can supply the missing years, so the guide tells you to use `DATETIME(6)` instead.
+
 ## Not yet
 
 - **No generic resource generator.** `renvor generate resource` does not exist. Generation of

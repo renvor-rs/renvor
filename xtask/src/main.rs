@@ -22,7 +22,7 @@ use std::process::{Command, Stdio};
 const EXIT_OK: i32 = 0;
 /// A step ran and failed.
 const EXIT_STEP_FAILED: i32 = 1;
-/// A required toolchain is missing; no steps ran.
+/// A required toolchain or database prerequisite is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
 /// The working tree was dirty after an otherwise successful run (step 11).
 const EXIT_DIRTY_TREE: i32 = 3;
@@ -43,6 +43,61 @@ struct Tool {
     /// The exact command that installs it.
     install: &'static str,
 }
+
+/// An environment prerequisite step 4's four-row census cannot run without.
+///
+/// Separate from [`Tool`] because the remedy is different in kind: a missing tool is installed
+/// once, and a missing database has to be started and pointed at. Reported in the same step-1
+/// block, with the same exit code, because from the operator's side both are the same sentence —
+/// *verification cannot run yet, and here is exactly what is absent*.
+struct Prerequisite {
+    /// The environment variable that must be set and non-empty.
+    variable: &'static str,
+    /// Which step needs it, so the operator knows what is at stake.
+    purpose: &'static str,
+    /// What to do about it. Never a value, and never a DSN: an example connection string in this
+    /// file would be an example credential in this file.
+    setup: &'static str,
+}
+
+/// The database environment step 4's census requires.
+///
+/// # Why this is a prerequisite rather than a condition
+///
+/// `contracts/verification-sequence.md` states of this sequence: *"Executed in order. None is
+/// conditional. None is skipped."* Until Phase 008's correction cycle the census contradicted it —
+/// with these variables absent it printed `ok — NOT RUN` and returned success, so a full
+/// `cargo xtask verify` could exit **0** having executed none of the row-suite pairs. That is the
+/// precise shape of the failure this repository has already been bitten by three times: a check
+/// that did not run, reported as a check that passed.
+///
+/// The four rows of `PLAN.md` §10.1 are not optional, so their evidence is not optional either.
+/// A contributor without databases now gets exit **2** and instructions, which is a refusal to
+/// verify rather than a verification that quietly covered less.
+///
+/// **Nothing here starts a service.** Exit 2 names what is missing; it does not go and fix it.
+/// A gate that silently provisions its own dependencies is a gate whose passing says nothing
+/// about the machine it ran on.
+const DATABASE_REQUIRED: &[Prerequisite] = &[
+    Prerequisite {
+        variable: "RENVOR_TEST_POSTGRES_URL",
+        purpose: "the four-row persistence census, step 4",
+        setup: "start a PostgreSQL the suite may create and drop tables in, and set this to its \
+                connection string — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_MYSQL_URL",
+        purpose: "the four-row persistence census, step 4",
+        setup: "start a MySQL the suite may create and drop tables in, and set this to its \
+                connection string — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_REQUIRE_DATABASE",
+        purpose: "turns a skipped real-database test into a failure, steps 4 and 7",
+        setup: "set it to `1`. Without it the test harness SKIPS every real-database test and \
+                still prints `ok`, which is the condition this variable exists to end",
+    },
+];
 
 /// Everything step 1 probes for. Order matches the step that consumes each tool.
 const REQUIRED: &[Tool] = &[
@@ -126,21 +181,31 @@ fn usage() {
     eprintln!("Runs the full verification sequence. Exit codes:");
     eprintln!("  0  every step ran and passed");
     eprintln!("  1  a step ran and failed");
-    eprintln!("  2  required tooling is missing; no steps ran");
+    eprintln!("  2  a required tool or the database environment is missing; no steps ran");
     eprintln!("  3  the working tree was dirty after a successful run");
 }
 
 /// Runs the sequence and returns the process exit code.
 fn verify() -> i32 {
     let root = workspace_root();
+    let environment = |name: &str| std::env::var_os(name);
 
-    // ---- Step 1: toolchain probe. Fail closed, before anything else runs. ----
-    let missing = probe_tooling();
-    if !missing.is_empty() {
-        report_missing(&missing);
-        return EXIT_TOOLING_MISSING;
+    // ---- Step 1: prerequisite probe. Fail closed, before anything else runs. ----
+    //
+    // Tools AND the database environment. The second half was added in Phase 008's correction
+    // cycle: step 4's census used to report `ok — NOT RUN` without it and let the whole sequence
+    // exit 0, which is a conditional step in a sequence whose contract says it has none.
+    let missing_tools = probe_tooling();
+    let missing_databases = missing_database_prerequisites(&environment);
+    if let Some(code) = prerequisites_gate(&missing_tools, &missing_databases) {
+        report_missing(&missing_tools, &missing_databases);
+        return code;
     }
-    step_ok(1, "toolchain probe", "all required tooling present");
+    step_ok(
+        1,
+        "prerequisite probe",
+        "all required tooling present, and the four-row database environment is set",
+    );
 
     // ---- Steps 2-5: Rust ----
     if !run(
@@ -191,6 +256,11 @@ fn verify() -> i32 {
     // suite green. Named as its own line of output, counted inside step 4, so the sequence stays
     // at eleven steps.
     if !the_end_to_end_relay_ran(&root) {
+        return EXIT_STEP_FAILED;
+    }
+    // STILL STEP 4. Four rows are specified by `PLAN.md` §10.1; nothing until now asserted that
+    // four of them ran. See `the_four_rows_all_ran`.
+    if !the_four_rows_all_ran(&root, &environment) {
         return EXIT_STEP_FAILED;
     }
     // Warnings are denied via RUSTDOCFLAGS; a broken intra-doc link is a failure.
@@ -368,6 +438,31 @@ fn probe_tooling() -> Vec<&'static Tool> {
     REQUIRED.iter().filter(|t| !present(t)).collect()
 }
 
+/// Returns the database prerequisites that are absent or empty.
+///
+/// Takes the lookup rather than reading the process environment, so the decision this makes is
+/// testable without a test mutating global state that its neighbours are reading concurrently.
+fn missing_database_prerequisites(
+    env: &dyn Fn(&str) -> Option<std::ffi::OsString>,
+) -> Vec<&'static Prerequisite> {
+    DATABASE_REQUIRED
+        .iter()
+        .filter(|p| env(p.variable).is_none_or(|value| value.is_empty()))
+        .collect()
+}
+
+/// The step-1 verdict: `None` to proceed, or the exit code to return without running anything.
+///
+/// A named function rather than an inline `if`, so that *"a missing prerequisite is never exit 0"*
+/// is a claim a test can hold rather than a shape a reader has to trust.
+fn prerequisites_gate(tools: &[&Tool], databases: &[&Prerequisite]) -> Option<i32> {
+    if tools.is_empty() && databases.is_empty() {
+        None
+    } else {
+        Some(EXIT_TOOLING_MISSING)
+    }
+}
+
 fn present(tool: &Tool) -> bool {
     Command::new(tool.program)
         .args(tool.probe)
@@ -382,12 +477,28 @@ fn present(tool: &Tool) -> bool {
 ///
 /// The final line is the point of this function. A partial run that reports success is
 /// the failure mode the fail-closed rule exists to prevent.
-fn report_missing(missing: &[&Tool]) {
-    eprintln!("error: verification cannot run — required tooling is missing");
+fn report_missing(tools: &[&Tool], databases: &[&Prerequisite]) {
+    eprintln!("error: verification cannot run — a required prerequisite is missing");
     eprintln!();
-    for tool in missing {
-        eprintln!("  missing: {} ({})", tool.name, tool.purpose);
+    for tool in tools {
+        eprintln!("  missing tool: {} ({})", tool.name, tool.purpose);
         eprintln!("    install: {}", tool.install);
+        eprintln!();
+    }
+    for prerequisite in databases {
+        eprintln!(
+            "  missing environment: {} ({})",
+            prerequisite.variable, prerequisite.purpose
+        );
+        eprintln!("    setup: {}", prerequisite.setup);
+        eprintln!();
+    }
+    if !databases.is_empty() {
+        eprintln!("The four rows of PLAN.md §10.1 are not optional, so neither is their evidence.");
+        eprintln!(
+            "This is a refusal to verify, not a verification that covered less. Nothing here"
+        );
+        eprintln!("starts a database for you: what runs is what you provided.");
         eprintln!();
     }
     eprintln!("no checks were run. verification did not pass.");
@@ -496,6 +607,10 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !persistence_isolation_holds(root) {
         return false;
     }
+    if !adapters_compile_per_driver(root) {
+        return false;
+    }
+
     if !lean_facade_compiles(root) {
         return false;
     }
@@ -514,7 +629,8 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, transport and persistence isolation, facade isolation, lean compile, \
+        "crate DAG, transport and persistence isolation, per-driver adapter compiles, \
+         facade isolation, lean compile, \
          publishable dependencies, required package metadata, instability wording, and the \
          executable name all hold, each with a control",
     );
@@ -565,7 +681,7 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 5] = [
+    let checks: [IsolationCheck<'_>; 7] = [
         (
             "renvor-seaorm + db-postgres",
             &[
@@ -617,17 +733,77 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             &["sqlx-postgres", "sqlx-mysql", "sqlx-sqlite"],
             &["sea-orm", "sqlx"],
         ),
+        // The direct-SQLx adapter had NO per-driver row until Phase 008. Its `--all-features`
+        // row below forbids the other ORM but permits both drivers, so nothing asserted that a
+        // project on direct SQLx and MySQL keeps PostgreSQL out of its graph — the very thing
+        // "no optional capability silently adds a second database" is about. The SeaORM adapter
+        // had these two rows from the start; this closes the asymmetry.
+        (
+            "renvor-sqlx + db-postgres",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &[
+                "sqlx-mysql",
+                "sqlx-sqlite",
+                "sea-orm",
+                "renvor-seaorm",
+                "rsa",
+                "webpki-roots",
+            ],
+            &["sqlx-postgres", "renvor-database"],
+        ),
+        (
+            "renvor-sqlx + db-mysql",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-mysql",
+            ],
+            &[
+                "sqlx-postgres",
+                "sqlx-sqlite",
+                "sea-orm",
+                "renvor-seaorm",
+                "rsa",
+                "webpki-roots",
+            ],
+            &["sqlx-mysql", "renvor-database"],
+        ),
         (
             "renvor-sqlx (--all-features)",
             &["-p", "renvor-sqlx", "--all-features"],
             &["sea-orm", "renvor-seaorm"],
             &["sqlx", "renvor-database"],
         ),
+        // `renvor-core` joined this row's forbidden list in Phase 008's correction cycle. The
+        // ports crate depended on the kernel for exactly one thing — projecting
+        // `DatabaseErrorKind` onto `ErrorCategory` — and that projection reported ordinary
+        // database outcomes as `Internal`, which C-E1 reserves for a kernel defect. Removing it
+        // left the dependency unused, and an unused edge between two crates is an edge somebody
+        // eventually uses.
+        //
+        // The controls are `renvor-validation` and `renvor-error`, which this crate really does
+        // resolve. The row previously controlled on `renvor-database` itself — the ROOT of its own
+        // tree — which is present in every possible output and therefore proves nothing about
+        // whether the walk can see a dependency.
         (
             "renvor-database (--all-features)",
             &["-p", "renvor-database", "--all-features"],
-            &["sea-orm", "sqlx", "renvor-seaorm", "renvor-sqlx"],
-            &["renvor-database"],
+            &[
+                "sea-orm",
+                "sqlx",
+                "renvor-seaorm",
+                "renvor-sqlx",
+                "renvor-core",
+            ],
+            &["renvor-validation", "renvor-error"],
         ),
     ];
 
@@ -760,6 +936,85 @@ fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
 /// `configuration` example used `renvor::config` with no `required-features` declaration, so
 /// `--no-default-features --all-targets` failed to compile while every tree query stayed green.
 /// Resolving a graph is not compiling against it.
+/// Step 7: every adapter **compiles** with each driver selected on its own.
+///
+/// # Resolving is not compiling, and the difference hid a real defect
+///
+/// `persistence_isolation_holds` reads `cargo tree`, which answers *what would be downloaded*. It
+/// cannot answer *does this build*, and the two came apart: `renvor-sqlx` resolved cleanly with
+/// only `db-mysql` and **failed to compile**, because a test helper named `sqlx::Postgres` from
+/// inside a module gated on `any(db-postgres, db-mysql)`. Every test in that module was already
+/// `db-postgres`-only, so with MySQL alone the module held a helper referring to a type that was
+/// not there.
+///
+/// A project generated for MySQL on direct SQLx would have hit that the first time it ran the
+/// adapter's own suite. Nothing detected it, because nothing had ever compiled that combination.
+///
+/// `--all-targets` is load-bearing here exactly as it is for the facade: the library alone
+/// compiled fine, and only the test target failed.
+fn adapters_compile_per_driver(root: &std::path::Path) -> bool {
+    const ROWS: [(&str, &str); 4] = [
+        ("renvor-sqlx", "db-postgres"),
+        ("renvor-sqlx", "db-mysql"),
+        ("renvor-seaorm", "db-postgres"),
+        ("renvor-seaorm", "db-mysql"),
+    ];
+
+    for (package, feature) in ROWS {
+        // CONTROL. `--all-targets` over a crate with no test targets compiles the library and
+        // reports success, which would make every row below pass for free. Deleting the suites is
+        // the way this gate goes quiet, so the gate says so.
+        let tests = root.join("crates").join(package).join("tests");
+        let populated = std::fs::read_dir(&tests).is_ok_and(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "rs")
+            })
+        });
+        if !populated {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`crates/{package}/tests` holds no `.rs` target, so `--all-targets` below \
+                     would compile only the library and this gate would pass having checked \
+                     nothing"
+                ),
+            );
+            return false;
+        }
+
+        if !cargo_succeeds(
+            root,
+            &[
+                "check",
+                "--locked",
+                "-p",
+                package,
+                "--no-default-features",
+                "--features",
+                feature,
+                "--all-targets",
+            ],
+        ) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`cargo check --locked -p {package} --no-default-features --features \
+                     {feature} --all-targets` FAILED. The dependency graph for this row resolves \
+                     — `cargo tree` is satisfied — but the code does not build, so a project that \
+                     selected only `{feature}` could not compile this adapter's own targets"
+                ),
+            );
+            return false;
+        }
+    }
+    true
+}
+
 fn lean_facade_compiles(root: &std::path::Path) -> bool {
     // THE GATE. `--all-targets` is the load-bearing flag: without it, examples and tests are never
     // built and the whole failure mode is invisible.
@@ -1339,6 +1594,406 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
     true
 }
 
+/// Every (row, suite) pair the persistence evidence rests on.
+///
+/// `(crate, test binary, test path)`. Four rows of `PLAN.md` §10.1's backend matrix. Five suites
+/// are compiled once in `renvor-testkit` and called by every row — the **ports** contract, the
+/// **domain** example, **concurrency and idempotency**, **portability**, and the **upgrade
+/// path**. Two more are per-adapter by necessity, because they drive each adapter's own code: the
+/// **startup diagnostic**, which carries two required tests (a refused socket and a refused
+/// credential reach different code), and **error classification**.
+///
+/// # The rows are not symmetric, and the asymmetry is real rather than an omission
+///
+/// Each direct-SQLx row carries **eleven** required tests and each SeaORM row **ten**. The
+/// difference is the transaction-conflict test: a deadlock is provoked by two sessions taking two
+/// row locks in opposite orders, which `renvor-sqlx` does through `sqlx::Pool` directly.
+/// `renvor-seaorm`'s suite classifies a `DbErr` through the idiomatic `Statement` path and has no
+/// equivalent, so inventing two entries for tests that do not exist would fail the census on every
+/// run. Its three tests are enumerated; the fourth is recorded here as absent rather than assumed.
+///
+/// # Why error classification is here at all
+///
+/// **It was not, until a review found the gap.** `PLAN.md` §819 makes *"database error
+/// normalization"* a Phase 008 deliverable, and these suites are its only real-database coverage —
+/// they are where not-null, check-violation and transaction-conflict classification are measured
+/// against servers rather than against a fabricated driver error. With no entry here, deleting or
+/// feature-gating one of them left `cargo test --workspace` reporting fewer tests and succeeding,
+/// and the census green: exactly the disappearance the census exists to prevent, in the suites
+/// that back the deliverable it was built for.
+///
+/// The four-per-adapter enumeration is deliberate rather than a sample. A census that named only
+/// `each_constraint_violation_is_classified_as_itself` would leave its own control — the one
+/// asserting the four kinds do not collapse onto one — deletable without complaint.
+///
+/// **This was twenty-four before Phase 008's correction cycle**, then twenty-eight when the
+/// server-side refusal test was added on the finding that `ConnectFailed`'s advice covered only
+/// one of the five causes it is returned for. The counts are stated here rather than left implicit
+/// so that a reader comparing this against phase evidence written earlier sees the change rather
+/// than a discrepancy.
+///
+/// Forty-two entries, and a missing one fails the gate whichever suite it belongs to.
+const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
+    (
+        "renvor-sqlx",
+        "shared_contract",
+        "postgres::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "shared_contract",
+        "mysql::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "contract",
+        "postgres::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "contract",
+        "mysql::the_shared_persistence_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "postgres::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "mysql::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "postgres::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "mysql::the_shared_domain_example_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "postgres::the_shared_concurrency_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "mysql::the_shared_concurrency_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "postgres::the_shared_concurrency_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "domain",
+        "mysql::the_shared_concurrency_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "portability",
+        "postgres::the_portability_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "portability",
+        "mysql::the_portability_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "portability",
+        "postgres::the_portability_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "portability",
+        "mysql::the_portability_contract_holds",
+    ),
+    ("renvor-sqlx", "domain", "postgres::the_upgrade_path_holds"),
+    ("renvor-sqlx", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-seaorm",
+        "domain",
+        "postgres::the_upgrade_path_holds",
+    ),
+    ("renvor-seaorm", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "postgres::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "mysql::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "postgres::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "mysql::a_failed_start_names_the_provider_and_what_to_do",
+    ),
+    // The server-side refusal rows, added by Phase 008's correction cycle. A refused socket and a
+    // refused credential reach different code — the I/O arm and `classify_connect_error` — so a
+    // census that required only the first would let the second be deleted silently.
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-sqlx",
+        "startup_diagnostic",
+        "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    (
+        "renvor-seaorm",
+        "startup_diagnostic",
+        "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+    ),
+    // The error-classification rows, added by Phase 008's second correction cycle on the finding
+    // that `PLAN.md` §819's "database error normalization" deliverable had its real-database
+    // coverage outside the census entirely.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::each_constraint_violation_is_classified_as_itself",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::each_constraint_violation_is_classified_as_itself",
+    ),
+    // The control for the four above. Without its own entry it could be deleted while the census
+    // stayed green, and a mapping that collapsed the four kinds onto one would then be caught by
+    // three assertions instead of by the property stated directly.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+    ),
+    // Transaction conflict: DIRECT-SQLX ROWS ONLY, and that is measured rather than overlooked.
+    // Provoking a deadlock takes two sessions holding two row locks in opposite orders, which the
+    // SQLx suite arranges over `sqlx::Pool`; `renvor-seaorm`'s suite has no such test, so there
+    // are two entries here and not four. Adding the missing pair means writing the tests first.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::a_lost_conflict_is_retryable_rather_than_a_rejection",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::a_lost_conflict_is_retryable_rather_than_a_rejection",
+    ),
+    // The redaction rows. Differently named per adapter because they defend against different
+    // text: the driver's message on one side, SeaORM's — which also carries the generated SQL —
+    // on the other. Both are the executable half of CONSTITUTION.md:107 for this path.
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "postgres::a_violation_never_carries_the_server_text",
+    ),
+    (
+        "renvor-sqlx",
+        "error_classification",
+        "mysql::a_violation_never_carries_the_server_text",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "postgres::a_violation_never_carries_the_seaorm_text",
+    ),
+    (
+        "renvor-seaorm",
+        "error_classification",
+        "mysql::a_violation_never_carries_the_seaorm_text",
+    ),
+];
+
+/// STEP 4, still: every one of the four rows reported in.
+///
+/// # `cargo test --workspace` cannot notice a missing row
+///
+/// Step 4 runs the whole workspace, so all four rows execute today. What it does not do — what
+/// nothing did before this — is state how many rows were *supposed* to run. Delete
+/// `crates/renvor-seaorm/tests/contract.rs` and `cargo test --workspace` runs fewer tests and
+/// reports success. A row can be removed, renamed, or feature-gated out of existence and the gate
+/// stays green, because a smaller test count is not a failure.
+///
+/// This is the same shape as two failures this repository has already been bitten by and fixed:
+/// the relay test above, which *"ran in NO automated gate until 2026-08-23"*, and the
+/// real-database suites that *"reported `ok` in CI having connected to nothing"*
+/// (`crates/renvor-sqlx/tests/support/mod.rs`). Both were closed by making the gate assert that
+/// the thing ran. This closes the third.
+///
+/// # Why `ok` here means the row genuinely reached a database
+///
+/// A test that skipped would also print `ok`. It cannot skip under this gate: `support::url`
+/// **panics** when `RENVOR_TEST_REQUIRE_DATABASE` is set and a URL is absent.
+///
+/// And that variable is no longer optional. Step 1 refuses the whole sequence with
+/// [`EXIT_TOOLING_MISSING`] — exit **2**, before any step runs — unless all three of
+/// `RENVOR_TEST_POSTGRES_URL`, `RENVOR_TEST_MYSQL_URL` and `RENVOR_TEST_REQUIRE_DATABASE` are set
+/// and non-empty. So reaching this function at all means the census was mandatory.
+///
+/// **The paragraph that used to stand here said the opposite** — that the census *"is reported as
+/// not-run when it is not ... so a contributor without local databases still gets a usable
+/// `cargo xtask verify`"*. That was the behaviour this correction removed, and a review found the
+/// comment still describing it. A doc comment that survives the behaviour it documents is how the
+/// next reader concludes the skip is still available.
+///
+/// # It re-runs two test binaries
+///
+/// Deliberate, and it costs a couple of seconds. `run` streams its child's output to the operator
+/// rather than capturing it, which is the right behaviour for a step whose output a human is
+/// watching; capturing step 4 wholesale to satisfy this check would trade live test progress for a
+/// census. Two small binaries run twice is the cheaper trade.
+fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> bool {
+    const TITLE: &str = "tests (four-row persistence census)";
+
+    // Defence in depth. Step 1 already refuses the run without these, so reaching here with one
+    // absent means the environment changed mid-sequence. Either way the answer is the same: a
+    // census that did not run is not a census that passed.
+    let absent = missing_database_prerequisites(env);
+    if !absent.is_empty() {
+        step_fail(
+            4,
+            TITLE,
+            &format!(
+                "the database environment is incomplete — {} of {} variables are absent or \
+                 empty, so none of the {} row-suite pairs could run. This is a FAILURE rather \
+                 than a skip: `contracts/verification-sequence.md` states that no step in this \
+                 sequence is conditional. Run `cargo xtask verify` again with the environment \
+                 CONTRIBUTING.md describes",
+                absent.len(),
+                DATABASE_REQUIRED.len(),
+                ROW_EVIDENCE.len()
+            ),
+        );
+        return false;
+    }
+
+    // Group the rows by the binary that carries them, so each binary runs once.
+    let mut binaries: Vec<(&str, &str)> = ROW_EVIDENCE
+        .iter()
+        .map(|(package, binary, _)| (*package, *binary))
+        .collect();
+    // Sorted before `dedup`, which only removes ADJACENT duplicates. Unsorted, a binary named
+    // again later in the table would be run twice.
+    binaries.sort_unstable();
+    binaries.dedup();
+
+    for (package, binary) in binaries {
+        let output = Command::new("cargo")
+            .args([
+                "test",
+                "-p",
+                package,
+                "--features",
+                "db-postgres,db-mysql",
+                "--test",
+                binary,
+            ])
+            .current_dir(root)
+            .output();
+
+        let Ok(output) = output else {
+            step_fail(
+                4,
+                TITLE,
+                &format!("`{package}/{binary}` could not be executed"),
+            );
+            return false;
+        };
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if !output.status.success() {
+            step_fail(
+                4,
+                TITLE,
+                &format!("`{package}/{binary}` failed:\n{combined}"),
+            );
+            return false;
+        }
+
+        for (expected_package, expected_binary, test) in ROW_EVIDENCE {
+            if expected_package != package || expected_binary != binary {
+                continue;
+            }
+            // The runner's own line for a test that RAN and passed. A row that was deleted,
+            // renamed, or compiled out produces no such line.
+            let evidence = format!("test {test} ... ok");
+            if !combined.contains(&evidence) {
+                step_fail(
+                    4,
+                    TITLE,
+                    &format!(
+                        "row `{package}::{test}` did not report in. Expected the line \
+                         `{evidence}` in the runner's output. The row was removed, renamed, or \
+                         feature-gated out — and without this census the workspace test run would \
+                         simply have executed one row fewer and reported success"
+                    ),
+                );
+                return false;
+            }
+        }
+    }
+
+    step_ok(
+        4,
+        TITLE,
+        &format!(
+            "all {} row-suite pairs reported in (11 required tests on each direct-SQLx row, \
+             10 on each SeaORM row)",
+            ROW_EVIDENCE.len()
+        ),
+    );
+    true
+}
+
 /// Whether a manifest's package is intended for publication.
 ///
 /// **Comment-aware, and that is the whole point.** Both this scan and the FR-040 dependency scan
@@ -1683,6 +2338,273 @@ const SC022_REQUIRED_OCCURRENCES: usize = 1;
 
 #[cfg(test)]
 mod tests {
+    /// A missing database prerequisite can only produce the missing-prerequisite code.
+    ///
+    /// Stated as three separate claims rather than one, because the failure being guarded against
+    /// is a gate returning **success**, and `assert_eq!(.., Some(2))` alone would still pass if
+    /// someone later made `EXIT_TOOLING_MISSING` equal `EXIT_OK`.
+    #[test]
+    fn a_missing_database_prerequisite_can_never_yield_exit_zero() {
+        let nothing = |_: &str| None;
+        let databases = super::missing_database_prerequisites(&nothing);
+        assert_eq!(
+            databases.len(),
+            super::DATABASE_REQUIRED.len(),
+            "the probe did not see the absent variables"
+        );
+
+        let verdict = super::prerequisites_gate(&[], &databases);
+        assert_eq!(verdict, Some(super::EXIT_TOOLING_MISSING));
+        assert_ne!(verdict, Some(super::EXIT_OK));
+        assert_ne!(
+            verdict, None,
+            "`None` means the sequence proceeds and can pass"
+        );
+    }
+
+    /// CONTROL: with the environment complete, the gate lets the run proceed.
+    ///
+    /// Without this the test above would pass against a gate that refused everything
+    /// unconditionally, which is a different defect wearing the same green tick.
+    #[test]
+    fn a_complete_environment_lets_verification_proceed() {
+        let everything = |_: &str| Some(std::ffi::OsString::from("set"));
+        let databases = super::missing_database_prerequisites(&everything);
+        assert!(
+            databases.is_empty(),
+            "the probe reported a variable that was set"
+        );
+        assert_eq!(super::prerequisites_gate(&[], &databases), None);
+    }
+
+    /// An empty value is absence. CI writes these variables from shell expansion, and an
+    /// expansion that produced nothing would otherwise satisfy a presence check while naming no
+    /// database at all.
+    #[test]
+    fn an_empty_variable_counts_as_missing() {
+        let empty = |_: &str| Some(std::ffi::OsString::new());
+        assert_eq!(
+            super::missing_database_prerequisites(&empty).len(),
+            super::DATABASE_REQUIRED.len()
+        );
+    }
+
+    /// RED (Correction E). `contracts/verification-sequence.md` says of this sequence: *"Executed
+    /// in order. None is conditional. None is skipped."* Step 4's census is conditional on an
+    /// environment variable, and when it is absent the census prints `ok — NOT RUN` and returns
+    /// success — so a full `cargo xtask verify` exits 0 having executed none of the census pairs.
+    #[test]
+    fn a_run_without_the_database_environment_cannot_report_the_census_as_ok() {
+        let nothing = |_: &str| None;
+        assert!(
+            !super::the_four_rows_all_ran(std::path::Path::new("."), &nothing),
+            "the census reported success without running"
+        );
+    }
+
+    /// Every test in the two error-classification binaries has a census entry, and vice versa.
+    ///
+    /// # Derived from the suites rather than counted by hand
+    ///
+    /// The gap a review found here was not an arithmetic error. It was that an entire
+    /// deliverable's real-database coverage — `PLAN.md` §819's *"database error normalization"* —
+    /// had **no** entry in `ROW_EVIDENCE` at all, so deleting or feature-gating one of those
+    /// suites left `cargo test --workspace` reporting fewer tests and succeeding, and the census
+    /// green beside it. Nothing compared the table against the suites.
+    ///
+    /// This reads the suites. It fails in both directions: a test added to either file without
+    /// its pair of rows, and a row naming a test that is not there. Both are how the table drifts.
+    ///
+    /// The sources are `include_str!`d, so they resolve at COMPILE time — a moved or deleted
+    /// suite is a build failure rather than a silently skipped test.
+    #[test]
+    fn every_error_classification_test_is_censused() {
+        const SUITES: [(&str, &str); 2] = [
+            (
+                "renvor-sqlx",
+                include_str!("../../crates/renvor-sqlx/tests/error_classification.rs"),
+            ),
+            (
+                "renvor-seaorm",
+                include_str!("../../crates/renvor-seaorm/tests/error_classification.rs"),
+            ),
+        ];
+        /// Both suites are macro-generated, once per engine, from one `mod` body.
+        const ENGINES: [&str; 2] = ["postgres", "mysql"];
+
+        /// The name of every `#[tokio::test] async fn` in one suite.
+        ///
+        /// Keyed on the ATTRIBUTE rather than on `async fn` alone: each suite also declares
+        /// `fixture` and `refused` helpers, and a parser that took every `async fn` would demand
+        /// census rows for functions that are not tests.
+        fn tests_in(source: &str) -> Vec<&str> {
+            let mut names = Vec::new();
+            let mut is_test = false;
+            for line in source.lines() {
+                let trimmed = line.trim();
+                if trimmed == "#[tokio::test]" {
+                    is_test = true;
+                } else if is_test {
+                    if let Some(rest) = trimmed.strip_prefix("async fn ") {
+                        names.push(rest.split('(').next().unwrap_or(rest));
+                    }
+                    is_test = false;
+                }
+            }
+            names
+        }
+
+        let censused: Vec<(&str, &str)> = super::ROW_EVIDENCE
+            .iter()
+            .filter(|(_, binary, _)| *binary == "error_classification")
+            .map(|(package, _, test)| (*package, *test))
+            .collect();
+
+        let mut expected = 0_usize;
+        for (package, source) in SUITES {
+            let names = tests_in(source);
+            // POSITIVE CONTROL. A parser that matched nothing would make every assertion below
+            // vacuous, and one that matched too much would name the helpers.
+            assert!(
+                names.len() >= 3,
+                "the parser found {} tests in {package}'s error-classification suite, which is \
+                 fewer than the suite is known to carry. It is matching the wrong thing",
+                names.len()
+            );
+            for helper in ["fixture", "refused"] {
+                assert!(
+                    !names.contains(&helper),
+                    "the parser counted `{helper}` as a test in {package}; it is a helper, and a \
+                     census row for it would never be satisfied"
+                );
+            }
+
+            for name in names {
+                for engine in ENGINES {
+                    let path = format!("{engine}::{name}");
+                    assert!(
+                        censused.contains(&(package, path.as_str())),
+                        "`{package}` carries the error-classification test `{path}`, and the \
+                         census does not require it. Add it to `ROW_EVIDENCE` — without a row, \
+                         deleting or feature-gating it leaves both the workspace test run and \
+                         this gate green"
+                    );
+                    expected += 1;
+                }
+            }
+        }
+
+        // THE OTHER DIRECTION. A row naming a test that does not exist fails the census on every
+        // run against a real database, which is a slow and confusing way to learn about a typo.
+        assert_eq!(
+            censused.len(),
+            expected,
+            "the census requires {} error-classification pairs and the suites carry {expected}. \
+             A row names a test that is not there: {censused:?}",
+            censused.len()
+        );
+    }
+
+    /// The recovery guidance for a partial MySQL migration describes what the runner does.
+    ///
+    /// # A guard for prose that was wrong until a review caught it
+    ///
+    /// `contracts/database-portability.md` instructed operators that after a partial MySQL failure
+    /// *"the recovery path is 'run the rest', not 'run it again from the start'"*, and the
+    /// documentation page said the same in its own words. SQLx refuses every subsequent run with
+    /// `MigrateError::Dirty` before sending a statement, so the instruction sent an operator round
+    /// a loop with no exit.
+    ///
+    /// `a_partial_migration_is_refused_on_the_next_run_rather_than_resumed` proves the behaviour
+    /// against both engines. This proves the three documents still **describe** it — a test and the
+    /// prose it backs can drift apart without either one failing, and that is exactly what
+    /// happened.
+    ///
+    /// **The third document is ADR-0023**, which the contract names as its source of authority and
+    /// which carried the same false rule in its own decision text. It was found by a sweep rather
+    /// than by the review, which cited the contract and the guide. A contract corrected against a
+    /// record still stating the opposite is a contract with a citation that contradicts it.
+    ///
+    /// Whitespace is collapsed before searching, because both documents wrap: the phrase this
+    /// guards against was split across two lines in the contract, which is why a plain `grep`
+    /// for it found nothing.
+    ///
+    /// # The false phrases still appear, and the test is built around that
+    ///
+    /// This repository corrects rather than erases: the contract QUOTES the instruction it
+    /// withdrew, so the reader can see what changed. A guard that simply forbade the words would
+    /// therefore fail on the fix, and the obvious way to make it pass would be to delete the
+    /// record of the mistake. So what is asserted is **order**: every occurrence of a resumption
+    /// phrase must come after the sentence that withdraws it. A document that reinstates the
+    /// instruction, or that carries it with no withdrawal at all, fails.
+    #[test]
+    fn the_partial_migration_guidance_matches_what_the_runner_does() {
+        /// `(name, source, the sentence that withdraws the instruction)`.
+        ///
+        /// The guide has **no** withdrawal marker on purpose: it is a working page rather than a
+        /// record, so it simply states the current behaviour. A resumption phrase appearing there
+        /// has nothing to be quoted by, and fails.
+        const DOCUMENTS: [(&str, &str, Option<&str>); 3] = [
+            (
+                "contracts/database-portability.md",
+                include_str!("../../contracts/database-portability.md"),
+                Some("used to stand here was false"),
+            ),
+            (
+                "docs/docs/database-portability.mdx",
+                include_str!("../../docs/docs/database-portability.mdx"),
+                None,
+            ),
+            (
+                "decisions/0023-database-portability-across-the-four-rows.md",
+                include_str!("../../decisions/0023-database-portability-across-the-four-rows.md"),
+                Some("Amended 2026-08-27"),
+            ),
+        ];
+
+        for (name, markdown, withdrawal) in DOCUMENTS {
+            let flat = markdown.split_whitespace().collect::<Vec<_>>().join(" ");
+
+            // POSITIVE CONTROL, first: a document that stopped covering the subject would satisfy
+            // every "does not say" assertion below by saying nothing at all.
+            assert!(
+                flat.contains("MigrationDirty") || flat.contains("MigrationDirty`"),
+                "{name} no longer names the kind a run after a partial failure returns. The \
+                 guidance was removed rather than corrected"
+            );
+            assert!(
+                flat.contains("_sqlx_migrations"),
+                "{name} no longer names the ledger an operator has to reconcile, so its recovery \
+                 procedure cannot be followed"
+            );
+
+            let withdrawal = withdrawal.and_then(|marker| flat.find(marker));
+
+            for resumption in [
+                "the recovery path is",
+                "run the rest",
+                "safe to re-run after a partial failure",
+                "leaves a database the next run can continue from",
+            ] {
+                let Some(at) = flat.find(resumption) else {
+                    continue;
+                };
+                let Some(withdrawn_at) = withdrawal else {
+                    panic!(
+                        "{name} tells an operator a partial migration can be resumed \
+                         (`{resumption}`) and never withdraws it. It cannot be resumed: every \
+                         later run is refused before a statement is sent"
+                    )
+                };
+                assert!(
+                    at > withdrawn_at,
+                    "{name} states `{resumption}` BEFORE the sentence that withdraws it, so it \
+                     reads as live guidance rather than as the quoted mistake"
+                );
+            }
+        }
+    }
+
     use super::scan_manifests;
 
     /// `TOTAL_STEPS` equals the number of steps the published contract lists.
@@ -1737,6 +2659,96 @@ mod tests {
             "the contract publishes {steps} steps but TOTAL_STEPS is {}. One of them was changed \
              without the other; they are the same promise stated twice.",
             super::TOTAL_STEPS
+        );
+    }
+
+    /// The published exit-code tables describe what the command actually does with exit 2.
+    ///
+    /// # The drift this catches
+    ///
+    /// `contracts/verification-sequence.md` described exit **2** as *"a required toolchain is
+    /// missing; no steps ran"*. Phase 008 widened the condition: step 1 now also refuses when the
+    /// four-row database environment is absent, and returns the same code. So the contract named
+    /// one of the two conditions that produce it, and a reader diagnosing a `2` had no reason to
+    /// look at their environment variables.
+    ///
+    /// The same code is published in three places — this contract, `CONTRIBUTING.md`, and the
+    /// doc comment on `EXIT_TOOLING_MISSING` — and nothing bound them together. Two of the three
+    /// were updated. This is what notices next time.
+    ///
+    /// **What this does not do.** It asserts the two conditions are *named*, not that the wording
+    /// is good. A table saying `2` means "tool or database" while the implementation returned it
+    /// for something else entirely would still pass; the behavioural proof is
+    /// `a_missing_database_prerequisite_can_never_yield_exit_zero`.
+    #[test]
+    fn the_published_exit_codes_describe_what_the_command_does() {
+        const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
+        const CONTRIBUTING: &str = include_str!("../../CONTRIBUTING.md");
+
+        /// The meaning column of the exit-code row for `code`.
+        ///
+        /// Keyed on the row having exactly TWO cells. Both documents carry other numbered tables —
+        /// the contract's step table has four columns and legitimately has a row numbered 2 — and
+        /// an earlier parser in this file was written after exactly that collision.
+        fn meaning_of(markdown: &str, code: u8) -> Option<String> {
+            markdown.lines().find_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with('|') || !trimmed.ends_with('|') {
+                    return None;
+                }
+                let cells: Vec<&str> = trimmed
+                    .trim_matches('|')
+                    .split('|')
+                    .map(str::trim)
+                    .collect();
+                if cells.len() != 2 {
+                    return None;
+                }
+                (cells[0].trim_matches('`').parse::<u8>().ok()? == code)
+                    .then(|| cells[1].to_owned())
+            })
+        }
+
+        // POSITIVE CONTROLS. A parser that matched nothing, or that matched the step table
+        // instead, would make every assertion below vacuous. Row 1 must be found in both, and it
+        // must be the exit-code row rather than the contract's step row named "Formatting".
+        for (label, markdown) in [("contract", CONTRACT), ("guide", CONTRIBUTING)] {
+            let one = meaning_of(markdown, 1)
+                .unwrap_or_else(|| panic!("the {label} exit-code table has no row for 1"));
+            assert!(
+                one.contains("failed"),
+                "the {label} row for 1 reads as the step table rather than the exit-code table"
+            );
+        }
+
+        for (label, markdown) in [("contract", CONTRACT), ("guide", CONTRIBUTING)] {
+            let two = meaning_of(markdown, 2)
+                .unwrap_or_else(|| panic!("the {label} exit-code table has no row for 2"));
+            let lowered = two.to_lowercase();
+            assert!(
+                lowered.contains("tool"),
+                "the {label} row for 2 does not name the missing-tooling condition"
+            );
+            assert!(
+                lowered.contains("database"),
+                "the {label} row for 2 names only the tooling condition, but \
+                 `missing_database_prerequisites` returns the same code for an absent four-row \
+                 environment"
+            );
+        }
+
+        // The third authority: the constant's own documentation, which an author reads before the
+        // published tables.
+        const SOURCE: &str = include_str!("main.rs");
+        let declaration = SOURCE
+            .lines()
+            .zip(SOURCE.lines().skip(1))
+            .find(|(_, next)| next.contains("const EXIT_TOOLING_MISSING"))
+            .map(|(doc, _)| doc.to_lowercase())
+            .expect("EXIT_TOOLING_MISSING is declared with a doc comment above it");
+        assert!(
+            declaration.contains("database"),
+            "EXIT_TOOLING_MISSING's own documentation names only the tooling condition"
         );
     }
 
@@ -2445,6 +3457,57 @@ mod tests {
             granted.len(),
             "GOVERNANCE.md's waiver table has a different number of rows from the ledger's"
         );
+
+        // ── the prose counts, which the checks above do not reach ──────────────────────────
+        //
+        // The headline, the summary table and GOVERNANCE.md were all bound. The SENTENCE that
+        // states why the exceptions exist was not, and it said "All fourteen" while the set it
+        // names held fifteen. It had been wrong once before — it read "All eight" while listing
+        // ten — and was corrected by hand both times, which is the shape this repository treats as
+        // a defect rather than a typo.
+        //
+        // The exception set is every granted waiver except W-001, which is the approval gap and is
+        // counted separately by this ledger's own rules — the same exclusion the loop above makes.
+        let exceptions = granted.iter().filter(|id| *id != "W-001").count();
+        let spelled_exceptions = words
+            .get(exceptions)
+            .unwrap_or_else(|| panic!("no spelling for {exceptions}"));
+        assert!(
+            ledger.contains(&format!(
+                "**All {} exist for the same underlying reason",
+                spelled_exceptions.to_lowercase()
+            )),
+            "the ledger does not say `All {} exist for the same underlying reason`, which is what \
+             its own exception set holds",
+            spelled_exceptions.to_lowercase()
+        );
+
+        // ── nothing is described as granted before it is granted ───────────────────────────
+        //
+        // The W-017 scope section said Phase closure "is **W-018**, granted separately, on the
+        // same terms" while no W-018 existed, and a blockquote saying "Both were granted" sat
+        // directly under a section describing one. A ledger that names a waiver it has not issued
+        // reads, to anyone auditing it, as one that has.
+        //
+        // W-007 is the single exemption, and an explicit one: both documents record at length that
+        // it does not exist and that the identifier is permanently burned.
+        for (label, text) in [("ledger", &ledger), ("GOVERNANCE.md", &governance)] {
+            let mut rest = text.as_str();
+            while let Some(at) = rest.find("W-0") {
+                let identifier: String = rest[at..].chars().take(5).collect();
+                rest = &rest[at + 3..];
+                if identifier.len() != 5 || !identifier[2..].chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                if identifier == "W-007" {
+                    continue;
+                }
+                assert!(
+                    granted.contains(&identifier),
+                    "{label} refers to {identifier}, which its own table does not grant"
+                );
+            }
+        }
     }
 
     // ── published documentation agrees with the contracts it republishes ────────────────────
