@@ -3204,14 +3204,16 @@ mod tests {
         let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
             .expect("every publishable package satisfies the metadata contract");
 
-        // ELEVEN since Phase 007: `renvor-seaorm` joined the ten Phase 006 left. The number is
+        // TWELVE since Phase 009: `renvor-auth` joined the eleven Phase 007 left. The number is
         // asserted rather than inferred so that adding a publishable package without adding it to
         // the release ordering fails here — which is exactly what happened when this count was
-        // five and three packages had just been added, again at Phase 006, and again here: this
-        // assertion is what first reported the new crate, before any manual list was touched.
+        // five and three packages had just been added, again at Phase 006, again at Phase 007, and
+        // AGAIN AT PHASE 009: this assertion is what reported `renvor-auth` before any manual list
+        // was touched, for the fourth time. It is the cheapest test in this file and the one that
+        // has caught the most.
         assert_eq!(
-            examined, 11,
-            "the workspace publishes eleven packages; the scan examined {examined}"
+            examined, 12,
+            "the workspace publishes twelve packages; the scan examined {examined}"
         );
     }
 

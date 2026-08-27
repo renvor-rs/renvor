@@ -141,7 +141,7 @@ env:
   #
   # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
   # sorts both sides — but it makes the line readable as the thing it describes.
-  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-testkit renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
+  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-testkit renvor-auth renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor
