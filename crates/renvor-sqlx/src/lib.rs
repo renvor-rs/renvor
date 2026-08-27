@@ -24,6 +24,7 @@
 //! offline cache, and a framework compiling against two backends would need two caches kept in
 //! step.
 
+pub mod auth;
 pub mod error;
 pub mod migrate;
 pub mod page;

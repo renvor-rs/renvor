@@ -2759,6 +2759,8 @@ dependencies = [
 name = "renvor-sqlx"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "renvor-auth",
  "renvor-core",
  "renvor-database",
  "renvor-testkit",

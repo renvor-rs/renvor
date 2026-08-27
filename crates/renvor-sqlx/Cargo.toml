@@ -33,6 +33,14 @@ include = [
 # database that cannot be reached fails BOOT rather than the first request, and so that readiness
 # cannot report ready before the database has answered. `renvor-database` deliberately does not
 # depend on this: the ports describe a shape, and only the adapter joins it to a lifecycle.
+# The authentication DOMAIN — its ports and value types, and no driver of its own. This adapter
+# implements the ports; the direction is adapter -> domain, which is the same direction
+# `renvor-database` is depended on in.
+# The instant type. `sqlx`'s `chrono` feature is already enabled below, so this names the crate
+# this adapter already binds rather than adding a second time library.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
