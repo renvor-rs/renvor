@@ -66,10 +66,24 @@ gap in the first version of the test suite** and it is recorded in the Phase 009
 
 ### Consequence: length is counted in code points, after NFC
 
-NIST says *"a minimum of 15 characters"* and does not define "character". Renvor counts **Unicode
-code points after NFC** and says so rather than implying the standard did. Counting UTF-8 bytes —
-the default thing to write — admits `"éééééééé"`: eight characters, sixteen bytes, through a
-fifteen-character floor.
+> **Corrected 2026-08-27, before acceptance.** An earlier draft of this record said NIST *"does not
+> define 'character'"* and presented code-point counting as Renvor's own operationalisation. **That
+> was false.** §3.1.1.2 defines it, normatively:
+>
+> > *"Each Unicode code point SHALL be counted as a single character when evaluating password
+> > length."*
+>
+> The implementation was already correct; the justification for it was not. A record that claims to
+> be exercising judgement where a standard actually states a `SHALL` invites a later reader to
+> revisit a decision that is not open.
+
+So counting is a **`SHALL`**, not a choice. Counting UTF-8 bytes over-counts and wrongly **accepts**
+`"éééééééé"` — eight code points, sixteen bytes — through a fifteen-character floor. Counting
+grapheme clusters under-counts and wrongly rejects. Both fail the same requirement, in opposite
+directions.
+
+**Order is load-bearing too.** NFC composition can turn 15 code points into 14, so a policy that
+measures before normalising can admit a password the `SHALL` forbids. Renvor normalises first.
 
 ## Decision 3 — the blocklist is a **port**, and this phase does not choose the corpus
 
@@ -77,6 +91,11 @@ fifteen-character floor.
 that could accept a substring, so §3.1.1.2's *"The entire password SHALL be subject to comparison,
 not substrings or words that might be contained therein"* is met by the shape rather than by
 implementations remembering it.
+
+A rejection must also **say why**: §3.1.1.2 requires the CSP to *"provide the reason for
+rejection"*. That reaches the user through the validation surface — `AuthError` stays fieldless so
+the rejected password cannot travel with the refusal, and the two requirements do not conflict
+because they address different audiences.
 
 **Which corpus ships — its size, its source, and its licence — is NOT decided here.** Phase 009
 delivers the mechanism and an in-memory implementation. Shipping a multi-hundred-megabyte breach
@@ -100,3 +119,28 @@ open work with an owner.
 | counting UTF-8 bytes | admits an 8-character password through a 15-character floor |
 | a network blocklist lookup | puts somebody else's outage on the registration path; the port is offline by construction |
 | shipping a breach corpus now | a packaging and licensing decision that deserves its own record |
+
+## A conflict this record must not hide
+
+**NIST does not approve Argon2.** §3.1.1.2 points to *"[SP800-132]"*, which resolves in NIST's own
+reference list to *Recommendation for Password-Based Key Derivation* — **PBKDF2**. Argon2id is
+mandated here by **PLAN.md §16.1**, and OWASP puts PBKDF2 second behind Argon2id *"if FIPS-140
+compliance is required."*
+
+The conflict is a FIPS-approval artifact rather than a claim that Argon2id is weaker, and NIST's
+wording is a `SHOULD` with an *"or updated NIST guidelines"* escape. It is recorded because a
+deployment that needs FIPS approval cannot use what this phase ships, and **that is a limitation
+with an owner, not a detail.** Whether Renvor grows a selectable PBKDF2 mode is a decision for a
+later record; `PasswordService` is parameterised over its cost settings but not over its algorithm,
+so taking it later is a public API change.
+
+## Blocklist sizing, since the standards disagree about direction
+
+ASVS **V6.2.4 (L1)** quantifies: *"at least, the top 3000 passwords **which match the application's
+password policy**"*. NIST warns the other way: *"Excessively large blocklists are of little
+incremental security benefit"*, because the blocklist defends against **online** attacks that
+throttling already bounds.
+
+These agree once read together, and V6.2.4's qualifier is the operative part: **with a 15-code-point
+minimum, the top-3000 list must be filtered to entries of 15 or more**, or almost all of it is dead
+weight against a policy that already rejects it. NIST Appendix A makes the same point.

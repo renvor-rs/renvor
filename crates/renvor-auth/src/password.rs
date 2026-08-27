@@ -103,10 +103,18 @@ impl PasswordPolicy {
 
     /// Checks a candidate's length, **in Unicode code points, after NFC**.
     ///
-    /// NIST says "15 characters" and does not define "character". Renvor counts **code points
-    /// after NFC**, which is at least as strict as any reading and, unlike "characters", is
-    /// something a program can count. Counting UTF-8 bytes — the default thing to write — admits
-    /// an 8-character password under a 15 minimum.
+    /// **The unit is a `SHALL`, not a choice.** §3.1.1.2: *"Each Unicode code point SHALL be
+    /// counted as a single character when evaluating password length."*
+    ///
+    /// Both ways of getting it wrong are conformance failures, in opposite directions:
+    ///
+    /// | Counted as | Effect |
+    /// |---|---|
+    /// | UTF-8 bytes | over-counts — wrongly **accepts** `"éééééééé"`, 8 code points, under a 15 floor |
+    /// | grapheme clusters | under-counts — wrongly **rejects** a conforming password |
+    ///
+    /// **Normalising first is also load-bearing**, not tidiness: NFC composition can turn 15 code
+    /// points into 14, so measuring before normalising can admit a password the `SHALL` forbids.
     ///
     /// # Errors
     ///
