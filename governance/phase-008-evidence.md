@@ -330,12 +330,40 @@ not match `$variant:ident`.
 `&'static str`, so a lifetime is not a provenance. That is the same finding this phase recorded
 against `DatabaseAdapter`.
 
-**The macro is duplicated into `renvor-core`, and the duplication is forced.** `renvor-database`
-declares no dependency on the kernel, deliberately, and `xtask` step 7 asserts that absence against
-the resolved graph **with a positive control**; `renvor-http` reaching `renvor-database` would
-breach transport/persistence isolation, which the same step asserts. The two copies generate
-independent types, so they cannot disagree about a value — only about which features the macro
-offers. Stated in both files rather than left to be discovered.
+**The macro is declared in `renvor-http` itself, and the first attempt to share it failed a gate.**
+`renvor-database` carries the same construction and the two cannot be shared: it declares no
+dependency on the kernel, deliberately, and `xtask` step 7 asserts that absence against the
+resolved graph **with a positive control**, while `renvor-http` reaching `renvor-database` would
+breach the transport/persistence isolation the same step asserts. There is no crate below both.
+
+The macro was therefore placed in `renvor-core` and imported as `renvor_core::closed_named_enum!`.
+That **compiles, tests and lints clean in a workspace build** — 103 suites, 1462 tests — and
+**fails `cargo package --workspace` verification**:
+
+```text
+error[E0433]: failed to resolve: could not find `closed_named_enum` in `renvor_core`
+  --> src/error.rs:39:14
+```
+
+What was established before changing the design, rather than after:
+
+| Question | Answer |
+|---|---|
+| Is the macro itself sound? | **Yes.** A scratch crate `path`-depending on the packaged `renvor-core` compiles it |
+| Is the tarball missing the file? | **No.** `closed_enum.rs` is in the `.crate`, and the packaged `lib.rs` declares the module |
+| Is it a stale extraction? | **No.** Reproduced from a fully cleared `target/package`, registry `src/` and `cache/` |
+| Does it resolve through the registry extraction by path? | **Yes**, which is what makes the failure specific to the packaged registry dependency |
+
+The interaction was **not identified**. What was decided is what to do about it: the declaration
+moved into the crate that uses it, where it needs no cross-crate resolution at all. That is also
+the better design on its own terms — it keeps a `#[macro_export]` out of the kernel's public
+surface for the sake of one consumer.
+
+**The gate was not suppressed, and the failure is not a mystery left in place.** It is a design
+that depended on a mechanism which does not survive the publication rehearsal, replaced by one
+that does. The duplication is now two copies in two crates that architecturally cannot share,
+generating independent types, so they cannot disagree about a value — only about which features
+each macro offers. Stated in both files.
 
 ### What is proven, and by what
 
