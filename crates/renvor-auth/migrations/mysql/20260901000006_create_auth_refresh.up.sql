@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_refresh (id BINARY(16) PRIMARY KEY, family_id BINARY(16) NOT NULL, user_id BINARY(16) NOT NULL, token_hash BINARY(32) NOT NULL UNIQUE, replaced_by BINARY(16), expires_at DATETIME(6) NOT NULL, revoked_at DATETIME(6), CONSTRAINT fk_auth_refresh_user FOREIGN KEY (user_id) REFERENCES rv_auth_user(id) ON DELETE CASCADE);

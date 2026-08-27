@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_attempt (dimension VARCHAR(32) NOT NULL, key_hash BYTEA NOT NULL, window_start TIMESTAMPTZ NOT NULL, attempts INTEGER NOT NULL, expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (dimension, key_hash, window_start));

@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_credential (user_id BYTEA PRIMARY KEY REFERENCES rv_auth_user(id) ON DELETE CASCADE, password_hash VARCHAR(255) NOT NULL, must_change BOOLEAN NOT NULL DEFAULT FALSE, updated_at TIMESTAMPTZ NOT NULL);

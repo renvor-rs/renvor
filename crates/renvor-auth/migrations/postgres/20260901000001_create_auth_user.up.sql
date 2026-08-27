@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_user (id BYTEA PRIMARY KEY, email VARCHAR(320) NOT NULL UNIQUE, email_verified_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL);
