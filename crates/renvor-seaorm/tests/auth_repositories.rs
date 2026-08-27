@@ -227,6 +227,102 @@ macro_rules! seaorm_auth_suite {
             }
 
             #[tokio::test]
+            async fn a_resend_invalidates_every_outstanding_token_for_that_user() {
+                // The persistence half of "at most one live token per purpose per account".
+                // Asserted on a real server because it is a property of a conditional UPDATE's
+                // reach, not of the code that calls it — and the two engines could differ.
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let Registration::Created(ada) = users
+                    .register("resend@example.test", now)
+                    .await
+                    .expect("registers")
+                else {
+                    panic!("created")
+                };
+                let Registration::Created(bob) = users
+                    .register("other@example.test", now)
+                    .await
+                    .expect("registers")
+                else {
+                    panic!("created")
+                };
+
+                let tokens = SeaOrmSingleUseTokenRepository::new(
+                    Arc::clone(&database),
+                    TokenTable::Verification,
+                );
+
+                // Three live tokens for Ada, one for Bob.
+                let mut ada_secrets = Vec::new();
+                for _ in 0..3 {
+                    let secret = Opaque::generate(OpaqueKind::Verification, &OsEntropy::new())
+                        .expect("entropy");
+                    tokens
+                        .issue(
+                            ada,
+                            &SecretDigest::of(&secret),
+                            now + chrono::Duration::hours(1),
+                        )
+                        .await
+                        .expect("issues");
+                    ada_secrets.push(secret);
+                }
+                let bob_secret =
+                    Opaque::generate(OpaqueKind::Verification, &OsEntropy::new()).expect("entropy");
+                tokens
+                    .issue(
+                        bob,
+                        &SecretDigest::of(&bob_secret),
+                        now + chrono::Duration::hours(1),
+                    )
+                    .await
+                    .expect("issues");
+
+                let swept = tokens
+                    .invalidate_all_for(ada, now)
+                    .await
+                    .expect("invalidates");
+                assert_eq!(swept, 3, "every one of Ada's live tokens must be swept");
+
+                for secret in &ada_secrets {
+                    assert!(
+                        tokens
+                            .consume(&SecretDigest::of(secret), now)
+                            .await
+                            .expect("no fault")
+                            .is_none(),
+                        "an invalidated token must not be consumable"
+                    );
+                }
+                // POSITIVE CONTROL: BOB's token is untouched. Without this, an implementation that
+                // swept the whole table would pass every assertion above.
+                assert_eq!(
+                    tokens
+                        .consume(&SecretDigest::of(&bob_secret), now)
+                        .await
+                        .expect("no fault"),
+                    Some(bob),
+                    "another user's token must survive"
+                );
+
+                // A second sweep finds nothing left to do.
+                assert_eq!(
+                    tokens
+                        .invalidate_all_for(ada, now)
+                        .await
+                        .expect("invalidates"),
+                    0,
+                    "already-invalidated rows must not be swept twice"
+                );
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
             async fn an_expired_token_is_refused_against_the_injected_clock() {
                 let Some((database, _fixture)) = migrated().await else {
                     return;

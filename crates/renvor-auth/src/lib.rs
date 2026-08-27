@@ -22,6 +22,7 @@
 
 pub mod clock;
 pub mod error;
+pub mod mail;
 pub mod opaque;
 pub mod password;
 pub mod repository;
@@ -30,6 +31,7 @@ pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use error::AuthError;
+pub use mail::{MailError, MailKind, MailPort, OutgoingMail, RecordingMailSink};
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};
 pub use password::{PasswordHash, PasswordPolicy, PasswordService};
 pub use repository::{

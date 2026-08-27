@@ -166,6 +166,29 @@ pub trait SingleUseTokenRepository: Send + Sync {
         expires_at: DateTime<Utc>,
     ) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 
+    /// Invalidates **every** outstanding token this repository holds for `user_id`.
+    ///
+    /// # Why resend must invalidate rather than accumulate
+    ///
+    /// A resend that leaves the previous token live multiplies the number of valid secrets for one
+    /// account, and every one of them is a link sitting in an inbox or a proxy log. Invalidating
+    /// first means **at most one** token per purpose per account is ever live, so the blast radius
+    /// of a leaked mailbox is one link rather than every link ever sent.
+    ///
+    /// Marks them consumed rather than deleting them: a consumed row is evidence that a token
+    /// existed, which an abuse control can count, and a deleted row is not.
+    ///
+    /// Returns how many were invalidated, so a caller can assert the effect rather than assume it.
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`].
+    fn invalidate_all_for(
+        &self,
+        user_id: UserId,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, DatabaseError>> + Send;
+
     /// Consumes the token matching `digest`, if it is unconsumed and unexpired at `now`.
     ///
     /// Returns the owner on success and `None` when the token is unknown, already consumed, or

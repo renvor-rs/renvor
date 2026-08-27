@@ -373,6 +373,31 @@ macro_rules! auth_repositories {
                         .map_err(|error| classify_db_error(&error))
                 }
 
+                async fn invalidate_all_for(
+                    &self,
+                    user_id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    // See the direct-SQLx implementation for why this marks consumed rather than
+                    // deleting, and why `consumed_at IS NULL` is in the predicate.
+                    let connection = self.database.acquire().await?;
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "UPDATE {} SET consumed_at = {} WHERE user_id = {} AND consumed_at IS NULL",
+                            self.table.as_str(),
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                        ),
+                        [now.into(), user_id.as_bytes().to_vec().into()],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_db_error(&error))
+                }
+
                 async fn consume(
                     &self,
                     digest: &SecretDigest,

@@ -283,6 +283,30 @@ macro_rules! auth_repositories {
                         .map_err(|error| classify_error(&error))
                 }
 
+                async fn invalidate_all_for(
+                    &self,
+                    user_id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    // Marks consumed rather than deleting: a consumed row is evidence a token
+                    // existed, which an abuse control can count. `consumed_at IS NULL` keeps an
+                    // already-consumed row's timestamp — the moment it was USED is the fact worth
+                    // keeping, not the moment a later resend swept it.
+                    let statement = format!(
+                        "UPDATE {} SET consumed_at = {} WHERE user_id = {} AND consumed_at IS NULL",
+                        self.table.as_str(),
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(now)
+                        .bind(user_id.as_bytes().as_slice())
+                        .execute(&self.pool)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_error(&error))
+                }
+
                 async fn consume(
                     &self,
                     digest: &SecretDigest,
