@@ -735,7 +735,7 @@ resolve, negative control 404s, and no lychee exclusion was ever created.
 | `008/L-2`, `008/L-3` | deliberate, argued in place |
 | `008/L-4` | transaction-conflict classification measured on the two direct-SQLx rows only |
 | `006/L-7`, `007/L-11` | inherited, retargeted to Phase 013 |
-| **F-3** | **open defect**, deadline **2026-09-02**, test enabled, recurred once during this phase's final gate runs |
+| **F-3** | **CLOSED 2026-08-27**, ahead of the 2026-09-02 deadline, by a dedicated follow-up branch off `29305025` — *not* by this phase. The record of the failure in §7 below is unedited; the diagnosis, red/green evidence and eight mutation results are in [`phase-008-limitations.md`](phase-008-limitations.md#closure--2026-08-27) |
 | **RO-001** | **no recruitment progress of any kind**, first review date unchanged at **2026-11-19** |
 
 ### The honest summary
@@ -751,3 +751,25 @@ two toolchains against a real four-row database environment. **None of that is t
 review W-018 waives**, and the findings above are the reason that waiver is a gap rather than a
 formality.
 
+---
+
+## Appendix — F-3 closed after this phase, 2026-08-27
+
+**Nothing above this line has been rewritten.** Phase 008 did not close F-3 and this appendix does
+not claim it did. It exists so that a reader who reaches §7's failure record is not left believing
+the defect is still open.
+
+F-3 was closed on **2026-08-27** by a dedicated branch off `29305025`, before Phase 009 began, as
+`phase-008-limitations.md` required. The fix corrected the **observation boundary** and left the
+assertion alone: on macOS the suite now reads certificate and trust state through read-only
+`security` queries — login-keychain and System-keychain certificates, plus the user and admin
+trust-settings domains — instead of fingerprinting the bytes of `login.keychain-db`, which is a
+credential database that any program on the machine may rewrite. `/etc/ssl/cert.pem` is still
+observed as a file, and the Linux and Windows observations are untouched.
+
+The full closure record — diagnosis, the red/green measurement against a fake-`HOME` fixture, eight
+mutations with all eight killed, one defect the correction itself introduced and fixed, and one
+reproduction attempt that did **not** work — is in
+[`phase-008-limitations.md`](phase-008-limitations.md#closure--2026-08-27).
+
+The trust-store test remains enabled on every platform and grew from **9 tests to 14**.
