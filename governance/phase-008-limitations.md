@@ -129,11 +129,17 @@ needed.
 
 ## F-3 — `tls_consent` has an unsound observation window on macOS
 
+> **CLOSED 2026-08-27**, ahead of the 2026-09-02 deadline, by
+> [`fix/tls-consent-macos-observation-boundary`](#closure--2026-08-27). **Everything below this
+> line is the record as it stood while the defect was open and is deliberately unedited** — the
+> diagnosis, the measured mtime, the recurrence, and the three passing runs that closed nothing.
+> The closure is appended at the end of this section rather than written over any of it.
+
 **An unresolved defect. Not fixed in this branch, not waived, and not closed by a passing rerun.**
 
 | Field | Value |
 |---|---|
-| **Status** | **open** |
+| **Status** | **open** *(as recorded then; closed 2026-08-27 — see the closure below)* |
 | **Owner** | Ahmed Anbar |
 | **Target** | a dedicated follow-up, **before Phase 009 begins** |
 | **Deadline** | **2026-09-02** |
@@ -220,3 +226,124 @@ A plausible fix is to drop `login.keychain-db` from the macOS path set and rely 
 `/etc/ssl/cert.pem` plus a `security` query scoped to what Renvor could actually modify. Choosing it
 belongs to whoever owns the TLS consent contract, which is why this is a dated obligation rather
 than a change made inside a persistence phase.
+
+---
+
+### Closure — 2026-08-27
+
+Closed by a dedicated branch off `29305025`, six days ahead of the deadline. The fix is to the
+**observation boundary**; the assertion is untouched. SC-010 still requires **0** trust-store
+modifications across every command, with consent granted and withheld.
+
+#### The diagnosis, restated exactly
+
+`~/Library/Keychains/login.keychain-db` **is not a trust store.** It is a credential database in
+which certificates are one tenant among several — generic passwords, internet passwords, keys and
+certificates share the file. Fingerprinting the file therefore asserted a fact about *certificates*
+by watching a container that *anything* on the machine may rewrite. The prediction in the entry
+above was right, and it was confirmed by measurement rather than adopted on its authority.
+
+#### What is observed now
+
+| Platform | Observation | Changed by this fix |
+|---|---|---|
+| macOS | login-keychain **certificates** (`security find-certificate -a -p`) | yes — was the file's bytes |
+| macOS | System-keychain **certificates** | **new** — `trust_store_description()` names it |
+| macOS | user and admin **trust settings** (`security dump-trust-settings`) | **new** — possession is not trust |
+| macOS | `/etc/ssl/cert.pem` as a file | no |
+| Linux | `ca-certificates.crt` and the two anchor directories | no |
+| Windows | `certutil -user -store Root` | no |
+
+Linux and Windows were left alone deliberately: their artifacts are certificate bundles and anchor
+directories, which carry no unrelated tenants, and no measurement showed them moving. The macOS
+**system** trust-settings domain is deliberately *not* watched — it is Apple's own and is not a
+store this command claims it could modify.
+
+Every macOS query is read-only. The command and its arguments were verified against the installed
+platform before being committed, on **macOS 26.3, build 25D125**.
+
+#### Red / green, measured
+
+Against a keychain created inside a temporary fake `HOME`. **The real keychain was never written
+to.** The unrelated writer runs inside the observation window, released by a `std::sync::Barrier`
+and joined — there is no sleep anywhere in this correction.
+
+| Observation | Under three unrelated `add-generic-password` writes |
+|---|---|
+| the superseded one — the file's bytes | **RED**: `20460` → `24232` bytes, FNV digest moves |
+| the corrected one — `find-certificate -a -p` | **GREEN**: byte-identical |
+| a synthetic certificate added via `add-certificates` | **detected**, `0` → `1302` bytes |
+
+The superseded observation is **kept in the test, named `superseded_file_observation`**, so the
+correction is measured against what it replaced rather than asserted to be better than it.
+
+#### Mutation results — 8 applied, 8 killed, 0 survived
+
+| # | Mutation | Killed by |
+|---|---|---|
+| M1 | macOS observations return empty | `the_snapshot_sees_something_real` |
+| M2 | platform selection: macOS file branch disabled | `the_snapshot_sees_something_real` |
+| M3 | `security_query` reports failure as an empty observation | `a_query_that_cannot_run_is_an_error_and_not_an_empty_observation` |
+| M4 | keychain existence check removed | `a_path_that_is_not_a_keychain_is_recorded_rather_than_silently_empty` |
+| M5 | **the correction reverted** — certificates replaced by file bytes | `credential_churn_moves_the_keychain_file_but_not_its_certificates` and two others |
+| M6 | certificate observation made constant | `a_certificate_added_to_the_fixture_is_noticed` and one other |
+| M7 | both trust-settings probes dropped | `the_snapshot_sees_something_real` |
+| M8 | fixture renamed back to `login.keychain-db` | `the_fixture_never_changes_the_keychain_search_list` |
+
+M7 and M8 **both survived their first run and are recorded as having done so.** M7 showed that
+"observes nothing" had been read too narrowly: every test here compares a snapshot to a snapshot,
+and a *smaller* snapshot still matches itself, so a probe could be deleted with nothing noticing.
+The control now asserts the observation set is **complete**, not merely non-empty. M8 is below.
+
+#### A defect this correction introduced, found, and fixed
+
+**`security create-keychain` adds the new keychain to the user's keychain search list — but only
+when the file is named `login.keychain-db`.** Measured, creating each in a temporary directory:
+
+| File name | Search-list entries, before → after |
+|---|---|
+| `probe.keychain-db` | 3 → 3 |
+| `login.keychain-db` | 3 → **4** |
+| `other.keychain` | 3 → 3 |
+
+The first draft named the fixture `login.keychain-db`, to mirror the path the superseded
+observation derived from `$HOME`. Running the suite and the mutation rounds left **twenty-two dead
+entries** in the developer's search list — every one a `/private/var/folders` path that no longer
+existed — while `cargo test` reported nothing but passes. The list was restored to the exact three
+entries found before the work began; no certificate, no trust setting, and no real keychain file
+was ever modified, verified by comparing the real login-keychain certificates, System-keychain
+certificates, admin trust settings and `/etc/ssl/cert.pem` digest against a baseline taken first.
+
+The fixture is now named `renvor-fixture.keychain-db`, which avoids the special case entirely
+rather than cleaning up after it. **The first version of the guard against this was itself
+vacuous**: it compared `tempfile`'s `/var/folders/…` path against `security`'s
+`/private/var/folders/…` spelling of the same file, so it never matched, and M8 passed with the
+search list visibly growing from three entries to five. The guard now canonicalises first. That
+sequence is recorded because it is the same defect as F-3 one layer down — a check that cannot
+fail — and finding it by mutation rather than by inspection is the reason mutations were run.
+
+#### What was tried and did not work
+
+**The flake could not be reproduced against the real login keychain.** Driving continuous
+`add-generic-password -U` churn at it and running the *original* test three times produced **three
+passes**, with the keychain file's mtime confirming it was being rewritten throughout. The likely
+reason is that `securityd` batches commits, so per-write churn does not move the file's bytes the
+way an unrelated application's write does. This is reported rather than omitted: it is why the
+deterministic reproduction is the fixture one, and why the ten repeat runs of the *corrected* suite
+under the same churn are **weak evidence on their own** — the original passed under it too. The
+load-bearing evidence is the fixture red/green pair and mutation M5.
+
+#### Residual, and it is narrow
+
+A background process could still add or remove a **certificate** in the login keychain during a
+test window, and that would still be attributed to Renvor. That is a far smaller target than
+"anything that touches the login keychain", it is the state the assertion is actually about, and
+narrowing it further would mean not observing a store the command says it could modify. Recorded
+here rather than left to be discovered.
+
+#### Test state
+
+**Enabled on every platform**, not ignored, skipped, or quarantined. The suite grew from **9 tests
+to 14**. The pre-existing non-vacuity control `the_snapshot_sees_something_real` is preserved and
+strengthened; `the_snapshot_can_detect_a_change` is unchanged.
+
