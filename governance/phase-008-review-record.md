@@ -150,8 +150,10 @@ arithmetic and about prose the code does not back.
 **Result: NOT PERFORMED.**
 
 It ran for roughly nine minutes and then went idle **without returning a report**. Its report was
-requested once, explicitly, in the terms the authority for this round set out. It went idle again
-without returning one. Per that same authority it was **not respawned**, and this is recorded as
+requested once, explicitly, in the terms the authority for this round set out. What came back was
+two `idle_notification` messages carrying `idleReason: available` — an availability signal, not a
+review — which is precisely the case that authority anticipated when it said an idle signal is not
+a result. Per that same authority it was **not respawned**, and this is recorded as
 NOT PERFORMED rather than as a silent absence or as a pass.
 
 **This is the third time in this phase.** Two reviewer agents were commissioned against the

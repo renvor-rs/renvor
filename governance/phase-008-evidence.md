@@ -405,6 +405,66 @@ The census line, from the verify run on each toolchain:
 The previous head reported **98 suites / 1428 passed**; the corrections added fourteen tests, four
 of them the new server-side refusal rows.
 
+## 7b. Pre-merge gates, third correction round — 2026-08-27
+
+Run against head `42d6122` on **rustc 1.94.0** (the MSRV floor) and **rustc 1.97.1** (stable at the
+time of the run), sequentially, against the two pinned images `postgres:17.11-trixie` and
+`mysql:8.4.11`.
+
+**22 gates, 22 passed, 0 failed.**
+
+| Gate | 1.94.0 | stable |
+|---|---|---|
+| `cargo xtask verify`, real four-row environment | **all 11 steps ran and passed** | **all 11 steps ran and passed** |
+| workspace tests, all features | **101 suites, 1454 passed, 0 failed** | **101 suites, 1454 passed, 0 failed** |
+| serial workspace tests (`--test-threads=1`) | **101 suites, 1454 passed, 0 failed** | **101 suites, 1454 passed, 0 failed** |
+| no-default / default / all-features checks | pass | pass |
+| rustdoc, warnings denied | pass | pass |
+| `cargo deny check` | advisories, bans, licenses, sources all ok | same |
+| `cargo package --workspace` | pass | pass |
+| `cargo publish --dry-run --workspace`, **no publication** | 11 uploads, **11 dry-run aborts** | 11 uploads, **11 dry-run aborts** |
+| `git diff --check` | pass | pass |
+
+The census line, from the verify run on **each** toolchain:
+
+```text
+[4/11] tests (four-row persistence census): ok — all 42 row-suite pairs reported in (11 required tests on each direct-SQLx row, 10 on each SeaORM row)
+```
+
+The previous head reported **101 suites / 1450 passed**. This round adds four tests: the partial-
+migration assertion on each of the two engines, and two `xtask` guards — the census-derived-from-
+the-suites check and the recovery-prose check.
+
+**Neither `package` nor `publish --dry-run` was run with `--allow-dirty`.** Every "Uploading" line
+in both dry runs is followed by `aborting upload due to dry run`, 11 for 11 on each toolchain, and
+`crates.io` returns **404** for the crates. Nothing was published.
+
+### The two runs before this one, which are part of the record
+
+**Attempt 1 — DISCARDED, not reported.** It was launched with `--allow-dirty` on `package` and
+`publish --dry-run`, which would have let a dirty tree past two gates that exist to catch one. It
+was stopped about a minute in, at step 1 of the first toolchain, before producing any result. A
+run that was stopped is an **incomplete measurement**, and it is recorded as discarded rather than
+counted either way — the same disposition M-21 and M-27b's first attempts received.
+
+**Attempt 2 — FAILED, and the failure was real.** Step 5 refused the tree:
+
+```text
+error: public documentation for `concurrency` links to private item `race_for`
+error: public documentation for `concurrency` links to private item `ensure`
+   = note: `-D rustdoc::private-intra-doc-links` implied by `-D warnings`
+[5/11] API documentation: FAILED — `cargo` exited with 101
+```
+
+The module documentation added for finding 3 linked to two private functions. Fixed in `42d6122`
+by anchoring the note on the two **public** assertions instead, and the run was restarted from the
+beginning rather than resumed. **The failure stays in this record even though the rerun passed**,
+per this phase's own rule that a failed first run is not erased by a green second one.
+
+Attempt 2 did reach step 4 before failing, and its census line already read **42 row-suite pairs**
+— so finding 4's fix was measured on a tree that then failed a different gate. That is stated
+rather than used: the reported result is attempt 3's, in full, on both toolchains.
+
 ## 8. Limitations and inherited work
 
 Full dispositions: [`phase-008-limitations.md`](phase-008-limitations.md).
