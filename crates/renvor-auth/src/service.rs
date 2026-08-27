@@ -403,7 +403,10 @@ where
     ///
     /// # Errors
     ///
-    /// See [`Self::issue_and_send`].
+    /// [`ServiceError::Storage`], or [`ServiceError::Refused`] with
+    /// [`AuthError::EntropyUnavailable`]. **A delivery failure is not an error** — it is reported
+    /// on the returned [`DispatchOutcome`], because an `Err` here would be an account-enumeration
+    /// oracle.
     pub async fn send_verification<T, M>(
         &self,
         tokens: &T,
@@ -424,7 +427,10 @@ where
     ///
     /// # Errors
     ///
-    /// See [`Self::issue_and_send`].
+    /// [`ServiceError::Storage`], or [`ServiceError::Refused`] with
+    /// [`AuthError::EntropyUnavailable`]. **A delivery failure is not an error** — it is reported
+    /// on the returned [`DispatchOutcome`], because an `Err` here would be an account-enumeration
+    /// oracle.
     pub async fn forgot_password<T, M>(
         &self,
         tokens: &T,
