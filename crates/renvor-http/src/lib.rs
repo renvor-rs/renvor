@@ -74,7 +74,7 @@ mod error;
 pub use admission::{Admission, AdmissionGuard};
 pub use context::{ClientIdentity, RequestContext, RequestId};
 pub use cors::{CorsPolicy, CorsPolicyError};
-pub use error::{HttpError, HttpErrorKind};
+pub use error::{HttpError, HttpErrorDetail, HttpErrorKind};
 pub use host::{HostPolicy, InvalidHost};
 pub use identity::TrustedProxies;
 pub use limits::Limits;

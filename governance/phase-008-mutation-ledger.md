@@ -20,7 +20,7 @@ A green suite is evidence that nothing is currently broken. It is **not** eviden
 would notice if something were. The only way to tell the two apart is to break something on purpose,
 and the only honest way to report it is to include the mutations that got away.
 
-Two of the forty below did.
+Two of the forty-five below did.
 
 **That count was stale.** It read *"twenty-seven"* — correct when M-27 was the highest —
 through the second correction round, which added five more without updating it. Corrected here
@@ -298,6 +298,36 @@ findings were the only ones of their kind: findings 1 and 2 were **false prose b
 test**, and no mutation of the code can surface that class. What guards it here is a prose guard
 (M-39) and a table of measurements that executes its own exclusions (M-34) — both narrower than the
 class they belong to, and recorded as such rather than as closure of it.
+
+
+## The HttpError telemetry correction — 2026-08-27
+
+Mutations run against the `HttpError` detail fix, which closes the site the second review round
+reported as out of scope.
+
+| # | Mutation | Result |
+|---|---|---|
+| M-41 | a data-bearing `Custom(&'static str)` variant is added to `HttpErrorDetail` | **KILLED at macro expansion** — `no rules expected `(`` |
+| M-42 | the caller's rejected host is added to the refusal record | **KILLED** — `case `rejected host`: record 0 field 1 carried a planted value into telemetry` |
+| M-43 | the `detail` field is dropped from the refusal record | **KILLED** — `case `rejected host` emitted no record carrying a `detail` field` |
+| M-44 | `Display` stops rendering the detail | **KILLED** — `` `Display` dropped the detail, so the redaction assertions above are vacuous`` |
+| M-45 | `Error::source` returns a chained cause | **KILLED** — `variant 0 attached a source; a cause chained here is rendered by reporters that never asked for the detail` |
+
+**M-41 is the one that matters, and it is the same shape as M-24b.** The other four defend the
+rendering paths; only M-41 defends the **declaration**. Closing `HttpError::new`'s parameter stops
+a caller passing runtime text; it does not stop the next maintainer adding a variant that carries
+it again. The macro does, and the failure arrives before anything compiles.
+
+**M-43 and M-44 are the anti-vacuity pair.** A redaction test that only asserts absence passes
+against a router that records nothing and against a type that renders nothing. Both had to fail for
+the absence assertions to mean anything, and they fail for different reasons — one at the emission
+site, one at the type.
+
+**M-42's failure message names `record 0 field 1` and prints neither the field nor its value.** That
+is not incidental. A leak is discovered by a failing redaction test, and a message that interpolated
+the offending text would copy the leaked value into CI output on the one run where that matters
+most. The credential-diagnostics gate enforces it, and it caught three violations in these very
+tests — see the evidence.
 
 ### The `compile_fail` controls, and why each has a twin
 
