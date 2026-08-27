@@ -318,6 +318,31 @@ where
     }
 }
 
+/// A mailed-token flow: which token kind is issued, and which template carries it.
+///
+/// The two never vary independently — a verification token belongs in a verification mail and
+/// nowhere else — so they travel as one value. That is also what stops a call site pairing a reset
+/// token with a verification template by transposing two arguments.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Flow {
+    token: crate::opaque::OpaqueKind,
+    template: crate::mail::MailKind,
+}
+
+impl Flow {
+    /// Confirming control of an address.
+    const VERIFICATION: Self = Self {
+        token: crate::opaque::OpaqueKind::Verification,
+        template: crate::mail::MailKind::Verification,
+    };
+
+    /// Beginning a password reset.
+    const PASSWORD_RESET: Self = Self {
+        token: crate::opaque::OpaqueKind::PasswordReset,
+        template: crate::mail::MailKind::PasswordReset,
+    };
+}
+
 impl<U, C, B> AuthenticationService<U, C, B>
 where
     U: UserRepository,
@@ -344,8 +369,7 @@ where
         &self,
         tokens: &T,
         mail: &M,
-        kind: crate::opaque::OpaqueKind,
-        template: crate::mail::MailKind,
+        flow: Flow,
         email: &str,
         lifetime: TokenLifetime,
         now: chrono::DateTime<chrono::Utc>,
@@ -361,12 +385,12 @@ where
 
         tokens.invalidate_all_for(user.id, now).await?;
 
-        let secret = crate::opaque::Opaque::generate(kind, self.entropy.as_ref())?;
+        let secret = crate::opaque::Opaque::generate(flow.token, self.entropy.as_ref())?;
         let digest = crate::opaque::SecretDigest::of(&secret);
         tokens.issue(user.id, &digest, now + lifetime.get()).await?;
 
         // The DIGEST went to the database; the SECRET goes to the transport, once.
-        let message = crate::mail::OutgoingMail::new(template, user.email, secret);
+        let message = crate::mail::OutgoingMail::new(flow.template, user.email, secret);
         match mail.deliver(message).await {
             Ok(()) => Ok((Acknowledged, DispatchOutcome::Delivered)),
             // Loud to the caller, silent to the requester. The token stays valid until it expires;
@@ -392,16 +416,8 @@ where
         T: crate::repository::SingleUseTokenRepository,
         M: crate::mail::MailPort,
     {
-        self.issue_and_send(
-            tokens,
-            mail,
-            crate::opaque::OpaqueKind::Verification,
-            crate::mail::MailKind::Verification,
-            email,
-            lifetime,
-            now,
-        )
-        .await
+        self.issue_and_send(tokens, mail, Flow::VERIFICATION, email, lifetime, now)
+            .await
     }
 
     /// Begins a password reset.
@@ -421,16 +437,8 @@ where
         T: crate::repository::SingleUseTokenRepository,
         M: crate::mail::MailPort,
     {
-        self.issue_and_send(
-            tokens,
-            mail,
-            crate::opaque::OpaqueKind::PasswordReset,
-            crate::mail::MailKind::PasswordReset,
-            email,
-            lifetime,
-            now,
-        )
-        .await
+        self.issue_and_send(tokens, mail, Flow::PASSWORD_RESET, email, lifetime, now)
+            .await
     }
 
     /// Confirms an email address using a verification token.
@@ -615,16 +623,18 @@ mod tests {
     }
 
     /// An in-memory single-use token store.
+    /// One row in the fake token store.
+    #[derive(Debug)]
+    struct TokenRow {
+        owner: UserId,
+        digest: crate::opaque::SecretDigest,
+        expires_at: DateTime<Utc>,
+        consumed_at: Option<DateTime<Utc>>,
+    }
+
     #[derive(Debug, Default)]
     struct Tokens {
-        rows: Mutex<
-            Vec<(
-                UserId,
-                crate::opaque::SecretDigest,
-                DateTime<Utc>,
-                Option<DateTime<Utc>>,
-            )>,
-        >,
+        rows: Mutex<Vec<TokenRow>>,
     }
 
     impl crate::repository::SingleUseTokenRepository for Tokens {
@@ -634,10 +644,12 @@ mod tests {
             digest: &crate::opaque::SecretDigest,
             expires_at: DateTime<Utc>,
         ) -> Result<(), DatabaseError> {
-            self.rows
-                .lock()
-                .expect("not poisoned")
-                .push((user_id, *digest, expires_at, None));
+            self.rows.lock().expect("not poisoned").push(TokenRow {
+                owner: user_id,
+                digest: *digest,
+                expires_at,
+                consumed_at: None,
+            });
             Ok(())
         }
 
@@ -649,8 +661,8 @@ mod tests {
             let mut rows = self.rows.lock().expect("not poisoned");
             let mut swept = 0_u64;
             for row in rows.iter_mut() {
-                if row.0 == user_id && row.3.is_none() {
-                    row.3 = Some(now);
+                if row.owner == user_id && row.consumed_at.is_none() {
+                    row.consumed_at = Some(now);
                     swept += 1;
                 }
             }
@@ -664,9 +676,9 @@ mod tests {
         ) -> Result<Option<UserId>, DatabaseError> {
             let mut rows = self.rows.lock().expect("not poisoned");
             for row in rows.iter_mut() {
-                if row.1.matches(digest) && row.3.is_none() && row.2 > now {
-                    row.3 = Some(now);
-                    return Ok(Some(row.0));
+                if row.digest.matches(digest) && row.consumed_at.is_none() && row.expires_at > now {
+                    row.consumed_at = Some(now);
+                    return Ok(Some(row.owner));
                 }
             }
             Ok(None)
@@ -1082,6 +1094,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn each_flow_delivers_its_own_template() {
+        // A MUTATION FOUND THIS MISSING. `Flow` pairs the token kind with the template so they
+        // cannot be transposed at a call site — but nothing asserted the pairing itself, so
+        // swapping them inside the constant went unnoticed (E-M10).
+        //
+        // The consequence is not cosmetic: a mail headed "verify your address" carrying a working
+        // password-reset token tells the reader one thing and hands them another, and trains them
+        // to treat reset links as routine verification.
+        let (service, tokens, mail) = registered().await;
+        let lifetime = TokenLifetime::default();
+
+        service
+            .send_verification(&tokens, &mail, "ada@example.test", lifetime, day())
+            .await
+            .expect("no fault");
+        assert_eq!(
+            mail.last().expect("sent").kind(),
+            crate::mail::MailKind::Verification,
+            "a verification flow must deliver the verification template"
+        );
+
+        service
+            .forgot_password(&tokens, &mail, "ada@example.test", lifetime, day())
+            .await
+            .expect("no fault");
+        assert_eq!(
+            mail.last().expect("sent").kind(),
+            crate::mail::MailKind::PasswordReset,
+            "a reset flow must deliver the reset template"
+        );
+    }
+
+    #[tokio::test]
     async fn a_reset_token_cannot_be_replayed() {
         let (service, tokens, mail) = registered().await;
         service
@@ -1244,7 +1289,7 @@ mod tests {
         let raw = mail.last().expect("sent").token().expose();
 
         let rows = tokens.rows.lock().expect("not poisoned");
-        let stored = format!("{:?}", rows[0].1);
+        let stored = format!("{:?}", rows[0].digest);
         assert!(
             !stored.contains(&raw),
             "the raw token reached the store: {stored}"
@@ -1255,7 +1300,7 @@ mod tests {
                 .expect("round-trips");
         assert!(
             rows[0]
-                .1
+                .digest
                 .matches(&crate::opaque::SecretDigest::of(&rebuilt))
         );
     }
