@@ -2583,6 +2583,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "renvor-auth"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "renvor-config",
+ "renvor-core",
+ "sha2 0.11.0",
+ "subtle",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "renvor-cli"
 version = "0.0.0"
 dependencies = [

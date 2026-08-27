@@ -1,0 +1,84 @@
+# The authentication domain: subjects, credentials, sessions, tokens, and policies (Phase 009).
+#
+# # This crate names no transport and no driver
+#
+# The same argument `renvor-error` makes about error codes applies to authentication: a policy
+# decision is a property of an application operation, not of the protocol that reached it. Putting
+# any of this in `renvor-http` would make "who may do what" a fact about HTTP.
+#
+# The dependency list is the assertion. There is no router here, no status code, no `sqlx`, and no
+# `sea-orm` — the repository *traits* live here and their implementations live in the adapters.
+#
+# # What is reused rather than rebuilt
+#
+# Three things this phase would otherwise have written already exist, and building second copies
+# would be the same mistake as vendoring a crate that is already in the graph:
+#
+# - `renvor-core`'s `EntropySource`/`OsEntropy` — the randomness port. `OsEntropy` has no fields and
+#   `new()` takes zero arguments, so a seed has nowhere to enter. There is no fallback if the OS
+#   CSPRNG fails, which is what this phase needs for session and token generation.
+# - `renvor-config`'s `Secret<T>` — redacted `Debug` *and* `Display`, zeroized on drop, and with
+#   **no** `Serialize` implementation, so serialising one is a compile error rather than a runtime
+#   promise.
+# - `renvor-testkit`'s barrier-based concurrency assertions, reached from tests only. **This crate
+#   must never depend on `renvor-testkit`** — `xtask`'s crate-DAG gate fails the build if it does,
+#   because that would put `test-util` in a production graph.
+#
+# # `chrono` rather than `time`, and the reason is measured
+#
+# Neither was a direct dependency of any Renvor crate before this one. The choice is not a
+# preference: `renvor-sqlx` already enables sqlx's `chrono` feature and `renvor-seaorm` already
+# enables sea-orm's `with-chrono`, so `chrono` is the type **both** persistence adapters are
+# already bound to. Selecting `time` would have meant a conversion at every one of the four rows.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-auth"
+description = "Authentication, sessions, tokens, and authorization policies for the Renvor framework: a closed subject model, Argon2id credentials, revocable sessions, and deny-by-default policies, with no transport dependency."
+documentation = "https://docs.rs/renvor-auth"
+readme = "README.md"
+keywords = ["renvor", "framework", "authentication", "sessions", "authorization"]
+categories = ["web-programming", "authentication"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The entropy port. This is the ONLY source of randomness in this crate.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `Secret<T>`. Every credential value in this crate is wrapped in one.
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+
+# The instant type both persistence adapters already bind. See the header.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+# Constant-time comparison. Already in the graph transitively; this makes the edge explicit
+# because a secret comparison that is not constant-time is a defect, not a style choice.
+subtle = { version = "2.6.1", default-features = false }
+
+# SHA-256, for the digests stored in a secret's place. **Already a direct dependency of
+# `renvor-cli` at this exact version**, so this adds an edge and no new package — checked with
+# `cargo tree -i sha2@0.11.0` rather than assumed.
+sha2 = { version = "0.11.0", default-features = false }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true
