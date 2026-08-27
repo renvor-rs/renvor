@@ -223,7 +223,6 @@ macro_rules! auth_repository_suite {
                         TokenTable::PasswordReset,
                     );
                     let barrier = Arc::clone(&barrier);
-                    let digest = digest;
                     handles.push(tokio::spawn(async move {
                         barrier.wait().await;
                         tokens.consume(&digest, now).await
