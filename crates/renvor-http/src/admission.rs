@@ -20,7 +20,7 @@ use std::sync::Arc;
 use renvor_core::{WorkGate, WorkPermit};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use crate::error::{HttpError, HttpErrorKind};
+use crate::error::{HttpError, HttpErrorDetail, HttpErrorKind};
 
 /// The two bounds a request must pass before reaching a handler.
 #[derive(Clone, Debug)]
@@ -56,7 +56,7 @@ impl Admission {
         let Ok(slot) = Arc::clone(&self.slots).try_acquire_owned() else {
             return Err(HttpError::new(
                 HttpErrorKind::Unavailable,
-                "concurrency ceiling reached",
+                HttpErrorDetail::ConcurrencyCeilingReached,
             ));
         };
 
@@ -65,7 +65,12 @@ impl Admission {
         let permit = self
             .gate
             .begin("http request")
-            .map_err(|error| HttpError::new(HttpErrorKind::Unavailable, error.to_string()))?;
+            // The kernel error is DISCARDED rather than rendered. `KernelError::ShuttingDown`
+            // carries an `operation: String` chosen by whoever called the gate, and this line used
+            // to put it straight into a telemetry field by way of `to_string()`.
+            .map_err(|_| {
+                HttpError::new(HttpErrorKind::Unavailable, HttpErrorDetail::DrainInProgress)
+            })?;
 
         Ok(AdmissionGuard {
             _permit: permit,

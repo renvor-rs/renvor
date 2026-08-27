@@ -87,9 +87,14 @@ pub enum ApiErrorCode {
     Unavailable,
     /// An unclassified failure. **A defect.**
     ///
-    /// Its `detail` is a fixed constant and carries nothing about the cause. The cause is
-    /// preserved for operators through telemetry, which is a different consumer with different
-    /// rights — see [`crate::problem`].
+    /// Its `detail` is a fixed constant and carries nothing about the cause.
+    ///
+    /// **The clause that used to follow was withdrawn on 2026-08-27.** It said the cause is
+    /// *"preserved for operators through telemetry, which is a different consumer with different
+    /// rights"*. `CONSTITUTION.md` principle VI forbids secrets in telemetry and exempts no
+    /// consumer, so there is no such consumer and no such right. The refusal's operator-facing
+    /// half is now a closed set of its own — `renvor_http::HttpErrorDetail` — and
+    /// `contracts/problem-details.md` 1.1.0 records the withdrawal.
     InternalError,
 }
 

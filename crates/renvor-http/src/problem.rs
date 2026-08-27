@@ -18,8 +18,13 @@
 //!
 //! [`HttpError`] carries an operator-facing `detail` that this module **never reads**. The
 //! document's `detail` comes from [`ApiErrorCode::detail`], which returns `&'static str` — so
-//! there is no runtime value that could inhabit it even by mistake. The operator-facing detail
-//! goes to telemetry, which is a different consumer with different rights.
+//! there is no runtime value that could inhabit it even by mistake.
+//!
+//! The clause that used to end that sentence — *"the operator-facing detail goes to telemetry,
+//! which is a different consumer with different rights"* — is **withdrawn**. Telemetry is not a
+//! consumer with different rights, and the detail is no longer runtime text: it is a fieldless
+//! `HttpErrorDetail`, so both halves of the refusal are now closed sets and this module's
+//! guarantee no longer rests on one of them being merely unread.
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response as AxumResponse};

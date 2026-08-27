@@ -67,7 +67,7 @@ use super::{Method, Next, Request, Response, RouteRegistry};
 use crate::admission::Admission;
 use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
-use crate::error::{HttpError, HttpErrorKind};
+use crate::error::{HttpError, HttpErrorDetail, HttpErrorKind};
 use crate::host::{self, HostPolicy};
 use crate::identity::{ForwardingHeaders, TrustedProxies, resolve};
 use crate::limits::Limits;
@@ -324,7 +324,7 @@ async fn not_found(request: AxumRequest) -> AxumResponse {
         .map(RequestContext::request_id);
 
     problem::from_http_error(
-        &HttpError::new(HttpErrorKind::NotFound, "no route declares this path"),
+        &HttpError::new(HttpErrorKind::NotFound, HttpErrorDetail::NoRouteDeclared),
         request_id,
     )
 }
@@ -351,7 +351,7 @@ async fn establish_context(
         return refuse(
             &HttpError::new(
                 HttpErrorKind::HandlerFailed,
-                "entropy unavailable for request-identifier generation",
+                HttpErrorDetail::EntropyUnavailable,
             ),
             None,
             shared.config.run_id,
@@ -411,7 +411,7 @@ async fn resolve_and_run(
         return refuse(
             &HttpError::new(
                 HttpErrorKind::HostRejected,
-                "absent, or more than one Host header",
+                HttpErrorDetail::HostHeaderAbsentOrRepeated,
             ),
             Some(request_id),
             run_id,
@@ -421,7 +421,7 @@ async fn resolve_and_run(
         return refuse(
             &HttpError::new(
                 HttpErrorKind::HostRejected,
-                "host is not in the configured set",
+                HttpErrorDetail::HostNotConfigured,
             ),
             Some(request_id),
             run_id,
@@ -435,7 +435,7 @@ async fn resolve_and_run(
         return refuse(
             &HttpError::new(
                 HttpErrorKind::StateUnavailable,
-                "no connection information; the router was not served with connect info",
+                HttpErrorDetail::ConnectInfoMissing,
             ),
             Some(request_id),
             run_id,
@@ -490,7 +490,7 @@ async fn resolve_and_run(
                 return refuse(
                     &HttpError::new(
                         HttpErrorKind::OriginRejected,
-                        "origin is not a readable value",
+                        HttpErrorDetail::OriginUnreadable,
                     ),
                     Some(request_id),
                     run_id,
@@ -506,7 +506,7 @@ async fn resolve_and_run(
         return refuse(
             &HttpError::new(
                 HttpErrorKind::OriginRejected,
-                "origin is not in the configured set",
+                HttpErrorDetail::OriginNotConfigured,
             ),
             Some(request_id),
             run_id,
@@ -573,10 +573,7 @@ async fn admit_and_bound(
         Err(_) => {
             context.cancel_scope().cancel();
             refuse(
-                &HttpError::new(
-                    HttpErrorKind::TimedOut,
-                    "request exceeded the configured timeout",
-                ),
+                &HttpError::new(HttpErrorKind::TimedOut, HttpErrorDetail::TimeoutElapsed),
                 Some(request_id),
                 shared.config.run_id,
             )
@@ -621,12 +618,12 @@ async fn dispatch(
             let reported = if over_limit {
                 HttpError::new(
                     HttpErrorKind::BodyTooLarge,
-                    "request body exceeded the configured limit",
+                    HttpErrorDetail::BodyLimitExceeded,
                 )
             } else {
                 HttpError::new(
                     HttpErrorKind::BodyUnreadable,
-                    "the request body could not be read to completion",
+                    HttpErrorDetail::BodyReadInterrupted,
                 )
             };
             return refuse(&reported, Some(request_id), run_id);
@@ -732,7 +729,7 @@ async fn dispatch(
             refuse(
                 &HttpError::new(
                     HttpErrorKind::HandlerFailed,
-                    "the handler panicked; the payload is deliberately not recorded",
+                    HttpErrorDetail::HandlerPanicked,
                 ),
                 Some(request_id),
                 run_id,
@@ -891,14 +888,14 @@ fn refuse(error: &HttpError, request_id: Option<RequestId>, run_id: RunIdentifie
     match request_id {
         Some(id) => tracing::warn!(
             code = error.kind().code(),
-            detail = error.detail(),
+            detail = error.detail().as_str(),
             request_id = %id,
             run_id = %run_id,
             "request refused"
         ),
         None => tracing::warn!(
             code = error.kind().code(),
-            detail = error.detail(),
+            detail = error.detail().as_str(),
             run_id = %run_id,
             "request refused before an identifier could be generated"
         ),
