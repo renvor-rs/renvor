@@ -88,7 +88,7 @@ the reader to treat it as public. The two are consistent; neither closes the oth
 
 | ID | Limitation | Target |
 |---|---|---|
-| `008/L-1` | Two documentation pages carry `custom_edit_url: null`, suppressing their "Edit this page" link, because the link check cannot pass a page that is not yet on `main` | **Removed in the post-merge closure pull request.** No lychee exclusion was created |
+| `008/L-1` | Two documentation pages carried `custom_edit_url: null`, suppressing their "Edit this page" link, because the link check cannot pass a page that is not yet on `main` | **CLOSED 2026-08-27.** Both suppressions removed in the closure pull request once the pages were on `main`; both edit links verified to resolve, with a nonexistent-page negative control that 404s. **No lychee exclusion was ever created** |
 | `008/L-2` | The portability contract is executed on the **engine** axis; the ORM axis is covered for reachability, not for independent engine facts | none — deliberate, argued in `renvor_testkit::portability` |
 | `008/L-3` | No supported engine **version range** is declared, so backup/restore guidance speaks only about the four pinned images | a phase that decides the support range (`F-2`) |
 | `008/L-4` | **Transaction-conflict classification is measured on the two direct-SQLx rows only.** `renvor-seaorm` has no deadlock test, so `TransactionConflict` is asserted for one adapter and inferred for the other | a follow-up that writes the SeaORM deadlock test |

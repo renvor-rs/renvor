@@ -17,7 +17,7 @@ so a reviewer can fetch it from a clean index-only checkout.
 | Codex review, round 2, of `0c88b39` | automated, advisory, **not independent** | **REQUEST CHANGES** — 1 P1 and 5 P2, all dispositioned |
 | Codex review, round 3, of `ca479fc` | automated, advisory, **not independent** | 4 P2, all dispositioned. **The review budget is exhausted; no fourth round was run** |
 | Validation-agent review of the round-3 corrections | automated | **NOT PERFORMED** — went idle twice without a report |
-| Independent human requirements-and-security review | *required by PLAN §6.1 step 10* | **did not occur** — to be waived at closure, in the post-merge closure pull request |
+| Independent human requirements-and-security review | *required by PLAN §6.1 step 10* | **did not occur** — waived by **W-018** at closure |
 | Independent human review of ADR-0023 | *required by constitution §Development and Phase Workflow #4* | **did not occur** — waived by **W-017** |
 
 **No independent human review of Phase 008 has occurred, and none is claimed.**
@@ -257,6 +257,10 @@ the whole content of **W-017**, and of the phase-level waiver granted at closure
 both are stated as gaps rather than as satisfied requirements.
 
 **RO-001**, the dated reviewer-recruitment obligation created with W-008, has produced **no
-recruitment progress of any kind**. Its first review date remains **2026-11-19**, unchanged. The
-phase-level waiver granted at closure will be the **eighth consecutive** waiver of the same rule
-for the same reason.
+recruitment progress of any kind**. Its first review date remains **2026-11-19**, unchanged.
+**W-018**, granted at closure, is the **eighth consecutive** waiver of the same rule for the same
+reason.
+
+Three commissioned reviewer agents were run across this phase: two against the reviewed head and
+one against the round-3 corrections. **All three returned no result**, twice each. That is the whole of the non-Codex review this phase obtained, and it is recorded as
+**NOT PERFORMED** rather than as a pass.

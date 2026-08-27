@@ -660,18 +660,21 @@ allowed was avoided by fixing the link at its source, and the temporary suppress
 the post-merge closure pull request. `git ls-files specs` returns zero. **Phase 009 has not
 started.**
 
-**One waiver has been granted so far**, by explicit authority and narrowly:
+**Two waivers have been granted**, by explicit authority and each narrowly:
 
 | Waiver | Waives | Does **not** |
 |---|---|---|
 | **W-017** | the independent-human-review requirement for accepting **ADR-0023** | close Phase 008 |
+| **W-018** | the independent requirements-and-security review required to **close Phase 008** | cover ADR-0023, or any defect, failed check, or missing acceptance criterion |
 
-It expires **2027-02-11**, or immediately when a qualified independent human reviewer becomes
+Both expire **2027-02-11**, or immediately when a qualified independent human reviewer becomes
 available — whichever comes first.
 
-**Phase 008 is not closed by this pull request.** Closing it requires a second, phase-level waiver,
-which is granted in the post-merge closure pull request alongside the removal of the two temporary
-edit-link suppressions. That will take Phase 008 to **exactly two** reviewed exceptions — this
-ledger's stated maximum — and will be the **eighth consecutive** phase-level waiver of the same
-rule for the same reason. **RO-001's 2026-11-19 review date is unchanged, and no recruitment
-progress of any kind has occurred.**
+That is **exactly two** reviewed exceptions for Phase 008 — this ledger's stated maximum, at the
+limit and not over it — and W-018 is the **eighth consecutive** phase-level waiver of the same rule
+for the same reason. **RO-001's 2026-11-19 review date is unchanged, and no recruitment progress of
+any kind has occurred.**
+
+The two temporary edit-link suppressions are removed in the same closure pull request, and both
+pages' edit links were verified to resolve with a nonexistent-page negative control. **No lychee
+exclusion was ever created for them**, which is what the suppression existed to avoid.
