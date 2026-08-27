@@ -24,10 +24,15 @@ pub mod clock;
 pub mod error;
 pub mod opaque;
 pub mod password;
+pub mod repository;
 pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use error::AuthError;
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};
 pub use password::{PasswordHash, PasswordPolicy, PasswordService};
+pub use repository::{
+    CredentialRecord, CredentialRepository, Registration, SingleUseTokenRepository, UserRecord,
+    UserRepository,
+};
 pub use subject::{AuthenticatedSubject, Subject, UserId};

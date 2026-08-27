@@ -60,6 +60,12 @@ include = [
 ]
 
 [dependencies]
+# The database VOCABULARY only — `DatabaseError` and its kinds. **No driver and no pool**: the
+# repository traits below are ports, and their implementations live in `renvor-sqlx` and
+# `renvor-seaorm`. `renvor-database` is the crate that exists precisely so a port can name an error
+# without naming a driver, and `xtask`'s isolation gate asserts it resolves neither.
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+
 # The entropy port. This is the ONLY source of randomness in this crate.
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 

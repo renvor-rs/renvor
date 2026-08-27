@@ -2630,6 +2630,7 @@ dependencies = [
  "chrono",
  "renvor-config",
  "renvor-core",
+ "renvor-database",
  "sha2 0.11.0",
  "subtle",
  "thiserror 2.0.20",
