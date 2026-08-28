@@ -139,9 +139,17 @@ env:
   # adapter it names in its own `Cargo.toml` with one driver feature. A framework whose persistence
   # ports could not be depended on would have no persistence story at all.
   #
+  # `renvor-testkit` MOVED AGAIN in batch G2, from before `renvor-auth` to after it. The four-row
+  # refresh contract is a shared suite, and every other shared suite in this workspace lives in
+  # `renvor-testkit` — so that crate now has an OPTIONAL `renvor-auth` dependency behind its own
+  # `tokens` feature. `publication_order_is_topological` builds each tree with `--all-features`, so
+  # the optional edge is a real edge to it, and the previous order would have published
+  # `renvor-testkit` before the crate it resolves. This is the fourth time this line has caught an
+  # ordering a `--dry-run` would have reported green.
+  #
   # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
   # sorts both sides — but it makes the line readable as the thing it describes.
-  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-testkit renvor-auth renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
+  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-auth renvor-testkit renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor

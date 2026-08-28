@@ -239,3 +239,15 @@ where
 /// separately and differently — see [`isolated_url`], which gives a suite its own database.
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 pub static SHARED_FIXTURE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Sixteen bytes from the operating system's CSPRNG, for a test-created identity.
+///
+/// Through `renvor-core`'s entropy port rather than a counter: two rows created in one suite run
+/// must differ, and a counter shared across `#[tokio::test]`s that a future change ran in parallel
+/// would silently start colliding on the primary key.
+pub fn rand16() -> [u8; 16] {
+    use renvor_core::observe::entropy::{EntropySource as _, OsEntropy};
+    let mut bytes = [0_u8; 16];
+    OsEntropy::new().fill(&mut bytes).expect("system entropy");
+    bytes
+}

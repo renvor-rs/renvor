@@ -657,6 +657,7 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
 /// | neither adapter resolves the other | each resolves `renvor-database` |
 /// | `renvor-database` resolves no driver and no ORM under **any** feature | it resolves itself |
 /// | the banned crates are absent workspace-wide | the permitted near-namesakes are present |
+/// | no crate resolves `jsonwebtoken` or `aws-lc-*` without `tokens` | the same crate WITH `tokens` resolves all three |
 /// One isolation row: a label, the `cargo tree` arguments, what must be absent, what must be
 /// present.
 ///
@@ -681,7 +682,93 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 7] = [
+    let checks: [IsolationCheck<'_>; 14] = [
+        // ---- API TOKEN MODE (FR-035, SC-011) ----------------------------------------------
+        //
+        // Added in batch G2, and the reason is that this property was TRUE and UNASSERTED. Batch G
+        // measured it by hand, recorded that it held, and left T039 at `todo` with the note that
+        // "an unasserted property is not evidence". This is the assertion.
+        //
+        // It matters more than an ordinary feature boundary. `tokens` is the only thing in this
+        // workspace that resolves `jsonwebtoken`, and behind it `aws-lc-sys` — which **compiles C
+        // and assembly** and therefore imposes a toolchain on every consumer who resolves it. A
+        // consumer who is not using API tokens must not pay that, and the only way to be sure is to
+        // walk the graph.
+        //
+        // Every row has its mirror image: the same package WITH the feature, asserting the same
+        // crates are present. Without that, a typo in a package name would make both the absence
+        // and its control vacuous.
+        (
+            "renvor-auth (no tokens)",
+            &["-p", "renvor-auth"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["renvor-database", "subtle"],
+        ),
+        (
+            "renvor-auth (--features tokens)",
+            &["-p", "renvor-auth", "--features", "tokens"],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+        ),
+        (
+            "renvor-sqlx + db-postgres (no tokens)",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["sqlx", "renvor-auth"],
+        ),
+        (
+            "renvor-sqlx + db-postgres,tokens",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres,tokens",
+            ],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs"],
+        ),
+        (
+            "renvor-seaorm + db-postgres (no tokens)",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["sea-orm", "renvor-auth"],
+        ),
+        (
+            "renvor-seaorm + db-postgres,tokens",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-postgres,tokens",
+            ],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs"],
+        ),
+        // The shared contract crate is a dev-dependency of both adapters, so its own `tokens`
+        // feature is a third place the JWT backend could arrive from. `--edges normal` already
+        // excludes dev-dependencies; this asserts the crate itself is clean rather than relying on
+        // the walk's edge filter to hide it.
+        (
+            "renvor-testkit (no tokens)",
+            &["-p", "renvor-testkit"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "renvor-auth"],
+            &["renvor-database", "renvor-core"],
+        ),
+        // ---- PERSISTENCE (Phase 007) -------------------------------------------------------
         (
             "renvor-seaorm + db-postgres",
             &[
@@ -1605,7 +1692,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 ///
 /// # The rows are not symmetric, and the asymmetry is real rather than an omission
 ///
-/// Each direct-SQLx row carries **eleven** required tests and each SeaORM row **ten**. The
+/// Each direct-SQLx row carries **twelve** required tests and each SeaORM row **eleven**. The
 /// difference is the transaction-conflict test: a deadlock is provoked by two sessions taking two
 /// row locks in opposite orders, which `renvor-sqlx` does through `sqlx::Pool` directly.
 /// `renvor-seaorm`'s suite classifies a `DbErr` through the idiomatic `Statement` path and has no
@@ -1634,9 +1721,43 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 ///
 /// **Forty-six before batch F**, and the prose above said "forty-two" while the array said
 /// forty-six — a stale count left by an earlier batch. Corrected here rather than left to be
-/// noticed again: fifty-four entries, and a missing one fails the gate whichever suite it belongs
-/// to.
-const ROW_EVIDENCE: [(&str, &str, &str); 54] = [
+/// noticed again: a missing entry fails the gate whichever suite it belongs to.
+///
+/// # The refresh-rotation pair, added in batch G2
+///
+/// **Fifty-four became fifty-eight.** `renvor_testkit::refresh` is the shared contract behind the
+/// refresh-token transition, and it is here for a reason narrower than symmetry: the defect it was
+/// written for — a successor inserted into a family a concurrent replay had already revoked —
+/// **cannot be reproduced without a real server**. The unit test that was supposed to catch it
+/// raced two rotations against an in-memory store whose `async fn`s contain no `.await`, so
+/// `tokio::join!` ran them one after the other and nothing interleaved.
+///
+/// One row per adapter-engine pair, matching every other shared suite here. The runner itself
+/// asserts it called all twelve of its assertions, because a census entry is one line per row and
+/// cannot see inside the function it names.
+///
+/// This pair is also why the census invocation carries `tokens`: see `the_four_rows_all_ran`.
+const ROW_EVIDENCE: [(&str, &str, &str); 58] = [
+    (
+        "renvor-sqlx",
+        "refresh_rotation",
+        "postgres::the_shared_refresh_contract_holds",
+    ),
+    (
+        "renvor-sqlx",
+        "refresh_rotation",
+        "mysql::the_shared_refresh_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "refresh_rotation",
+        "postgres::the_shared_refresh_contract_holds",
+    ),
+    (
+        "renvor-seaorm",
+        "refresh_rotation",
+        "mysql::the_shared_refresh_contract_holds",
+    ),
     (
         "renvor-sqlx",
         "shared_contract",
@@ -2009,8 +2130,13 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
                 "test",
                 "-p",
                 package,
+                // `tokens` is here for the refresh-rotation pair, which does not exist without it —
+                // a census row for a test compiled out is a row that can never report in. One
+                // feature string for every census binary rather than a per-row list: the other
+                // suites are unaffected by it, and a second string is a second thing to keep
+                // correct.
                 "--features",
-                "db-postgres,db-mysql",
+                "db-postgres,db-mysql,tokens",
                 "--test",
                 binary,
             ])
@@ -2066,8 +2192,8 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (11 required tests on each direct-SQLx row, \
-             10 on each SeaORM row)",
+            "all {} row-suite pairs reported in (12 required tests on each direct-SQLx row, \
+             11 on each SeaORM row, the refresh-rotation contract included)",
             ROW_EVIDENCE.len()
         ),
     );

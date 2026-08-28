@@ -153,8 +153,8 @@ Current order:
 | 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
 | 3 | `renvor-database` | `renvor-core`, `renvor-validation` | The persistence **ports**. Names no driver, so it can be depended on by an application that has not chosen one |
 | 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
-| 4 | `renvor-testkit` | `renvor-core`, `renvor-database` | The test harness. **Moved from position 2 in Phase 007**: it now hosts the shared persistence contract both adapters are measured against, so it publishes after the ports |
 | 4 | `renvor-auth` | `renvor-core`, `renvor-config`, `renvor-database` | The authentication domain. Names **no driver and no transport** — `xtask` step 7 asserts it resolves neither — so it publishes with the ports rather than with the adapters that implement them |
+| 5 | `renvor-testkit` | `renvor-core`, `renvor-database`, `renvor-auth` *(optional)* | The test harness. **Moved from 2 to 4 in Phase 007** and from 4 to 5 in Phase 009 batch G2: it hosts every shared contract both adapters are measured against, and the refresh one names `renvor-auth` |
 | 5 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-auth` | The direct-SQLx adapter. Publishes after the ports it implements — and, **since Phase 009, after `renvor-auth`**, whose repository ports it also implements |
 | 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation` | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
@@ -189,6 +189,18 @@ Current order:
 >
 > **The count assertion reported this crate before any list here was edited** — the fourth time it
 > has done so, and the reason it is pinned rather than derived.
+
+> **Corrected 2026-08-29 (Phase 009, batch G2).** `renvor-testkit` **moves from 4 to 5**, after
+> `renvor-auth`. It gained an optional `renvor-auth` dependency behind its own `tokens` feature,
+> because the four-row refresh-rotation contract is a shared suite and every other shared suite in
+> this workspace lives there. `publication_order_is_topological` builds each package's tree with
+> `--all-features`, so an optional edge is a real edge to it — and the previous order published
+> `renvor-testkit` before a crate it resolves.
+>
+> This is the **second** time `renvor-testkit` has been moved by acquiring a contract, and both
+> moves were forced by the same rule rather than chosen. A `cargo publish --dry-run` computes its
+> own order and would have reported green either way; only a real publish would have failed, with a
+> missing-dependency registry error that reads like a network fault.
 
 > **Extended 2026-08-24 (Phase 007).** `renvor-seaorm` joins at position 4, beside `renvor-sqlx`
 > rather than after it. The two adapters implement the same ports against different programming

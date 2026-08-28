@@ -37,6 +37,17 @@ include = [
 [dependencies]
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 
+# The AUTHENTICATION ports and value types, for the refresh-rotation contract. Optional and behind
+# `tokens`, so a consumer measuring only the persistence contract resolves neither this crate's
+# auth half nor the JWT backend behind it.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0", optional = true }
+
+# The instant type the refresh contract compares. Optional for the same reason.
+chrono = { version = "0.4.45", default-features = false, features = [
+    "std",
+    "clock",
+], optional = true }
+
 # The persistence PORTS, so `persistence.rs` can host the contract every adapter is measured
 # against. Ports only — this crate names no driver, and depends on neither adapter, so hosting the
 # shared suite does not put SQLx or SeaORM into anyone's graph.
@@ -54,6 +65,13 @@ tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[features]
+default = []
+
+# The refresh-rotation contract. Names `renvor-auth`'s `tokens` half, which is where the JWT
+# dependency lives — so a build without this feature resolves no `jsonwebtoken` through this crate.
+tokens = ["dep:renvor-auth", "dep:chrono", "renvor-auth/tokens"]
 
 [lints]
 workspace = true

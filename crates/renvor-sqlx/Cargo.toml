@@ -96,5 +96,10 @@ default = []
 db-postgres = ["sqlx/postgres"]
 db-mysql = ["sqlx/mysql"]
 
+# API token mode. Selects `renvor-auth`'s `tokens` half, which is where the JWT backend lives —
+# so a build of this adapter WITHOUT it resolves neither `jsonwebtoken` nor `aws-lc-rs`, and the
+# refresh repositories below do not exist. Naming a database is still a separate decision.
+tokens = ["renvor-auth/tokens", "renvor-testkit/tokens"]
+
 [lints]
 workspace = true
