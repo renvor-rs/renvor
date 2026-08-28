@@ -32,6 +32,15 @@ pub mod service;
 pub mod session;
 pub mod subject;
 
+/// Refresh tokens: rotation, replay detection, and family revocation. Behind the `tokens` feature.
+#[cfg(feature = "tokens")]
+pub mod refresh;
+
+/// API tokens. Behind the `tokens` feature (FR-035): a build without it resolves neither
+/// `jsonwebtoken` nor `aws-lc-rs`, which `xtask` proves from the dependency graph.
+#[cfg(feature = "tokens")]
+pub mod token;
+
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use cookie::{CookiePolicy, CookieRejection, SameSiteChoice, SetCookie};
 pub use csrf::{Credential, CsrfKey, CsrfRejection, CsrfToken, RequestKind};

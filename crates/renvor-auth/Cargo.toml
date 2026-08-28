@@ -120,6 +120,54 @@ hmac = { version = "0.13.0", default-features = false }
 
 thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 
+# ---- API token mode (batch G, FR-035 … FR-043). OFF BY DEFAULT. ----
+#
+# # The backend is pinned HERE, and that is a security property rather than tidiness
+#
+# `jsonwebtoken 11.0.0` ships **no** crypto backend by default — one of `aws_lc_rs` or `rust_crypto`
+# must be chosen. `rust_crypto`'s feature list is
+# `['dep:ed25519-dalek', 'dep:hmac', 'dep:p256', 'dep:p384', 'dep:rand', 'dep:rsa', 'dep:sha2']`,
+# and cargo features are additive at the crate level, so selecting it for EdDSA alone still resolves
+# `rsa 0.9.10` — which carries **RUSTSEC-2023-0071** (Marvin Attack) with an **empty `patched`
+# list**. `cargo deny` reports "No safe upgrade is available!". It would also duplicate `hmac 0.12`
+# and `sha2 0.10` beside the `0.13`/`0.11` above.
+#
+# The backend is therefore selected on THIS LINE and is reachable from no `renvor-auth` feature.
+# `deny.toml` sets `all-features = true`, so a feature that could turn on `rust_crypto` would put an
+# unpatched key-recovery advisory into every audit — **including a consumer's own**, for a backend
+# Renvor never uses. Measured, not assumed: with this exact line,
+# `cargo deny check advisories licenses bans` reports `advisories ok, bans ok, licenses ok`.
+#
+# The cost accepted in exchange is a **native build**: `aws-lc-sys` needs `cmake` and a C compiler.
+# That is real, and it is why `tokens` is off by default. See ADR-0028.
+jsonwebtoken = { version = "11.0.0", default-features = false, features = [
+    "aws_lc_rs",
+    "use_pem",
+], optional = true }
+
+# Key generation, so that no key material is ever committed to this repository. **Zero new
+# packages**: `aws-lc-rs` is already in the graph as `jsonwebtoken`'s selected backend, so this is
+# an edge and nothing more — the same argument the `sha2` and `unicode-normalization` rows make.
+# Its types appear in no public signature; `SigningKey` and `VerifyingKey` wrap them.
+aws-lc-rs = { version = "1.18.0", default-features = false, features = [
+    "aws-lc-sys",
+    "alloc",
+], optional = true }
+
+# Claims are JSON. Both are already in `Cargo.lock` at these exact versions.
+serde = { version = "1.0.229", default-features = false, features = [
+    "std",
+    "derive",
+], optional = true }
+serde_json = { version = "1.0.151", default-features = false, features = [
+    "std",
+], optional = true }
+
+[features]
+# API token mode. FR-035 and SC-011 require that a build without it resolve **none** of the above,
+# proven by the dependency graph rather than by this flag's presence — `xtask` reads the graph.
+tokens = ["dep:jsonwebtoken", "dep:aws-lc-rs", "dep:serde", "dep:serde_json"]
+
 [lints]
 workspace = true
 

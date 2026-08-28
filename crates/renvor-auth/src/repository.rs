@@ -204,3 +204,68 @@ pub trait SingleUseTokenRepository: Send + Sync {
         now: DateTime<Utc>,
     ) -> impl Future<Output = Result<Option<UserId>, DatabaseError>> + Send;
 }
+
+/// The refresh-token store (FR-040 … FR-042). Part of API token mode, so it is behind `tokens`.
+///
+/// # Why this port cannot answer `Option`, where [`SingleUseTokenRepository`] can
+///
+/// [`SingleUseTokenRepository::consume`] deliberately returns one answer for "unknown", "already
+/// consumed", and "expired": telling the holder of a stale password-reset link which of the three
+/// it is tells them something about the account.
+///
+/// A refresh token is the opposite case. **"Already consumed" is the security signal**, not a
+/// detail to be hidden — ASVS **V10.4.5 (L1)** requires that presenting an already-invalidated
+/// refresh token *"revoke all refresh tokens for that authorization"*, and a port that cannot
+/// distinguish a replay from an unknown token cannot implement that sentence. The distinction is
+/// still never given to the *presenter*: [`crate::refresh::RefreshRejection`] narrows it back down
+/// before anything leaves the crate.
+///
+/// # One statement decides the winner, and a later read is safe
+///
+/// [`Self::consume`] must be a **single conditional statement** whose `WHERE` clause carries the
+/// preconditions — unconsumed, unexpired, unrevoked family — exactly as
+/// [`SingleUseTokenRepository`] requires, so two concurrent presentations of one valid token
+/// produce **exactly one** rotation on all four rows.
+///
+/// When that statement affects no row, the implementation may then read the row to say *why*. That
+/// second read does not need to be in the same transaction, because every state it distinguishes is
+/// **terminal**: a consumed token is never unconsumed again, and a revoked family is never
+/// un-revoked. The diagnosis cannot go stale in the direction that matters.
+#[cfg(feature = "tokens")]
+pub trait RefreshTokenRepository: Send + Sync {
+    /// Stores a newly issued refresh token. **Only its digest** — FR-041.
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`].
+    fn issue(
+        &self,
+        record: crate::refresh::NewRefreshToken,
+    ) -> impl Future<Output = Result<(), DatabaseError>> + Send;
+
+    /// Atomically consumes the token matching `digest`, and reports what was observed.
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`].
+    fn consume(
+        &self,
+        digest: &SecretDigest,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<crate::refresh::RefreshConsumption, DatabaseError>> + Send;
+
+    /// Revokes **every** token in `family`, consumed or not, and returns how many were affected.
+    ///
+    /// This is the ASVS V10.4.5 response to a detected replay. It returns a count so a caller can
+    /// assert the effect rather than assume it — a revocation that silently affected nothing is the
+    /// failure mode this signature exists to make visible.
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`].
+    fn revoke_family(
+        &self,
+        family: crate::refresh::FamilyId,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<u64, DatabaseError>> + Send;
+}
