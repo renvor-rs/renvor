@@ -923,11 +923,16 @@ mod tests {
             .expect("no storage failure")
         {
             SessionOutcome::Live(who) => assert_eq!(who, subject()),
-            // Renders the rejection reason only. `SessionRejection` is a closed operator-facing
-            // enum carrying no credential; the whole `SessionOutcome` would carry the
-            // authenticated subject in its other arm.
-            SessionOutcome::Rejected(reason) => {
-                panic!("expected a live session, got a rejection: {reason:?}")
+            // Every arm carries a STATIC message. Rendering the reason -- even though
+            // `SessionRejection` holds no credential -- keeps a value derived from the presented
+            // identifier flowing into the panic, which is the path a taint analysis follows. One
+            // literal per variant says which rejection occurred with nothing to taint, and
+            // `#[non_exhaustive]` does not force a wildcard inside the defining crate.
+            SessionOutcome::Rejected(SessionRejection::Cookie(_)) => {
+                panic!("expected a live session; the cookie header was rejected")
+            }
+            SessionOutcome::Rejected(SessionRejection::NotLive) => {
+                panic!("expected a live session; no live session matched the identifier")
             }
         }
     }
