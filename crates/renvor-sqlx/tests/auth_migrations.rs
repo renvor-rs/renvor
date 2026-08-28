@@ -20,7 +20,7 @@
 mod support;
 
 macro_rules! auth_migration_suite {
-    ($module:ident, $feature:literal, $driver:ty, $connect:path, $run:ident, $url:expr, $engine:literal, $table_exists:literal) => {
+    ($module:ident, $feature:literal, $driver:ty, $connect:path, $run:ident, $url:expr, $engine:literal, $table_exists:literal, $files:literal) => {
         #[cfg(feature = $feature)]
         mod $module {
             use std::path::{Path, PathBuf};
@@ -32,10 +32,12 @@ macro_rules! auth_migration_suite {
             use crate::support;
 
             /// Every table this phase creates, newest first — which is the order they must be
-            /// dropped in, because each has a foreign key to `rv_auth_user`.
-            const AUTH_TABLES: [&str; 7] = [
+            /// dropped in. Each has a foreign key to `rv_auth_user`, and `rv_auth_refresh` has one
+            /// to `rv_auth_refresh_family`, so the token table precedes the family table here.
+            const AUTH_TABLES: [&str; 8] = [
                 "rv_auth_attempt",
                 "rv_auth_refresh",
+                "rv_auth_refresh_family",
                 "rv_auth_password_reset",
                 "rv_auth_verification",
                 "rv_auth_session",
@@ -106,9 +108,9 @@ macro_rules! auth_migration_suite {
                 // POSITIVE CONTROL: without it, a directory that could not be read would pass this
                 // test having examined nothing — the vacuity failure this project has recorded twice.
                 assert_eq!(
-                    checked, 16,
-                    "expected 16 migration files for {}, found {checked}",
-                    $engine
+                    checked, $files,
+                    "expected {} migration files for {}, found {checked}",
+                    $files, $engine
                 );
             }
 
@@ -122,10 +124,16 @@ macro_rules! auth_migration_suite {
                     .expect("the auth migration set loads");
 
                 assert!(migrations.is_ordered(), "versions must strictly increase");
-                assert_eq!(migrations.versions().len(), 8, "seven tables and one index");
+                // Half the file count: each migration is an `.up.sql` and a `.down.sql`.
+                let expected = $files / 2;
+                assert_eq!(
+                    migrations.versions().len(),
+                    expected,
+                    "eight tables, plus the PostgreSQL-only foreign-key index"
+                );
 
                 let first = migrations.$run(&database).await.expect("applies");
-                assert_eq!(first.applied(), 8, "every migration should be new");
+                assert_eq!(first.applied(), expected, "every migration should be new");
                 assert!(
                     first
                         .steps()
@@ -143,7 +151,7 @@ macro_rules! auth_migration_suite {
             #[tokio::test]
             async fn every_auth_table_exists_after_migrating() {
                 // The control that keeps the test above from passing on a set that applied
-                // nothing: a migration runner reporting "8 applied" proves it ran, not that it
+                // nothing: a migration runner reporting "9 applied" proves it ran, not that it
                 // built the schema this phase needs.
                 let Some((database, _fixture)) = blank().await else {
                     return;
@@ -162,7 +170,7 @@ macro_rules! auth_migration_suite {
                     assert_eq!(present, 1, "{table} was not created on {}", $engine);
                 }
 
-                // POSITIVE CONTROL: the catalogue query can report absence, so the sevens above
+                // POSITIVE CONTROL: the catalogue query can report absence, so the eights above
                 // are facts about the schema rather than about a query that always answers 1.
                 let absent: i64 = sqlx::query_scalar(AssertSqlSafe(
                     $table_exists.replace("{table}", "rv_auth_not_a_table"),
@@ -186,7 +194,12 @@ auth_migration_suite!(
     run_postgres,
     support::POSTGRES_URL,
     "postgres",
-    "SELECT (CASE WHEN to_regclass('{table}') IS NULL THEN 0 ELSE 1 END)::bigint"
+    "SELECT (CASE WHEN to_regclass('{table}') IS NULL THEN 0 ELSE 1 END)::bigint",
+    // EIGHTEEN, not sixteen. PostgreSQL does not index a foreign-key column automatically, so the
+    // index on `rv_auth_refresh (family_id)` is its own migration here. MySQL/InnoDB requires one
+    // and creates it with the constraint, which is why its set is two files shorter — the engines
+    // differing, not a file missing. ADR-0025 is why there are two directories to differ.
+    18
 );
 auth_migration_suite!(
     mysql,
@@ -197,5 +210,6 @@ auth_migration_suite!(
     support::MYSQL_URL,
     "mysql",
     "SELECT CAST(COUNT(*) AS SIGNED) FROM information_schema.tables \
-     WHERE table_schema = DATABASE() AND table_name = '{table}'"
+     WHERE table_schema = DATABASE() AND table_name = '{table}'",
+    16
 );

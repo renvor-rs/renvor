@@ -42,9 +42,10 @@ macro_rules! seaorm_auth_suite {
 
             use crate::support;
 
-            const AUTH_TABLES: [&str; 7] = [
+            const AUTH_TABLES: [&str; 8] = [
                 "rv_auth_attempt",
                 "rv_auth_refresh",
+                "rv_auth_refresh_family",
                 "rv_auth_password_reset",
                 "rv_auth_verification",
                 "rv_auth_session",

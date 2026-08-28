@@ -31,15 +31,46 @@
 //! there in non-normative prose. Citing the RFC for this would be citing it for something it does
 //! not require.
 //!
-//! # The race is decided by the store, not by this module
+//! # The defect this module was rebuilt around
 //!
-//! Two concurrent presentations of one *valid* token must produce exactly one rotation. That is not
-//! arranged here with a lock; it is a precondition on
-//! [`crate::repository::RefreshTokenRepository::consume`], which must be a single conditional
-//! statement. The loser of that race observes [`RefreshConsumption`](crate::refresh::RefreshConsumption)`::Replayed`
-//! and takes the family
-//! down — which is the correct outcome, because from the store's position a second presentation of
-//! a consumed token is indistinguishable from theft.
+//! The first version drove three independent store calls — consume, then mint, then insert, and a
+//! separate revocation on the replay branch. Every one of them was individually correct and the
+//! composition was not:
+//!
+//! ```text
+//! A: consume(old)     -> Consumed          A wins the race
+//! B: consume(old)     -> Replayed          B loses, and correctly detects the replay
+//! B: revoke_family(f) -> revokes every row THAT EXISTS AT THIS INSTANT
+//! A: issue(new)       -> INSERT ... revoked_at = NULL
+//!                        the family B just revoked has a live token again
+//! ```
+//!
+//! It passed its unit suite because the fake store's `async fn`s contain no `.await`, so
+//! `tokio::join!` ran each rotation to completion before starting the next and the interleaving
+//! above never occurred. **A fake with no suspension point cannot fail a concurrency test**, which
+//! is why the four-row suite is the evidence for this property and this module's tests are not.
+//!
+//! The fix is not an ordering. It is that the transition — revalidate, consume, insert — has to be
+//! **one transaction over a durable family row**, so a concurrent revocation cannot land in the
+//! middle of it. See [`crate::repository::RefreshTokenRepository::advance`].
+//!
+//! # The order this module works in, and why
+//!
+//! ```text
+//! grant_for(presented)   read the immutable grant. Decides NOTHING.
+//!        |
+//! generate + sign        both secrets, in memory. Nothing durable yet.
+//!        |
+//! advance(...)           THE decision, under the family lock, in one transaction
+//!        |
+//!  committed?  yes -> hand over the prepared secrets
+//!              no  -> drop them
+//! ```
+//!
+//! Signing before the write is deliberate. A successor that is durable while its access token
+//! failed to sign is a live refresh token whose holder was never given anything — an inaccessible
+//! credential nothing will clean up. Doing the fallible work first means a failure costs a refused
+//! request, not a stranded row.
 
 use std::fmt;
 
@@ -57,7 +88,8 @@ use crate::token::{AccessToken, AccessTokenIssuer, ScopeSet};
 /// The placeholder every redacted rendering in this module uses.
 const REDACTED: &str = "[redacted]";
 
-/// The longest a refresh token may be configured to live: **thirty days**.
+/// The longest a refresh token — or a whole refresh family — may be configured to live:
+/// **thirty days**.
 ///
 /// Stated as Renvor's ceiling rather than a citation. NIST SP 800-63B-4 §4.1.3 sets
 /// reauthentication periods for *sessions* — 30 days at AAL1, 12 hours at AAL2 — and those are
@@ -96,6 +128,52 @@ impl Default for RefreshLifetime {
     /// Fourteen days.
     fn default() -> Self {
         Self(Duration::days(14))
+    }
+}
+
+/// How long a whole refresh *chain* may live, counted from the login that began it.
+///
+/// # Why a chain needs its own bound
+///
+/// [`RefreshLifetime`] bounds one token. Rotation replaces that token, so a chain that is used
+/// steadily never expires: fourteen days after the login, and after every rotation, there is
+/// always another fourteen days. The credential stops being a session and becomes permanent
+/// without anyone deciding that it should.
+///
+/// This is the decision. A family carries an absolute end written **once**, at
+/// [`RefreshRotation::begin`], and no rotation moves it — so a chain outlives its login by at most
+/// this long whatever happens to it in between. A successor's expiry is the earlier of the token
+/// lifetime and what remains of the family; that is arithmetic rather than a silent clamp of a
+/// configured value, and the configuration itself is refused rather than clamped below.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FamilyLifetime(Duration);
+
+impl FamilyLifetime {
+    /// Builds a chain lifetime.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError::PolicyMisconfigured`] when not positive or above [`MAX_REFRESH_LIFETIME`].
+    pub fn new(lifetime: Duration) -> Result<Self, AuthError> {
+        if lifetime <= Duration::zero() || lifetime > MAX_REFRESH_LIFETIME {
+            return Err(AuthError::PolicyMisconfigured);
+        }
+        Ok(Self(lifetime))
+    }
+
+    /// The configured duration.
+    #[must_use]
+    pub const fn get(self) -> Duration {
+        self.0
+    }
+}
+
+impl Default for FamilyLifetime {
+    /// Thirty days — the ceiling. A chain reaching the outer bound is the *default* because
+    /// shortening it is a decision an operator makes about their own risk, and a default below the
+    /// ceiling would silently cap sessions in a way nobody asked for.
+    fn default() -> Self {
+        Self(MAX_REFRESH_LIFETIME)
     }
 }
 
@@ -138,6 +216,53 @@ impl FamilyId {
 }
 
 impl fmt::Display for FamilyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Identifies one row in a refresh chain.
+///
+/// Distinct from [`FamilyId`] as a type rather than as a convention: `replaced_by` points at a
+/// token and the family lock is taken on a family, and a single sixteen-byte newtype for both
+/// would let one be passed where the other belongs and still compile.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash)]
+pub struct RefreshTokenId([u8; Self::BYTES]);
+
+impl RefreshTokenId {
+    /// The number of bytes behind a token row identifier.
+    pub const BYTES: usize = 16;
+
+    /// Generates an identifier.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError::EntropyUnavailable`] when the platform CSPRNG fails.
+    pub fn generate(source: &dyn EntropySource) -> Result<Self, AuthError> {
+        let mut bytes = [0_u8; Self::BYTES];
+        source
+            .fill(&mut bytes)
+            .map_err(|_| AuthError::EntropyUnavailable)?;
+        Ok(Self(bytes))
+    }
+
+    /// Rebuilds an identifier from persistence.
+    #[must_use]
+    pub const fn from_bytes(bytes: [u8; Self::BYTES]) -> Self {
+        Self(bytes)
+    }
+
+    /// The raw bytes, for persistence.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &[u8; Self::BYTES] {
+        &self.0
+    }
+}
+
+impl fmt::Display for RefreshTokenId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
             write!(f, "{byte:02x}")?;
@@ -195,56 +320,90 @@ impl fmt::Display for RefreshToken {
     }
 }
 
-/// A row to be written, carrying the digest and never the token.
+/// A family and its first token, to be created together.
 ///
 /// # There is nowhere in this type to put the secret
 ///
-/// The field is a [`SecretDigest`]. A caller that wanted to store the raw token would have to
-/// change this struct to do it, which is a reviewable act — the same argument
+/// The token field is a [`SecretDigest`]. A caller that wanted to store the raw token would have
+/// to change this struct to do it, which is a reviewable act — the same argument
 /// [`crate::token::TokenRejection`] makes about rejection reasons, applied to a write.
 #[derive(Clone, Debug)]
-pub struct NewRefreshToken {
-    /// What the store holds in the token's place.
-    pub digest: SecretDigest,
-    /// The chain this token belongs to.
+pub struct NewRefreshFamily {
+    /// The chain being started.
     pub family: FamilyId,
-    /// Whose token it is.
+    /// Whose chain it is. **Immutable for the life of the family**, and the only copy of the fact.
     pub user: UserId,
-    /// The privileges a rotation from this token may carry forward.
+    /// The privileges every rotation in this chain carries forward. Also immutable, and also the
+    /// only copy: a per-token copy is a second place the answer can be, and two places disagree.
     pub scopes: ScopeSet,
-    /// When it was issued.
-    pub issued_at: DateTime<Utc>,
-    /// When it stops being valid.
-    pub expires_at: DateTime<Utc>,
+    /// The identity of the first token row.
+    pub first_token_id: RefreshTokenId,
+    /// What the store holds in the first token's place.
+    pub first_token: SecretDigest,
+    /// When the login happened.
+    pub created_at: DateTime<Utc>,
+    /// The absolute end of the chain. Written once; no rotation moves it.
+    pub family_expires_at: DateTime<Utc>,
+    /// When the first token stops being valid. Never after `family_expires_at`.
+    pub token_expires_at: DateTime<Utc>,
 }
 
-/// What a consumed refresh token grants.
+/// The immutable facts behind a presented refresh token.
+///
+/// Read before the decision and used to prepare the successor. It is safe to act on a value that
+/// may be a moment old because **every field is immutable once written** — see
+/// [`crate::repository::RefreshTokenRepository::grant_for`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct RefreshGrant {
     /// The chain to continue.
     pub family: FamilyId,
-    /// Whose token it was.
+    /// Whose token it is.
     pub user: UserId,
     /// The privileges to carry forward. **Never widened** by a rotation.
     pub scopes: ScopeSet,
+    /// The absolute end of the chain, so a successor cannot be issued past it.
+    pub family_expires_at: DateTime<Utc>,
 }
 
-/// What the store's single conditional statement observed.
+/// One atomic rotation, as the store is asked to perform it.
 ///
-/// The variants are ordered by what they mean to the caller, not by likelihood: the second one is
-/// the security event.
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// Carries the successor **already generated**: the store's job is to decide and to write, never
+/// to mint. A repository that generated the secret would be signing tokens inside a transaction,
+/// which is the shape [`crate::repository::RefreshTokenRepository::advance`] exists to avoid.
+#[derive(Clone, Copy, Debug)]
+pub struct AdvanceRequest<'a> {
+    /// The digest of the token the client presented.
+    pub presented: &'a SecretDigest,
+    /// The identity of the successor row, if one is written.
+    pub successor_id: RefreshTokenId,
+    /// The digest of the successor, if one is written.
+    pub successor: &'a SecretDigest,
+    /// When the successor stops being valid.
+    pub successor_expires_at: DateTime<Utc>,
+    /// The instant the transition is evaluated at — from the injected [`Clock`], never the
+    /// database's own clock, so a test can place it exactly.
+    pub now: DateTime<Utc>,
+}
+
+/// What the store's single transaction did.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
-pub enum RefreshConsumption {
-    /// The statement consumed the row. This caller won, and no other can.
-    Consumed(RefreshGrant),
-    /// The row exists and was **already consumed**. ASVS V10.4.5: revoke the family.
-    Replayed(FamilyId),
-    /// The row exists and its family has already been revoked.
+pub enum RefreshTransition {
+    /// The presented token was consumed and the successor is durable. This caller won, and no
+    /// other can: both writes happened under the family lock, in one transaction.
+    Advanced,
+    /// The presented token had already been spent. ASVS V10.4.5: the family's tombstone is set and
+    /// every live token in it revoked, **in the same transaction that observed the replay**.
+    /// `revoked` is how many token rows that affected.
+    Replayed {
+        /// How many token rows the response revoked.
+        revoked: u64,
+    },
+    /// The family's tombstone was already set. Nothing was written.
     FamilyRevoked,
-    /// No usable row: unknown, or expired. **One answer for both** — an expired token is not a
-    /// replay, and telling a presenter which of the two it holds tells them whether the value was
-    /// ever real.
+    /// No usable row: the digest is unknown, the token has expired, or the family has. **One
+    /// answer for all three** — an expired token is not a replay, and telling a presenter which of
+    /// them it holds tells them whether the value was ever real.
     Unusable,
 }
 
@@ -252,7 +411,7 @@ pub enum RefreshConsumption {
 ///
 /// # This is narrower than what the store saw, deliberately
 ///
-/// [`RefreshConsumption`] distinguishes four states because the *issuer* needs the distinction to
+/// [`RefreshTransition`] distinguishes four states because the *issuer* needs the distinction to
 /// implement family revocation. The *presenter* gets three, and never learns whether the token it
 /// holds was unknown or merely expired. Like [`crate::token::TokenRejection`], every variant is a
 /// bare marker, so nothing built from one can carry the credential.
@@ -295,9 +454,10 @@ pub struct RotatedTokens {
 pub enum RefreshOutcome {
     /// The presented token was spent and a new pair issued.
     Rotated(RotatedTokens),
-    /// The presented token was refused. When the reason is [`RefreshRejection::Replayed`], the
-    /// family **has already been revoked** by the time this value exists, and `revoked` says how
-    /// many rows that affected — so a caller can assert the response happened rather than trust it.
+    /// The presented token was refused, and **the prepared secrets were discarded** — they were
+    /// never durable, so nothing has to be undone. When the reason is
+    /// [`RefreshRejection::Replayed`], the family was revoked in the same transaction that
+    /// detected the replay, and `revoked` says how many token rows that affected.
     Rejected {
         /// Why.
         reason: RefreshRejection,
@@ -311,18 +471,27 @@ pub enum RefreshOutcome {
 pub struct RefreshRotation<R> {
     repository: R,
     lifetime: RefreshLifetime,
+    family_lifetime: FamilyLifetime,
 }
 
 impl<R: RefreshTokenRepository> RefreshRotation<R> {
     /// Builds a rotation service.
-    pub const fn new(repository: R, lifetime: RefreshLifetime) -> Self {
+    pub const fn new(
+        repository: R,
+        lifetime: RefreshLifetime,
+        family_lifetime: FamilyLifetime,
+    ) -> Self {
         Self {
             repository,
             lifetime,
+            family_lifetime,
         }
     }
 
     /// Starts a new family for a subject that has just authenticated, and issues the first pair.
+    ///
+    /// The family row and its first token are written by one call, so there is never a family with
+    /// no token or a token with no grant.
     ///
     /// # Errors
     ///
@@ -338,18 +507,45 @@ impl<R: RefreshTokenRepository> RefreshRotation<R> {
         clock: &dyn Clock,
         entropy: &dyn EntropySource,
     ) -> Result<RotatedTokens, AuthError> {
+        let now = clock.now();
         let family = FamilyId::generate(entropy)?;
-        self.mint(family, subject, scopes, issuer, clock, entropy)
+        let first_token_id = RefreshTokenId::generate(entropy)?;
+        let refresh = RefreshToken::generate(entropy)?;
+        // SIGNED BEFORE THE WRITE. A signing failure after the row is durable would leave a live
+        // refresh token whose holder received nothing.
+        let access = issuer.issue(subject, scopes, clock, entropy)?;
+
+        let family_expires_at = now + self.family_lifetime.get();
+        self.repository
+            .begin_family(NewRefreshFamily {
+                family,
+                user: subject.user_id(),
+                scopes: scopes.clone(),
+                first_token_id,
+                first_token: refresh.digest(),
+                created_at: now,
+                family_expires_at,
+                token_expires_at: token_expiry(now, self.lifetime, family_expires_at),
+            })
             .await
+            .map_err(store_failure)?;
+
+        Ok(RotatedTokens {
+            access,
+            refresh,
+            family,
+        })
     }
 
     /// Spends `presented` and issues the next pair, or refuses it.
     ///
     /// # The order is the security argument
     ///
-    /// The store decides first, in one statement. Only then is anything issued — so a losing racer
-    /// never receives a token, and a replay is answered by revocation **before** the caller is told
-    /// what happened.
+    /// The grant is read first and decides nothing. Both secrets are then prepared **in memory**.
+    /// The store's single transaction is the decision, and the prepared secrets are released only
+    /// if it committed — so a losing racer never receives a token, a replay is answered by
+    /// revocation inside the same transaction that detected it, and a signing failure costs a
+    /// refused request rather than a stranded row.
     ///
     /// # Errors
     ///
@@ -367,49 +563,70 @@ impl<R: RefreshTokenRepository> RefreshRotation<R> {
         // A value that is not even the right shape is refused without touching the store. This is
         // not an optimisation: it keeps a malformed presentation from becoming a database query.
         let Some(token) = RefreshToken::from_wire(presented) else {
-            return Ok(RefreshOutcome::Rejected {
-                reason: RefreshRejection::Unusable,
-                revoked: 0,
-            });
+            return Ok(rejected(RefreshRejection::Unusable));
+        };
+        let presented_digest = token.digest();
+
+        // THE PRELIMINARY READ. It grants no authority; every field it returns is immutable, and
+        // `advance` re-decides everything under the family lock.
+        let Some(grant) = self
+            .repository
+            .grant_for(&presented_digest)
+            .await
+            .map_err(store_failure)?
+        else {
+            return Ok(rejected(RefreshRejection::Unusable));
         };
 
-        let observed = self
+        // Prepared, not committed. Nothing below this line is durable until `advance` returns.
+        let successor_id = RefreshTokenId::generate(entropy)?;
+        let successor = RefreshToken::generate(entropy)?;
+        let subject = AuthenticatedSubject::new(grant.user);
+        // The scopes come from the GRANT, not from the caller. A rotation carries privileges
+        // forward; it is not an opportunity to acquire new ones.
+        let access = issuer.issue(subject, &grant.scopes, clock, entropy)?;
+
+        let transition = self
             .repository
-            .consume(&token.digest(), now)
+            .advance(AdvanceRequest {
+                presented: &presented_digest,
+                successor_id,
+                successor: &successor.digest(),
+                successor_expires_at: token_expiry(now, self.lifetime, grant.family_expires_at),
+                now,
+            })
             .await
             .map_err(store_failure)?;
 
-        match observed {
-            RefreshConsumption::Consumed(grant) => {
-                let subject = AuthenticatedSubject::new(grant.user);
-                // The scopes come from the GRANT, not from the caller. A rotation carries
-                // privileges forward; it is not an opportunity to acquire new ones.
-                self.mint(grant.family, subject, &grant.scopes, issuer, clock, entropy)
-                    .await
-                    .map(RefreshOutcome::Rotated)
-            }
-            RefreshConsumption::Replayed(family) => {
-                // ASVS V10.4.5. The revocation happens HERE, before the caller is answered, so
-                // there is no window in which a replay has been detected and not yet responded to.
-                let revoked = self
-                    .repository
-                    .revoke_family(family, now)
-                    .await
-                    .map_err(store_failure)?;
-                Ok(RefreshOutcome::Rejected {
-                    reason: RefreshRejection::Replayed,
-                    revoked,
-                })
-            }
-            RefreshConsumption::FamilyRevoked => Ok(RefreshOutcome::Rejected {
-                reason: RefreshRejection::FamilyRevoked,
-                revoked: 0,
+        match transition {
+            RefreshTransition::Advanced => Ok(RefreshOutcome::Rotated(RotatedTokens {
+                access,
+                refresh: successor,
+                family: grant.family,
+            })),
+            // `access` and `successor` are dropped here, unreturned and never written.
+            RefreshTransition::Replayed { revoked } => Ok(RefreshOutcome::Rejected {
+                reason: RefreshRejection::Replayed,
+                revoked,
             }),
-            RefreshConsumption::Unusable => Ok(RefreshOutcome::Rejected {
-                reason: RefreshRejection::Unusable,
-                revoked: 0,
-            }),
+            RefreshTransition::FamilyRevoked => Ok(rejected(RefreshRejection::FamilyRevoked)),
+            RefreshTransition::Unusable => Ok(rejected(RefreshRejection::Unusable)),
         }
+    }
+
+    /// Ends a chain deliberately — a sign-out, or an administrator closing a session.
+    ///
+    /// Returns how many token rows were revoked. Distinct from the replay response, which is
+    /// inside the store's transition because it must be atomic with the check that detected it.
+    ///
+    /// # Errors
+    ///
+    /// [`AuthError::NotPermitted`] when the store refuses the write.
+    pub async fn revoke(&self, family: FamilyId, clock: &dyn Clock) -> Result<u64, AuthError> {
+        self.repository
+            .revoke_family(family, clock.now())
+            .await
+            .map_err(store_failure)
     }
 
     /// The store, for tests that must assert what was **written** rather than what was returned.
@@ -417,39 +634,25 @@ impl<R: RefreshTokenRepository> RefreshRotation<R> {
     const fn store_for_test(&self) -> &R {
         &self.repository
     }
+}
 
-    /// Generates a pair, stores the digest, and returns the secrets.
-    async fn mint(
-        &self,
-        family: FamilyId,
-        subject: AuthenticatedSubject,
-        scopes: &ScopeSet,
-        issuer: &AccessTokenIssuer,
-        clock: &dyn Clock,
-        entropy: &dyn EntropySource,
-    ) -> Result<RotatedTokens, AuthError> {
-        let now = clock.now();
-        let refresh = RefreshToken::generate(entropy)?;
-        let access = issuer.issue(subject, scopes, clock, entropy)?;
+/// A refusal, with the count that only a replay ever carries.
+const fn rejected(reason: RefreshRejection) -> RefreshOutcome {
+    RefreshOutcome::Rejected { reason, revoked: 0 }
+}
 
-        self.repository
-            .issue(NewRefreshToken {
-                digest: refresh.digest(),
-                family,
-                user: subject.user_id(),
-                scopes: scopes.clone(),
-                issued_at: now,
-                expires_at: now + self.lifetime.get(),
-            })
-            .await
-            .map_err(store_failure)?;
-
-        Ok(RotatedTokens {
-            access,
-            refresh,
-            family,
-        })
-    }
+/// When a token issued at `now` stops being valid: the token lifetime, or the end of the family,
+/// whichever comes first.
+///
+/// **Not a clamp of a configured value.** [`RefreshLifetime::new`] refuses a lifetime it will not
+/// honour; this is the arithmetic that keeps a token from outliving the chain it belongs to, which
+/// is a different statement and one no configuration can express.
+fn token_expiry(
+    now: DateTime<Utc>,
+    lifetime: RefreshLifetime,
+    family_expires_at: DateTime<Utc>,
+) -> DateTime<Utc> {
+    (now + lifetime.get()).min(family_expires_at)
 }
 
 /// Narrows a store failure to this crate's fieldless error.
@@ -464,9 +667,9 @@ fn store_failure(_: DatabaseError) -> AuthError {
 #[cfg(test)]
 mod tests {
     use super::{
-        FamilyId, MAX_REFRESH_LIFETIME, NewRefreshToken, REDACTED, RefreshConsumption,
+        AdvanceRequest, FamilyId, FamilyLifetime, MAX_REFRESH_LIFETIME, NewRefreshFamily, REDACTED,
         RefreshGrant, RefreshLifetime, RefreshOutcome, RefreshRejection, RefreshRotation,
-        RefreshToken,
+        RefreshToken, RefreshTokenId, RefreshTransition,
     };
     use crate::clock::FixedClock;
     use crate::error::AuthError;
@@ -475,16 +678,28 @@ mod tests {
     use crate::subject::{AuthenticatedSubject, UserId};
     use crate::token::{
         AccessLifetime, AccessTokenIssuer, AccessTokenVerifier, Audience, Issuer, KeyId, KeyRing,
-        Scope, ScopeSet, Skew, VerifyingKey, generate_ed25519,
+        Scope, ScopeSet, Skew, generate_ed25519,
     };
     use chrono::{DateTime, Duration, Utc};
     use renvor_core::observe::entropy::{EntropySource, EntropyUnavailable};
-    use renvor_database::DatabaseError;
+    use renvor_database::{DatabaseError, DatabaseErrorKind};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
     // NO DIAGNOSTIC IN THIS MODULE INTERPOLATES A TOKEN OR A DIGEST. Same rule as `token`'s tests
     // and for the same reason: a refresh token in a failure message is a live credential in a log.
+
+    // WHAT THIS MODULE PROVES, AND WHAT IT DOES NOT
+    //
+    // It proves the SERVICE's contract: the order it works in, that a refusal returns nothing and
+    // writes nothing, that scopes come from the grant, that a raw token never reaches the store.
+    //
+    // It does NOT prove atomicity, and it cannot. `Store` below is a `Mutex` over a `Vec` whose
+    // `async fn`s contain no `.await`, so two rotations joined with `tokio::join!` run one after
+    // the other and no interleaving is ever attempted. The PREVIOUS version of this module had a
+    // concurrency test built exactly that way, it passed, and the defect it was supposed to catch
+    // shipped anyway. The evidence for the race lives in the four-row suite against real servers
+    // on separate connections — `renvor_testkit::refresh` — and nowhere else.
 
     fn at(seconds: i64) -> DateTime<Utc> {
         DateTime::from_timestamp(1_800_000_000 + seconds, 0).expect("a representable instant")
@@ -529,92 +744,201 @@ mod tests {
     }
 
     #[derive(Debug)]
-    struct Row {
-        digest: SecretDigest,
-        family: FamilyId,
+    struct Family {
+        id: FamilyId,
         user: UserId,
         scopes: ScopeSet,
+        expires_at: DateTime<Utc>,
+        revoked_at: Option<DateTime<Utc>>,
+    }
+
+    #[derive(Debug)]
+    struct Row {
+        family: FamilyId,
+        digest: SecretDigest,
         expires_at: DateTime<Utc>,
         consumed_at: Option<DateTime<Utc>>,
         revoked_at: Option<DateTime<Utc>>,
     }
 
+    #[derive(Debug, Default)]
+    struct State {
+        families: Vec<Family>,
+        rows: Vec<Row>,
+    }
+
     /// An in-memory store with the **same decision order** the port's documentation requires.
     ///
-    /// The `Mutex` is what makes `consume` a single atomic decision here, standing in for the one
-    /// conditional `UPDATE` an adapter must use. What this proves is the **contract** — that a
-    /// second consumption reports a replay. That two real connections race correctly on all four
-    /// rows is a property of the adapters' SQL and belongs to the four-row suites; it is **not**
-    /// claimed by anything in this module.
+    /// One `Mutex` covers both tables, which is what makes `advance` a single transition here —
+    /// standing in for the transaction and the two row locks an adapter must take. It stands in
+    /// for them; it does not test them.
     #[derive(Debug, Default)]
     struct Store {
-        rows: Mutex<Vec<Row>>,
-        queries: AtomicUsize,
+        state: Mutex<State>,
+        /// Every port method called, in order, so a test can assert what ran before what.
+        calls: Mutex<Vec<&'static str>>,
+        /// Set to fail the next `advance`, to prove a store failure is an error and not a refusal.
+        fail_advance: AtomicUsize,
     }
 
     impl Store {
-        fn raw_values_held(&self) -> Vec<SecretDigest> {
-            self.rows
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().expect("not poisoned").clone()
+        }
+
+        fn record(&self, name: &'static str) {
+            self.calls.lock().expect("not poisoned").push(name);
+        }
+
+        fn digests_held(&self) -> Vec<SecretDigest> {
+            self.state
                 .lock()
                 .expect("not poisoned")
+                .rows
                 .iter()
                 .map(|row| row.digest)
                 .collect()
         }
 
-        fn queries(&self) -> usize {
-            self.queries.load(Ordering::SeqCst)
-        }
-
         fn live_count(&self) -> usize {
-            self.rows
+            self.state
                 .lock()
                 .expect("not poisoned")
+                .rows
                 .iter()
                 .filter(|row| row.consumed_at.is_none() && row.revoked_at.is_none())
                 .count()
         }
+
+        fn row_count(&self) -> usize {
+            self.state.lock().expect("not poisoned").rows.len()
+        }
+
+        fn tombstone(&self, family: FamilyId) -> Option<DateTime<Utc>> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .families
+                .iter()
+                .find(|entry| entry.id == family)
+                .and_then(|entry| entry.revoked_at)
+        }
+
+        fn expiry_of(&self, digest: &SecretDigest) -> Option<DateTime<Utc>> {
+            self.state
+                .lock()
+                .expect("not poisoned")
+                .rows
+                .iter()
+                .find(|row| row.digest.matches(digest))
+                .map(|row| row.expires_at)
+        }
     }
 
     impl RefreshTokenRepository for Store {
-        async fn issue(&self, record: NewRefreshToken) -> Result<(), DatabaseError> {
-            self.rows.lock().expect("not poisoned").push(Row {
-                digest: record.digest,
-                family: record.family,
-                user: record.user,
-                scopes: record.scopes,
-                expires_at: record.expires_at,
+        async fn begin_family(&self, family: NewRefreshFamily) -> Result<(), DatabaseError> {
+            self.record("begin_family");
+            let mut state = self.state.lock().expect("not poisoned");
+            state.families.push(Family {
+                id: family.family,
+                user: family.user,
+                scopes: family.scopes,
+                expires_at: family.family_expires_at,
+                revoked_at: None,
+            });
+            state.rows.push(Row {
+                family: family.family,
+                digest: family.first_token,
+                expires_at: family.token_expires_at,
                 consumed_at: None,
                 revoked_at: None,
             });
             Ok(())
         }
 
-        async fn consume(
+        async fn grant_for(
             &self,
             digest: &SecretDigest,
-            now: DateTime<Utc>,
-        ) -> Result<RefreshConsumption, DatabaseError> {
-            self.queries.fetch_add(1, Ordering::SeqCst);
-            let mut rows = self.rows.lock().expect("not poisoned");
-            let Some(row) = rows.iter_mut().find(|row| row.digest.matches(digest)) else {
-                return Ok(RefreshConsumption::Unusable);
+        ) -> Result<Option<RefreshGrant>, DatabaseError> {
+            self.record("grant_for");
+            let state = self.state.lock().expect("not poisoned");
+            let Some(row) = state.rows.iter().find(|row| row.digest.matches(digest)) else {
+                return Ok(None);
             };
-            if row.revoked_at.is_some() {
-                return Ok(RefreshConsumption::FamilyRevoked);
-            }
-            if row.consumed_at.is_some() {
-                return Ok(RefreshConsumption::Replayed(row.family));
-            }
-            if row.expires_at <= now {
-                return Ok(RefreshConsumption::Unusable);
-            }
-            row.consumed_at = Some(now);
-            Ok(RefreshConsumption::Consumed(RefreshGrant {
-                family: row.family,
-                user: row.user,
-                scopes: row.scopes.clone(),
+            let family = state
+                .families
+                .iter()
+                .find(|entry| entry.id == row.family)
+                .expect("a token row always has its family");
+            Ok(Some(RefreshGrant {
+                family: family.id,
+                user: family.user,
+                scopes: family.scopes.clone(),
+                family_expires_at: family.expires_at,
             }))
+        }
+
+        async fn advance(
+            &self,
+            request: AdvanceRequest<'_>,
+        ) -> Result<RefreshTransition, DatabaseError> {
+            self.record("advance");
+            if self.fail_advance.load(Ordering::SeqCst) > 0 {
+                return Err(DatabaseError::new(DatabaseErrorKind::StatementRejected));
+            }
+            let mut state = self.state.lock().expect("not poisoned");
+
+            let Some(index) = state
+                .rows
+                .iter()
+                .position(|row| row.digest.matches(request.presented))
+            else {
+                return Ok(RefreshTransition::Unusable);
+            };
+            let family_id = state.rows[index].family;
+            let family = state
+                .families
+                .iter()
+                .find(|entry| entry.id == family_id)
+                .expect("a token row always has its family");
+
+            if family.revoked_at.is_some() {
+                return Ok(RefreshTransition::FamilyRevoked);
+            }
+            if family.expires_at <= request.now {
+                return Ok(RefreshTransition::Unusable);
+            }
+
+            let row = &state.rows[index];
+            if row.consumed_at.is_some() || row.revoked_at.is_some() {
+                // THE REPLAY RESPONSE, in the same transition that detected it.
+                let mut revoked = 0_u64;
+                for entry in state.families.iter_mut() {
+                    if entry.id == family_id && entry.revoked_at.is_none() {
+                        entry.revoked_at = Some(request.now);
+                    }
+                }
+                for row in state.rows.iter_mut() {
+                    if row.family == family_id && row.revoked_at.is_none() {
+                        row.revoked_at = Some(request.now);
+                        revoked += 1;
+                    }
+                }
+                return Ok(RefreshTransition::Replayed { revoked });
+            }
+            if row.expires_at <= request.now {
+                return Ok(RefreshTransition::Unusable);
+            }
+
+            state.rows[index].consumed_at = Some(request.now);
+            state.rows.push(Row {
+                family: family_id,
+                digest: *request.successor,
+                expires_at: request.successor_expires_at,
+                consumed_at: None,
+                revoked_at: None,
+            });
+            Ok(RefreshTransition::Advanced)
         }
 
         async fn revoke_family(
@@ -622,10 +946,17 @@ mod tests {
             family: FamilyId,
             now: DateTime<Utc>,
         ) -> Result<u64, DatabaseError> {
-            let mut rows = self.rows.lock().expect("not poisoned");
+            self.record("revoke_family");
+            let mut state = self.state.lock().expect("not poisoned");
+            for entry in state.families.iter_mut() {
+                // MONOTONIC. An already-set tombstone keeps its instant.
+                if entry.id == family && entry.revoked_at.is_none() {
+                    entry.revoked_at = Some(now);
+                }
+            }
             let mut revoked = 0_u64;
-            for row in rows.iter_mut().filter(|row| row.family == family) {
-                if row.revoked_at.is_none() {
+            for row in state.rows.iter_mut() {
+                if row.family == family && row.revoked_at.is_none() {
                     row.revoked_at = Some(now);
                     revoked += 1;
                 }
@@ -634,10 +965,11 @@ mod tests {
         }
     }
 
+    /// The issuer, verifier and clock every test below shares.
     struct Fixture {
-        rotation: RefreshRotation<Store>,
         issuer: AccessTokenIssuer,
-        verifying: VerifyingKey,
+        verifier: AccessTokenVerifier,
+        clock: FixedClock,
         entropy: Varying,
     }
 
@@ -645,458 +977,555 @@ mod tests {
         let entropy = Varying::default();
         let pair = generate_ed25519(KeyId::new("k1").expect("a well-formed key id"), &entropy)
             .expect("a generated key pair");
+        let issuer = AccessTokenIssuer::new(
+            Issuer::new("https://issuer.test").expect("a well-formed issuer"),
+            Audience::new("https://api.test").expect("a well-formed audience"),
+            pair.signing,
+            AccessLifetime::default(),
+        );
+        let verifier = AccessTokenVerifier::new(
+            Issuer::new("https://issuer.test").expect("a well-formed issuer"),
+            [Audience::new("https://api.test").expect("a well-formed audience")],
+            KeyRing::new(vec![pair.verifying]).expect("a bounded ring"),
+            Skew::default(),
+        )
+        .expect("a configured verifier");
         Fixture {
-            rotation: RefreshRotation::new(Store::default(), RefreshLifetime::default()),
-            issuer: AccessTokenIssuer::new(
-                Issuer::new("https://renvor.test/issuer").expect("a well-formed issuer"),
-                Audience::new("https://renvor.test/api").expect("a well-formed audience"),
-                pair.signing,
-                AccessLifetime::default(),
-            ),
-            verifying: pair.verifying,
+            issuer,
+            verifier,
+            clock: FixedClock::at(at(0)),
             entropy,
         }
     }
 
-    impl Fixture {
-        fn store(&self) -> &Store {
-            // The service owns the store; reaching it is how a test asserts what was WRITTEN
-            // rather than only what was returned.
-            self.rotation.store_for_test()
-        }
-    }
-
-    // -- issuing --------------------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn a_new_family_issues_a_pair_and_stores_only_the_digest() {
-        let f = fixture();
-        let clock = FixedClock::at(at(0));
-        let issued = f
-            .rotation
-            .begin(subject(), &scopes(&["read"]), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-
-        assert!(
-            f.store().live_count() == 1,
-            "the store does not hold exactly one live token"
-        );
-
-        // FR-041. The store holds the DIGEST; the raw token is not recoverable from it.
-        let held = f.store().raw_values_held();
-        assert!(held.len() == 1, "the store holds the wrong number of rows");
-        assert!(
-            held[0].matches(&issued.refresh.digest()),
-            "the store does not hold the digest of the issued token"
-        );
-        assert!(
-            !format!("{:?}", held[0]).contains(&issued.refresh.expose()),
-            "the raw refresh token is recoverable from what the store holds"
-        );
-    }
-
-    // -- rotation -------------------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn a_rotation_spends_the_old_token_and_issues_a_different_one_in_the_same_family() {
-        let f = fixture();
-        let clock = FixedClock::at(at(0));
-        let first = f
-            .rotation
-            .begin(subject(), &scopes(&["read"]), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-
-        let outcome = f
-            .rotation
-            .rotate(&first.refresh.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered");
-
-        let RefreshOutcome::Rotated(second) = outcome else {
-            panic!("a valid refresh token was refused")
-        };
-        assert!(
-            second.refresh.expose() != first.refresh.expose(),
-            "the rotation returned the same refresh token it was given"
-        );
-        assert!(
-            second.family == first.family,
-            "the rotation started a new family"
-        );
-        assert!(
-            f.store().live_count() == 1,
-            "the rotation did not leave exactly one live token"
-        );
+    fn rotation(store: Store) -> RefreshRotation<Store> {
+        RefreshRotation::new(store, RefreshLifetime::default(), FamilyLifetime::default())
     }
 
     #[tokio::test]
-    async fn a_rotation_carries_the_scopes_forward_and_the_presenter_cannot_widen_them() {
+    async fn a_new_family_holds_exactly_one_usable_token() {
         let f = fixture();
-        let clock = FixedClock::at(at(0));
-        let granted = scopes(&["orders.read"]);
-        let first = f
-            .rotation
-            .begin(subject(), &granted, &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-
-        let RefreshOutcome::Rotated(second) = f
-            .rotation
-            .rotate(&first.refresh.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered")
-        else {
-            panic!("a valid refresh token was refused")
-        };
-
-        // `rotate` takes no scope parameter at all — the privileges come from the stored grant.
-        // This asserts the consequence: the new access token carries exactly what was granted.
-        let verifier = verifier_for(f.verifying.clone());
-        let verified = verifier
-            .verify(second.access.expose(), &clock)
-            .expect("the access token this rotation just issued");
-        assert!(
-            verified.scopes() == &granted,
-            "a rotation changed the granted scopes"
-        );
-    }
-
-    // -- replay, ASVS V10.4.5 ---------------------------------------------------------------------
-
-    #[tokio::test]
-    async fn replaying_a_spent_token_revokes_the_entire_family() {
-        let f = fixture();
-        let clock = FixedClock::at(at(0));
-        let first = f
-            .rotation
-            .begin(subject(), &scopes(&["read"]), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-        let RefreshOutcome::Rotated(second) = f
-            .rotation
-            .rotate(&first.refresh.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered")
-        else {
-            panic!("a valid refresh token was refused")
-        };
-
-        // The stolen copy of the FIRST token is presented after the legitimate rotation.
-        let replay = f
-            .rotation
-            .rotate(&first.refresh.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered");
-
-        let RefreshOutcome::Rejected { reason, revoked } = replay else {
-            panic!("a replayed refresh token was accepted")
-        };
-        assert!(
-            reason == RefreshRejection::Replayed,
-            "a replay was not reported as one"
-        );
-        assert!(revoked >= 1, "a replay revoked nothing at all");
-        assert!(
-            f.store().live_count() == 0,
-            "a live token survived the family revocation"
-        );
-
-        // And the consequence that matters: the token the LEGITIMATE client is holding is now dead.
-        let after = f
-            .rotation
-            .rotate(&second.refresh.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered");
-        assert!(
-            matches!(
-                after,
-                RefreshOutcome::Rejected {
-                    reason: RefreshRejection::FamilyRevoked,
-                    ..
-                }
-            ),
-            "a sibling of a revoked family was still usable"
-        );
-    }
-
-    #[tokio::test]
-    async fn two_presentations_of_one_valid_token_produce_exactly_one_rotation() {
-        // WHAT THIS PROVES: the port's contract. The store decides in one guarded step, so the
-        // second presentation observes a replay rather than minting a second token.
-        //
-        // WHAT IT DOES NOT PROVE: that two real database connections race correctly. That is a
-        // property of each adapter's SQL and belongs to the four-row suites. Nothing here is
-        // evidence about PostgreSQL or MySQL, and this comment exists so no reader mistakes it for
-        // some.
-        let f = fixture();
-        let clock = FixedClock::at(at(0));
-        let first = f
-            .rotation
-            .begin(subject(), &scopes(&["read"]), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-        let presented = first.refresh.expose();
-
-        let (a, b) = tokio::join!(
-            f.rotation.rotate(&presented, &f.issuer, &clock, &f.entropy),
-            f.rotation.rotate(&presented, &f.issuer, &clock, &f.entropy),
-        );
-        let outcomes = [
-            a.expect("a store that answered"),
-            b.expect("a store that answered"),
-        ];
-        let rotated = outcomes
-            .iter()
-            .filter(|outcome| matches!(outcome, RefreshOutcome::Rotated(_)))
-            .count();
-        assert!(
-            rotated == 1,
-            "one token was spent more than once, or not at all"
-        );
-        assert!(
-            outcomes.iter().any(|outcome| matches!(
-                outcome,
-                RefreshOutcome::Rejected {
-                    reason: RefreshRejection::Replayed,
-                    ..
-                }
-            )),
-            "the losing presentation was not reported as a replay"
-        );
-        assert!(
-            f.store().live_count() == 0,
-            "the replay response did not take the family down"
-        );
-    }
-
-    // -- refusals that are not replays ------------------------------------------------------------
-
-    #[tokio::test]
-    async fn an_unknown_token_is_refused_and_revokes_nothing() {
-        let f = fixture();
-        let clock = FixedClock::at(at(0));
-        f.rotation
-            .begin(subject(), &scopes(&["read"]), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a first pair");
-
-        let stranger = RefreshToken::generate(&f.entropy).expect("a generated token");
-        let outcome = f
-            .rotation
-            .rotate(&stranger.expose(), &f.issuer, &clock, &f.entropy)
-            .await
-            .expect("a store that answered");
-
-        assert!(
-            matches!(
-                outcome,
-                RefreshOutcome::Rejected {
-                    reason: RefreshRejection::Unusable,
-                    revoked: 0
-                }
-            ),
-            "an unknown token was not refused as unusable, or it revoked something"
-        );
-        assert!(
-            f.store().live_count() == 1,
-            "an unknown token disturbed a live family"
-        );
-    }
-
-    #[tokio::test]
-    async fn an_expired_token_is_refused_and_is_not_treated_as_a_replay() {
-        let f = fixture();
-        let first = f
-            .rotation
+        let service = rotation(Store::default());
+        let issued = service
             .begin(
                 subject(),
                 &scopes(&["read"]),
                 &f.issuer,
-                &FixedClock::at(at(0)),
+                &f.clock,
                 &f.entropy,
             )
             .await
-            .expect("a first pair");
+            .expect("a family begins");
 
-        let past_expiry = at(RefreshLifetime::default().get().num_seconds() + 1);
-        let outcome = f
-            .rotation
-            .rotate(
-                &first.refresh.expose(),
+        assert_eq!(service.store_for_test().live_count(), 1);
+        assert_eq!(service.store_for_test().row_count(), 1);
+        // The access token that came with it is genuinely valid.
+        let verified = f
+            .verifier
+            .verify(issued.access.expose(), &f.clock)
+            .expect("the access token verifies");
+        assert_eq!(verified.subject(), subject());
+        assert_eq!(verified.scopes(), &scopes(&["read"]));
+    }
+
+    #[tokio::test]
+    async fn a_rotation_consumes_the_old_token_and_leaves_one_live_successor() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
                 &f.issuer,
-                &FixedClock::at(past_expiry),
+                &f.clock,
                 &f.entropy,
             )
             .await
-            .expect("a store that answered");
+            .expect("a family begins");
 
-        // An expired token is a dead credential, NOT evidence of theft. Revoking the family here
-        // would log a user out for the ordinary act of coming back after a fortnight.
+        let outcome = service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
+        let RefreshOutcome::Rotated(second) = outcome else {
+            panic!("a live token was refused");
+        };
+
+        assert_eq!(second.family, first.family, "the chain changed identity");
+        assert_ne!(
+            second.refresh.digest().as_bytes(),
+            first.refresh.digest().as_bytes(),
+            "the successor is the same secret as its predecessor"
+        );
+        assert_eq!(service.store_for_test().row_count(), 2);
+        assert_eq!(
+            service.store_for_test().live_count(),
+            1,
+            "exactly one token in a family is usable at a time"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_replay_revokes_the_family_and_reports_the_count() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+        let wire = first.refresh.expose();
+
+        let RefreshOutcome::Rotated(second) = service
+            .rotate(&wire, &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered")
+        else {
+            panic!("a live token was refused");
+        };
+
+        // The SAME token again. ASVS V10.4.5.
+        let outcome = service
+            .rotate(&wire, &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
+        let RefreshOutcome::Rejected { reason, revoked } = outcome else {
+            panic!("a replayed token was rotated");
+        };
+        assert_eq!(reason, RefreshRejection::Replayed);
+        // TWO, not one. The count is how many token ROWS the response changed, and the family
+        // holds two: the predecessor, consumed but not yet revoked, and the live successor.
+        // Marking the consumed one is not redundant — `revoked_at` records that the authorisation
+        // ended, which `consumed_at` does not say.
+        assert_eq!(
+            revoked, 2,
+            "the replay response left a row in the family unrevoked"
+        );
+        assert!(
+            service.store_for_test().tombstone(first.family).is_some(),
+            "the family carries no tombstone after a replay"
+        );
+        assert_eq!(service.store_for_test().live_count(), 0);
+
+        // And the successor the legitimate client is holding is dead too.
+        let after = service
+            .rotate(&second.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
+        let RefreshOutcome::Rejected { reason, .. } = after else {
+            panic!("a descendant of a revoked family was rotated");
+        };
+        assert_eq!(reason, RefreshRejection::FamilyRevoked);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_returns_no_tokens_and_writes_nothing() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+        service
+            .revoke(first.family, &f.clock)
+            .await
+            .expect("the family is revoked");
+
+        let before = service.store_for_test().row_count();
+        let outcome = service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
+
         assert!(
             matches!(
                 outcome,
                 RefreshOutcome::Rejected {
-                    reason: RefreshRejection::Unusable,
+                    reason: RefreshRejection::FamilyRevoked,
                     revoked: 0
                 }
             ),
-            "an expired token was treated as a replay"
+            "a revoked family did not refuse the rotation"
+        );
+        assert_eq!(
+            service.store_for_test().row_count(),
+            before,
+            "a refused rotation wrote a row"
         );
     }
 
     #[tokio::test]
     async fn a_malformed_presentation_never_reaches_the_store() {
         let f = fixture();
-        let clock = FixedClock::at(at(0));
-        for malformed in ["", "not-hex", &"z".repeat(64), &"a".repeat(63)] {
-            let outcome = f
-                .rotation
-                .rotate(malformed, &f.issuer, &clock, &f.entropy)
-                .await
-                .expect("a store that answered");
-            assert!(
-                matches!(
-                    outcome,
-                    RefreshOutcome::Rejected {
-                        reason: RefreshRejection::Unusable,
-                        revoked: 0
-                    }
-                ),
-                "a malformed presentation was not refused"
-            );
-        }
+        let service = rotation(Store::default());
+        let outcome = service
+            .rotate("not-a-refresh-token", &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("no store call to fail");
+        assert!(matches!(
+            outcome,
+            RefreshOutcome::Rejected {
+                reason: RefreshRejection::Unusable,
+                ..
+            }
+        ));
         assert!(
-            f.store().queries() == 0,
-            "a malformed presentation was turned into a database query"
+            service.store_for_test().calls().is_empty(),
+            "a malformed value became a query"
         );
     }
 
-    // -- redaction and configuration ----------------------------------------------------------------
+    #[tokio::test]
+    async fn an_unknown_digest_is_refused_by_the_read_before_anything_is_minted() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let stranger = RefreshToken::generate(&f.entropy).expect("a generated token");
+
+        let outcome = service
+            .rotate(&stranger.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
+        assert!(matches!(
+            outcome,
+            RefreshOutcome::Rejected {
+                reason: RefreshRejection::Unusable,
+                ..
+            }
+        ));
+        assert_eq!(
+            service.store_for_test().calls(),
+            vec!["grant_for"],
+            "an unknown digest reached the decision"
+        );
+    }
 
     #[tokio::test]
-    async fn a_refresh_token_never_renders_itself() {
+    async fn the_decision_comes_after_the_read_and_nothing_is_written_between_them() {
         let f = fixture();
-        let issued = f
-            .rotation
+        let service = rotation(Store::default());
+        let first = service
             .begin(
                 subject(),
                 &scopes(&["read"]),
                 &f.issuer,
-                &FixedClock::at(at(0)),
+                &f.clock,
                 &f.entropy,
             )
             .await
-            .expect("a first pair");
+            .expect("a family begins");
+        service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered");
 
-        let debug = format!("{:?}", issued.refresh);
-        let display = format!("{}", issued.refresh);
-        assert!(
-            debug.contains(REDACTED),
-            "Debug omitted the redaction placeholder"
+        assert_eq!(
+            service.store_for_test().calls(),
+            vec!["begin_family", "grant_for", "advance"],
+            "the rotation wrote outside its single transition"
         );
-        assert!(
-            !debug.contains(&issued.refresh.expose()),
-            "Debug rendered the refresh token"
-        );
-        assert!(
-            display == REDACTED,
-            "Display was not exactly the redaction placeholder"
-        );
+    }
 
-        // And the enclosing struct, which is what a caller is most likely to log.
-        let whole = format!("{issued:?}");
-        assert!(
-            !whole.contains(&issued.refresh.expose()),
-            "the rotated pair rendered its refresh token"
+    #[tokio::test]
+    async fn scopes_come_from_the_grant_and_a_rotation_cannot_widen_them() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+
+        let RefreshOutcome::Rotated(second) = service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered")
+        else {
+            panic!("a live token was refused");
+        };
+
+        let verified = f
+            .verifier
+            .verify(second.access.expose(), &f.clock)
+            .expect("the rotated access token verifies");
+        assert_eq!(
+            verified.scopes(),
+            &scopes(&["read"]),
+            "the rotation changed the granted scopes"
         );
+        // `rotate` takes no scope parameter at all: there is no argument a caller could widen.
         assert!(
-            !whole.contains(issued.access.expose()),
-            "the rotated pair rendered its access token"
+            !verified
+                .scopes()
+                .grants(&Scope::new("write").expect("a scope"))
+        );
+    }
+
+    #[tokio::test]
+    async fn the_store_never_holds_the_raw_token() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+
+        let wire = first.refresh.expose();
+        let raw = wire.as_bytes();
+        for digest in service.store_for_test().digests_held() {
+            assert_ne!(
+                digest.as_bytes().as_slice(),
+                raw,
+                "the store holds the presented value rather than its digest"
+            );
+        }
+        // And the digest it DOES hold is the digest of that token.
+        assert!(
+            service
+                .store_for_test()
+                .digests_held()
+                .iter()
+                .any(|held| held.matches(&first.refresh.digest())),
+            "the stored digest is not the digest of the issued token"
         );
     }
 
     #[test]
-    fn a_rejection_has_nowhere_to_put_a_credential() {
-        fn assert_copy<T: Copy>() {}
-        assert_copy::<RefreshRejection>();
-        let rendered = format!(
-            "{:?} {}",
-            RefreshRejection::Replayed,
-            RefreshRejection::Unusable
-        );
-        assert!(
-            rendered.is_ascii(),
-            "a rejection rendered something unexpected"
-        );
-    }
-
-    #[test]
-    fn a_lifetime_out_of_range_is_refused_rather_than_clamped() {
-        assert!(
-            RefreshLifetime::new(MAX_REFRESH_LIFETIME + Duration::seconds(1)).is_err(),
-            "an over-long refresh lifetime was accepted"
-        );
-        assert!(
-            RefreshLifetime::new(Duration::zero()).is_err(),
-            "a zero lifetime was accepted"
-        );
-        assert!(
-            RefreshLifetime::new(MAX_REFRESH_LIFETIME).is_ok(),
-            "the ceiling was refused"
-        );
-        assert!(
-            RefreshLifetime::new(-Duration::days(1)).unwrap_err() == AuthError::PolicyMisconfigured,
-            "a lifetime refusal used the wrong error variant"
-        );
-    }
-
-    #[test]
-    fn family_identifiers_come_from_the_entropy_port_and_differ() {
-        let entropy = Varying::default();
-        let first = FamilyId::generate(&entropy).expect("a generated family");
-        let second = FamilyId::generate(&entropy).expect("a generated family");
-        assert!(
-            first != second,
-            "two generated family identifiers were equal"
-        );
-        assert!(
-            FamilyId::from_bytes(*first.as_bytes()) == first,
-            "a family identifier did not round trip through its bytes"
-        );
-        assert!(
-            first.to_string().len() == FamilyId::BYTES * 2,
-            "a family identifier does not render as fixed-width hex"
-        );
-    }
-
-    #[test]
-    fn a_refresh_token_is_the_refresh_kind_and_nothing_else() {
+    fn debug_and_display_render_no_secret() {
         let entropy = Varying::default();
         let token = RefreshToken::generate(&entropy).expect("a generated token");
-        assert!(
-            RefreshToken::from_wire(&token.expose()).is_some(),
-            "a generated refresh token did not survive its own wire form"
+        let exposed = token.expose();
+
+        let debug = format!("{token:?}");
+        let display = format!("{token}");
+        assert!(!debug.contains(&exposed), "Debug rendered the secret");
+        assert!(!display.contains(&exposed), "Display rendered the secret");
+        assert!(debug.contains(REDACTED));
+        assert_eq!(display, REDACTED);
+    }
+
+    #[test]
+    fn an_identifier_renders_as_hex_and_round_trips() {
+        let family = FamilyId::from_bytes([0xab_u8; FamilyId::BYTES]);
+        assert_eq!(family.to_string(), "ab".repeat(FamilyId::BYTES));
+        assert_eq!(FamilyId::from_bytes(*family.as_bytes()), family);
+
+        let token = RefreshTokenId::from_bytes([0x0f_u8; RefreshTokenId::BYTES]);
+        assert_eq!(token.to_string(), "0f".repeat(RefreshTokenId::BYTES));
+        assert_eq!(RefreshTokenId::from_bytes(*token.as_bytes()), token);
+    }
+
+    #[test]
+    fn a_lifetime_outside_the_bounds_is_refused_rather_than_clamped() {
+        assert_eq!(
+            RefreshLifetime::new(Duration::zero()),
+            Err(AuthError::PolicyMisconfigured)
         );
-        assert!(
-            RefreshToken::from_wire("").is_none(),
-            "an empty presentation parsed"
+        assert_eq!(
+            RefreshLifetime::new(MAX_REFRESH_LIFETIME + Duration::seconds(1)),
+            Err(AuthError::PolicyMisconfigured)
         );
-        assert!(
-            RefreshToken::from_wire(&token.expose().to_uppercase()).is_none(),
-            "an upper-case presentation parsed, so two renderings would name one token"
+        assert_eq!(
+            RefreshLifetime::new(MAX_REFRESH_LIFETIME)
+                .expect("the ceiling itself is allowed")
+                .get(),
+            MAX_REFRESH_LIFETIME
+        );
+        assert_eq!(
+            FamilyLifetime::new(Duration::zero()),
+            Err(AuthError::PolicyMisconfigured)
+        );
+        assert_eq!(
+            FamilyLifetime::new(MAX_REFRESH_LIFETIME + Duration::seconds(1)),
+            Err(AuthError::PolicyMisconfigured)
+        );
+        assert_eq!(FamilyLifetime::default().get(), MAX_REFRESH_LIFETIME);
+        assert_eq!(RefreshLifetime::default().get(), Duration::days(14));
+    }
+
+    #[tokio::test]
+    async fn a_token_never_outlives_the_family_it_belongs_to() {
+        let f = fixture();
+        // A chain shorter than one token's lifetime: the token must be cut down to the chain.
+        let service = RefreshRotation::new(
+            Store::default(),
+            RefreshLifetime::new(Duration::days(14)).expect("a bounded lifetime"),
+            FamilyLifetime::new(Duration::hours(1)).expect("a bounded chain"),
+        );
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+
+        let expiry = service
+            .store_for_test()
+            .expiry_of(&first.refresh.digest())
+            .expect("the first token was stored");
+        assert_eq!(
+            expiry,
+            at(3600),
+            "the first token outlives the chain it belongs to"
+        );
+
+        let RefreshOutcome::Rotated(second) = service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect("the store answered")
+        else {
+            panic!("a live token was refused");
+        };
+        let successor_expiry = service
+            .store_for_test()
+            .expiry_of(&second.refresh.digest())
+            .expect("the successor was stored");
+        assert_eq!(
+            successor_expiry,
+            at(3600),
+            "a rotation extended the chain past its absolute end"
         );
     }
 
-    /// Builds a verifier for `key`, for the one test that must read a claim back out.
-    fn verifier_for(key: VerifyingKey) -> AccessTokenVerifier {
-        AccessTokenVerifier::new(
-            Issuer::new("https://renvor.test/issuer").expect("a well-formed issuer"),
-            [Audience::new("https://renvor.test/api").expect("a well-formed audience")],
-            KeyRing::new(vec![key]).expect("a bounded ring"),
-            Skew::default(),
-        )
-        .expect("a configured verifier")
+    #[tokio::test]
+    async fn an_expired_family_refuses_a_rotation() {
+        let f = fixture();
+        let service = RefreshRotation::new(
+            Store::default(),
+            RefreshLifetime::new(Duration::hours(2)).expect("a bounded lifetime"),
+            FamilyLifetime::new(Duration::hours(1)).expect("a bounded chain"),
+        );
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+
+        let later = FixedClock::at(at(3601));
+        let outcome = service
+            .rotate(&first.refresh.expose(), &f.issuer, &later, &f.entropy)
+            .await
+            .expect("the store answered");
+        assert!(
+            matches!(
+                outcome,
+                RefreshOutcome::Rejected {
+                    reason: RefreshRejection::Unusable,
+                    ..
+                }
+            ),
+            "an expired chain was rotated"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deliberate_revocation_is_monotonic() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+
+        let revoked = service
+            .revoke(first.family, &f.clock)
+            .await
+            .expect("the family is revoked");
+        assert_eq!(revoked, 1);
+        let first_tombstone = service
+            .store_for_test()
+            .tombstone(first.family)
+            .expect("a tombstone");
+
+        let again = service
+            .revoke(first.family, &FixedClock::at(at(600)))
+            .await
+            .expect("a second revocation answers");
+        assert_eq!(again, 0, "a second revocation revoked rows a second time");
+        assert_eq!(
+            service.store_for_test().tombstone(first.family),
+            Some(first_tombstone),
+            "a second revocation moved the tombstone forward"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_store_failure_is_an_error_and_never_a_refusal() {
+        let f = fixture();
+        let service = rotation(Store::default());
+        let first = service
+            .begin(
+                subject(),
+                &scopes(&["read"]),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
+            .await
+            .expect("a family begins");
+        service
+            .store_for_test()
+            .fail_advance
+            .store(1, Ordering::SeqCst);
+
+        let error = service
+            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .await
+            .expect_err("a failing store must not look like a refusal");
+        assert_eq!(error, AuthError::NotPermitted);
+        // FIELDLESS. There is nowhere in the error for the driver's text to be.
+        assert_eq!(error.to_string(), "the operation is not permitted");
+    }
+
+    #[test]
+    fn every_rejection_reason_renders_a_static_description() {
+        for reason in [
+            RefreshRejection::Unusable,
+            RefreshRejection::Replayed,
+            RefreshRejection::FamilyRevoked,
+        ] {
+            let rendered = reason.to_string();
+            assert!(!rendered.is_empty());
+            assert!(
+                !rendered.contains("rv-"),
+                "a rejection description carries a token prefix"
+            );
+        }
     }
 }

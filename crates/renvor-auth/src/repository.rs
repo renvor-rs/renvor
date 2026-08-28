@@ -207,7 +207,64 @@ pub trait SingleUseTokenRepository: Send + Sync {
 
 /// The refresh-token store (FR-040 … FR-042). Part of API token mode, so it is behind `tokens`.
 ///
-/// # Why this port cannot answer `Option`, where [`SingleUseTokenRepository`] can
+/// # This port was redesigned, and the reason is a defect that was in it
+///
+/// The first shape had three independent methods — `consume`, `issue`, `revoke_family` — and the
+/// rotation service called them in that order. Against a *fake* repository whose async methods
+/// contain no `.await`, `tokio::join!` runs each rotation effectively to completion before the
+/// next starts, so a two-caller race never interleaved and the suite was green. Against a real
+/// database it interleaves like this:
+///
+/// ```text
+/// A: consume(old)      -> Consumed          A won the race
+/// B: consume(old)      -> Replayed          B lost, and correctly detects the replay
+/// B: revoke_family(f)  -> revokes every row THAT EXISTS RIGHT NOW
+/// A: issue(successor)  -> INSERT ... revoked_at = NULL
+///                         the revoked family is live again
+/// ```
+///
+/// No ordering of three separate statements fixes that, because the successor does not exist when
+/// the revocation runs. **The transition has to be one transaction**, and the family has to have a
+/// durable row of its own so that there is something to hold a lock on and something to carry a
+/// tombstone.
+///
+/// # The shape that replaces it
+///
+/// ```text
+/// rv_auth_refresh_family   id, user_id, scopes, created_at, expires_at, revoked_at
+///        ^ one row per login: the IMMUTABLE grant, plus the monotonic tombstone
+///        |
+/// rv_auth_refresh          id, family_id, token_hash, issued_at, expires_at,
+///                          consumed_at, replaced_by, revoked_at
+///          ^ the chain. No user and no scopes: they are facts about the FAMILY, and a
+///            copy on every token row is a copy that can disagree with the original.
+/// ```
+///
+/// [`Self::advance`] locks the family, then the token, revalidates both, and either consumes and
+/// inserts **in one transaction** or refuses. A revocation and an insertion into the same family
+/// can no longer interleave, because the second cannot begin until the first commits.
+///
+/// # Why the caller reads before it decides, and why that is safe
+///
+/// Minting an access token needs the subject and the scopes, and signing after the successor is
+/// durable would risk a live refresh token whose access token was never handed out. So the service
+/// reads the grant with [`Self::grant_for`], prepares both secrets **in memory**, and only then
+/// calls [`Self::advance`].
+///
+/// That preliminary read grants no authority. Every field it returns is immutable for the life of
+/// the row — a token's `family_id` never changes, and a family's `user_id`, `scopes` and
+/// `expires_at` are written once by [`Self::begin_family`] and never updated — so the value cannot
+/// go stale in a direction that matters. Whether the rotation *happens* is decided entirely by
+/// `advance`, under the lock, and a caller that ignored a refusal would still have written nothing.
+///
+/// # There is deliberately no generic "insert a token into a family"
+///
+/// The old `issue` was exactly that, and it is the method the interleaving above needed. A
+/// successor can now be created **only** by `advance`, in the same transaction that consumed its
+/// predecessor and revalidated the tombstone, and a first token only by `begin_family`, which
+/// creates the family alongside it.
+///
+/// # Why this port answers `Replayed` where [`SingleUseTokenRepository`] answers `None`
 ///
 /// [`SingleUseTokenRepository::consume`] deliberately returns one answer for "unknown", "already
 /// consumed", and "expired": telling the holder of a stale password-reset link which of the three
@@ -219,46 +276,80 @@ pub trait SingleUseTokenRepository: Send + Sync {
 /// distinguish a replay from an unknown token cannot implement that sentence. The distinction is
 /// still never given to the *presenter*: [`crate::refresh::RefreshRejection`] narrows it back down
 /// before anything leaves the crate.
-///
-/// # One statement decides the winner, and a later read is safe
-///
-/// [`Self::consume`] must be a **single conditional statement** whose `WHERE` clause carries the
-/// preconditions — unconsumed, unexpired, unrevoked family — exactly as
-/// [`SingleUseTokenRepository`] requires, so two concurrent presentations of one valid token
-/// produce **exactly one** rotation on all four rows.
-///
-/// When that statement affects no row, the implementation may then read the row to say *why*. That
-/// second read does not need to be in the same transaction, because every state it distinguishes is
-/// **terminal**: a consumed token is never unconsumed again, and a revoked family is never
-/// un-revoked. The diagnosis cannot go stale in the direction that matters.
 #[cfg(feature = "tokens")]
 pub trait RefreshTokenRepository: Send + Sync {
-    /// Stores a newly issued refresh token. **Only its digest** — FR-041.
+    /// Creates a family and its first token **in one transaction**.
+    ///
+    /// Both or neither. A family with no token is an authorisation nobody can exercise and nothing
+    /// will ever clean up; a token with no family has no grant to carry and no tombstone to check.
     ///
     /// # Errors
     ///
     /// Any [`DatabaseError`].
-    fn issue(
+    fn begin_family(
         &self,
-        record: crate::refresh::NewRefreshToken,
+        family: crate::refresh::NewRefreshFamily,
     ) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 
-    /// Atomically consumes the token matching `digest`, and reports what was observed.
+    /// Reads the immutable grant behind a presented digest, if the digest names a token at all.
+    ///
+    /// **This grants nothing.** It reports what a rotation *would* carry forward so the caller can
+    /// prepare the secrets before the decision; [`Self::advance`] is the decision. It answers for
+    /// consumed, expired and revoked tokens too — the grant is a fact about the family, and
+    /// withholding it here would only move the same read inside the transaction.
     ///
     /// # Errors
     ///
     /// Any [`DatabaseError`].
-    fn consume(
+    fn grant_for(
         &self,
         digest: &SecretDigest,
-        now: DateTime<Utc>,
-    ) -> impl Future<Output = Result<crate::refresh::RefreshConsumption, DatabaseError>> + Send;
+    ) -> impl Future<Output = Result<Option<crate::refresh::RefreshGrant>, DatabaseError>> + Send;
 
-    /// Revokes **every** token in `family`, consumed or not, and returns how many were affected.
+    /// The one atomic transition: consume the presented token and insert its successor, **or**
+    /// refuse and — for a replay — tombstone the family, all in a single transaction.
     ///
-    /// This is the ASVS V10.4.5 response to a detected replay. It returns a count so a caller can
-    /// assert the effect rather than assume it — a revocation that silently affected nothing is the
-    /// failure mode this signature exists to make visible.
+    /// # What the implementation must do, in this order
+    ///
+    /// 1. Find the presented token's family. Unknown digest → [`crate::refresh::RefreshTransition::Unusable`],
+    ///    with nothing written.
+    /// 2. Lock the **family** row, then the **token** row. Always that order: two transitions on
+    ///    one family take the same locks in the same sequence, so they queue rather than deadlock.
+    /// 3. Revalidate under the lock. A revoked or expired family →
+    ///    [`crate::refresh::RefreshTransition::FamilyRevoked`] or [`crate::refresh::RefreshTransition::Unusable`], and **no other
+    ///    family's state may change**.
+    /// 4. A token already consumed or revoked → the replay response: write the family's tombstone
+    ///    if it is not already set, revoke every unrevoked token in the family, and return
+    ///    [`crate::refresh::RefreshTransition::Replayed`] with the count. In the same transaction.
+    /// 5. A live, unexpired token → consume it, record `replaced_by`, and insert the successor.
+    ///    In the same transaction. Return [`crate::refresh::RefreshTransition::Advanced`].
+    ///
+    /// A successor may **never** be inserted into a family whose tombstone is set. That is what
+    /// step 2's lock buys: a concurrent replay response cannot land between step 3 and step 5.
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`]. A failure must roll back the whole transition — a consumed
+    /// predecessor with no successor is a silently ended session, and a successor with a live
+    /// predecessor is two valid tokens where the design promises one.
+    fn advance(
+        &self,
+        request: crate::refresh::AdvanceRequest<'_>,
+    ) -> impl Future<Output = Result<crate::refresh::RefreshTransition, DatabaseError>> + Send;
+
+    /// Revokes `family` outright: the tombstone, and every token still live in it.
+    ///
+    /// **Not part of rotation** — the replay response lives inside [`Self::advance`], where it can
+    /// be atomic with the check that detected it. This is the deliberate operation: a sign-out, or
+    /// an administrator ending a session.
+    ///
+    /// The tombstone is **monotonic**. A family revoked at `t1` and revoked again at `t2` keeps
+    /// `t1`: the moment authorisation ended is the fact worth keeping, and a later write that moved
+    /// it forward would make the audit trail describe the second call rather than the event.
+    ///
+    /// Returns how many token rows were affected, so a caller can assert the effect rather than
+    /// assume it — a revocation that silently touched nothing is the failure mode this signature
+    /// exists to make visible.
     ///
     /// # Errors
     ///

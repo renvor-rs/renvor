@@ -110,6 +110,34 @@ for our users and not only for us.
 The refresh half **adds no dependency**: `Opaque` and `SecretDigest` are built, and already give
 hashing at rest and a digest-keyed store.
 
+#### The refresh store is one atomic transition over a durable family row
+
+*Added 2026-08-29, while this record was still `proposed`. The first implementation of the row above
+was withdrawn; recording the correction here rather than in a second ADR, because it is the same
+decision — "family-wide on replay" — implemented in a shape that can actually deliver it.*
+
+The store first offered three independent operations: `consume`, `issue`, `revoke_family`. It could
+not deliver family-wide revocation, and a real database shows why:
+
+```text
+A: consume(old)      -> Consumed
+B: consume(old)      -> Replayed
+B: revoke_family(f)  -> revokes every row THAT EXISTS RIGHT NOW
+A: issue(successor)  -> INSERT ... revoked_at = NULL     <- the revoked family is live again
+```
+
+No ordering of three statements fixes it: the successor does not exist when the revocation runs.
+So the family became **a durable row of its own** — carrying the immutable subject and scope grant,
+an absolute chain expiry, and a monotonic tombstone — and rotation became **one transaction** that
+locks the family, then the token, revalidates both, and either consumes-and-inserts or refuses.
+
+There is deliberately **no generic "insert a token into a family"**. A successor can be created only
+by that transition, while it holds the family lock, having just revalidated the tombstone.
+
+The same table also had no scopes column, so no adapter could return the grant this record's
+"family-wide" revocation depends on without inventing privileges. Both defects were structural,
+which is why the schema changed rather than the SQL.
+
 ### 2. The verifier shape
 
 ```

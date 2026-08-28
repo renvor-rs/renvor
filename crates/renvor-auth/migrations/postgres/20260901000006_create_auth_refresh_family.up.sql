@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_refresh_family (id BYTEA PRIMARY KEY, user_id BYTEA NOT NULL REFERENCES rv_auth_user(id) ON DELETE CASCADE, scopes VARCHAR(2079) NOT NULL, created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ);
