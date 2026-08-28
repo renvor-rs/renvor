@@ -22,6 +22,7 @@
 
 pub mod clock;
 pub mod cookie;
+pub mod csrf;
 pub mod error;
 pub mod mail;
 pub mod opaque;
@@ -33,6 +34,7 @@ pub mod subject;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use cookie::{CookiePolicy, CookieRejection, SameSiteChoice, SetCookie};
+pub use csrf::{Credential, CsrfKey, CsrfRejection, CsrfToken, RequestKind};
 pub use error::AuthError;
 pub use mail::{MailError, MailKind, MailPort, OutgoingMail, RecordingMailSink};
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};

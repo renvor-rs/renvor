@@ -71,7 +71,7 @@ pub enum SameSiteChoice {
     /// `PATCH`, `DELETE` — while still arriving when a user follows a link from their mail client,
     /// which is the flow a verification or reset link depends on.
     ///
-    /// It is **defence in depth, not the defence**. The CSRF control in `crate::csrf` does not
+    /// It is **defence in depth, not the defence**. The CSRF control in [`crate::csrf`] does not
     /// assume any `SameSite` value, because `SameSite` is a user-agent behaviour and a server that
     /// rests its CSRF story on one is trusting the client.
     #[default]
