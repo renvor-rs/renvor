@@ -504,7 +504,19 @@ mod tests {
     #[test]
     fn a_method_this_crate_does_not_know_is_treated_as_state_changing() {
         // Fail closed. The failure a lenient classifier produces is an unprotected write.
-        for method in ["QUERY", "LOCK", "", "post "] {
+        // The lengths matter as much as the names: F-M31 survived a first run because every
+        // method here was six characters or fewer, so a classifier keyed on LENGTH slipped past.
+        // `PROPPATCH`, `MKCALENDAR` and `CONNECT` are all real, all longer, and all write.
+        for method in [
+            "QUERY",
+            "LOCK",
+            "",
+            "post ",
+            "CONNECT",
+            "PROPPATCH",
+            "MKCALENDAR",
+            "VERSION-CONTROL",
+        ] {
             assert_eq!(
                 classify(method),
                 RequestKind::StateChanging,
