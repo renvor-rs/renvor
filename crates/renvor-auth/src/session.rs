@@ -588,23 +588,36 @@ mod tests {
     #[derive(Default)]
     struct MemoryStore {
         rows: Mutex<Vec<([u8; 32], Row)>>,
-        fail: Mutex<bool>,
+        /// How many further calls succeed before one fails. `None` means never fail.
+        fail_after: Mutex<Option<usize>>,
     }
 
     impl MemoryStore {
         fn fail_next(&self) {
-            *self.fail.lock().expect("test lock") = true;
+            self.fail_after(0);
+        }
+
+        /// Lets `calls` more calls through, then fails one. `rotate` issues three statements, so
+        /// failing "the next" cannot reach the one that matters.
+        fn fail_after(&self, calls: usize) {
+            *self.fail_after.lock().expect("test lock") = Some(calls);
         }
 
         fn check(&self) -> Result<(), DatabaseError> {
-            let mut flag = self.fail.lock().expect("test lock");
-            if *flag {
-                *flag = false;
-                return Err(renvor_database::DatabaseError::new(
-                    renvor_database::DatabaseErrorKind::ConnectFailed,
-                ));
+            let mut remaining = self.fail_after.lock().expect("test lock");
+            match *remaining {
+                Some(0) => {
+                    *remaining = None;
+                    Err(renvor_database::DatabaseError::new(
+                        renvor_database::DatabaseErrorKind::ConnectFailed,
+                    ))
+                }
+                Some(more) => {
+                    *remaining = Some(more - 1);
+                    Ok(())
+                }
+                None => Ok(()),
             }
-            Ok(())
         }
 
         fn live_rows(&self) -> usize {
@@ -1197,6 +1210,35 @@ mod tests {
             0,
             "rotating a dead session created a live one"
         );
+    }
+
+    #[tokio::test]
+    async fn a_rotation_whose_create_fails_still_retires_the_old_identifier() {
+        // F-M20 SURVIVED its first run against the tests above, and it was right to: swapping
+        // `rotate` to create-before-revoke produces an IDENTICAL happy path, so no successful
+        // rotation can tell the two orders apart. They diverge only when the create fails —
+        // revoke-first logs the subject out (safe), create-first leaves live the very identifier
+        // the rotation existed to retire.
+        let service = service(MemoryStore::default());
+        let (cookie, _) = service.begin(subject(), "", at(9, 0)).await.expect("begin");
+        let header = as_request_header(cookie);
+
+        // rotate() issues touch, then revoke, then create. Fail the third.
+        service.sessions.fail_after(2);
+        assert!(matches!(
+            service.rotate(&header, at(9, 1)).await,
+            Err(ServiceError::Storage(_))
+        ));
+
+        assert_eq!(
+            service.sessions.live_rows(),
+            0,
+            "a half-completed rotation left the old identifier usable"
+        );
+        assert!(matches!(
+            service.authenticate(&header, at(9, 2)).await.expect("ok"),
+            SessionOutcome::Rejected(SessionRejection::NotLive)
+        ));
     }
 
     // ---- the concurrency bound ---------------------------------------------------------------
