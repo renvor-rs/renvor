@@ -822,15 +822,16 @@ mod tests {
         let stored = service.sessions.stored_keys();
         assert_eq!(stored.len(), 1);
         // Positive control: it IS the digest.
-        assert_eq!(
-            stored[0],
-            *SecretDigest::of(&secret).as_bytes(),
+        // Neither comparison uses `assert_eq!`/`assert_ne!`: both print their operands, and in
+        // the failing case `stored[0]` IS the raw session identifier — the exact value this test
+        // exists to keep out of the store, and therefore out of the log.
+        assert!(
+            stored[0] == *SecretDigest::of(&secret).as_bytes(),
             "the store does not hold the digest of the identifier"
         );
         // And it is NOT the identifier, compared byte-to-byte rather than byte-to-hex.
-        assert_ne!(
-            stored[0].as_slice(),
-            raw_bytes(&secret.expose()).as_slice(),
+        assert!(
+            stored[0].as_slice() != raw_bytes(&secret.expose()).as_slice(),
             "the raw session identifier reached the store"
         );
         assert!(service.sessions.holds_digest(&SecretDigest::of(&secret)));
@@ -905,12 +906,12 @@ mod tests {
         // The identifier in the cookie must NOT be what the store holds.
         let raw = header.split_once('=').expect("name=value").1.to_owned();
         for key in service.sessions.stored_keys() {
-            assert_ne!(
+            assert!(
                 crate::cookie::read(&header)
                     .expect("readable")
                     .expose()
-                    .as_bytes(),
-                key.as_slice(),
+                    .as_bytes()
+                    != key.as_slice(),
                 "the store holds the identifier itself, not a digest"
             );
         }
@@ -922,7 +923,12 @@ mod tests {
             .expect("no storage failure")
         {
             SessionOutcome::Live(who) => assert_eq!(who, subject()),
-            other => panic!("expected a live session, got {other:?}"),
+            // Renders the rejection reason only. `SessionRejection` is a closed operator-facing
+            // enum carrying no credential; the whole `SessionOutcome` would carry the
+            // authenticated subject in its other arm.
+            SessionOutcome::Rejected(reason) => {
+                panic!("expected a live session, got a rejection: {reason:?}")
+            }
         }
     }
 
@@ -1327,7 +1333,13 @@ mod tests {
     #[test]
     fn the_service_debug_reveals_no_secret() {
         let rendered = format!("{:?}", service(MemoryStore::default()));
-        assert!(rendered.contains("SessionService"), "{rendered}");
-        assert!(!rendered.to_lowercase().contains("entropy"), "{rendered}");
+        assert!(
+            rendered.contains("SessionService"),
+            "Debug did not name the service"
+        );
+        assert!(
+            !rendered.to_lowercase().contains("entropy"),
+            "Debug named the entropy source"
+        );
     }
 }

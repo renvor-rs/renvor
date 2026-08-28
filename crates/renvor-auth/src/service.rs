@@ -1296,10 +1296,7 @@ mod tests {
 
         let rows = tokens.rows.lock().expect("not poisoned");
         let stored = format!("{:?}", rows[0].digest);
-        assert!(
-            !stored.contains(&raw),
-            "the raw token reached the store: {stored}"
-        );
+        assert!(!stored.contains(&raw), "the raw token reached the store");
         // POSITIVE CONTROL: the stored value is a digest OF that token, not of something else.
         let rebuilt =
             crate::opaque::Opaque::from_wire(crate::opaque::OpaqueKind::Verification, &raw)

@@ -546,15 +546,24 @@ mod tests {
     #[test]
     fn the_key_reveals_nothing_through_debug() {
         let rendered = format!("{:?}", CsrfKey::from_bytes([0xab; 32]));
-        assert!(!rendered.contains("ab"), "{rendered}");
-        assert!(rendered.contains("[redacted]"), "{rendered}");
+        assert!(!rendered.contains("ab"), "Debug rendered the key material");
+        assert!(
+            rendered.contains("[redacted]"),
+            "Debug omitted the redaction placeholder"
+        );
     }
 
     #[test]
     fn the_token_reveals_nothing_through_debug() {
         let token = issue(&key(), &session(1), &entropy()).expect("entropy");
         let rendered = format!("{token:?}");
-        assert!(!rendered.contains('.'), "{rendered}");
-        assert!(rendered.contains("[redacted]"), "{rendered}");
+        assert!(
+            !rendered.contains('.'),
+            "Debug rendered the token's delimiter, and so its parts"
+        );
+        assert!(
+            rendered.contains("[redacted]"),
+            "Debug omitted the redaction placeholder"
+        );
     }
 }

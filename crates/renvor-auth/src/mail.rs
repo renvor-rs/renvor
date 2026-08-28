@@ -212,15 +212,18 @@ mod tests {
         let rendered = format!("{mail:?}");
         assert!(
             !rendered.contains(&mail.token().expose()),
-            "Debug rendered the token: {rendered}"
+            "Debug rendered the token"
         );
         assert!(
             !rendered.contains("ada@example.test"),
-            "Debug rendered the recipient, which is personal data: {rendered}"
+            "Debug rendered the recipient, which is personal data"
         );
         // POSITIVE CONTROL: the kind IS shown, so the redaction is targeted rather than a Debug
         // that prints nothing and would hide a real diagnostic.
-        assert!(rendered.contains("Verification"), "{rendered}");
+        assert!(
+            rendered.contains("Verification"),
+            "Debug did not name the kind"
+        );
     }
 
     #[tokio::test]

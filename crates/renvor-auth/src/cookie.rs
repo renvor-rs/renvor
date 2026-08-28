@@ -327,7 +327,7 @@ mod tests {
         let header = issue(&token(), CookiePolicy::default(), week()).expose_header_value();
         assert!(
             header.starts_with(&format!("{SESSION_COOKIE_NAME}=")),
-            "got [{header}]"
+            "the issued cookie does not carry the `__Host-` prefixed name"
         );
     }
 
@@ -407,9 +407,12 @@ mod tests {
         let rendered = format!("{:?}", issue(&token(), CookiePolicy::default(), week()));
         assert!(
             !rendered.contains(TOKEN),
-            "Debug leaked the session identifier: {rendered}"
+            "Debug leaked the session identifier"
         );
-        assert!(rendered.contains("[redacted]"), "got {rendered}");
+        assert!(
+            rendered.contains("[redacted]"),
+            "Debug omitted the redaction placeholder"
+        );
     }
 
     #[test]
@@ -417,7 +420,7 @@ mod tests {
         let header = expire(CookiePolicy::default()).expose_header_value();
         assert!(
             !header.contains(TOKEN),
-            "the expiry cookie must not restate the value it is expiring: {header}"
+            "the expiry cookie restated the value it is expiring"
         );
     }
 

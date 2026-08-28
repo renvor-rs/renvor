@@ -243,34 +243,42 @@ mod tests {
         //
         // THIS TEST FAILED ON THE FIRST IMPLEMENTATION, which used a derived `Debug` and printed
         // `bytes: [171, 205, 239, 18, ...]`. That is the RED this test exists to have caught.
+        //
+        // NO DIAGNOSTIC BELOW INTERPOLATES THE RENDERING, THE PROBE, OR THE SECRET. A message
+        // that printed `rendered` would put the very credential this test defends into the test
+        // log at exactly the moment the defence failed — reporting the leak by leaking. Each
+        // assertion is identified by a static description, and the loop by its probe index, so a
+        // failure says which check broke without saying what escaped.
         let secret = fixture();
         let rendered = format!("{secret:?}");
-        assert!(rendered.contains(REDACTED), "Debug must redact: {rendered}");
+        assert!(
+            rendered.contains(REDACTED),
+            "Debug omitted the redaction placeholder"
+        );
         assert!(
             !rendered.contains(&secret.expose()),
-            "Debug rendered the secret: {rendered}"
+            "Debug rendered the secret in full"
         );
         // The raw bytes in BOTH renderings a derived Debug could produce.
-        for leaked in ["171", "205", "239", "abcdef"] {
+        for (probe, leaked) in ["171", "205", "239", "abcdef"].into_iter().enumerate() {
             assert!(
                 !rendered.contains(leaked),
-                "Debug leaked raw bytes {leaked:?}: {rendered}"
+                "Debug leaked the raw bytes matched by probe {probe}"
             );
         }
         // ...and the kind is still visible, or the diagnostic is useless.
-        assert!(
-            rendered.contains("Session"),
-            "Debug must name the kind: {rendered}"
-        );
+        assert!(rendered.contains("Session"), "Debug did not name the kind");
     }
 
     #[test]
     fn display_does_not_render_the_secret() {
         let secret = fixture();
         let rendered = format!("{secret}");
-        assert_eq!(
-            rendered, REDACTED,
-            "Display must be exactly the placeholder"
+        // `assert_eq!` would print both operands, and the left one is the leaked rendering
+        // itself. Compared inside `assert!` instead, so the failure names the fault only.
+        assert!(
+            rendered == REDACTED,
+            "Display was not exactly the redaction placeholder"
         );
         assert!(!rendered.contains(&secret.expose()));
     }
@@ -290,9 +298,10 @@ mod tests {
                 u8::from_str_radix(std::str::from_utf8(pair).expect("hex is ascii"), 16)
                     .expect("hex parses");
         }
-        assert_ne!(
-            digest.as_bytes(),
-            &secret_bytes,
+        // `assert_ne!` prints both operands on failure, and in the failing case they are the
+        // raw credential bytes. `assert!` reports the fault without reproducing them.
+        assert!(
+            digest.as_bytes() != &secret_bytes,
             "the digest IS the secret; storing it would put a usable credential in the database"
         );
     }
