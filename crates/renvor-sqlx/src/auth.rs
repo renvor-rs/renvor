@@ -25,6 +25,7 @@ use renvor_auth::repository::{
     CredentialRecord, CredentialRepository, Registration, SingleUseTokenRepository, UserRecord,
     UserRepository,
 };
+use renvor_auth::session::{SessionHandle, SessionRecord, SessionRepository};
 use renvor_auth::subject::UserId;
 use renvor_database::{DatabaseError, DatabaseErrorKind, DatabaseKind};
 
@@ -64,8 +65,9 @@ macro_rules! auth_repositories {
             use super::{
                 CredentialRecord, CredentialRepository, DatabaseError, DatabaseErrorKind,
                 DatabaseKind, DateTime, PasswordHash, Registration, SecretDigest,
-                SingleUseTokenRepository, TokenTable, UserId, UserRecord, UserRepository, Utc,
-                classify_error, into_user, rand_bytes, user_id_from,
+                SessionHandle, SessionRecord, SessionRepository, SingleUseTokenRepository,
+                TokenTable, UserId, UserRecord, UserRepository, Utc, classify_error, digest_from,
+                into_user, rand_bytes, user_id_from,
             };
 
             /// This engine's placeholder rule.
@@ -241,6 +243,180 @@ macro_rules! auth_repositories {
                 }
             }
 
+            /// Reads and writes `rv_auth_session`.
+            #[derive(Clone, Debug)]
+            pub struct SqlxSessionRepository {
+                pool: sqlx::Pool<$driver>,
+            }
+
+            impl SqlxSessionRepository {
+                /// Wraps a pool.
+                #[must_use]
+                pub const fn new(pool: sqlx::Pool<$driver>) -> Self {
+                    Self { pool }
+                }
+            }
+
+            impl SessionRepository for SqlxSessionRepository {
+                async fn create(
+                    &self,
+                    user_id: UserId,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                ) -> Result<(), DatabaseError> {
+                    let id = UserId::from_bytes(rand_bytes()?);
+                    let statement = format!(
+                        "INSERT INTO rv_auth_session (id, user_id, token_hash, created_at, last_seen_at, revoked_at) VALUES ({}, {}, {}, {}, {}, NULL)",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                        KIND.placeholder(4),
+                        KIND.placeholder(5),
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(id.as_bytes().as_slice())
+                        .bind(user_id.as_bytes().as_slice())
+                        .bind(digest.as_bytes().as_slice())
+                        .bind(now)
+                        .bind(now)
+                        .execute(&self.pool)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| classify_error(&error))
+                }
+
+                async fn touch(
+                    &self,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                    idle_cutoff: DateTime<Utc>,
+                    absolute_cutoff: DateTime<Utc>,
+                ) -> Result<Option<SessionRecord>, DatabaseError> {
+                    // ONE STATEMENT carries the liveness predicate, so a concurrent revoke cannot
+                    // slip between a check and a refresh.
+                    //
+                    // `rows_affected` is load-bearing here, and on MySQL that is only sound
+                    // because `sqlx-mysql` negotiates `CLIENT_FOUND_ROWS` — without it MySQL
+                    // reports rows *changed*, and a second request in the same microsecond would
+                    // set `last_seen_at` to the value it already held, report zero, and appear to
+                    // be a signed-out session. The four-row suite pins that with a test that
+                    // touches twice at ONE instant.
+                    let update = format!(
+                        "UPDATE rv_auth_session SET last_seen_at = {} WHERE token_hash = {} AND revoked_at IS NULL AND last_seen_at > {} AND created_at > {}",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                        KIND.placeholder(4),
+                    );
+                    let affected = sqlx::query(sqlx::AssertSqlSafe(update))
+                        .bind(now)
+                        .bind(digest.as_bytes().as_slice())
+                        .bind(idle_cutoff)
+                        .bind(absolute_cutoff)
+                        .execute(&self.pool)
+                        .await
+                        .map_err(|error| classify_error(&error))?
+                        .rows_affected();
+                    if affected == 0 {
+                        // Unknown, revoked, idle, or too old — ONE answer for all four.
+                        return Ok(None);
+                    }
+
+                    let select = format!(
+                        "SELECT user_id, created_at, last_seen_at FROM rv_auth_session WHERE token_hash = {}",
+                        KIND.placeholder(1)
+                    );
+                    let row: Option<(Vec<u8>, DateTime<Utc>, DateTime<Utc>)> =
+                        sqlx::query_as(sqlx::AssertSqlSafe(select))
+                            .bind(digest.as_bytes().as_slice())
+                            .fetch_optional(&self.pool)
+                            .await
+                            .map_err(|error| classify_error(&error))?;
+                    row.map(|(id, created_at, last_seen_at)| {
+                        Ok(SessionRecord {
+                            user_id: user_id_from(&id)?,
+                            created_at,
+                            last_seen_at,
+                        })
+                    })
+                    .transpose()
+                }
+
+                async fn revoke(
+                    &self,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                ) -> Result<bool, DatabaseError> {
+                    // `revoked_at IS NULL` makes this genuinely conditional: exactly one of two
+                    // concurrent logouts changes the row, so exactly one sees `true`. The SET also
+                    // always alters a value, so `rows_affected` is unambiguous on either engine.
+                    let statement = format!(
+                        "UPDATE rv_auth_session SET revoked_at = {} WHERE token_hash = {} AND revoked_at IS NULL",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(now)
+                        .bind(digest.as_bytes().as_slice())
+                        .execute(&self.pool)
+                        .await
+                        .map(|done| done.rows_affected() == 1)
+                        .map_err(|error| classify_error(&error))
+                }
+
+                async fn revoke_all_for(
+                    &self,
+                    user_id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    let statement = format!(
+                        "UPDATE rv_auth_session SET revoked_at = {} WHERE user_id = {} AND revoked_at IS NULL",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(now)
+                        .bind(user_id.as_bytes().as_slice())
+                        .execute(&self.pool)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_error(&error))
+                }
+
+                async fn live_for(
+                    &self,
+                    user_id: UserId,
+                    idle_cutoff: DateTime<Utc>,
+                    absolute_cutoff: DateTime<Utc>,
+                ) -> Result<Vec<SessionHandle>, DatabaseError> {
+                    // The ORDER BY is part of the port's contract, not a convenience: it IS the
+                    // eviction order, and a repository returning newest-first would evict the
+                    // session the subject is using.
+                    let select = format!(
+                        "SELECT token_hash, last_seen_at FROM rv_auth_session WHERE user_id = {} AND revoked_at IS NULL AND last_seen_at > {} AND created_at > {} ORDER BY last_seen_at ASC",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                    );
+                    let rows: Vec<(Vec<u8>, DateTime<Utc>)> =
+                        sqlx::query_as(sqlx::AssertSqlSafe(select))
+                            .bind(user_id.as_bytes().as_slice())
+                            .bind(idle_cutoff)
+                            .bind(absolute_cutoff)
+                            .fetch_all(&self.pool)
+                            .await
+                            .map_err(|error| classify_error(&error))?;
+                    rows.into_iter()
+                        .map(|(hash, last_seen_at)| {
+                            Ok(SessionHandle {
+                                digest: digest_from(&hash)?,
+                                last_seen_at,
+                            })
+                        })
+                        .collect()
+                }
+            }
+
             /// Reads and writes one of the single-use token tables.
             #[derive(Clone, Debug)]
             pub struct SqlxSingleUseTokenRepository {
@@ -364,6 +540,14 @@ pub(crate) fn rand_bytes() -> Result<[u8; 16], DatabaseError> {
         .fill(&mut bytes)
         .map_err(|_| crate::error::record(DatabaseErrorKind::StatementRejected))?;
     Ok(bytes)
+}
+
+/// Rebuilds a `SecretDigest` from the stored `token_hash`.
+pub(crate) fn digest_from(bytes: &[u8]) -> Result<SecretDigest, DatabaseError> {
+    let sized: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| crate::error::record(DatabaseErrorKind::StatementRejected))?;
+    Ok(SecretDigest::from_bytes(sized))
 }
 
 /// Rebuilds a `UserId` from the stored bytes.

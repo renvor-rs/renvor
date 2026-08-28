@@ -29,11 +29,13 @@ macro_rules! seaorm_auth_suite {
                 CredentialRepository as _, Registration, SingleUseTokenRepository as _,
                 UserRepository as _,
             };
+            use renvor_auth::session::SessionRepository as _;
             use renvor_core::observe::entropy::{FixedEntropy, OsEntropy};
             use renvor_database::{Database as _, MigrationSettings};
             use renvor_seaorm::auth::TokenTable;
             use renvor_seaorm::auth::$module::{
-                SeaOrmCredentialRepository, SeaOrmSingleUseTokenRepository, SeaOrmUserRepository,
+                SeaOrmCredentialRepository, SeaOrmSessionRepository,
+                SeaOrmSingleUseTokenRepository, SeaOrmUserRepository,
             };
             use renvor_seaorm::migrate::Migrations;
             use sea_orm::ConnectionTrait as _;
@@ -487,6 +489,358 @@ macro_rules! seaorm_auth_suite {
                 let count: i64 = row.try_get("", "n").expect("reads");
                 assert_eq!(count, 1, "an upsert must not accumulate rows");
                 drop(connection);
+
+                database.close().await.expect("closes");
+            }
+
+            // ---- sessions (batch F) --------------------------------------------------------
+
+            /// Registers one subject and returns its identity.
+            async fn a_subject(
+                users: &SeaOrmUserRepository,
+                email: &str,
+                now: chrono::DateTime<Utc>,
+            ) -> renvor_auth::subject::UserId {
+                match users.register(email, now).await.expect("registers") {
+                    Registration::Created(id) => id,
+                    other => panic!("expected a fresh account, got {other:?}"),
+                }
+            }
+
+            fn a_session_secret() -> Opaque {
+                Opaque::generate(OpaqueKind::Session, &OsEntropy::new()).expect("entropy")
+            }
+
+            #[tokio::test]
+            async fn a_session_row_holds_a_digest_and_never_the_identifier() {
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let user = a_subject(&users, "digest@example.test", now).await;
+
+                let secret = a_session_secret();
+                sessions
+                    .create(user, &SecretDigest::of(&secret), now)
+                    .await
+                    .expect("creates");
+
+                // SCOPED: the acquired connection must return to the pool before `close()`, or
+                // the close waits for a checkout that is still held and reports DeadlineExceeded.
+                let stored: Vec<u8> = {
+                    let connection = database.acquire().await.expect("acquires");
+                    let row = connection
+                        .query_one_raw(sea_orm::Statement::from_string(
+                            connection.get_database_backend(),
+                            "SELECT token_hash FROM rv_auth_session".to_owned(),
+                        ))
+                        .await
+                        .expect("reads")
+                        .expect("one row");
+                    row.try_get("", "token_hash").expect("column")
+                };
+
+                // Positive control: it IS the digest.
+                assert_eq!(
+                    stored.as_slice(),
+                    SecretDigest::of(&secret).as_bytes().as_slice(),
+                    "the row does not hold the digest"
+                );
+                // And it is NOT the identifier. Compared BYTES to BYTES: comparing 32 stored bytes
+                // against a 64-character hex string would pass against any implementation at all.
+                let raw: Vec<u8> = (0..32)
+                    .map(|i| {
+                        u8::from_str_radix(&secret.expose()[i * 2..i * 2 + 2], 16).expect("hex")
+                    })
+                    .collect();
+                assert_ne!(
+                    stored, raw,
+                    "the raw session identifier was written to the database"
+                );
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn two_concurrent_logouts_revoke_exactly_once() {
+                // A rendezvous, not a sleep. `revoke` is ONE conditional UPDATE whose SET always
+                // alters a value, so `rows_affected` is unambiguous on both engines.
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let user = a_subject(&users, "race-logout@example.test", now).await;
+                let secret = a_session_secret();
+                SeaOrmSessionRepository::new(Arc::clone(&database))
+                    .create(user, &SecretDigest::of(&secret), now)
+                    .await
+                    .expect("creates");
+
+                let barrier = Arc::new(tokio::sync::Barrier::new(4));
+                let mut handles = Vec::new();
+                for _ in 0..4 {
+                    let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                    let barrier = Arc::clone(&barrier);
+                    let digest = SecretDigest::of(&secret);
+                    handles.push(tokio::spawn(async move {
+                        barrier.wait().await;
+                        sessions.revoke(&digest, now).await
+                    }));
+                }
+                let mut winners = 0_usize;
+                for handle in handles {
+                    if handle.await.expect("joins").expect("no database fault") {
+                        winners += 1;
+                    }
+                }
+                assert_eq!(winners, 1, "exactly one logout may revoke a live session");
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn touching_twice_at_one_instant_keeps_the_session_live() {
+                // THE MySQL TRAP. `touch` decides liveness from `rows_affected`, and MySQL reports
+                // rows *changed* unless the client negotiated `CLIENT_FOUND_ROWS`. A second touch
+                // at the SAME instant writes `last_seen_at` the value it already holds — zero rows
+                // changed, one row matched. Without the flag this test signs the user out.
+                //
+                // `sqlx-mysql` does set it, and grepping its source is not proof; this is.
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 12, 0, 0).unwrap();
+                let user = a_subject(&users, "same-instant@example.test", now).await;
+                let secret = a_session_secret();
+                let digest = SecretDigest::of(&secret);
+                sessions.create(user, &digest, now).await.expect("creates");
+
+                let idle = now - chrono::Duration::minutes(30);
+                let absolute = now - chrono::Duration::hours(12);
+                for attempt in 1..=3 {
+                    let live = sessions
+                        .touch(&digest, now, idle, absolute)
+                        .await
+                        .expect("no database fault");
+                    assert!(
+                        live.is_some(),
+                        "touch #{attempt} at the same instant reported a dead session"
+                    );
+                }
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn each_expiry_window_refuses_a_session_on_its_own() {
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let start = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let user = a_subject(&users, "windows@example.test", start).await;
+                let secret = a_session_secret();
+                let digest = SecretDigest::of(&secret);
+                sessions
+                    .create(user, &digest, start)
+                    .await
+                    .expect("creates");
+
+                // Positive control first: inside both windows it is live.
+                let inside = start + chrono::Duration::minutes(10);
+                assert!(
+                    sessions
+                        .touch(
+                            &digest,
+                            inside,
+                            inside - chrono::Duration::minutes(30),
+                            inside - chrono::Duration::hours(12)
+                        )
+                        .await
+                        .expect("no fault")
+                        .is_some(),
+                    "the control must be live"
+                );
+
+                // Idle alone: the absolute window is wide, the idle one has lapsed.
+                let idled = inside + chrono::Duration::hours(1);
+                assert!(
+                    sessions
+                        .touch(
+                            &digest,
+                            idled,
+                            idled - chrono::Duration::minutes(30),
+                            idled - chrono::Duration::days(30)
+                        )
+                        .await
+                        .expect("no fault")
+                        .is_none(),
+                    "the inactivity window did not end the session"
+                );
+
+                // Absolute alone: activity is recent, the overall window has lapsed.
+                let aged = inside + chrono::Duration::hours(20);
+                assert!(
+                    sessions
+                        .touch(
+                            &digest,
+                            aged,
+                            aged - chrono::Duration::days(30),
+                            aged - chrono::Duration::hours(12)
+                        )
+                        .await
+                        .expect("no fault")
+                        .is_none(),
+                    "the overall window did not end the session"
+                );
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn a_revoked_session_can_never_be_touched_again() {
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let user = a_subject(&users, "revoked@example.test", now).await;
+                let secret = a_session_secret();
+                let digest = SecretDigest::of(&secret);
+                sessions.create(user, &digest, now).await.expect("creates");
+
+                assert!(sessions.revoke(&digest, now).await.expect("revokes"));
+                let later = now + chrono::Duration::minutes(1);
+                assert!(
+                    sessions
+                        .touch(
+                            &digest,
+                            later,
+                            later - chrono::Duration::minutes(30),
+                            later - chrono::Duration::hours(12)
+                        )
+                        .await
+                        .expect("no fault")
+                        .is_none(),
+                    "a revoked session was replayed"
+                );
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn live_sessions_come_back_least_recently_seen_first() {
+                // The ORDER BY is the eviction order and therefore part of the port's contract:
+                // newest-first would evict the session the subject is using right now.
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let start = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let user = a_subject(&users, "order@example.test", start).await;
+
+                let mut digests = Vec::new();
+                for minute in 0..3 {
+                    let secret = a_session_secret();
+                    let digest = SecretDigest::of(&secret);
+                    sessions
+                        .create(user, &digest, start + chrono::Duration::minutes(minute))
+                        .await
+                        .expect("creates");
+                    digests.push(digest);
+                }
+
+                // Refresh the OLDEST so it becomes the newest by activity.
+                let refreshed = start + chrono::Duration::minutes(10);
+                sessions
+                    .touch(
+                        &digests[0],
+                        refreshed,
+                        refreshed - chrono::Duration::minutes(30),
+                        refreshed - chrono::Duration::hours(12),
+                    )
+                    .await
+                    .expect("no fault")
+                    .expect("still live");
+
+                let now = start + chrono::Duration::minutes(11);
+                let live = sessions
+                    .live_for(
+                        user,
+                        now - chrono::Duration::minutes(30),
+                        now - chrono::Duration::hours(12),
+                    )
+                    .await
+                    .expect("lists");
+                assert_eq!(live.len(), 3);
+                let order: Vec<[u8; 32]> = live.iter().map(|h| *h.digest.as_bytes()).collect();
+                assert_eq!(
+                    order,
+                    vec![
+                        *digests[1].as_bytes(),
+                        *digests[2].as_bytes(),
+                        *digests[0].as_bytes()
+                    ],
+                    "live_for must order by activity, not by creation"
+                );
+
+                database.close().await.expect("closes");
+            }
+
+            #[tokio::test]
+            async fn revoking_every_session_leaves_another_subject_untouched() {
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SeaOrmUserRepository::new(Arc::clone(&database));
+                let sessions = SeaOrmSessionRepository::new(Arc::clone(&database));
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let mine = a_subject(&users, "mine@example.test", now).await;
+                let theirs = a_subject(&users, "theirs@example.test", now).await;
+
+                for _ in 0..3 {
+                    sessions
+                        .create(mine, &SecretDigest::of(&a_session_secret()), now)
+                        .await
+                        .expect("creates");
+                }
+                let survivor = a_session_secret();
+                let survivor_digest = SecretDigest::of(&survivor);
+                sessions
+                    .create(theirs, &survivor_digest, now)
+                    .await
+                    .expect("creates");
+
+                let revoked = sessions.revoke_all_for(mine, now).await.expect("revokes");
+                assert_eq!(revoked, 3);
+
+                let later = now + chrono::Duration::minutes(1);
+                assert!(
+                    sessions
+                        .touch(
+                            &survivor_digest,
+                            later,
+                            later - chrono::Duration::minutes(30),
+                            later - chrono::Duration::hours(12)
+                        )
+                        .await
+                        .expect("no fault")
+                        .is_some(),
+                    "another subject's session was revoked"
+                );
+                // And revoking again finds nothing left to do.
+                assert_eq!(
+                    sessions.revoke_all_for(mine, later).await.expect("again"),
+                    0
+                );
 
                 database.close().await.expect("closes");
             }

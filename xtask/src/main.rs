@@ -1632,8 +1632,11 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// so that a reader comparing this against phase evidence written earlier sees the change rather
 /// than a discrepancy.
 ///
-/// Forty-two entries, and a missing one fails the gate whichever suite it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 46] = [
+/// **Forty-six before batch F**, and the prose above said "forty-two" while the array said
+/// forty-six — a stale count left by an earlier batch. Corrected here rather than left to be
+/// noticed again: fifty-four entries, and a missing one fails the gate whichever suite it belongs
+/// to.
+const ROW_EVIDENCE: [(&str, &str, &str); 54] = [
     (
         "renvor-sqlx",
         "shared_contract",
@@ -1873,6 +1876,57 @@ const ROW_EVIDENCE: [(&str, &str, &str); 46] = [
         "renvor-seaorm",
         "auth_repositories",
         "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+    ),
+    // ---- PHASE 009 BATCH F: the session rows ----
+    //
+    // Two tests, four rows each. The first is the revocation race — exactly one of four concurrent
+    // logouts may revoke a live session, and that is a property of the database rather than of the
+    // code that calls it.
+    //
+    // The second exists because of a difference between the engines that no unit test can reach:
+    // `touch` decides liveness from `rows_affected`, and MySQL reports rows *changed* unless the
+    // client negotiated `CLIENT_FOUND_ROWS`. Two requests in one microsecond write `last_seen_at`
+    // the value it already holds — zero changed, one matched — and the user is signed out. Reading
+    // `sqlx-mysql`'s source says the flag is set; only this says it stayed set.
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::two_concurrent_logouts_revoke_exactly_once",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::two_concurrent_logouts_revoke_exactly_once",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::two_concurrent_logouts_revoke_exactly_once",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::two_concurrent_logouts_revoke_exactly_once",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::touching_twice_at_one_instant_keeps_the_session_live",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::touching_twice_at_one_instant_keeps_the_session_live",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::touching_twice_at_one_instant_keeps_the_session_live",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::touching_twice_at_one_instant_keeps_the_session_live",
     ),
 ];
 

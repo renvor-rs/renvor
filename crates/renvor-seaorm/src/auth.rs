@@ -36,6 +36,7 @@ use renvor_auth::repository::{
     CredentialRecord, CredentialRepository, Registration, SingleUseTokenRepository, UserRecord,
     UserRepository,
 };
+use renvor_auth::session::{SessionHandle, SessionRecord, SessionRepository};
 use renvor_auth::subject::UserId;
 use renvor_database::{DatabaseError, DatabaseErrorKind, DatabaseKind};
 
@@ -80,6 +81,14 @@ pub(crate) fn rand_bytes() -> Result<[u8; 16], DatabaseError> {
     Ok(bytes)
 }
 
+/// Rebuilds a `SecretDigest` from the stored `token_hash`.
+pub(crate) fn digest_from(bytes: &[u8]) -> Result<SecretDigest, DatabaseError> {
+    let sized: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| crate::error::record(DatabaseErrorKind::StatementRejected))?;
+    Ok(SecretDigest::from_bytes(sized))
+}
+
 /// Rebuilds a `UserId` from stored bytes.
 pub(crate) fn user_id_from(bytes: &[u8]) -> Result<UserId, DatabaseError> {
     let sized: [u8; 16] = bytes
@@ -96,8 +105,9 @@ macro_rules! auth_repositories {
             use super::{
                 Arc, CredentialRecord, CredentialRepository, DatabaseError, DatabaseErrorKind,
                 DatabaseKind, DateTime, PasswordHash, Registration, SeaOrmDatabase, SecretDigest,
-                SingleUseTokenRepository, TokenTable, UserId, UserRecord, UserRepository, Utc,
-                classify_db_error, rand_bytes, user_id_from,
+                SessionHandle, SessionRecord, SessionRepository, SingleUseTokenRepository,
+                TokenTable, UserId, UserRecord, UserRepository, Utc, classify_db_error, digest_from,
+                rand_bytes, user_id_from,
             };
             use sea_orm::ConnectionTrait as _;
 
@@ -319,6 +329,210 @@ macro_rules! auth_repositories {
                         password_hash: PasswordHash::from_phc(phc),
                         must_change,
                     }))
+                }
+            }
+
+            /// Reads and writes `rv_auth_session`.
+            #[derive(Clone, Debug)]
+            pub struct SeaOrmSessionRepository {
+                database: Arc<SeaOrmDatabase<$driver>>,
+            }
+
+            impl SeaOrmSessionRepository {
+                /// Wraps a database handle.
+                #[must_use]
+                pub const fn new(database: Arc<SeaOrmDatabase<$driver>>) -> Self {
+                    Self { database }
+                }
+            }
+
+            impl SessionRepository for SeaOrmSessionRepository {
+                async fn create(
+                    &self,
+                    user_id: UserId,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                ) -> Result<(), DatabaseError> {
+                    let connection = self.database.acquire().await?;
+                    let id = UserId::from_bytes(rand_bytes()?);
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "INSERT INTO rv_auth_session (id, user_id, token_hash, created_at, last_seen_at, revoked_at) VALUES ({}, {}, {}, {}, {}, NULL)",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                            KIND.placeholder(4),
+                            KIND.placeholder(5),
+                        ),
+                        [
+                            id.as_bytes().to_vec().into(),
+                            user_id.as_bytes().to_vec().into(),
+                            digest.as_bytes().to_vec().into(),
+                            now.into(),
+                            now.into(),
+                        ],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| classify_db_error(&error))
+                }
+
+                async fn touch(
+                    &self,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                    idle_cutoff: DateTime<Utc>,
+                    absolute_cutoff: DateTime<Utc>,
+                ) -> Result<Option<SessionRecord>, DatabaseError> {
+                    // ONE STATEMENT carries the liveness predicate; see the SQLx twin for why
+                    // `rows_affected` is trustworthy on MySQL here.
+                    let connection = self.database.acquire().await?;
+                    let update = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "UPDATE rv_auth_session SET last_seen_at = {} WHERE token_hash = {} AND revoked_at IS NULL AND last_seen_at > {} AND created_at > {}",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                            KIND.placeholder(4),
+                        ),
+                        [
+                            now.into(),
+                            digest.as_bytes().to_vec().into(),
+                            idle_cutoff.into(),
+                            absolute_cutoff.into(),
+                        ],
+                    );
+                    let affected = connection
+                        .execute_raw(update)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?
+                        .rows_affected();
+                    if affected == 0 {
+                        // Unknown, revoked, idle, or too old — ONE answer for all four.
+                        return Ok(None);
+                    }
+
+                    let select = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "SELECT user_id, created_at, last_seen_at FROM rv_auth_session WHERE token_hash = {}",
+                            KIND.placeholder(1)
+                        ),
+                        [digest.as_bytes().to_vec().into()],
+                    );
+                    let Some(row) = connection
+                        .query_one_raw(select)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?
+                    else {
+                        return Ok(None);
+                    };
+                    let id: Vec<u8> = row
+                        .try_get("", "user_id")
+                        .map_err(|error| classify_db_error(&error))?;
+                    let created_at: DateTime<Utc> = row
+                        .try_get("", "created_at")
+                        .map_err(|error| classify_db_error(&error))?;
+                    let last_seen_at: DateTime<Utc> = row
+                        .try_get("", "last_seen_at")
+                        .map_err(|error| classify_db_error(&error))?;
+                    Ok(Some(SessionRecord {
+                        user_id: user_id_from(&id)?,
+                        created_at,
+                        last_seen_at,
+                    }))
+                }
+
+                async fn revoke(
+                    &self,
+                    digest: &SecretDigest,
+                    now: DateTime<Utc>,
+                ) -> Result<bool, DatabaseError> {
+                    // `revoked_at IS NULL` makes this genuinely conditional, so exactly one of two
+                    // concurrent logouts sees `true`.
+                    let connection = self.database.acquire().await?;
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "UPDATE rv_auth_session SET revoked_at = {} WHERE token_hash = {} AND revoked_at IS NULL",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                        ),
+                        [now.into(), digest.as_bytes().to_vec().into()],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map(|done| done.rows_affected() == 1)
+                        .map_err(|error| classify_db_error(&error))
+                }
+
+                async fn revoke_all_for(
+                    &self,
+                    user_id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    let connection = self.database.acquire().await?;
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "UPDATE rv_auth_session SET revoked_at = {} WHERE user_id = {} AND revoked_at IS NULL",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                        ),
+                        [now.into(), user_id.as_bytes().to_vec().into()],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_db_error(&error))
+                }
+
+                async fn live_for(
+                    &self,
+                    user_id: UserId,
+                    idle_cutoff: DateTime<Utc>,
+                    absolute_cutoff: DateTime<Utc>,
+                ) -> Result<Vec<SessionHandle>, DatabaseError> {
+                    // The ORDER BY is the eviction order, and it is part of the port's contract.
+                    let connection = self.database.acquire().await?;
+                    let select = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "SELECT token_hash, last_seen_at FROM rv_auth_session WHERE user_id = {} AND revoked_at IS NULL AND last_seen_at > {} AND created_at > {} ORDER BY last_seen_at ASC",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                        ),
+                        [
+                            user_id.as_bytes().to_vec().into(),
+                            idle_cutoff.into(),
+                            absolute_cutoff.into(),
+                        ],
+                    );
+                    let rows = connection
+                        .query_all_raw(select)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?;
+                    rows.into_iter()
+                        .map(|row| {
+                            let hash: Vec<u8> = row
+                                .try_get("", "token_hash")
+                                .map_err(|error| classify_db_error(&error))?;
+                            let last_seen_at: DateTime<Utc> = row
+                                .try_get("", "last_seen_at")
+                                .map_err(|error| classify_db_error(&error))?;
+                            Ok(SessionHandle {
+                                digest: digest_from(&hash)?,
+                                last_seen_at,
+                            })
+                        })
+                        .collect()
                 }
             }
 
