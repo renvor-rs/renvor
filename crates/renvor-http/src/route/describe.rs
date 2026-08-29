@@ -470,6 +470,12 @@ mod tests {
             (ApiErrorCode::PayloadTooLarge, 413),
             (ApiErrorCode::RequestTimeout, 408),
             (ApiErrorCode::Unavailable, 503),
+            // Added in Phase 009 batch J, when the registry gained no authentication codes at all
+            // and FR-081 needed somewhere correct to map a refused login. This assertion is what
+            // caught the omission: the mapping was updated and this list was not.
+            (ApiErrorCode::AuthenticationRequired, 401),
+            (ApiErrorCode::NotPermitted, 403),
+            (ApiErrorCode::TooManyAttempts, 429),
             (ApiErrorCode::InternalError, 500),
         ];
 
