@@ -116,10 +116,44 @@ impl fmt::Display for Method {
 /// Both values are **inert here**. This crate copies them and forms no opinion about either.
 ///
 /// [`ClientIdentity`]: crate::ClientIdentity
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// # `Debug` is hand-written, and `PartialEq` is deliberately absent
+///
+/// A derived `Debug` prints `cookie: "__Host-rv_session=<live session id>"` — a live credential, in
+/// whatever log or panic message formatted it. Every other type in this workspace that holds one
+/// refuses that: `renvor_auth::AttemptKeyring` renders `[redacted]`, `AuthenticationService` renders
+/// its type name and nothing else, `renvor_config::Secret` exists for it, and `SetCookie` makes the
+/// disclosure conspicuous by naming the method `expose_header_value`. This derived it, which was the
+/// one place in the diff that broke that discipline.
+///
+/// `PartialEq` is gone for a second reason: comparing credential material with `==` is a
+/// non-constant-time comparison, and offering one on a type that holds a session identifier invites
+/// exactly that.
+#[derive(Clone, Default)]
 pub struct PresentedCredentials {
     cookie: String,
     authorization: String,
+}
+
+impl fmt::Debug for PresentedCredentials {
+    /// Reports **whether** each credential was presented, never what it was.
+    ///
+    /// Presence is an operational fact worth having in a diagnostic; the value is the thing the
+    /// diagnostic must not carry.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PresentedCredentials")
+            .field("cookie", &presence(&self.cookie))
+            .field("authorization", &presence(&self.authorization))
+            .finish()
+    }
+}
+
+/// Whether a credential was presented, as the only thing safe to print about it.
+const fn presence(value: &str) -> &'static str {
+    if value.is_empty() {
+        "absent"
+    } else {
+        "present (redacted)"
+    }
 }
 
 impl PresentedCredentials {
@@ -862,16 +896,27 @@ mod tests {
         // This is a structural claim and the assertion below is only its shadow: what enforces it
         // is that no other method exists. The test is here so that adding one is a deliberate act
         // next to this comment rather than an unremarked line in an impl block.
-        let credentials = PresentedCredentials::new("a=b", "Bearer c");
+        let credentials = PresentedCredentials::new("__Host-rv_session=abc", "Bearer tok");
         let rendered = format!("{credentials:?}");
         assert!(rendered.contains("cookie"));
         assert!(rendered.contains("authorization"));
         for absent in ["host", "origin", "forwarded", "x-forwarded-for", "referer"] {
             assert!(
                 !rendered.contains(absent),
-                "the credential pair grew a {absent:?} field"
+                "the credential pair grew a field it should not have"
             );
         }
+
+        // AND NEITHER VALUE IS RENDERED. A derived `Debug` printed both in full; a security review
+        // found it, and this is what stops it coming back.
+        assert!(!rendered.contains("abc"), "the cookie value was printed");
+        assert!(!rendered.contains("tok"), "the bearer token was printed");
+        assert!(rendered.contains("present (redacted)"));
+
+        // POSITIVE CONTROL: an absent credential is reported as absent rather than as redacted, so
+        // the marker above is about the value rather than about a constant string.
+        let empty = PresentedCredentials::default();
+        assert!(format!("{empty:?}").contains("absent"));
     }
 
     #[test]

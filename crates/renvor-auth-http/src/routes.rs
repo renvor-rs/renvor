@@ -30,13 +30,14 @@ use std::sync::Arc;
 use renvor_auth::abuse::{AbuseGuard, AttemptFlow, AttemptRepository, FlowKeys};
 use renvor_auth::audit::{AuditSink, CorrelationId};
 use renvor_auth::mail::MailPort;
+use renvor_auth::opaque::SecretDigest;
 use renvor_auth::password::PasswordBlocklist;
 use renvor_auth::repository::{
     CredentialRepository, Registration, SingleUseTokenRepository, UserRepository,
 };
 use renvor_auth::service::{AuthenticationService, ServiceError, TokenLifetime};
 use renvor_auth::session::{SessionOutcome, SessionRepository, SessionService};
-use renvor_auth::{AuthError, Clock};
+use renvor_auth::{AuthError, Clock, CsrfKey, csrf};
 use renvor_http::route::{Request, Response, RouteError, RouteGroup};
 
 use crate::dto;
@@ -54,14 +55,38 @@ pub struct AuthEndpoints<U, C, B, S, T, M, R, A> {
     pub authentication: AuthenticationService<U, C, B>,
     /// Session lifecycle and the cookie boundary.
     pub sessions: SessionService<S>,
-    /// Verification and password-reset tokens.
-    pub tokens: T,
+    /// The **verification** token store.
+    ///
+    /// # Two fields, because a `SingleUseTokenRepository` is bound to one table
+    ///
+    /// `SqlxSingleUseTokenRepository::new` takes a `TokenTable` and holds it, so one value
+    /// addresses one table. A single field served both flows, and the consequence was not
+    /// cosmetic: `issue_and_send` calls `invalidate_all_for` before issuing, so **a verification
+    /// resend silently destroyed the user's outstanding password-reset token**, and every reset
+    /// token was written to and read from the verification table.
+    ///
+    /// Found by requirements review. The `OpaqueKind` tag meant a verification token still could
+    /// not reset a password, so this was a correctness defect rather than a privilege one.
+    pub verifications: T,
+    /// The **password-reset** token store. A different table; see [`Self::verifications`].
+    pub resets: T,
     /// Where mail goes. Phase 010 owns the operational adapter (FR-075).
     pub mail: M,
     /// The abuse controls. **Every flow passes through this.**
     pub abuse: AbuseGuard<R, A>,
     /// How long a mailed token stays valid.
     pub token_lifetime: TokenLifetime,
+    /// The CSRF signing key.
+    ///
+    /// FR-028: *"Every cookie-authenticated unsafe operation is CSRF-protected."* In this route
+    /// table that is exactly one operation — `POST /auth/logout`. Every other unsafe route is
+    /// unauthenticated or presents a bearer token, and `GET /auth/me` is safe.
+    ///
+    /// The module shipped in batch F and nothing wired it until a requirements review found that
+    /// logout was reachable cross-site.
+    pub csrf: CsrfKey,
+    /// The entropy port, for minting CSRF tokens. The only source of randomness here.
+    pub entropy: Arc<dyn renvor_core::observe::EntropySource + Send + Sync>,
     /// The injected clock. There is no wall-clock read anywhere in this module.
     pub clock: Arc<dyn Clock>,
 }
@@ -86,11 +111,12 @@ fn read_body<T: serde::de::DeserializeOwned>(
     correlation: CorrelationId,
 ) -> Result<T, Response> {
     serde_json::from_slice(request.body()).map_err(|_| {
-        problem::render(
-            &ServiceError::Refused(AuthError::CredentialNoLongerValid),
-            correlation,
-            Vec::new(),
-        )
+        // `malformed_body`, NOT `authentication_required`.
+        //
+        // The first version returned 401 for every unparseable body, so `POST /auth/register` with
+        // a stray `{` answered "the request presented no usable credential" — for a route that
+        // takes no credential. A wrong answer a client will branch on. Found by security review.
+        problem::malformed_body(correlation)
     })
 }
 
@@ -131,13 +157,18 @@ fn with_cookie(response: Response, cookie: renvor_auth::SetCookie) -> Response {
         .unwrap_or_else(|_| Response::status(500).unwrap_or_else(|_| Response::text("")))
 }
 
-/// `POST /auth/register`.
+/// `POST /auth/register`. **Bounded** — `AttemptFlow::Register`.
 ///
-/// # Registration is deliberately not abuse-bounded here
+/// # It was not bounded until a security review said what that cost
 ///
-/// FR-063 names **six** flows and registration is not one of them. Adding a seventh dimension
-/// would change `max_rows = 10 × buckets` and every proof written against it, so the gap is
-/// recorded rather than closed quietly — see `evidence/batch-j-placement.md`.
+/// FR-063 names six flows and registration is not among them, so the first version of this handler
+/// left it unbounded and recorded the gap. The review priced it: an **unauthenticated,
+/// unrate-limited Argon2id amplifier** at 64 MiB and ~72 ms per request, and an unbounded source of
+/// rows in `rv_auth_user` — which the SQ-4 bound does not cover, because SQ-4 is about
+/// `rv_auth_attempt`.
+///
+/// A seventh flow costs two dimensions, a changed row bound, a changed schema `CHECK`, and every
+/// document that states the formula. That is what it cost.
 async fn register<U, C, B, S, T, M, R, A>(
     endpoints: &AuthEndpoints<U, C, B, S, T, M, R, A>,
     request: Request,
@@ -146,6 +177,8 @@ where
     U: UserRepository,
     C: CredentialRepository,
     B: PasswordBlocklist,
+    R: AttemptRepository,
+    A: AuditSink,
 {
     let correlation = correlation_of(&request);
     let body: dto::RegisterRequest = match read_body(&request, correlation) {
@@ -154,9 +187,23 @@ where
     };
     let now = endpoints.clock.now();
 
+    let admitted = match endpoints
+        .abuse
+        .admit(
+            AttemptFlow::Register,
+            keys_for(&request, Some(&body.email), None),
+            correlation,
+            now,
+        )
+        .await
+    {
+        Ok(admitted) => admitted,
+        Err(error) => return problem::render_service_error(&error, correlation),
+    };
+
     match endpoints
         .authentication
-        .register(&body.email, &body.password, now)
+        .register(admitted, &body.email, &body.password, now)
         .await
     {
         // A DUPLICATE IS NOT AN ERROR AND NOT A DIFFERENT ANSWER.
@@ -171,7 +218,7 @@ where
         Ok(Registration::Created(_) | Registration::AlreadyRegistered) => {
             json(202, &dto::AcknowledgedResponse::new())
         }
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -208,7 +255,7 @@ where
         .await
     {
         Ok(admitted) => admitted,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     let authenticated = match endpoints
@@ -217,7 +264,7 @@ where
         .await
     {
         Ok(authenticated) => authenticated,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     // The session is established AFTER authentication, and it retires whatever the caller arrived
@@ -227,23 +274,58 @@ where
         .begin(authenticated.subject, request.credentials().cookie(), now)
         .await
     {
-        Ok((cookie, _established)) => with_cookie(
-            json(
-                200,
-                &dto::AuthenticatedResponse {
-                    id: authenticated.subject.user_id().to_string(),
-                },
-            ),
-            cookie,
-        ),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Ok((cookie, _established)) => {
+            // THE CSRF TOKEN IS BOUND TO THE SESSION JUST ESTABLISHED, which is why it is minted
+            // here and not earlier: `csrf::issue` signs over the session's digest, so a token from
+            // before the rotation would not verify against the session after it. That is the
+            // property `rotating_the_session_invalidates_every_token_bound_to_it` asserts.
+            let Some(session) = cookie_digest(&cookie) else {
+                return problem::render_service_error(
+                    &ServiceError::Refused(AuthError::PolicyMisconfigured),
+                    correlation,
+                );
+            };
+            let Ok(csrf) = csrf::issue(&endpoints.csrf, &session, endpoints.entropy.as_ref())
+            else {
+                return problem::render_service_error(
+                    &ServiceError::Refused(AuthError::EntropyUnavailable),
+                    correlation,
+                );
+            };
+            with_cookie(
+                json(
+                    200,
+                    &dto::AuthenticatedResponse {
+                        id: authenticated.subject.user_id().to_string(),
+                        csrf_token: csrf.expose(),
+                    },
+                ),
+                cookie,
+            )
+        }
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
-/// `POST /auth/logout`.
+/// The session digest a `Set-Cookie` names, for binding a CSRF token to it.
 ///
-/// Not one of FR-063's six flows, and deliberately unbounded: the only thing it can do is revoke,
-/// so an attacker who floods it spends their own budget destroying their own sessions.
+/// Parses the header this crate just produced rather than reaching into the session service: the
+/// digest is what `csrf::issue` signs over, and `cookie::read` is the one function that knows how
+/// to recover an identifier from a cookie header. A second parser here would be a second answer.
+fn cookie_digest(cookie: &renvor_auth::SetCookie) -> Option<SecretDigest> {
+    // `expose_header_value` consumes, so this works on a clone — the value is going to the client
+    // in the same response either way, and cloning it changes no disclosure.
+    let rendered = cookie.clone().expose_header_value();
+    let pair = rendered.split(';').next()?;
+    renvor_auth::cookie::read(pair)
+        .ok()
+        .map(|secret| SecretDigest::of(&secret))
+}
+
+/// `POST /auth/logout`. **CSRF-protected** — the one cookie-authenticated unsafe operation here.
+///
+/// Not one of the abuse-bounded flows, and deliberately so: the only thing it can do is revoke, so
+/// an attacker who floods it spends their own budget destroying their own sessions.
 async fn log_out<U, C, B, S, T, M, R, A>(
     endpoints: &AuthEndpoints<U, C, B, S, T, M, R, A>,
     request: Request,
@@ -254,6 +336,47 @@ where
     let correlation = correlation_of(&request);
     let now = endpoints.clock.now();
 
+    // CSRF FIRST, before anything is revoked.
+    //
+    // `is_required` decides from the method and the credential kind — a cookie-authenticated unsafe
+    // request needs a token; a bearer-authenticated one does not, because a browser does not attach
+    // an `Authorization:` header cross-site on its own.
+    let presented_cookie = request.credentials().cookie();
+    let credential = if request.credentials().authorization().is_empty() {
+        csrf::Credential::Cookie
+    } else {
+        csrf::Credential::BearerToken
+    };
+    if csrf::is_required("POST", credential) {
+        let body: dto::LogoutRequest = match read_body(&request, correlation) {
+            Ok(body) => body,
+            Err(response) => return response,
+        };
+        let Ok(secret) = renvor_auth::cookie::read(presented_cookie) else {
+            // No readable session means nothing to protect and nothing to revoke. The generic
+            // credential refusal, which is what an expired cookie gets too.
+            return problem::render_service_error(
+                &ServiceError::Refused(AuthError::CredentialNoLongerValid),
+                correlation,
+            );
+        };
+        if csrf::verify(
+            &endpoints.csrf,
+            &SecretDigest::of(&secret),
+            &[body.csrf_token.as_str()],
+        )
+        .is_err()
+        {
+            // EVERY `CsrfRejection` becomes one refusal. Which of absent, duplicated, malformed,
+            // unbound or forged it was is operator-facing; telling a requester would say which
+            // half of the double submit they got wrong.
+            return problem::render_service_error(
+                &ServiceError::Refused(AuthError::NotPermitted),
+                correlation,
+            );
+        }
+    }
+
     // ONE ANSWER whether or not a live session was found. `LogoutOutcome` distinguishes them for
     // the caller; the requester is told the same thing either way, because the goal is that no
     // usable session remains and none does.
@@ -263,7 +386,7 @@ where
         .await
     {
         Ok((cookie, _outcome)) => with_cookie(json(200, &dto::AcknowledgedResponse::new()), cookie),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -291,13 +414,12 @@ where
         // never rendered — a malformed cookie, an expired session and a revoked one are the same
         // answer to the holder of a dead cookie.
         Ok(SessionOutcome::Rejected(_)) => {
-            return problem::render(
+            return problem::render_service_error(
                 &ServiceError::Refused(AuthError::CredentialNoLongerValid),
                 correlation,
-                Vec::new(),
             );
         }
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     match endpoints.authentication.current_user(subject).await {
@@ -309,7 +431,7 @@ where
                 email_verified: user.email_verified_at.is_some(),
             },
         ),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -350,7 +472,7 @@ where
         .await
     {
         Ok(admitted) => admitted,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     // `DispatchOutcome` is DISCARDED here, and that is the whole design.
@@ -364,7 +486,7 @@ where
                 .authentication
                 .forgot_password(
                     admitted,
-                    &endpoints.tokens,
+                    &endpoints.resets,
                     &endpoints.mail,
                     &body.email,
                     endpoints.token_lifetime,
@@ -377,7 +499,7 @@ where
                 .authentication
                 .send_verification(
                     admitted,
-                    &endpoints.tokens,
+                    &endpoints.verifications,
                     &endpoints.mail,
                     &body.email,
                     endpoints.token_lifetime,
@@ -389,7 +511,7 @@ where
 
     match dispatched {
         Ok((_acknowledged, _outcome)) => json(202, &dto::AcknowledgedResponse::new()),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -427,16 +549,16 @@ where
         .await
     {
         Ok(admitted) => admitted,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     match endpoints
         .authentication
-        .confirm_verification(admitted, &endpoints.tokens, &body.token, now)
+        .confirm_verification(admitted, &endpoints.verifications, &body.token, now)
         .await
     {
         Ok(_user) => json(200, &dto::AcknowledgedResponse::new()),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -471,14 +593,14 @@ where
         .await
     {
         Ok(admitted) => admitted,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     match endpoints
         .authentication
         .reset_password(
             admitted,
-            &endpoints.tokens,
+            &endpoints.resets,
             &body.token,
             &body.password,
             now,
@@ -486,7 +608,7 @@ where
         .await
     {
         Ok(_user) => json(200, &dto::AcknowledgedResponse::new()),
-        Err(error) => problem::render(&error, correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&error, correlation),
     }
 }
 
@@ -499,7 +621,7 @@ pub type SharedEndpoints<U, C, B, S, T, M, R, A> = Arc<AuthEndpoints<U, C, B, S,
 
 /// Builds the authentication route group.
 ///
-/// # The six bounded flows, and the three that are not
+/// # The seven bounded flows, and the two that are not
 ///
 /// | Route | Bounded by |
 /// |---|---|
@@ -509,12 +631,13 @@ pub type SharedEndpoints<U, C, B, S, T, M, R, A> = Arc<AuthEndpoints<U, C, B, S,
 /// | `POST /auth/password/forgot` | `AttemptFlow::ForgotPassword` |
 /// | `POST /auth/password/reset` | `AttemptFlow::ResetPassword` |
 /// | `POST /auth/token/refresh` | `AttemptFlow::TokenRefresh` — see `token_routes`, which exists only under the `tokens` feature |
-/// | `POST /auth/register` | **nothing.** FR-063 names six flows and this is not one |
+/// | `POST /auth/register` | `AttemptFlow::Register` — a **seventh** flow, added after review |
 /// | `POST /auth/logout` | nothing — it can only revoke |
 /// | `GET /auth/me` | nothing — it reads the caller's own account |
 ///
-/// The six are not a convention. Each of those handlers calls `AbuseGuard::admit` because the
-/// operation it calls **takes an `Admitted`**, and there is no other way to make one.
+/// This is not a convention. Each of those handlers calls `AbuseGuard::admit` because the operation
+/// it calls **takes an `Admitted`** — a type with no public constructor, no `Copy`, and no `Clone`,
+/// so one counted attempt admits exactly one call.
 ///
 /// # Errors
 ///
@@ -623,7 +746,7 @@ where
         .await
     {
         Ok(admitted) => admitted,
-        Err(error) => return problem::render(&error, correlation, Vec::new()),
+        Err(error) => return problem::render_service_error(&error, correlation),
     };
 
     match endpoints
@@ -653,12 +776,11 @@ where
         // revoked" would confirm to a thief that they had held a real token.
         // `RefreshOutcome` is `#[non_exhaustive]`, so an added variant lands here too — and lands
         // on the REFUSING arm rather than a permitting one, which is the fail-closed direction.
-        Ok(_) => problem::render(
+        Ok(_) => problem::render_service_error(
             &ServiceError::Refused(AuthError::CredentialNoLongerValid),
             correlation,
-            Vec::new(),
         ),
-        Err(error) => problem::render(&ServiceError::Refused(error), correlation, Vec::new()),
+        Err(error) => problem::render_service_error(&ServiceError::Refused(error), correlation),
     }
 }
 

@@ -26,7 +26,7 @@
 use renvor_auth::AuthError;
 use renvor_auth::audit::CorrelationId;
 use renvor_auth::service::ServiceError;
-use renvor_error::{ApiErrorCode, InvalidParam, ProblemDetails};
+use renvor_error::{ApiErrorCode, InvalidParam, Location, Pointer, ProblemDetails};
 use renvor_http::route::Response;
 
 /// The media type RFC 9457 assigns to a problem document.
@@ -79,6 +79,73 @@ pub fn classify_refusal(error: AuthError) -> (ApiErrorCode, u16) {
         // seen would be a confident wrong answer, and 500 is at least an honest one.
         _ => (ApiErrorCode::InternalError, 500),
     }
+}
+
+/// The `invalidParams` entry a refused password produces.
+///
+/// # It names the field and not the rule, and that is a tension rather than an omission
+///
+/// FR-010 says a rejection *"**SHALL** state its reason"*. FR-013 says the error taxonomy is
+/// fieldless, and `AuthError::PasswordRejected` therefore covers "too short", "too long" and
+/// "known compromised" with one value — deliberately, because *"a `String` detail is a place a
+/// credential can end up"*.
+///
+/// The consequence is that **the specific rule is not available at this boundary**. What travels
+/// is the field and a fixed reason from a closed vocabulary; what does not travel is which of the
+/// three rules broke. Every `invalidParams` list in this crate was empty until a requirements
+/// review pointed out that FR-010's mechanism existed and was never used; this is as much of it as
+/// the taxonomy permits, and the remainder is recorded as a limitation rather than closed.
+///
+/// The rejected password itself cannot travel: `InvalidParam` has no field it could occupy.
+#[must_use]
+fn password_rejected() -> Vec<InvalidParam> {
+    let Ok(pointer) = Pointer::new("/password") else {
+        // Unreachable — a literal with no control characters, well under the length bound. An
+        // empty list rather than a panic: a problem document with no `invalidParams` is a worse
+        // answer than one with them, and a panic on an error path is worse than both.
+        return Vec::new();
+    };
+    vec![InvalidParam {
+        location: Location::Body,
+        pointer,
+        reason: "the password does not meet policy",
+    }]
+}
+
+/// Renders the refusal for a body that could not be read.
+///
+/// Separate from [`render`] because it is not a [`ServiceError`]: nothing in the domain was
+/// consulted, so there is no domain refusal to map. `ApiErrorCode::MalformedBody` already exists
+/// and carries no caller data.
+///
+/// **The parse error is discarded**, here as at the call site. `serde_json` reports the offending
+/// line, column, and often the unexpected token — and on `POST /auth/password/reset` the unexpected
+/// token is the new password.
+#[must_use]
+pub fn malformed_body(correlation: CorrelationId) -> Response {
+    let problem = ProblemDetails::new(ApiErrorCode::MalformedBody, 400, correlation.encode());
+    let Ok(body) = problem.to_json() else {
+        return Response::status(400).unwrap_or_else(|_| Response::text(""));
+    };
+    Response::status(400)
+        .unwrap_or_else(|_| Response::text(""))
+        .with_header("content-type", PROBLEM_MEDIA_TYPE)
+        .unwrap_or_else(|_| Response::text(""))
+        .with_body(body)
+}
+
+/// Renders a refusal, attaching the `invalidParams` its code calls for.
+///
+/// The one entry point a handler should use. [`render`] takes an explicit list for callers that
+/// have one; this derives it from the refusal, so a password rejection carries its field without
+/// every call site remembering to pass it.
+#[must_use]
+pub fn render_service_error(error: &ServiceError, correlation: CorrelationId) -> Response {
+    let params = match error {
+        ServiceError::Refused(AuthError::PasswordRejected) => password_rejected(),
+        _ => Vec::new(),
+    };
+    render(error, correlation, params)
 }
 
 /// Renders a refusal as a Problem Details response.

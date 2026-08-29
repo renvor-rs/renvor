@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, TimeZone as _, Utc};
+use renvor_auth::CsrfKey;
 use renvor_auth::FixedClock;
 use renvor_auth::abuse::{AbuseContract, AbuseGuard, AttemptBuckets, AttemptKeyring};
 use renvor_auth::audit::RecordingAuditSink;
@@ -39,7 +40,7 @@ use renvor_auth_http::routes::{AuthEndpoints, routes};
 use renvor_core::identity::ClientIdentity;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
 use renvor_database::{ConnectionString, Database as _, MigrationSettings, PoolSettings};
-use renvor_http::route::{PresentedCredentials, Request, RouteRegistry};
+use renvor_http::route::{Method, PresentedCredentials, Request, RouteRegistry};
 use renvor_http::{RequestContext, RequestId};
 use renvor_sqlx::Migrations;
 use renvor_sqlx::auth::TokenTable;
@@ -66,6 +67,16 @@ const AUTH_TABLES: [&str; 8] = [
     "rv_auth_credential",
     "rv_auth_user",
 ];
+
+/// The `csrf_token` a login response carried.
+fn csrf_of(body: &str) -> String {
+    let value: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    value
+        .get("csrf_token")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
 
 fn at() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 1, 12, 0, 0)
@@ -102,14 +113,18 @@ struct Application {
 
 impl Application {
     /// Sends one request through the real route table and records the response for the sweep.
-    async fn send(&self, method: &str, path: &str, body: &str, cookie: &str) -> (u16, String) {
-        let route = self
+    async fn send(&self, method: Method, route: &str, body: &str, cookie: &str) -> (u16, String) {
+        // THE METHOD IS MATCHED, not discarded.
+        //
+        // The first version located a route by path alone and threw the method away with
+        // `let _ = method;` — so a route table that declared `GET /auth/login` would have passed
+        // this suite unchanged. Found by requirements review.
+        let declared = self
             .registry
             .routes()
             .iter()
-            .find(|route| route.path() == path)
-            .unwrap_or_else(|| panic!("no route declares {path}"));
-        let _ = method;
+            .find(|candidate| candidate.path() == route && candidate.method() == method)
+            .unwrap_or_else(|| panic!("no route declares that path for that method"));
 
         let context = RequestContext::new(
             RunIdentifier::generate(&OsEntropy).expect("entropy"),
@@ -126,7 +141,7 @@ impl Application {
         )
         .with_credentials(PresentedCredentials::new(cookie, ""));
 
-        let response = route.dispatch(request).await;
+        let response = declared.dispatch(request).await;
         let status = response.status_code();
         let rendered = String::from_utf8_lossy(response.body()).into_owned();
 
@@ -240,7 +255,10 @@ async fn application() -> Option<Application> {
             CookiePolicy::default(),
             Arc::clone(&entropy),
         ),
-        tokens: SqlxSingleUseTokenRepository::new(pool.clone(), TokenTable::Verification),
+        // TWO STORES, TWO TABLES. One field served both until a requirements review found that a
+        // verification resend was destroying the user's outstanding password-reset token.
+        verifications: SqlxSingleUseTokenRepository::new(pool.clone(), TokenTable::Verification),
+        resets: SqlxSingleUseTokenRepository::new(pool.clone(), TokenTable::PasswordReset),
         mail: Arc::clone(&mail),
         abuse: AbuseGuard::new(
             SqlxAttemptRepository::new(pool),
@@ -248,6 +266,8 @@ async fn application() -> Option<Application> {
             AbuseContract::default(),
             RecordingAuditSink::new(),
         ),
+        csrf: CsrfKey::from_bytes([0x7E; 32]),
+        entropy: Arc::clone(&entropy),
         token_lifetime: TokenLifetime::default(),
         clock: Arc::new(FixedClock::at(at())),
     });
@@ -273,9 +293,13 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
 
     // ---- 1. REGISTRATION, and the duplicate that must look identical ---------------------------
     let register = format!(r#"{{"email":"{KNOWN_ADDRESS}","password":"{PASSWORD_CANARY}"}}"#);
-    let (status, first) = app.send("POST", "/auth/register", &register, "").await;
+    let (status, first) = app
+        .send(Method::Post, "/auth/register", &register, "")
+        .await;
     assert_eq!(status, 202, "registration was not accepted");
-    let (status, again) = app.send("POST", "/auth/register", &register, "").await;
+    let (status, again) = app
+        .send(Method::Post, "/auth/register", &register, "")
+        .await;
     assert_eq!(status, 202);
     assert_eq!(
         first, again,
@@ -288,11 +312,16 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
         .await;
     assert_eq!(status, 401, "a wrong password was not 401");
 
-    let (status, _body, cookie) = app.login(KNOWN_ADDRESS, PASSWORD_CANARY).await;
+    let (status, login_body, cookie) = app.login(KNOWN_ADDRESS, PASSWORD_CANARY).await;
     assert_eq!(status, 200, "a correct password did not authenticate");
+    let csrf = csrf_of(&login_body);
+    assert!(!csrf.is_empty(), "login issued no CSRF token");
+    // THE VALUE IS NOT PRINTED. `cookie` is a live session credential, and a failure here is
+    // exactly the run where printing it would matter most — which is what
+    // `renvor-core/tests/diagnostics.rs` refuses, and it caught the first version of this line.
     assert!(
         cookie.contains(SESSION_COOKIE_NAME) && cookie.contains("HttpOnly"),
-        "the session cookie was not set, or lost HttpOnly: {cookie}"
+        "the session cookie was not set, or lost HttpOnly"
     );
     // The header value is `name=value; attributes`; the flows below present it as a `Cookie:`.
     let presented = cookie.split(';').next().unwrap_or_default().to_owned();
@@ -305,33 +334,38 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
     );
 
     // ---- 4. CURRENT USER, with and without the cookie -------------------------------------------
-    let (status, body) = app.send("GET", "/auth/me", "", &presented).await;
+    let (status, body) = app.send(Method::Get, "/auth/me", "", &presented).await;
     assert_eq!(status, 200, "a live session could not read its own account");
     assert!(body.contains(KNOWN_ADDRESS), "the account was not returned");
 
-    let (status, _body) = app.send("GET", "/auth/me", "", "").await;
+    let (status, _body) = app.send(Method::Get, "/auth/me", "", "").await;
     assert_eq!(status, 401, "an absent cookie was not refused");
 
     // ---- 5. THE MAILED FLOWS: known and unknown answer the same ---------------------------------
-    for (path, address) in [
+    // INDEXED, not interpolated. `address` is caller data and `route` would be fine, but an index
+    // identifies the case without either — which is what the diagnostics gate asks for.
+    for (index, (route, address)) in [
         ("/auth/password/forgot", KNOWN_ADDRESS),
         ("/auth/password/forgot", UNKNOWN_ADDRESS),
         ("/auth/verification/resend", KNOWN_ADDRESS),
         ("/auth/verification/resend", UNKNOWN_ADDRESS),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let body = format!(r#"{{"email":"{address}"}}"#);
-        let (status, rendered) = app.send("POST", path, &body, "").await;
-        assert_eq!(status, 202, "{path} for {address} was not accepted");
+        let (status, rendered) = app.send(Method::Post, route, &body, "").await;
+        assert_eq!(status, 202, "mailed flow {index} was not accepted");
         assert_eq!(
             rendered, r#"{"acknowledged":true}"#,
-            "{path} answered differently for {address}"
+            "mailed flow {index} answered differently from its neighbours"
         );
     }
 
     // ---- 6. THE TOKEN-CONSUMING FLOWS refuse an invented token ----------------------------------
     let (status, _body) = app
         .send(
-            "POST",
+            Method::Post,
             "/auth/verification/confirm",
             r#"{"token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}"#,
             "",
@@ -344,7 +378,7 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
 
     let (status, _body) = app
         .send(
-            "POST",
+            Method::Post,
             "/auth/password/reset",
             &format!(
                 r#"{{"token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","password":"{PASSWORD_CANARY}"}}"#
@@ -354,12 +388,54 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
         .await;
     assert_eq!(status, 401, "an invented reset token was not refused");
 
-    // ---- 7. LOGOUT ------------------------------------------------------------------------------
-    let (status, _body) = app.send("POST", "/auth/logout", "", &presented).await;
-    assert_eq!(status, 200, "logout did not succeed");
+    // ---- 7. LOGOUT IS CSRF-PROTECTED ------------------------------------------------------------
+    //
+    // FR-028: every cookie-authenticated unsafe operation. This is the only one in the table, and
+    // it was unprotected until a requirements review found it.
+
+    // WITHOUT a token: refused, and the session survives.
+    let (status, _body) = app
+        .send(
+            Method::Post,
+            "/auth/logout",
+            r#"{"csrf_token":""}"#,
+            &presented,
+        )
+        .await;
+    assert_eq!(status, 403, "logout without a CSRF token was not refused");
+    let (status, _body) = app.send(Method::Get, "/auth/me", "", &presented).await;
+    assert_eq!(status, 200, "a refused logout ended the session anyway");
+
+    // With a token minted for ANOTHER session: refused. This is the one that matters — an attacker
+    // who can obtain *a* token must not be able to spend it on *this* session.
+    let (_status, _body, other) = app.login(KNOWN_ADDRESS, PASSWORD_CANARY).await;
+    let foreign = csrf_of(&other);
+    let (status, _body) = app
+        .send(
+            Method::Post,
+            "/auth/logout",
+            &format!(r#"{{"csrf_token":"{foreign}"}}"#),
+            &presented,
+        )
+        .await;
+    assert_eq!(status, 403, "a token bound to another session was accepted");
+
+    // WITH the right token: accepted.
+    let (status, _body) = app
+        .send(
+            Method::Post,
+            "/auth/logout",
+            &format!(r#"{{"csrf_token":"{csrf}"}}"#),
+            &presented,
+        )
+        .await;
+    assert_eq!(
+        status, 200,
+        "logout with a valid CSRF token did not succeed"
+    );
 
     // The cookie is dead now, and the answer is the same one an absent cookie gets.
-    let (status, _body) = app.send("GET", "/auth/me", "", &presented).await;
+    let (status, _body) = app.send(Method::Get, "/auth/me", "", &presented).await;
     assert_eq!(
         status, 401,
         "a logged-out session still read its own account"
@@ -371,11 +447,14 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
     // it was given, which is the leak SC-006 is about.
     let swept = app.swept.lock().expect("unpoisoned").join("\n");
     assert!(!swept.is_empty(), "the sweep collected nothing");
-    for canary in [PASSWORD_CANARY, "hunter2", "correct-horse"] {
-        assert!(
-            !swept.contains(canary),
-            "a response echoed {canary:?}:\n{swept}"
-        );
+    // NEITHER THE CANARY NOR THE SWEPT TEXT IS PRINTED. On a real leak this failure message would
+    // otherwise carry the leaked credential into the test log — the one run where that matters
+    // most. The index says which canary; the value is in this file, four lines up.
+    for (index, canary) in [PASSWORD_CANARY, "hunter2", "correct-horse"]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(!swept.contains(canary), "a response echoed canary {index}");
     }
     // The MAILED SECRETS never reach a response either. `RecordingMailSink` holds them because the
     // mail did; the responses must not.

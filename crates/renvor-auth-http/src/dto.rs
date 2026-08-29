@@ -47,6 +47,20 @@ pub struct AddressRequest {
     pub email: String,
 }
 
+/// `POST /auth/logout`.
+///
+/// # The CSRF token travels in the body, not a header
+///
+/// `renvor_http::PresentedCredentials` exposes exactly two headers — `Cookie:` and
+/// `Authorization:` — and deliberately offers no `header(name)`, so a transport-supplied
+/// `X-CSRF-Token` is not reachable from a handler. OWASP's double-submit pattern is defined for a
+/// **field or a header**, and the field is the half this seam can carry.
+#[derive(Deserialize)]
+pub struct LogoutRequest {
+    /// The token issued alongside the session, echoed back.
+    pub csrf_token: String,
+}
+
 /// `POST /auth/verification/confirm`.
 #[derive(Deserialize)]
 pub struct TokenRequest {
@@ -113,15 +127,24 @@ pub struct CurrentUserResponse {
     pub email_verified: bool,
 }
 
-/// `POST /auth/register` and `POST /auth/login`.
+/// `POST /auth/login`.
 ///
 /// Carries **no session identifier**: the session leaves in a `Set-Cookie` header, which is the
 /// only place it can be marked `HttpOnly`. Putting it in a body would make it readable by script,
 /// which is the property the cookie boundary exists to deny.
+///
+/// # The CSRF token is here on purpose, and it is the opposite case
+///
+/// It is in the **body**, where script *can* read it — because a double-submit token only works if
+/// the client can echo it back, and a token the client cannot read protects nothing. The session
+/// identifier is `HttpOnly` and the CSRF token is not, and that asymmetry is the design rather
+/// than an oversight: one is the credential, the other is proof the request was intended.
 #[derive(Serialize)]
 pub struct AuthenticatedResponse {
     /// The account identifier, rendered.
     pub id: String,
+    /// The CSRF token bound to the session just established. Echoed back on unsafe operations.
+    pub csrf_token: String,
 }
 
 /// `POST /auth/token/refresh`.

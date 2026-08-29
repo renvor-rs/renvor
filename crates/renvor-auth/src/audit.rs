@@ -22,11 +22,25 @@
 //! Not a warning, not a lint, not a review comment — the crate does not build.
 //!
 //! **The honest limit of that proof**, because a guarantee whose edges are not stated is a guarantee
-//! nobody can rely on: `&'static str` *is* `Copy`, so a `&'static str` field would survive the
-//! derive. Reaching it with attacker-controlled text needs `Box::leak`, which is conspicuous, but
-//! it is not impossible. Two things sit behind the derive for that case — an exact
-//! [`core::mem::size_of`] assertion in this module's tests, which any added field breaks, and the
-//! credential-canary sweep over every rendered event.
+//! nobody can rely on. `Copy` excludes **heap-owned** data and nothing else, and two things survive
+//! it:
+//!
+//! - `&'static str` is `Copy`. Reaching it with attacker text needs `Box::leak`, which is
+//!   conspicuous, but it is not impossible.
+//! - **Fixed-size arrays are `Copy`** — and every credential in this crate is one. A `[u8; 32]`
+//!   field would take a session identifier or a token digest untouched. [`CredentialRef`] is that
+//!   exact shape, already here, and its `from_bytes` takes an arbitrary `[u8; 16]`: sixteen bytes
+//!   of attacker-derived text *can* enter an event through it. Every shipped call site passes an
+//!   identifier that came from a store, and restricting the constructor would break the adapters
+//!   that legitimately build one — so this is a bound on the claim rather than a hole to close.
+//!   The first version of this paragraph named only `&'static str`; a security review pointed out
+//!   that it understated the case.
+//!
+//! So `Copy` is one leg of four, not the whole argument. The others: **private fields** — no crate
+//! outside this one can set anything even if a field existed; a **closed constructor** taking only
+//! enums, a [`CorrelationId`] and a `DateTime`; and an exact [`core::mem::size_of`] assertion in
+//! this module's tests that any added field breaks. Plus the canary sweep over every rendered
+//! event.
 //!
 //! # There is no `reason` field, and that is deliberate
 //!
@@ -592,7 +606,7 @@ mod tests {
     fn nothing_but_sixteen_lowercase_hex_characters_becomes_a_correlation_identifier() {
         // This is the whole of "validated". Each of these is something a caller-supplied header
         // could plausibly contain, and none of them may pass.
-        for refused in [
+        for (index, refused) in [
             "",                  // empty
             "deadbeef0102030",   // one short
             "deadbeef010203045", // one long
@@ -603,12 +617,14 @@ mod tests {
             "deadbeef0102030g",  // a non-hex digit
             "hunter2hunter2hu",  // a password of exactly the right length
             "../../etc/passwd",  // exactly 16 bytes of traversal
-        ] {
-            assert_eq!(
-                CorrelationId::parse(refused),
-                None,
-                "accepted {refused:?}, which a caller controls"
-            );
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // THE INPUT IS NOT PRINTED. One of these cases is a password; a failure message that
+            // echoed it would put it in the test log, which is what
+            // `renvor-core/tests/diagnostics.rs` refuses. The index says which case.
+            assert_eq!(CorrelationId::parse(refused), None, "accepted case {index}");
         }
 
         // POSITIVE CONTROL: the parser is not simply always `None`.
@@ -725,10 +741,12 @@ mod tests {
 
         assert_eq!(rendered.len(), 14 * 2 * 2 * 3 * 4, "the sweep lost a case");
         for text in &rendered {
-            for canary in CANARIES {
+            for (index, canary) in CANARIES.into_iter().enumerate() {
+                // THE CANARY IS NOT PRINTED. On a real leak this is the message that would carry
+                // it into the log.
                 assert!(
                     !text.contains(canary),
-                    "a rendered audit event contained {canary:?}"
+                    "an audit event contained canary {index}"
                 );
             }
         }

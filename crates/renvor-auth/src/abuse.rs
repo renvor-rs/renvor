@@ -29,7 +29,7 @@
 //! enumerable sets, so
 //!
 //! ```text
-//! max_rows = |AttemptDimension| × buckets = 10 × 65_536 = 655_360
+//! max_rows = |AttemptDimension| × buckets = 12 × 65_536 = 786_432
 //! ```
 //!
 //! **and that holds whether or not [`AttemptRepository::prune`] is ever called.** Pruning reclaims
@@ -95,6 +95,16 @@ pub enum AttemptAxis {
 /// One of the six flows an abuse control guards.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum AttemptFlow {
+    /// Creating an account.
+    ///
+    /// **FR-063 names six flows and this is a seventh.** It was added after a security review found
+    /// `POST /auth/register` to be an unauthenticated, unrate-limited Argon2id amplifier — 64 MiB
+    /// and ~72 ms per request, reachable with no credential — and an unbounded source of rows in
+    /// `rv_auth_user`, which the SQ-4 bound does not cover because SQ-4 is about `rv_auth_attempt`.
+    ///
+    /// The batch brief's security requirement is broader than FR-063's list: *"Account/client/
+    /// network input must not create unbounded unique database keys."* Registration creates them.
+    Register,
     /// Password authentication.
     LogIn,
     /// Re-sending a verification mail.
@@ -111,7 +121,8 @@ pub enum AttemptFlow {
 
 impl AttemptFlow {
     /// Every flow. FR-063 names six; this is the list, and its length is asserted in tests.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Register,
         Self::LogIn,
         Self::VerificationResend,
         Self::VerificationComplete,
@@ -124,6 +135,10 @@ impl AttemptFlow {
     #[must_use]
     pub const fn dimensions(self) -> &'static [AttemptDimension] {
         match self {
+            Self::Register => &[
+                AttemptDimension::RegisterAccount,
+                AttemptDimension::RegisterNetwork,
+            ],
             Self::LogIn => &[
                 AttemptDimension::LogInAccount,
                 AttemptDimension::LogInNetwork,
@@ -152,6 +167,7 @@ impl AttemptFlow {
     #[must_use]
     pub const fn audit_action(self) -> crate::audit::AuditAction {
         match self {
+            Self::Register => crate::audit::AuditAction::Register,
             Self::LogIn => crate::audit::AuditAction::LogIn,
             Self::VerificationResend => crate::audit::AuditAction::VerificationResend,
             Self::VerificationComplete => crate::audit::AuditAction::VerificationComplete,
@@ -169,6 +185,10 @@ impl AttemptFlow {
 /// no such constructor.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum AttemptDimension {
+    /// Registration, by submitted account identifier.
+    RegisterAccount,
+    /// Registration, by network address.
+    RegisterNetwork,
     /// Login, by submitted account identifier.
     LogInAccount,
     /// Login, by network address.
@@ -193,7 +213,9 @@ pub enum AttemptDimension {
 
 impl AttemptDimension {
     /// Every dimension. **Its length is the `|AttemptDimension|` in the row bound.**
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
+        Self::RegisterAccount,
+        Self::RegisterNetwork,
         Self::LogInAccount,
         Self::LogInNetwork,
         Self::VerificationResendAccount,
@@ -216,6 +238,10 @@ impl AttemptDimension {
     #[must_use]
     pub const fn code(self) -> i16 {
         match self {
+            // 11 and 12 rather than renumbering: a code is what a stored row means, and shifting
+            // one re-points every existing row at a different dimension.
+            Self::RegisterAccount => 11,
+            Self::RegisterNetwork => 12,
             Self::LogInAccount => 1,
             Self::LogInNetwork => 2,
             Self::VerificationResendAccount => 3,
@@ -246,6 +272,8 @@ impl AttemptDimension {
             8 => Some(Self::ResetPasswordNetwork),
             9 => Some(Self::TokenRefreshClient),
             10 => Some(Self::TokenRefreshNetwork),
+            11 => Some(Self::RegisterAccount),
+            12 => Some(Self::RegisterNetwork),
             _ => None,
         }
     }
@@ -254,11 +282,13 @@ impl AttemptDimension {
     #[must_use]
     pub const fn axis(self) -> AttemptAxis {
         match self {
-            Self::LogInAccount | Self::VerificationResendAccount | Self::ForgotPasswordAccount => {
-                AttemptAxis::Account
-            }
+            Self::RegisterAccount
+            | Self::LogInAccount
+            | Self::VerificationResendAccount
+            | Self::ForgotPasswordAccount => AttemptAxis::Account,
             Self::TokenRefreshClient => AttemptAxis::Client,
-            Self::LogInNetwork
+            Self::RegisterNetwork
+            | Self::LogInNetwork
             | Self::VerificationResendNetwork
             | Self::VerificationCompleteNetwork
             | Self::ForgotPasswordNetwork
@@ -275,6 +305,8 @@ impl AttemptDimension {
     #[must_use]
     const fn tag(self) -> &'static str {
         match self {
+            Self::RegisterAccount => "register/account",
+            Self::RegisterNetwork => "register/network",
             Self::LogInAccount => "login/account",
             Self::LogInNetwork => "login/network",
             Self::VerificationResendAccount => "verification-resend/account",
@@ -477,8 +509,25 @@ impl AttemptKeyring {
                             mac.update(&[4]);
                             mac.update(&v4.octets());
                         } else {
+                            // THE /64 PREFIX, not the full address.
+                            //
+                            // The module header names the attacker this exists for: a routine `/64`
+                            // gives 2^64 source addresses. Bucketing bounds the ROW COUNT against
+                            // them and does nothing to the RATE — every fresh address lands in a
+                            // uniformly random network bucket, so an attacker with one /64 can fill
+                            // every account bucket while no network bucket ever reaches its limit.
+                            //
+                            // Keying on the /64 makes the network axis count what it was written to
+                            // count: 2^64 addresses become ONE key, and the attack costs the
+                            // attacker their own network budget as `sq-4-bounded-abuse-state.md` §5
+                            // claims it does. Before this, that claim was false.
+                            //
+                            // A /64 is the smallest block RFC 4291 §2.5.1 requires for a subnet, so
+                            // it is the finest granularity at which two addresses are reliably
+                            // different parties. Finer would be free to defeat; coarser would put
+                            // unrelated customers of one provider in one bucket.
                             mac.update(&[6]);
-                            mac.update(&v6.octets());
+                            mac.update(&v6.octets()[..8]);
                         }
                     }
                 }
@@ -634,6 +683,11 @@ impl Default for AbuseContract {
         };
         Self {
             limits: [
+                // REGISTRATION. The account axis is tight because a repeat for one address is
+                // either a typo or a probe; the network axis is the one that stops an Argon2id
+                // amplifier, and 20 per 15 minutes is ~1.3 s of hashing per bucket per window.
+                limit(3, minutes(60)),   // RegisterAccount
+                limit(20, minutes(15)),  // RegisterNetwork
                 limit(20, minutes(15)),  // LogInAccount
                 limit(100, minutes(15)), // LogInNetwork
                 limit(5, minutes(60)),   // VerificationResendAccount
@@ -816,7 +870,29 @@ pub struct FlowKeys<'a> {
 /// let _ = a_flow_that_requires_admission;
 /// let _ = AttemptFlow::LogIn;
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// # It is deliberately NOT `Copy`, and NOT `Clone`
+///
+/// This derived `Copy` once, and that made the guarantee above **false**: every guarded method takes
+/// an `Admitted` *by value*, so `Copy` turned one counted attempt into unlimited flow invocations.
+///
+/// ```text
+/// let admitted = guard.admit(AttemptFlow::LogIn, keys, correlation, now).await?;
+/// for candidate in wordlist {
+///     let _ = service.log_in(admitted, &email, candidate).await;   // copied, not moved
+/// }
+/// ```
+///
+/// One row incremented; ten million logins. That is the unbounded flow FR-063 exists to make
+/// unwriteable, reachable through safe code and the public API alone.
+///
+/// **This is the second time the same derive falsified the same kind of sentence in this crate.**
+/// The commit before this batch removed `Copy` from [`crate::policy::Authorized`] for exactly this
+/// reason — *"a `consuming` method consumes nothing when the type is `Copy`"* — and this type's own
+/// documentation says it reuses that shape. It reused the shape and not the correction.
+///
+/// `Clone` is absent too. A `Clone` here would be a one-line way back to the same defect, written by
+/// someone who had a borrow-checker error and reached for the obvious fix.
+#[derive(PartialEq, Eq, Debug)]
 #[must_use = "an admission that is not passed to a flow counted an attempt for nothing"]
 pub struct Admitted {
     flow: AttemptFlow,
@@ -824,8 +900,10 @@ pub struct Admitted {
 
 impl Admitted {
     /// Which flow this admits.
+    ///
+    /// Borrows rather than consumes: reading the tag must not spend the admission.
     #[must_use]
-    pub const fn flow(self) -> AttemptFlow {
+    pub const fn flow(&self) -> AttemptFlow {
         self.flow
     }
 
@@ -853,7 +931,7 @@ impl Admitted {
     ///
     /// [`AuthError::PolicyMisconfigured`] — a configuration mistake at a call site, never
     /// something a requester can cause, so it does not need to be indistinguishable from anything.
-    pub const fn expect(self, expected: AttemptFlow) -> Result<(), AuthError> {
+    pub const fn expect(&self, expected: AttemptFlow) -> Result<(), AuthError> {
         if self.flow as u8 == expected as u8 {
             Ok(())
         } else {
@@ -1135,7 +1213,9 @@ mod tests {
     fn every_dimension_has_a_distinct_stable_code_that_round_trips() {
         // A CHANGED CODE IS A MIGRATION, not an edit: it re-points every stored row at a different
         // dimension. The literals are pinned here so that change cannot happen quietly.
-        let expected: [(AttemptDimension, i16); 10] = [
+        let expected: [(AttemptDimension, i16); 12] = [
+            (AttemptDimension::RegisterAccount, 11),
+            (AttemptDimension::RegisterNetwork, 12),
             (AttemptDimension::LogInAccount, 1),
             (AttemptDimension::LogInNetwork, 2),
             (AttemptDimension::VerificationResendAccount, 3),
@@ -1151,12 +1231,12 @@ mod tests {
             assert_eq!(dimension.code(), code);
             assert_eq!(AttemptDimension::from_code(code), Some(dimension));
         }
-        assert_eq!(AttemptDimension::ALL.len(), 10);
-        assert_eq!(AttemptDimension::COUNT, 10);
+        assert_eq!(AttemptDimension::ALL.len(), 12);
+        assert_eq!(AttemptDimension::COUNT, 12);
 
         // FAIL CLOSED: an unrecognised code is refused, never defaulted. Defaulting would merge an
         // unknown dimension's rows into a known one's counters.
-        for absent in [i16::MIN, -1, 0, 11, 12, i16::MAX] {
+        for absent in [i16::MIN, -1, 0, 13, 14, i16::MAX] {
             assert_eq!(AttemptDimension::from_code(absent), None);
         }
     }
@@ -1171,13 +1251,13 @@ mod tests {
                 .filter(|d| d.axis() == axis)
                 .count()
         };
-        assert_eq!(count(AttemptAxis::Account), 3);
+        assert_eq!(count(AttemptAxis::Account), 4);
         assert_eq!(count(AttemptAxis::Client), 1);
-        assert_eq!(count(AttemptAxis::Network), 6);
+        assert_eq!(count(AttemptAxis::Network), 7);
 
         // Six flows, and EVERY one carries a network axis — that is what bounds the token-only
         // flows, which deliberately have no account axis.
-        assert_eq!(AttemptFlow::ALL.len(), 6);
+        assert_eq!(AttemptFlow::ALL.len(), 7);
         let mut used = BTreeSet::new();
         for flow in AttemptFlow::ALL {
             let dimensions = flow.dimensions();
@@ -1204,7 +1284,9 @@ mod tests {
         //
         // The pairs below ARE the matrix. Changing one is a documentation change too.
         let contract = AbuseContract::default();
-        let expected: [(AttemptDimension, u32, i64); 10] = [
+        let expected: [(AttemptDimension, u32, i64); 12] = [
+            (AttemptDimension::RegisterAccount, 3, 60),
+            (AttemptDimension::RegisterNetwork, 20, 15),
             (AttemptDimension::LogInAccount, 20, 15),
             (AttemptDimension::LogInNetwork, 100, 15),
             (AttemptDimension::VerificationResendAccount, 5, 60),
@@ -1287,8 +1369,8 @@ mod tests {
     fn the_row_bound_is_the_stated_formula() {
         let default = AttemptBuckets::default();
         assert_eq!(default.get(), 65_536);
-        assert_eq!(default.max_rows(), 10 * 65_536);
-        assert_eq!(default.max_rows(), 655_360);
+        assert_eq!(default.max_rows(), 12 * 65_536);
+        assert_eq!(default.max_rows(), 786_432);
 
         // The formula, not the constant: it tracks both factors.
         for count in [256_u32, 1024, 65_536, 1_048_576] {
@@ -1328,6 +1410,7 @@ mod tests {
         // The key is fixed, so these are computed facts, not samples.
         let ring = keyring(65_536);
         let account_dimensions = [
+            AttemptDimension::RegisterAccount,
             AttemptDimension::LogInAccount,
             AttemptDimension::VerificationResendAccount,
             AttemptDimension::ForgotPasswordAccount,
@@ -1409,13 +1492,22 @@ mod tests {
     }
 
     #[test]
-    fn an_entire_ipv6_prefix_still_cannot_grow_the_key_space() {
-        // The network axis is unbounded for the SAME reason the account axis is, and it does not
-        // need an email to be: a routine /64 gives an attacker 2^64 source addresses.
+    fn an_entire_ipv6_prefix_is_one_network_key() {
+        // THE ATTACKER THE MODULE HEADER NAMES, and the reason the /64 fold exists.
+        //
+        // Bucketing bounds the ROW COUNT against 2^64 source addresses and does nothing to the
+        // RATE: with the full 128 bits as the key, every fresh address landed in a uniformly random
+        // network bucket, so an attacker with one /64 could fill every ACCOUNT bucket while no
+        // NETWORK bucket ever reached its limit. `sq-4-bounded-abuse-state.md` §5 priced that
+        // attack against a defence that was not there. A security review found it.
+        //
+        // Folding to the /64 makes the network axis count what it was written to count.
         const BUCKETS: u32 = 256;
         let ring = keyring(BUCKETS);
         let mut seen = BTreeSet::new();
         for n in 0..50_000_u32 {
+            // 50_000 addresses that differ ONLY in the interface identifier — the half of a v6
+            // address its holder chooses freely.
             let address = ClientIdentity::DirectPeer(IpAddr::V6(Ipv6Addr::new(
                 0x2001,
                 0xdb8,
@@ -1432,8 +1524,40 @@ mod tests {
                     .get(),
             );
         }
-        assert!(seen.len() <= BUCKETS as usize);
-        assert_eq!(seen.len(), BUCKETS as usize, "the mapping is not spreading");
+        assert_eq!(
+            seen.len(),
+            1,
+            "one /64 reached {} network buckets; an attacker holding it pays nothing",
+            seen.len()
+        );
+
+        // POSITIVE CONTROL: DISTINCT prefixes are still distinct keys, and still spread. Without
+        // this, folding everything to a single constant would satisfy the assertion above and make
+        // the network axis useless.
+        let mut prefixes = BTreeSet::new();
+        for n in 0..50_000_u32 {
+            let address = ClientIdentity::DirectPeer(IpAddr::V6(Ipv6Addr::new(
+                0x2001,
+                0xdb8,
+                (n >> 16) as u16,
+                (n & 0xffff) as u16,
+                0,
+                0,
+                0,
+                1,
+            )));
+            prefixes.insert(
+                ring.bucket(AttemptDimension::LogInNetwork, AttemptKey::Network(address))
+                    .expect("the axes match")
+                    .get(),
+            );
+        }
+        assert!(prefixes.len() <= BUCKETS as usize);
+        assert_eq!(
+            prefixes.len(),
+            BUCKETS as usize,
+            "distinct /64s are not spreading across the bucket space"
+        );
     }
 
     #[test]
@@ -1957,6 +2081,73 @@ mod tests {
                 .admit(AttemptFlow::LogIn, keys, correlation(), at(0))
                 .await
                 .is_ok()
+        );
+    }
+
+    /// An admission is spent by the flow that takes it.
+    ///
+    /// ```compile_fail
+    /// # async fn demo<R: renvor_auth::abuse::AttemptRepository, A: renvor_auth::audit::AuditSink>(
+    /// #     guard: &renvor_auth::abuse::AbuseGuard<R, A>,
+    /// #     keys: renvor_auth::abuse::FlowKeys<'_>,
+    /// #     correlation: renvor_auth::audit::CorrelationId,
+    /// #     now: chrono::DateTime<chrono::Utc>,
+    /// # ) {
+    /// fn spends(_: renvor_auth::abuse::Admitted) {}
+    ///
+    /// let admitted = guard
+    ///     .admit(renvor_auth::abuse::AttemptFlow::LogIn, keys, correlation, now)
+    ///     .await
+    ///     .expect("admitted");
+    /// spends(admitted);
+    /// spends(admitted);   // ONE counted attempt must not admit a second call.
+    /// # }
+    /// ```
+    ///
+    /// The control below compiles, so the block above fails for the move rather than for a renamed
+    /// item or a changed signature — the trap `renvor-xtask`'s own notes record about bare
+    /// `compile_fail` blocks.
+    ///
+    /// ```
+    /// fn spends(_: renvor_auth::abuse::Admitted) {}
+    /// let _ = spends;
+    /// let _ = renvor_auth::abuse::AttemptFlow::LogIn;
+    /// ```
+    #[tokio::test]
+    async fn an_admission_is_spent_by_the_flow_that_takes_it() {
+        // The doctests above carry the structural half. This carries the observable half: after a
+        // guarded call, a second call needs a SECOND counted attempt, and the store shows two.
+        let guard = AbuseGuard::new(
+            FakeAttempts::default(),
+            keyring(65_536),
+            AbuseContract::default(),
+            RecordingAuditSink::new(),
+        );
+        let keys = FlowKeys {
+            account: Some("ada@example.test"),
+            client: None,
+            network: network(1),
+        };
+        for _ in 0..3 {
+            let admission = guard
+                .admit(AttemptFlow::LogIn, keys, correlation(), at(0))
+                .await
+                .expect("under the limit");
+            assert_eq!(admission.flow(), AttemptFlow::LogIn);
+            drop(admission);
+        }
+
+        // THREE calls, THREE counted attempts. When `Admitted` derived `Copy` one call could have
+        // served all three, and the store would read one.
+        let rows = guard.repository.rows.lock().expect("unpoisoned");
+        let account = rows
+            .values()
+            .map(|state| state.current)
+            .max()
+            .expect("a row exists");
+        assert_eq!(
+            account, 3,
+            "three flow invocations did not cost three attempts"
         );
     }
 

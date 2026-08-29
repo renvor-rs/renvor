@@ -226,10 +226,12 @@ where
     /// policy or is blocklisted, or [`ServiceError::Storage`].
     pub async fn register(
         &self,
+        admitted: crate::abuse::Admitted,
         email: &str,
         password: &str,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Result<Registration, ServiceError> {
+        admitted.expect(crate::abuse::AttemptFlow::Register)?;
         // Policy and blocklist BEFORE the database. Hashing a password that policy will refuse
         // spends 64 MiB on an answer already known, from an unauthenticated endpoint.
         self.policy.admit(password)?;
@@ -237,12 +239,25 @@ where
             return Err(AuthError::PasswordRejected.into());
         }
 
+        // HASH FIRST, and pay it on BOTH paths.
+        //
+        // This used to hash only after the insert succeeded, so a duplicate address returned
+        // without doing the work — and `PasswordService`'s own parameters are measured at **71.9 ms
+        // / 64 MiB**. One request, one stopwatch, no statistics: fast means the account exists.
+        //
+        // That is the same oracle `log_in` was built around — *"a skipped verification is 68 ms
+        // cheaper. That is not a difference an attacker needs statistics to see"* — and the same
+        // remedy: do the work unconditionally and discard it, rather than ask a caller to be
+        // careful. Found by security review.
+        let hash = self.passwords.hash(password, self.entropy.as_ref())?;
+
         let outcome = self.users.register(email, now).await?;
         let Registration::Created(user) = outcome else {
+            // The hash is DISCARDED here. Computing it and throwing it away is exactly the cost
+            // that makes the two paths cost the same.
             return Ok(Registration::AlreadyRegistered);
         };
 
-        let hash = self.passwords.hash(password, self.entropy.as_ref())?;
         self.credentials.upsert(user, &hash, false, now).await?;
         Ok(Registration::Created(user))
     }
@@ -800,7 +815,12 @@ mod tests {
         // correct caller, so only a WRONG-flow admission can detect it.
         let service = service();
         service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
 
@@ -839,7 +859,12 @@ mod tests {
         // login endpoint tells an attacker which addresses have accounts.
         let service = service();
         service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
 
@@ -882,7 +907,12 @@ mod tests {
         // early on `find_by_email` yielding `None` never gets there.
         let service = service();
         service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
 
@@ -909,7 +939,12 @@ mod tests {
         // above while breaking every login.
         let service = service();
         let Registration::Created(id) = service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers")
         else {
@@ -938,7 +973,12 @@ mod tests {
         let service = service();
         let error = refusal(
             service
-                .register("ada@example.test", "short", moment())
+                .register(
+                    admitted(crate::abuse::AttemptFlow::Register),
+                    "ada@example.test",
+                    "short",
+                    moment(),
+                )
                 .await
                 .expect_err("a 5-character password must be refused"),
         );
@@ -955,7 +995,12 @@ mod tests {
         let service = service();
         let error = refusal(
             service
-                .register("ada@example.test", "correct horse battery staple", moment())
+                .register(
+                    admitted(crate::abuse::AttemptFlow::Register),
+                    "ada@example.test",
+                    "correct horse battery staple",
+                    moment(),
+                )
                 .await
                 .expect_err("a blocklisted password must be refused"),
         );
@@ -969,13 +1014,23 @@ mod tests {
         // taken and NOT which account holds it.
         let service = service();
         let first = service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
         assert!(matches!(first, Registration::Created(_)));
 
         let second = service
-            .register("ada@example.test", "a different long passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a different long passphrase",
+                moment(),
+            )
             .await
             .expect("a duplicate is an outcome, not an error");
         assert_eq!(second, Registration::AlreadyRegistered);
@@ -1012,7 +1067,12 @@ mod tests {
         // authenticate and forget to ask.
         let service = service();
         let Registration::Created(id) = service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers")
         else {
@@ -1072,7 +1132,12 @@ mod tests {
     ) {
         let service = service();
         service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
         (service, Tokens::default(), RecordingMailSink::new())
@@ -1173,7 +1238,12 @@ mod tests {
         // makes it useful elsewhere and useless here.
         let service = service_with_varying_entropy();
         service
-            .register("ada@example.test", "a long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "ada@example.test",
+                "a long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers");
         let (tokens, mail) = (Tokens::default(), RecordingMailSink::new());
@@ -1332,7 +1402,12 @@ mod tests {
         // else's password with your own link.
         let (service, tokens, mail) = registered().await;
         let Registration::Created(bob) = service
-            .register("bob@example.test", "bob's long enough passphrase", moment())
+            .register(
+                admitted(crate::abuse::AttemptFlow::Register),
+                "bob@example.test",
+                "bob's long enough passphrase",
+                moment(),
+            )
             .await
             .expect("registers")
         else {

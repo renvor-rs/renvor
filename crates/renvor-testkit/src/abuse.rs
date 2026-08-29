@@ -130,14 +130,25 @@ fn correlation() -> CorrelationId {
     CorrelationId::from_bytes([0xAB; 8])
 }
 
+/// A distinct network identity per index.
+///
+/// # The index varies the /64 PREFIX, not the interface identifier
+///
+/// The network axis keys on the `/64`, because an attacker holding one has 2^64 addresses inside it
+/// and keying on the full 128 bits made the axis count nothing. So a helper that varied the
+/// low half would hand every index the **same** key — and the assertions that need distinct
+/// network identities would silently be measuring one.
+///
+/// This helper varied the low half until a security review found the /64 gap; the suite went red
+/// on the fix, which is the test doing its job.
 fn network(index: u32) -> ClientIdentity {
     ClientIdentity::DirectPeer(IpAddr::V6(Ipv6Addr::new(
         0x2001,
         0xdb8,
-        0,
-        0,
         (index >> 16) as u16,
         (index & 0xffff) as u16,
+        0,
+        0,
         0,
         1,
     )))

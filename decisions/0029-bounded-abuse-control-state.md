@@ -52,14 +52,15 @@ Every identifier is mapped, **before any storage call**, into a fixed space:
 bucket = HMAC-SHA256(server_secret, dimension_tag ‖ 0x1F ‖ key_bytes) & (buckets - 1)
 ```
 
-- `dimension` is the discriminant of a **closed, fieldless** Rust enum with **ten** variants — one
-  per `(flow, axis)` pair actually counted.
+- `dimension` is the discriminant of a **closed, fieldless** Rust enum with **twelve** variants — one
+  per `(flow, axis)` pair actually counted. FR-063 names six flows; registration is a **seventh**,
+  added after a security review priced the unbounded route (see `evidence/review-round-1.md` §4).
 - `buckets` is a configured **power of two** in `[256, 1_048_576]`, default `65_536`. A power of two
   makes the reduction a mask, so there is no modulo bias toward low indices.
 - The window is **content of the row**, not part of its key. Rolling a window is an `UPDATE`.
 
 ```
-max_rows = |AttemptDimension| × buckets = 10 × 65_536 = 655_360
+max_rows = |AttemptDimension| × buckets = 12 × 65_536 = 786_432
 ```
 
 **and that bound holds whether or not any sweep ever runs.** Both factors are bounded twice — in
@@ -96,8 +97,10 @@ and failing **open** for one window. That is the same cost as restarting with an
 is the operator's decision.
 
 **Adding a seventh flow is now expensive.** `|AttemptDimension|` is a factor in the bound, a `CHECK`
-constraint, a four-row assertion, and four mutations. Registration is deliberately *not* bounded for
-exactly this reason, and that gap is recorded rather than closed quietly.
+constraint, a four-row assertion, and four mutations. Registration **was** deliberately unbounded for exactly this reason,
+and the gap was recorded rather than closed quietly — until a security review priced it at 64 MiB
+and ~72 ms per unauthenticated request plus a single-sample timing oracle, at which point paying
+the cost was clearly right.
 
 **The batch C migration was corrected in place rather than patched forward.** Four reasons, in
 `evidence/sq-4-bounded-abuse-state.md` §7 — the decisive one being that a forward migration would

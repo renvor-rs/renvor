@@ -97,4 +97,5 @@ renvor-database = { path = "../renvor-database", version = "0.0.0" }
 # it is here — the application itself never composes SQL; every statement it causes is composed by
 # `renvor-sqlx`.
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "chrono"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time"] }
