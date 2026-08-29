@@ -3565,16 +3565,26 @@ mod tests {
         let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
             .expect("every publishable package satisfies the metadata contract");
 
-        // TWELVE since Phase 009: `renvor-auth` joined the eleven Phase 007 left. The number is
-        // asserted rather than inferred so that adding a publishable package without adding it to
-        // the release ordering fails here — which is exactly what happened when this count was
-        // five and three packages had just been added, again at Phase 006, again at Phase 007, and
-        // AGAIN AT PHASE 009: this assertion is what reported `renvor-auth` before any manual list
-        // was touched, for the fourth time. It is the cheapest test in this file and the one that
-        // has caught the most.
+        // THIRTEEN since Phase 009 batch J: `renvor-auth-http` joined the twelve that earlier
+        // Phase 009 work left, which were themselves the eleven Phase 007 ended with plus
+        // `renvor-auth`. The number is asserted rather than inferred so that adding a publishable
+        // package without adding it to the release ordering fails here — which is exactly what
+        // happened when this count was five and three packages had just been added, again at
+        // Phase 006, again at Phase 007, again earlier in Phase 009 for `renvor-auth`, and AGAIN
+        // at batch J for `renvor-auth-http`.
+        //
+        // That fifth occurrence is the instructive one. Batch J *did* add the crate to
+        // `RELEASING.md`'s ordered table and to the release rehearsal's `CRATES` list — the two
+        // lists a publication actually reads — and still left both spelled counts at twelve. The
+        // structural lists agreed with the manifests while two sentences did not, which is the
+        // failure mode a count derived from `cargo metadata` cannot have and a sentence always
+        // can. Raising the pin is the correct response only once those lists are confirmed to
+        // already carry the new package, which they were.
+        //
+        // It is the cheapest test in this file and the one that has caught the most.
         assert_eq!(
-            examined, 12,
-            "the workspace publishes twelve packages; the scan examined {examined}"
+            examined, 13,
+            "the workspace publishes thirteen packages; the scan examined {examined}"
         );
     }
 

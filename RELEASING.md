@@ -228,10 +228,23 @@ Packages sharing a position have no dependency on each other and may publish in 
 order, or concurrently. Each later position waits for **every** package at every
 earlier one — an optional dependency still has to be resolvable at publish time.
 
-**Twelve publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
+**Thirteen publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
 a package added without appearing in this table fails verification rather than being discovered at
 publication time. `publishable_package_count_is_stated_correctly` asserts the same count against
 **this sentence**, which is a separate claim and was the one that had drifted.
+
+> **Corrected 2026-08-30 (Phase 009 batch J).** This line read **"Twelve"** while the table above
+> it listed thirteen. Batch J added `renvor-auth-http` to that ordered table *and* to
+> `release-dry-run.yml`'s `CRATES` list — the two lists a publication actually reads — and updated
+> neither spelled count. **The fourth occurrence of this project's recurring failure, and the
+> second in this file.**
+>
+> One thing was different this time: it was caught by a test rather than by a reader. Both
+> `publishable_package_count_is_stated_correctly` and
+> `every_real_publishable_package_declares_its_required_metadata` failed in the Phase 009 closing
+> workspace run, before anything was pushed. The 2026-08-25 occurrence below was found by a human
+> during a dependency review, which is why the count test was written; this is that test doing the
+> job it was written for.
 
 > **This line read "Eight" until 2026-08-25, while the table above it listed eleven.** It was
 > already wrong at Phase 006 — the truth was ten — and Phase 007 widened the gap by adding a row to
