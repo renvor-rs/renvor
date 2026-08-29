@@ -2734,6 +2734,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "renvor-auth-http"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "renvor-auth",
+ "renvor-core",
+ "renvor-database",
+ "renvor-error",
+ "renvor-http",
+ "renvor-openapi",
+ "renvor-sqlx",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "renvor-cli"
 version = "0.0.0"
 dependencies = [
@@ -2811,6 +2829,7 @@ dependencies = [
  "axum",
  "futures-util",
  "http-body-util",
+ "renvor-auth",
  "renvor-core",
  "renvor-error",
  "renvor-openapi",
