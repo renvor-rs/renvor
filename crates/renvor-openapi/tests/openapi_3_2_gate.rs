@@ -120,6 +120,7 @@ fn representative_document() -> Document {
     path.set(
         "GET",
         Operation {
+            security: Vec::new(),
             operation_id: "listItems".to_owned(),
             summary: Some("List items".to_owned()),
             description: None,
@@ -347,6 +348,7 @@ fn open_ended_maps_are_emitted_in_sorted_order() {
         .set(
             "GET",
             Operation {
+                security: Vec::new(),
                 operation_id: "getZebra".to_owned(),
                 summary: None,
                 description: None,
@@ -429,6 +431,7 @@ fn a_duplicate_operation_id_is_refused_rather_than_silently_kept() {
         .set(
             "GET",
             Operation {
+                security: Vec::new(),
                 // The SAME identifier the existing operation uses.
                 operation_id: "listItems".to_owned(),
                 summary: None,
@@ -462,6 +465,7 @@ fn a_duplicate_operation_id_is_refused_rather_than_silently_kept() {
 fn declaring_the_same_method_twice_for_one_path_is_refused() {
     let mut path = PathItem::default();
     let operation = || Operation {
+        security: Vec::new(),
         operation_id: "x".to_owned(),
         summary: None,
         description: None,

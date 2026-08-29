@@ -127,6 +127,26 @@ pub trait MailPort: Send + Sync {
     ) -> impl core::future::Future<Output = Result<(), MailError>> + Send;
 }
 
+/// A shared mail port is itself a mail port.
+///
+/// Without this, a caller holding one sink and wanting to inspect what it recorded would have to
+/// choose between **giving** it to the service and **keeping** it — there is no third option,
+/// because the service takes ownership. Forwarding adds no behaviour, so there is nothing here for
+/// a test to accidentally measure instead of the real implementation.
+///
+/// The same shape [`crate::abuse::AttemptRepository`] uses for `&T`, and for the same reason.
+impl<T> MailPort for std::sync::Arc<T>
+where
+    T: MailPort + ?Sized,
+{
+    fn deliver(
+        &self,
+        mail: OutgoingMail,
+    ) -> impl core::future::Future<Output = Result<(), MailError>> + Send {
+        (**self).deliver(mail)
+    }
+}
+
 /// A sink that records what it was asked to send.
 ///
 /// Available outside `cfg(test)` on purpose, for the same reason

@@ -202,6 +202,13 @@ pub struct Operation {
     pub request_body: Option<RequestBody>,
     /// The declared responses, keyed by status. Sorted, because it is a [`BTreeMap`].
     pub responses: BTreeMap<String, Response>,
+    /// The security requirements. **Any one** of them satisfies the operation.
+    ///
+    /// An empty vector is serialised as absent, which in OpenAPI means "inherit the document's
+    /// top-level requirement" — not "no security". An operation that must be reachable without a
+    /// credential declares an explicit empty [`SecurityRequirement`] instead.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub security: Vec<SecurityRequirement>,
 }
 
 /// One path and the operations it answers.
@@ -280,12 +287,89 @@ impl PathItem {
     }
 }
 
+/// Where an API key travels.
+///
+/// **A closed set, and deliberately smaller than OpenAPI's.** The specification also permits
+/// `query`, and Renvor does not implement it: a credential in a query string is written to every
+/// access log, proxy log, and browser history entry between the client and the server. A variant
+/// here would be a way to declare something the transport must never do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiKeyLocation {
+    /// A cookie. Renvor's session credential.
+    Cookie,
+    /// A request header.
+    Header,
+}
+
+/// One security scheme.
+///
+/// # The vocabulary is closed because FR-082 is a claim about what is *implemented*
+///
+/// *"OpenAPI declares the security schemes the transport actually implements, and no others."*
+/// An open `type` field would let a document announce OAuth2 flows, OpenID discovery, or mutual
+/// TLS that nothing serves — and a client that trusted the document would build against them.
+///
+/// Two variants, because Renvor's transport authenticates two ways: a session cookie, and a bearer
+/// token behind `renvor-auth`'s `tokens` feature. `openIdConnect`, `oauth2` and `mutualTLS` are
+/// absent because they are not implemented, not because they were forgotten.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "type")]
+pub enum SecurityScheme {
+    /// A credential carried in a named cookie or header.
+    #[serde(rename = "apiKey")]
+    ApiKey {
+        /// The cookie or header name.
+        name: String,
+        /// Where it travels.
+        #[serde(rename = "in")]
+        location: ApiKeyLocation,
+        /// What it is, for a human reading the document.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+    /// An `Authorization:` scheme, per RFC 9110.
+    #[serde(rename = "http")]
+    Http {
+        /// The authentication scheme, lowercase — `bearer`.
+        scheme: String,
+        /// A hint at the bearer token's format.
+        #[serde(rename = "bearerFormat", skip_serializing_if = "Option::is_none")]
+        bearer_format: Option<String>,
+        /// What it is, for a human reading the document.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
+    },
+}
+
+/// One security requirement: scheme names to the scopes each must grant.
+///
+/// A `Vec` of these on an operation means **any one of them** satisfies it; the entries *within*
+/// one requirement must **all** hold. That asymmetry is OpenAPI's, and it is stated here because
+/// getting it backwards produces a document that says the opposite of what is enforced.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct SecurityRequirement(pub BTreeMap<String, Vec<String>>);
+
+impl SecurityRequirement {
+    /// A requirement naming one scheme and the scopes it must grant.
+    #[must_use]
+    pub fn new(scheme: impl Into<String>, scopes: Vec<String>) -> Self {
+        let mut map = BTreeMap::new();
+        map.insert(scheme.into(), scopes);
+        Self(map)
+    }
+}
+
 /// Reusable components.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Components {
     /// Schemas, sorted by name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub schemas: BTreeMap<String, serde_json::Value>,
+    /// Security schemes, sorted by name.
+    #[serde(rename = "securitySchemes", skip_serializing_if = "BTreeMap::is_empty")]
+    pub security_schemes: BTreeMap<String, SecurityScheme>,
 }
 
 /// Why a document could not be built.
@@ -382,7 +466,10 @@ pub struct Document {
 }
 
 fn components_are_empty(components: &Components) -> bool {
-    components.schemas.is_empty()
+    // BOTH maps. The single-field version omitted `components` entirely whenever `schemas` was
+    // empty, which would have dropped a document's security schemes on the floor — silently, and
+    // only for documents that declare security without declaring a schema.
+    components.schemas.is_empty() && components.security_schemes.is_empty()
 }
 
 impl Document {

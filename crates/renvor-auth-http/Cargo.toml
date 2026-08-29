@@ -1,0 +1,100 @@
+# The authentication transport adapter.
+#
+# # Why this crate exists at all
+#
+# `renvor-auth` names no transport, and `renvor-http` names no domain. Something has to join them,
+# and `plan.md` §1 originally said that something was `renvor-http` itself. **The gate refuted it**,
+# which is the outcome that paragraph anticipated: `renvor-auth` depends on `renvor-config` for
+# `Secret<T>`, and step 7's CLAIM 3 forbids `renvor-http` from resolving `renvor-config`.
+#
+# So this crate stands to the transport exactly as `renvor-sqlx` and `renvor-seaorm` stand to the
+# persistence ports: an adapter that depends on both sides and that neither side depends on.
+# Dependencies point inward (constitution principle II).
+#
+# The three rejected alternatives — an optional feature that hides from the gate, logic in the
+# pure-`pub use` facade, and moving `Secret<T>` into the kernel that exists precisely not to hold
+# one — are recorded in `specs/009-.../evidence/batch-j-placement.md`.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-auth-http"
+description = "HTTP routes, Problem Details mapping, and OpenAPI security schemes for the Renvor framework's authentication flows. The adapter that joins renvor-auth's transport-independent operations to renvor-http. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-auth-http"
+readme = "README.md"
+keywords = ["renvor", "authentication", "http", "openapi"]
+categories = ["web-programming", "authentication"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The domain. This adapter implements no operation of its own — it routes to these.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
+
+# The transport seam: `Request`, `Response`, `RouteGroup`, `Handler`. None of them names `axum`.
+renvor-http = { path = "../renvor-http", version = "0.0.0" }
+
+# The public error registry and RFC 9457 rendering. The mapping in `problem.rs` is the whole of
+# FR-081's "without leaking", and it is expressed in this crate's vocabulary rather than invented.
+renvor-error = { path = "../renvor-error", version = "0.0.0" }
+
+# The document the security schemes are declared in.
+renvor-openapi = { path = "../renvor-openapi", version = "0.0.0" }
+
+# The client identity the abuse controls count. Resolved by `renvor-http`; this crate only passes
+# it along, and never parses a forwarding header.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# The instant type both `renvor-auth` and the persistence adapters already bind.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+# Request and response bodies are JSON.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+[features]
+default = []
+
+# API token mode, passed through to the domain. The refresh route does not exist without it, for
+# the same reason `renvor-sqlx`'s refresh repository does not.
+tokens = ["renvor-auth/tokens"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# THE TEST APPLICATION USES A REAL DATABASE, not a set of fakes.
+#
+# FR-083 asks for a test application that "exercises every flow end to end", and a suite of
+# in-memory doubles would exercise the routes against a second implementation of the ports rather
+# than against the real one. The four-row suites already prove the adapters; this proves the
+# **routes**, and it does so through the same adapter an application would use.
+#
+# A dev-dependency, so this edge reaches no consumer's graph — the same argument this crate's
+# `renvor-auth` dev-edge in `renvor-http` makes.
+renvor-sqlx = { path = "../renvor-sqlx", version = "0.0.0", features = ["db-postgres"] }
+
+# The persistence PORTS, for `MigrationSettings` and `PoolSettings`. Dev-only: this crate's own
+# surface names no database.
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+
+# Raw statements, to drop and recreate the auth schema between runs. Dev-only, and the ONLY reason
+# it is here — the application itself never composes SQL; every statement it causes is composed by
+# `renvor-sqlx`.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "chrono"] }
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "macros", "time"] }

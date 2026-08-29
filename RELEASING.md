@@ -159,6 +159,7 @@ Current order:
 | 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation` | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
 | 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http`, `renvor-error`, `renvor-validation`, `renvor-openapi` | Facade. `renvor-config` is optional-but-default-on; the other four are optional-and-default-**off**, and `transport-rest` enables `renvor-http`, `renvor-error`, `renvor-validation` and `renvor-openapi` together. **All six** must exist first |
+| 5 | `renvor-auth-http` | `renvor-auth`, `renvor-http`, `renvor-error`, `renvor-openapi`, `renvor-core` | The authentication **transport adapter**. Added in Phase 009 batch J, and it publishes after both sides because it depends on both. It exists because `renvor-http` **cannot** depend on `renvor-auth`: that would pull `renvor-config` into the transport's graph, which step 7's CLAIM 3 forbids |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
 
 > **Extended 2026-08-24 (Phase 006).** `renvor-database` and `renvor-sqlx` join the table, and they
