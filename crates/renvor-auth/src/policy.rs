@@ -138,7 +138,14 @@ pub trait Policy<R> {
 /// ```
 ///
 /// Without it, renaming `Authorized` would turn both `compile_fail` blocks into permanent passes.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+///
+/// # Deliberately not `Copy`
+///
+/// It was, and the derive quietly falsified the sentence on [`Self::into_resource`]: with a `Copy`
+/// resource the whole permission is `Copy`, so "consumes the permission" consumed nothing and the
+/// caller kept a usable duplicate. `Clone` stays — duplicating a permission is sometimes right —
+/// but it now has to be **written**, which is the difference between a decision and an accident.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Authorized<R> {
     subject: AuthenticatedSubject,
     resource: R,
@@ -159,10 +166,29 @@ impl<R> Authorized<R> {
         &self.resource
     }
 
-    /// Takes the resource out.
+    /// Takes the resource out, consuming the permission with it.
     ///
-    /// Consumes the permission with it: an operation that has unwrapped its authorization cannot
-    /// then hand the same proof to a second operation.
+    /// An operation that has unwrapped its authorization cannot then hand the same proof to a
+    /// second operation — the value is moved, and [`Authorized`] is deliberately not `Copy`:
+    ///
+    /// ```compile_fail
+    /// use renvor_auth::policy::{Authorized, OwnedBySubject, authorize};
+    /// # fn demo<R>(granted: Authorized<R>) {
+    /// let _first = granted.into_resource();
+    /// let _second = granted.into_resource();   // moved out above
+    /// # }
+    /// ```
+    ///
+    /// The control, which **does** compile — so the failure above is the move rather than the
+    /// method being unusable or the path being wrong:
+    ///
+    /// ```
+    /// use renvor_auth::policy::Authorized;
+    /// # fn demo<R>(granted: Authorized<R>) {
+    /// let _first = granted.resource();
+    /// let _second = granted.resource();   // borrowing twice is fine
+    /// # }
+    /// ```
     #[must_use]
     pub fn into_resource(self) -> R {
         self.resource
