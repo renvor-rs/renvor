@@ -27,6 +27,7 @@ pub mod error;
 pub mod mail;
 pub mod opaque;
 pub mod password;
+pub mod policy;
 pub mod repository;
 pub mod service;
 pub mod session;
@@ -48,6 +49,7 @@ pub use error::AuthError;
 pub use mail::{MailError, MailKind, MailPort, OutgoingMail, RecordingMailSink};
 pub use opaque::{Opaque, OpaqueKind, SecretDigest};
 pub use password::{PasswordHash, PasswordPolicy, PasswordService};
+pub use policy::{Authorized, Owned, OwnedBySubject, Policy, authorize};
 pub use repository::{
     CredentialRecord, CredentialRepository, Registration, SingleUseTokenRepository, UserRecord,
     UserRepository,
