@@ -30,6 +30,9 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use renvor_auth::abuse::{
+    AttemptDimension, AttemptObservation, AttemptOutcome, AttemptRepository, AttemptState,
+};
 use renvor_auth::opaque::SecretDigest;
 use renvor_auth::password::PasswordHash;
 use renvor_auth::repository::{
@@ -129,12 +132,14 @@ pub(crate) fn scopes_from(claim: &str) -> Result<ScopeSet, DatabaseError> {
 }
 
 macro_rules! auth_repositories {
-    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $engine_doc:literal) => {
+    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $upsert_nothing:literal, $engine_doc:literal) => {
         #[cfg(feature = $feature)]
         #[doc = $engine_doc]
         pub mod $module {
             use super::{
-                Arc, CredentialRecord, CredentialRepository, DatabaseError, DatabaseErrorKind,
+                Arc, AttemptDimension, AttemptObservation, AttemptOutcome, AttemptRepository,
+                AttemptState, CredentialRecord, CredentialRepository, DatabaseError,
+                DatabaseErrorKind,
                 DatabaseKind, DateTime, PasswordHash, Registration, SeaOrmDatabase, SecretDigest,
                 SessionHandle, SessionRecord, SessionRepository, SingleUseTokenRepository,
                 TokenTable, UserId, UserRecord, UserRepository, Utc, classify_db_error, digest_from,
@@ -701,6 +706,195 @@ macro_rules! auth_repositories {
                 }
             }
 
+            /// Reads and writes `rv_auth_attempt`: the bounded abuse counters.
+            ///
+            /// # The mirror of the direct-SQLx implementation, statement for statement
+            ///
+            /// Three statements in one transaction — a no-op upsert that guarantees the row exists,
+            /// a `SELECT ... FOR UPDATE` that locks it, and an `UPDATE` with counts computed in
+            /// Rust. The reasoning for each is in `renvor_sqlx::auth`'s copy and is not repeated;
+            /// what matters here is that it is the SAME three, because FR-079 requires one shared
+            /// suite to hold for both adapters and a different shape would make that a coincidence.
+            #[derive(Clone, Debug)]
+            pub struct SeaOrmAttemptRepository {
+                database: Arc<SeaOrmDatabase<$driver>>,
+            }
+
+            impl SeaOrmAttemptRepository {
+                /// Wraps a database handle.
+                #[must_use]
+                pub const fn new(database: Arc<SeaOrmDatabase<$driver>>) -> Self {
+                    Self { database }
+                }
+
+                /// The transition itself. Called inside the transaction; the caller commits.
+                async fn count_within(
+                    unit: &crate::SeaOrmUnitOfWork<'_, $driver>,
+                    observation: &AttemptObservation,
+                ) -> Result<AttemptOutcome, DatabaseError> {
+                    let backend = unit.get_database_backend();
+                    let dimension = observation.dimension.code();
+                    let bucket = i32::try_from(observation.bucket.get())
+                        .map_err(|_| crate::error::record(DatabaseErrorKind::StatementRejected))?;
+
+                    // 1. ENSURE THE ROW. `SELECT ... FOR UPDATE` on an absent row locks nothing.
+                    let ensure = sea_orm::Statement::from_sql_and_values(
+                        backend,
+                        &format!(
+                            "INSERT INTO rv_auth_attempt (dimension, bucket, window_start, current_count, previous_count, expires_at) VALUES ({}, {}, {}, 0, 0, {}){}",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                            KIND.placeholder(4),
+                            $upsert_nothing,
+                        ),
+                        [
+                            i32::from(dimension).into(),
+                            bucket.into(),
+                            observation.window_start.into(),
+                            observation.expires_at.into(),
+                        ],
+                    );
+                    unit.execute_raw(ensure)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?;
+
+                    // 2. THE LOCK.
+                    let lock = sea_orm::Statement::from_sql_and_values(
+                        backend,
+                        &format!(
+                            "SELECT window_start, current_count, previous_count FROM rv_auth_attempt WHERE dimension = {} AND bucket = {} FOR UPDATE",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                        ),
+                        [i32::from(dimension).into(), bucket.into()],
+                    );
+                    let Some(row) = unit
+                        .query_one_raw(lock)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?
+                    else {
+                        // Unreachable: step 1 guaranteed the row. Refused rather than assumed.
+                        return Err(crate::error::record(DatabaseErrorKind::StatementRejected));
+                    };
+                    let stored_start: DateTime<Utc> = row
+                        .try_get("", "window_start")
+                        .map_err(|error| classify_db_error(&error))?;
+                    let stored_current: i64 = row
+                        .try_get("", "current_count")
+                        .map_err(|error| classify_db_error(&error))?;
+                    let stored_previous: i64 = row
+                        .try_get("", "previous_count")
+                        .map_err(|error| classify_db_error(&error))?;
+
+                    // 3. THE DECISION, in Rust — never `current_count + 1` in SQL, which an engine
+                    //    can raise on.
+                    if stored_start > observation.window_start {
+                        return Ok(AttemptOutcome::ClockRegressed);
+                    }
+                    let current = u64::try_from(stored_current).unwrap_or(0);
+                    let previous = u64::try_from(stored_previous).unwrap_or(0);
+                    let (next_current, next_previous) = if stored_start == observation.window_start {
+                        (
+                            current.saturating_add(1).min(AttemptState::CEILING),
+                            previous,
+                        )
+                    } else if stored_start == observation.previous_window_start {
+                        (1, current)
+                    } else {
+                        (1, 0)
+                    };
+
+                    let write = sea_orm::Statement::from_sql_and_values(
+                        backend,
+                        &format!(
+                            "UPDATE rv_auth_attempt SET window_start = {}, current_count = {}, previous_count = {}, expires_at = {} WHERE dimension = {} AND bucket = {}",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                            KIND.placeholder(4),
+                            KIND.placeholder(5),
+                            KIND.placeholder(6),
+                        ),
+                        [
+                            observation.window_start.into(),
+                            i64::try_from(next_current).unwrap_or(i64::MAX).into(),
+                            i64::try_from(next_previous).unwrap_or(i64::MAX).into(),
+                            observation.expires_at.into(),
+                            i32::from(dimension).into(),
+                            bucket.into(),
+                        ],
+                    );
+                    let affected = unit
+                        .execute_raw(write)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_db_error(&error))?;
+                    if affected != 1 {
+                        return Err(crate::error::record(DatabaseErrorKind::StatementRejected));
+                    }
+
+                    Ok(AttemptOutcome::Counted(AttemptState {
+                        current: next_current,
+                        previous: next_previous,
+                        window_start: observation.window_start,
+                    }))
+                }
+            }
+
+            impl AttemptRepository for SeaOrmAttemptRepository {
+                async fn observe(
+                    &self,
+                    observation: AttemptObservation,
+                ) -> Result<AttemptOutcome, DatabaseError> {
+                    use renvor_database::{Database as _, UnitOfWork as _};
+                    let unit = self.database.begin().await?;
+                    match Self::count_within(&unit, &observation).await {
+                        Ok(outcome) => {
+                            unit.commit().await?;
+                            Ok(outcome)
+                        }
+                        Err(error) => {
+                            let _ = unit.rollback().await;
+                            Err(error)
+                        }
+                    }
+                }
+
+                async fn prune(
+                    &self,
+                    dimension: AttemptDimension,
+                    from: u32,
+                    count: u32,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    // A half-open bucket range, for the reasons the direct-SQLx copy records.
+                    let upper = u64::from(from).saturating_add(u64::from(count));
+                    let connection = self.database.acquire().await?;
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "DELETE FROM rv_auth_attempt WHERE dimension = {} AND bucket >= {} AND bucket < {} AND expires_at <= {}",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3),
+                            KIND.placeholder(4),
+                        ),
+                        [
+                            i32::from(dimension.code()).into(),
+                            i64::from(from).into(),
+                            i64::try_from(upper).unwrap_or(i64::MAX).into(),
+                            now.into(),
+                        ],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map(|done| done.rows_affected())
+                        .map_err(|error| classify_db_error(&error))
+                }
+            }
+
             #[cfg(feature = "tokens")]
             use super::{
                 AdvanceRequest, FamilyId, NewRefreshFamily, RefreshGrant, RefreshTokenRepository,
@@ -1110,6 +1304,7 @@ auth_repositories!(
     "db-postgres",
     sqlx::Postgres,
     DatabaseKind::Postgres,
+    " ON CONFLICT (dimension, bucket) DO NOTHING",
     "The PostgreSQL repositories. Placeholders are numbered (`$1`); `from_sql_and_values` rewrites nothing, so the rule arrives per-module."
 );
 auth_repositories!(
@@ -1117,5 +1312,6 @@ auth_repositories!(
     "db-mysql",
     sqlx::MySql,
     DatabaseKind::MySql,
+    " ON DUPLICATE KEY UPDATE expires_at = expires_at",
     "The MySQL repositories. Placeholders are positional (`?`); `from_sql_and_values` rewrites nothing, so the rule arrives per-module."
 );

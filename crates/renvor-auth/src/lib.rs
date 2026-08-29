@@ -20,6 +20,8 @@
 //! - [`Clock`] is a port. Expiry is evaluated against an injected instant, so a test moves time
 //!   instead of waiting for it, and production reads the real clock through the same trait.
 
+pub mod abuse;
+pub mod audit;
 pub mod clock;
 pub mod cookie;
 pub mod csrf;
@@ -34,6 +36,10 @@ pub mod session;
 pub mod subject;
 
 /// Refresh tokens: rotation, replay detection, and family revocation. Behind the `tokens` feature.
+/// The scope + policy + audit gate an application operation puts in front of itself.
+#[cfg(feature = "tokens")]
+pub mod operation;
+
 #[cfg(feature = "tokens")]
 pub mod refresh;
 
@@ -42,6 +48,15 @@ pub mod refresh;
 #[cfg(feature = "tokens")]
 pub mod token;
 
+pub use abuse::{
+    AbuseContract, AbuseGuard, Admitted, AttemptAxis, AttemptBucket, AttemptBuckets,
+    AttemptDimension, AttemptFlow, AttemptKey, AttemptKeyring, AttemptLimit, AttemptObservation,
+    AttemptOutcome, AttemptRepository, AttemptState, FlowKeys,
+};
+pub use audit::{
+    AuditAction, AuditActor, AuditError, AuditEvent, AuditOutcome, AuditSink, AuditSubject,
+    CorrelationId, CredentialRef, RecordingAuditSink,
+};
 pub use clock::{Clock, FixedClock, SystemClock};
 pub use cookie::{CookiePolicy, CookieRejection, SameSiteChoice, SetCookie};
 pub use csrf::{Credential, CsrfKey, CsrfRejection, CsrfToken, RequestKind};

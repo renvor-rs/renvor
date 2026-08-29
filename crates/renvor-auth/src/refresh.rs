@@ -301,6 +301,37 @@ impl RefreshToken {
         self.0.expose()
     }
 
+    /// The abuse-control **client key** for a presented refresh token.
+    ///
+    /// # Why this is here and not computed by the transport
+    ///
+    /// `evidence/abuse-control-matrix.md` §2.1 records why the client axis is keyed on the token
+    /// rather than on its family: the family is not known until the store has been read, and a
+    /// rate limit that needs a database lookup to decide whether to rate-limit is not much of a
+    /// rate limit.
+    ///
+    /// The key is the first sixteen bytes of the digest, not the digest itself, because
+    /// [`crate::abuse::AttemptKey::Client`] takes sixteen — and truncation costs nothing here: the
+    /// value is immediately HMAC'd under the server key and masked into a bucket, so it is a
+    /// *lookup key*, never a credential comparison.
+    ///
+    /// **A malformed presentation is keyed on a fixed constant.** Every unparseable token shares
+    /// one bucket, which is correct rather than a compromise — they are all the same event, and
+    /// giving each its own bucket would let garbage spread across the whole space for free.
+    ///
+    /// It lives on this type so there is **one** place that decides what a presented token's key
+    /// is. A transport computing its own would be a second answer to the same question.
+    #[must_use]
+    pub fn client_key(presented: &str) -> [u8; 16] {
+        let Some(token) = Self::from_wire(presented) else {
+            return [0; 16];
+        };
+        let digest = token.digest();
+        let mut key = [0_u8; 16];
+        key.copy_from_slice(&digest.as_bytes()[..16]);
+        key
+    }
+
     /// What the store holds in its place (FR-041).
     #[must_use]
     pub fn digest(&self) -> SecretDigest {
@@ -553,11 +584,15 @@ impl<R: RefreshTokenRepository> RefreshRotation<R> {
     /// because being handed a dead credential is an ordinary event and not a fault.
     pub async fn rotate(
         &self,
+        admitted: crate::abuse::Admitted,
         presented: &str,
         issuer: &AccessTokenIssuer,
         clock: &dyn Clock,
         entropy: &dyn EntropySource,
     ) -> Result<RefreshOutcome, AuthError> {
+        // The sixth of FR-063's six flows. `Admitted` has no public constructor, so a rotation
+        // that never passed an abuse control cannot be written — see `crate::abuse::Admitted`.
+        admitted.expect(crate::abuse::AttemptFlow::TokenRefresh)?;
         let now = clock.now();
 
         // A value that is not even the right shape is refused without touching the store. This is
@@ -666,6 +701,15 @@ fn store_failure(_: DatabaseError) -> AuthError {
 
 #[cfg(test)]
 mod tests {
+    /// An admission for the refresh flow, without counting one.
+    ///
+    /// These tests are about the rotation transition. The abuse control that guards it is measured
+    /// in `crate::abuse` and in the four-row suite. `Admitted::for_test` is `#[cfg(test)]`, so it
+    /// exists in no build a consumer compiles.
+    fn admitted() -> crate::abuse::Admitted {
+        crate::abuse::Admitted::for_test(crate::abuse::AttemptFlow::TokenRefresh)
+    }
+
     use super::{
         AdvanceRequest, FamilyId, FamilyLifetime, MAX_REFRESH_LIFETIME, NewRefreshFamily, REDACTED,
         RefreshGrant, RefreshLifetime, RefreshOutcome, RefreshRejection, RefreshRotation,
@@ -1044,7 +1088,13 @@ mod tests {
             .expect("a family begins");
 
         let outcome = service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
         let RefreshOutcome::Rotated(second) = outcome else {
@@ -1082,7 +1132,7 @@ mod tests {
         let wire = first.refresh.expose();
 
         let RefreshOutcome::Rotated(second) = service
-            .rotate(&wire, &f.issuer, &f.clock, &f.entropy)
+            .rotate(admitted(), &wire, &f.issuer, &f.clock, &f.entropy)
             .await
             .expect("the store answered")
         else {
@@ -1091,7 +1141,7 @@ mod tests {
 
         // The SAME token again. ASVS V10.4.5.
         let outcome = service
-            .rotate(&wire, &f.issuer, &f.clock, &f.entropy)
+            .rotate(admitted(), &wire, &f.issuer, &f.clock, &f.entropy)
             .await
             .expect("the store answered");
         let RefreshOutcome::Rejected { reason, revoked } = outcome else {
@@ -1114,7 +1164,13 @@ mod tests {
 
         // And the successor the legitimate client is holding is dead too.
         let after = service
-            .rotate(&second.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &second.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
         let RefreshOutcome::Rejected { reason, .. } = after else {
@@ -1144,7 +1200,13 @@ mod tests {
 
         let before = service.store_for_test().row_count();
         let outcome = service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
 
@@ -1170,7 +1232,13 @@ mod tests {
         let f = fixture();
         let service = rotation(Store::default());
         let outcome = service
-            .rotate("not-a-refresh-token", &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                "not-a-refresh-token",
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("no store call to fail");
         assert!(matches!(
@@ -1193,7 +1261,13 @@ mod tests {
         let stranger = RefreshToken::generate(&f.entropy).expect("a generated token");
 
         let outcome = service
-            .rotate(&stranger.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &stranger.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
         assert!(matches!(
@@ -1225,7 +1299,13 @@ mod tests {
             .await
             .expect("a family begins");
         service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
 
@@ -1252,7 +1332,13 @@ mod tests {
             .expect("a family begins");
 
         let RefreshOutcome::Rotated(second) = service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered")
         else {
@@ -1395,7 +1481,13 @@ mod tests {
         );
 
         let RefreshOutcome::Rotated(second) = service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect("the store answered")
         else {
@@ -1433,7 +1525,13 @@ mod tests {
 
         let later = FixedClock::at(at(3601));
         let outcome = service
-            .rotate(&first.refresh.expose(), &f.issuer, &later, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &later,
+                &f.entropy,
+            )
             .await
             .expect("the store answered");
         assert!(
@@ -1505,7 +1603,13 @@ mod tests {
             .store(1, Ordering::SeqCst);
 
         let error = service
-            .rotate(&first.refresh.expose(), &f.issuer, &f.clock, &f.entropy)
+            .rotate(
+                admitted(),
+                &first.refresh.expose(),
+                &f.issuer,
+                &f.clock,
+                &f.entropy,
+            )
             .await
             .expect_err("a failing store must not look like a refusal");
         assert_eq!(error, AuthError::NotPermitted);

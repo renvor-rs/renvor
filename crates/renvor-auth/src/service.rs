@@ -253,7 +253,18 @@ where
     ///
     /// [`ServiceError::Refused`] with [`AuthError::InvalidCredentials`] — **the same value for an
     /// unknown account and a wrong password** — or [`ServiceError::Storage`].
-    pub async fn log_in(&self, email: &str, password: &str) -> Result<Authenticated, ServiceError> {
+    /// # The admission is a parameter, so an unbounded login cannot be written
+    ///
+    /// `admitted` comes from [`crate::abuse::AbuseGuard::admit`] and from nowhere else — the type
+    /// has no public constructor. FR-063 is therefore a property of this signature rather than of
+    /// every call site remembering to check first.
+    pub async fn log_in(
+        &self,
+        admitted: crate::abuse::Admitted,
+        email: &str,
+        password: &str,
+    ) -> Result<Authenticated, ServiceError> {
+        admitted.expect(crate::abuse::AttemptFlow::LogIn)?;
         // ONE PATH. Neither a missing account nor a missing credential shortens the work, because
         // the identity to look up and the hash to verify against are **selected** rather than
         // branched on. An early return here is the enumeration oracle FR-012 exists to close, and
@@ -409,6 +420,7 @@ where
     /// oracle.
     pub async fn send_verification<T, M>(
         &self,
+        admitted: crate::abuse::Admitted,
         tokens: &T,
         mail: &M,
         email: &str,
@@ -419,6 +431,7 @@ where
         T: crate::repository::SingleUseTokenRepository,
         M: crate::mail::MailPort,
     {
+        admitted.expect(crate::abuse::AttemptFlow::VerificationResend)?;
         self.issue_and_send(tokens, mail, Flow::VERIFICATION, email, lifetime, now)
             .await
     }
@@ -433,6 +446,7 @@ where
     /// oracle.
     pub async fn forgot_password<T, M>(
         &self,
+        admitted: crate::abuse::Admitted,
         tokens: &T,
         mail: &M,
         email: &str,
@@ -443,6 +457,7 @@ where
         T: crate::repository::SingleUseTokenRepository,
         M: crate::mail::MailPort,
     {
+        admitted.expect(crate::abuse::AttemptFlow::ForgotPassword)?;
         self.issue_and_send(tokens, mail, Flow::PASSWORD_RESET, email, lifetime, now)
             .await
     }
@@ -455,6 +470,7 @@ where
     /// unknown, already consumed, or expired — **one answer for all three**.
     pub async fn confirm_verification<T>(
         &self,
+        admitted: crate::abuse::Admitted,
         tokens: &T,
         presented: &str,
         now: chrono::DateTime<chrono::Utc>,
@@ -462,6 +478,7 @@ where
     where
         T: crate::repository::SingleUseTokenRepository,
     {
+        admitted.expect(crate::abuse::AttemptFlow::VerificationComplete)?;
         let secret =
             crate::opaque::Opaque::from_wire(crate::opaque::OpaqueKind::Verification, presented)
                 .ok_or(AuthError::CredentialNoLongerValid)?;
@@ -488,6 +505,7 @@ where
     /// [`AuthError::PasswordRejected`] when the new password fails policy or is blocklisted.
     pub async fn reset_password<T>(
         &self,
+        admitted: crate::abuse::Admitted,
         tokens: &T,
         presented: &str,
         new_password: &str,
@@ -496,6 +514,7 @@ where
     where
         T: crate::repository::SingleUseTokenRepository,
     {
+        admitted.expect(crate::abuse::AttemptFlow::ResetPassword)?;
         let secret =
             crate::opaque::Opaque::from_wire(crate::opaque::OpaqueKind::PasswordReset, presented)
                 .ok_or(AuthError::CredentialNoLongerValid)?;
@@ -521,6 +540,15 @@ where
 
 #[cfg(test)]
 mod tests {
+    /// An admission for a flow, without counting one.
+    ///
+    /// These tests are about the flows, not about the abuse control — that is measured in
+    /// `crate::abuse` and, for atomicity and the row bound, in the four-row suite. The constructor
+    /// is `#[cfg(test)]`, so it exists in no build a consumer compiles.
+    fn admitted(flow: crate::abuse::AttemptFlow) -> crate::abuse::Admitted {
+        crate::abuse::Admitted::for_test(flow)
+    }
+
     use super::{
         Acknowledged, Authenticated, AuthenticationService, DispatchOutcome, ServiceError,
         TokenLifetime,
@@ -767,6 +795,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn an_admission_earned_on_another_flow_does_not_open_a_login() {
+        // A-M13's target. Removing `admitted.expect(...)` from `log_in` changes nothing for a
+        // correct caller, so only a WRONG-flow admission can detect it.
+        let service = service();
+        service
+            .register("ada@example.test", "a long enough passphrase", moment())
+            .await
+            .expect("registers");
+
+        let outcome = service
+            .log_in(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
+                "ada@example.test",
+                "a long enough passphrase",
+            )
+            .await;
+        assert!(
+            matches!(
+                outcome,
+                Err(ServiceError::Refused(AuthError::PolicyMisconfigured))
+            ),
+            "a forgot-password admission opened a login: {outcome:?}"
+        );
+
+        // POSITIVE CONTROL: the right admission works, so the refusal is about the flow rather
+        // than about the credentials.
+        assert!(
+            service
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "a long enough passphrase"
+                )
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
     async fn an_unknown_account_and_a_wrong_password_are_indistinguishable() {
         // FR-012 and FR-052. Two different failures must produce ONE observable answer, or the
         // login endpoint tells an attacker which addresses have accounts.
@@ -778,13 +845,21 @@ mod tests {
 
         let unknown = refusal(
             service
-                .log_in("nobody@example.test", "a long enough passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "nobody@example.test",
+                    "a long enough passphrase",
+                )
                 .await
                 .expect_err("an unknown account must not authenticate"),
         );
         let wrong = refusal(
             service
-                .log_in("ada@example.test", "the wrong passphrase entirely")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "the wrong passphrase entirely",
+                )
                 .await
                 .expect_err("a wrong password must not authenticate"),
         );
@@ -813,7 +888,11 @@ mod tests {
 
         let before = *service.credentials.lookups.lock().expect("not poisoned");
         let _ = service
-            .log_in("nobody@example.test", "a long enough passphrase")
+            .log_in(
+                admitted(crate::abuse::AttemptFlow::LogIn),
+                "nobody@example.test",
+                "a long enough passphrase",
+            )
             .await;
         let after = *service.credentials.lookups.lock().expect("not poisoned");
 
@@ -841,7 +920,11 @@ mod tests {
             subject,
             must_change_password,
         } = service
-            .log_in("ada@example.test", "a long enough passphrase")
+            .log_in(
+                admitted(crate::abuse::AttemptFlow::LogIn),
+                "ada@example.test",
+                "a long enough passphrase",
+            )
             .await
             .expect("the correct password must authenticate");
         assert_eq!(subject.user_id(), id);
@@ -900,14 +983,22 @@ mod tests {
         // ...and the second password did NOT overwrite the first credential.
         assert!(
             service
-                .log_in("ada@example.test", "a long enough passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "a long enough passphrase"
+                )
                 .await
                 .is_ok(),
             "the original password must still work"
         );
         assert!(
             service
-                .log_in("ada@example.test", "a different long passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "a different long passphrase"
+                )
                 .await
                 .is_err(),
             "a duplicate registration must NOT reset the password — that would be account takeover"
@@ -938,7 +1029,11 @@ mod tests {
             .expect("marks compromised");
 
         let authenticated = service
-            .log_in("ada@example.test", "a long enough passphrase")
+            .log_in(
+                admitted(crate::abuse::AttemptFlow::LogIn),
+                "ada@example.test",
+                "a long enough passphrase",
+            )
             .await
             .expect("authenticates");
         assert!(authenticated.must_change_password);
@@ -991,11 +1086,25 @@ mod tests {
         let lifetime = TokenLifetime::default();
 
         let (known, known_outcome) = service
-            .forgot_password(&tokens, &mail, "ada@example.test", lifetime, day())
+            .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         let (unknown, unknown_outcome) = service
-            .forgot_password(&tokens, &mail, "nobody@example.test", lifetime, day())
+            .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
+                &tokens,
+                &mail,
+                "nobody@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
 
@@ -1011,6 +1120,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "nobody@example.test",
@@ -1033,6 +1143,7 @@ mod tests {
 
         let (public, outcome) = service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1069,13 +1180,27 @@ mod tests {
         let lifetime = TokenLifetime::default();
 
         service
-            .send_verification(&tokens, &mail, "ada@example.test", lifetime, day())
+            .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         let first = mail.last().expect("sent").token().expose();
 
         service
-            .send_verification(&tokens, &mail, "ada@example.test", lifetime, day())
+            .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         let second = mail.last().expect("sent").token().expose();
@@ -1084,7 +1209,12 @@ mod tests {
         // The FIRST token no longer works.
         assert!(
             service
-                .confirm_verification(&tokens, &first, day())
+                .confirm_verification(
+                    admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                    &tokens,
+                    &first,
+                    day()
+                )
                 .await
                 .is_err(),
             "the superseded token must be dead"
@@ -1092,7 +1222,12 @@ mod tests {
         // POSITIVE CONTROL: the second one does.
         assert!(
             service
-                .confirm_verification(&tokens, &second, day())
+                .confirm_verification(
+                    admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                    &tokens,
+                    &second,
+                    day()
+                )
                 .await
                 .is_ok(),
             "the current token must work"
@@ -1112,7 +1247,14 @@ mod tests {
         let lifetime = TokenLifetime::default();
 
         service
-            .send_verification(&tokens, &mail, "ada@example.test", lifetime, day())
+            .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         assert_eq!(
@@ -1122,7 +1264,14 @@ mod tests {
         );
 
         service
-            .forgot_password(&tokens, &mail, "ada@example.test", lifetime, day())
+            .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         assert_eq!(
@@ -1137,6 +1286,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1149,14 +1299,26 @@ mod tests {
 
         assert!(
             service
-                .reset_password(&tokens, &token, "a brand new long passphrase", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "a brand new long passphrase",
+                    day()
+                )
                 .await
                 .is_ok()
         );
         // The SAME token, with a perfectly valid password, must fail.
         let replay = refusal(
             service
-                .reset_password(&tokens, &token, "another brand new passphrase", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "another brand new passphrase",
+                    day(),
+                )
                 .await
                 .expect_err("a consumed token must not work twice"),
         );
@@ -1180,6 +1342,7 @@ mod tests {
         // Ada requests a reset; Ada's token comes back.
         service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1191,7 +1354,13 @@ mod tests {
         let ada_token = mail.last().expect("sent").token().expose();
 
         let changed = service
-            .reset_password(&tokens, &ada_token, "ada's replacement passphrase", day())
+            .reset_password(
+                admitted(crate::abuse::AttemptFlow::ResetPassword),
+                &tokens,
+                &ada_token,
+                "ada's replacement passphrase",
+                day(),
+            )
             .await
             .expect("resets");
         assert_ne!(changed, bob, "Ada's token must never change Bob's account");
@@ -1199,7 +1368,11 @@ mod tests {
         // Bob's password is untouched.
         assert!(
             service
-                .log_in("bob@example.test", "bob's long enough passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "bob@example.test",
+                    "bob's long enough passphrase"
+                )
                 .await
                 .is_ok(),
             "Bob's credential must be unaffected"
@@ -1207,7 +1380,11 @@ mod tests {
         // ...and Ada's changed.
         assert!(
             service
-                .log_in("ada@example.test", "ada's replacement passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "ada's replacement passphrase"
+                )
                 .await
                 .is_ok()
         );
@@ -1218,7 +1395,14 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         let lifetime = TokenLifetime::new(chrono::Duration::hours(1)).expect("inside the ceiling");
         service
-            .send_verification(&tokens, &mail, "ada@example.test", lifetime, day())
+            .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                lifetime,
+                day(),
+            )
             .await
             .expect("no fault");
         let token = mail.last().expect("sent").token().expose();
@@ -1226,7 +1410,12 @@ mod tests {
         let later = day() + chrono::Duration::hours(1) + chrono::Duration::seconds(1);
         assert!(
             service
-                .confirm_verification(&tokens, &token, later)
+                .confirm_verification(
+                    admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                    &tokens,
+                    &token,
+                    later
+                )
                 .await
                 .is_err(),
             "an expired token must be refused"
@@ -1234,7 +1423,12 @@ mod tests {
         // POSITIVE CONTROL: inside the window the same token works.
         assert!(
             service
-                .confirm_verification(&tokens, &token, day())
+                .confirm_verification(
+                    admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                    &tokens,
+                    &token,
+                    day()
+                )
                 .await
                 .is_ok()
         );
@@ -1247,6 +1441,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1259,7 +1454,13 @@ mod tests {
 
         let refused = refusal(
             service
-                .reset_password(&tokens, &verification, "a brand new long passphrase", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &verification,
+                    "a brand new long passphrase",
+                    day(),
+                )
                 .await
                 .expect_err("a verification token must not reset a password"),
         );
@@ -1284,6 +1485,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1325,6 +1527,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1337,7 +1540,13 @@ mod tests {
 
         let refused = refusal(
             service
-                .reset_password(&tokens, &token, "short", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "short",
+                    day(),
+                )
                 .await
                 .expect_err("a password below the policy minimum must be refused"),
         );
@@ -1346,7 +1555,13 @@ mod tests {
         // THE POINT: the token is gone, even though the attempt failed on policy.
         let retry = refusal(
             service
-                .reset_password(&tokens, &token, "a perfectly fine passphrase", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "a perfectly fine passphrase",
+                    day(),
+                )
                 .await
                 .expect_err("the token was spent by the refused attempt"),
         );
@@ -1355,7 +1570,11 @@ mod tests {
         // ...and nothing was half-changed: the original password still works.
         assert!(
             service
-                .log_in("ada@example.test", "a long enough passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "a long enough passphrase"
+                )
                 .await
                 .is_ok()
         );
@@ -1369,6 +1588,7 @@ mod tests {
         let (service, tokens, mail) = registered().await;
         service
             .forgot_password(
+                admitted(crate::abuse::AttemptFlow::ForgotPassword),
                 &tokens,
                 &mail,
                 "ada@example.test",
@@ -1381,14 +1601,26 @@ mod tests {
 
         let refused = refusal(
             service
-                .reset_password(&tokens, &token, "correct horse battery staple", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "correct horse battery staple",
+                    day(),
+                )
                 .await
                 .expect_err("a blocklisted password must be refused"),
         );
         assert_eq!(refused, AuthError::PasswordRejected);
         assert!(
             service
-                .reset_password(&tokens, &token, "a perfectly fine passphrase", day())
+                .reset_password(
+                    admitted(crate::abuse::AttemptFlow::ResetPassword),
+                    &tokens,
+                    &token,
+                    "a perfectly fine passphrase",
+                    day()
+                )
                 .await
                 .is_err(),
             "the token was spent by the refused attempt and must not be reusable"
@@ -1396,7 +1628,11 @@ mod tests {
         // ...and the original password still works, so nothing was half-changed.
         assert!(
             service
-                .log_in("ada@example.test", "a long enough passphrase")
+                .log_in(
+                    admitted(crate::abuse::AttemptFlow::LogIn),
+                    "ada@example.test",
+                    "a long enough passphrase"
+                )
                 .await
                 .is_ok()
         );

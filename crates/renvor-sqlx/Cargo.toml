@@ -77,7 +77,11 @@ tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # The SHARED persistence contract, the same functions `renvor-seaorm` calls.
-renvor-testkit = { path = "../renvor-testkit", version = "0.0.0" }
+# `auth` is on UNCONDITIONALLY, and `tokens` is not. The abuse-control contract needs
+# `renvor-auth`'s value types but none of its token half, so pulling it in here does not resolve
+# `jsonwebtoken` or `aws-lc-sys` — which is what keeps the native build optional from the test side
+# too, and what the token-isolation rows in `xtask` step 7 assert.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["auth"] }
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt",
     "rt-multi-thread",

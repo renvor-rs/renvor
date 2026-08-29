@@ -90,6 +90,24 @@ serde = { version = "1.0.229", default-features = false, features = ["std", "der
 serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+# The AUTHENTICATION domain, for ONE integration proof: that an untrusted peer cannot forge the
+# network identity Renvor's abuse controls count (FR-065, T046).
+#
+# # Why this is a dev-dependency and why that is not evasion
+#
+# `renvor-auth` resolves `renvor-config`, and verification step 7 forbids `renvor-http` from
+# resolving `renvor-config` — the transport depends inward only (FR-001). `cargo tree --edges
+# normal`, which that gate reads, excludes `[dev-dependencies]`, so this edge is invisible to it.
+#
+# That is the correct answer rather than a way around the gate, and the distinction is real: the
+# rule exists so a CONSUMER's transport graph stays free of the configuration layer, and a
+# dev-dependency reaches no consumer's graph. It is the same argument `renvor-auth` already makes
+# about its own `tokio` dev-dependency, and the same one this file makes about `test-util`.
+#
+# The claim needs both crates in one test binary and cannot be made in either alone: `renvor-auth`
+# has no forwarding-header parser to be fooled, and `renvor-http` has no abuse counter to protect.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
+
 # Collecting a real response body in-process. Dev-only: nothing in the public surface needs it.
 http-body-util = { version = "0.1.5", default-features = false }
 

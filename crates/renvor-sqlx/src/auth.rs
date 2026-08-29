@@ -19,6 +19,9 @@
 //! translated into [`Registration::AlreadyRegistered`] rather than propagated.
 
 use chrono::{DateTime, Utc};
+use renvor_auth::abuse::{
+    AttemptDimension, AttemptObservation, AttemptOutcome, AttemptRepository, AttemptState,
+};
 use renvor_auth::opaque::SecretDigest;
 use renvor_auth::password::PasswordHash;
 use renvor_auth::repository::{
@@ -67,11 +70,13 @@ impl TokenTable {
 
 /// Generates the repositories for one engine.
 macro_rules! auth_repositories {
-    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $engine_doc:literal) => {
+    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $upsert_nothing:literal, $engine_doc:literal) => {
         #[cfg(feature = $feature)]
         #[doc = $engine_doc]
         pub mod $module {
             use super::{
+                AttemptDimension, AttemptObservation, AttemptOutcome, AttemptRepository,
+                AttemptState,
                 CredentialRecord, CredentialRepository, DatabaseError, DatabaseErrorKind,
                 DatabaseKind, DateTime, PasswordHash, Registration, SecretDigest,
                 SessionHandle, SessionRecord, SessionRepository, SingleUseTokenRepository,
@@ -535,6 +540,205 @@ macro_rules! auth_repositories {
                 }
             }
 
+            /// Reads and writes `rv_auth_attempt`: the bounded abuse counters.
+            ///
+            /// # Why this one holds a pool and opens its own transaction
+            ///
+            /// The same reason `SqlxRefreshTokenRepository` does. `observe` must increment **and**
+            /// report the resulting count with nothing able to land between them, or two concurrent
+            /// attempts both read `limit - 1` and both proceed. That is a transaction, not a
+            /// statement.
+            ///
+            /// # The row is created first, then locked
+            ///
+            /// Three statements, in this order and no other:
+            ///
+            /// 1. an **upsert that changes nothing** — it exists only to guarantee the row is
+            ///    there. `SELECT ... FOR UPDATE` on an absent row locks nothing, so two
+            ///    transactions would both find nothing and both insert; one would then fail on the
+            ///    primary key. This removes that case instead of retrying it.
+            /// 2. `SELECT ... FOR UPDATE`, which now has a row to lock.
+            /// 3. `UPDATE`, with the new counts computed **in Rust**.
+            ///
+            /// `contracts/database-portability.md` §3 forbids depending on the default isolation
+            /// level and requires a read-modify-write either to lock the row it read or to state a
+            /// condition that fails if the row changed. Step 2 locks it.
+            ///
+            /// # The arithmetic is deliberately not in SQL
+            ///
+            /// `SET current_count = current_count + 1` would ask the engine to add, and an engine
+            /// that overflows raises — PostgreSQL `22003`, MySQL `1264`. Turning a rate-limit check
+            /// on an unauthenticated endpoint into an error is worse than the overflow. Computing
+            /// in Rust gives `saturating_add` and a ceiling that fits `BIGINT`.
+            #[derive(Clone, Debug)]
+            pub struct SqlxAttemptRepository {
+                pool: sqlx::Pool<$driver>,
+            }
+
+            impl SqlxAttemptRepository {
+                /// Wraps a pool.
+                #[must_use]
+                pub const fn new(pool: sqlx::Pool<$driver>) -> Self {
+                    Self { pool }
+                }
+
+                /// The whole transition, inside the caller's transaction.
+                async fn count_within(
+                    uow: &mut crate::SqlxUnitOfWork<'_, $driver>,
+                    observation: &AttemptObservation,
+                ) -> Result<AttemptOutcome, DatabaseError> {
+                    let dimension = observation.dimension.code();
+                    // `bucket` is masked into `[0, buckets)` and `buckets <= 2^20`, so this
+                    // conversion cannot fail. It is written as a checked one anyway: an
+                    // unrepresentable bucket must not become a negative one the CHECK would refuse
+                    // with a different error.
+                    let bucket = i32::try_from(observation.bucket.get()).map_err(|_| {
+                        crate::error::record(DatabaseErrorKind::StatementRejected)
+                    })?;
+
+                    // 1. ENSURE THE ROW. Changes nothing when it is already there.
+                    let ensure = format!(
+                        "INSERT INTO rv_auth_attempt (dimension, bucket, window_start, current_count, previous_count, expires_at) VALUES ({}, {}, {}, 0, 0, {}){}",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                        KIND.placeholder(4),
+                        $upsert_nothing,
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(ensure))
+                        .bind(dimension)
+                        .bind(bucket)
+                        .bind(observation.window_start)
+                        .bind(observation.expires_at)
+                        .execute(&mut **uow.inner())
+                        .await
+                        .map_err(|error| classify_error(&error))?;
+
+                    // 2. THE LOCK.
+                    let lock = format!(
+                        "SELECT window_start, current_count, previous_count FROM rv_auth_attempt WHERE dimension = {} AND bucket = {} FOR UPDATE",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                    );
+                    let row: Option<(DateTime<Utc>, i64, i64)> =
+                        sqlx::query_as(sqlx::AssertSqlSafe(lock))
+                            .bind(dimension)
+                            .bind(bucket)
+                            .fetch_optional(&mut **uow.inner())
+                            .await
+                            .map_err(|error| classify_error(&error))?;
+                    let Some((stored_start, stored_current, stored_previous)) = row else {
+                        // Unreachable: step 1 guaranteed the row. Refused rather than assumed —
+                        // if it ever happens, step 1 is not doing what this function claims, and a
+                        // silent success would hide that.
+                        return Err(crate::error::record(DatabaseErrorKind::StatementRejected));
+                    };
+
+                    // 3. THE DECISION, in Rust.
+                    if stored_start > observation.window_start {
+                        // A stored instant in the future. Writing would erase evidence, so nothing
+                        // is written and the caller refuses.
+                        return Ok(AttemptOutcome::ClockRegressed);
+                    }
+                    let current = u64::try_from(stored_current).unwrap_or(0);
+                    let previous = u64::try_from(stored_previous).unwrap_or(0);
+                    let (next_current, next_previous) = if stored_start == observation.window_start {
+                        (
+                            current.saturating_add(1).min(AttemptState::CEILING),
+                            previous,
+                        )
+                    } else if stored_start == observation.previous_window_start {
+                        // The window rolled by exactly one: the old count becomes the tail the
+                        // weighted estimate charges.
+                        (1, current)
+                    } else {
+                        // A gap of more than one window. There is no tail to charge.
+                        (1, 0)
+                    };
+
+                    let write = format!(
+                        "UPDATE rv_auth_attempt SET window_start = {}, current_count = {}, previous_count = {}, expires_at = {} WHERE dimension = {} AND bucket = {}",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                        KIND.placeholder(4),
+                        KIND.placeholder(5),
+                        KIND.placeholder(6),
+                    );
+                    let affected = sqlx::query(sqlx::AssertSqlSafe(write))
+                        .bind(observation.window_start)
+                        // The ceiling is `i64::MAX`, so this conversion is total.
+                        .bind(i64::try_from(next_current).unwrap_or(i64::MAX))
+                        .bind(i64::try_from(next_previous).unwrap_or(i64::MAX))
+                        .bind(observation.expires_at)
+                        .bind(dimension)
+                        .bind(bucket)
+                        .execute(&mut **uow.inner())
+                        .await
+                        .map_err(|error| classify_error(&error))?
+                        .rows_affected();
+                    if affected != 1 {
+                        // Unreachable while the lock is held. Same argument as above.
+                        return Err(crate::error::record(DatabaseErrorKind::StatementRejected));
+                    }
+
+                    Ok(AttemptOutcome::Counted(AttemptState {
+                        current: next_current,
+                        previous: next_previous,
+                        window_start: observation.window_start,
+                    }))
+                }
+            }
+
+            impl AttemptRepository for SqlxAttemptRepository {
+                async fn observe(
+                    &self,
+                    observation: AttemptObservation,
+                ) -> Result<AttemptOutcome, DatabaseError> {
+                    let mut uow = crate::SqlxUnitOfWork::begin_on(&self.pool, KIND).await?;
+                    match Self::count_within(&mut uow, &observation).await {
+                        Ok(outcome) => {
+                            renvor_database::UnitOfWork::commit(uow).await?;
+                            Ok(outcome)
+                        }
+                        Err(error) => {
+                            let _ = renvor_database::UnitOfWork::rollback(uow).await;
+                            Err(error)
+                        }
+                    }
+                }
+
+                async fn prune(
+                    &self,
+                    dimension: AttemptDimension,
+                    from: u32,
+                    count: u32,
+                    now: DateTime<Utc>,
+                ) -> Result<u64, DatabaseError> {
+                    // A HALF-OPEN BUCKET RANGE, not a `LIMIT`. PostgreSQL has no `LIMIT` on
+                    // `DELETE` and MySQL refuses one inside an `IN` subquery, so the two obvious
+                    // portable-looking forms are not portable. A range is bounded by construction:
+                    // `(dimension, bucket)` is unique, so at most `count` rows match.
+                    let upper = u64::from(from).saturating_add(u64::from(count));
+                    let statement = format!(
+                        "DELETE FROM rv_auth_attempt WHERE dimension = {} AND bucket >= {} AND bucket < {} AND expires_at <= {}",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3),
+                        KIND.placeholder(4),
+                    );
+                    Ok(sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(dimension.code())
+                        .bind(i64::from(from))
+                        .bind(i64::try_from(upper).unwrap_or(i64::MAX))
+                        .bind(now)
+                        .execute(&self.pool)
+                        .await
+                        .map_err(|error| classify_error(&error))?
+                        .rows_affected())
+                }
+            }
+
             #[cfg(feature = "tokens")]
             use super::{
                 AdvanceRequest, FamilyId, NewRefreshFamily, RefreshGrant,
@@ -977,6 +1181,8 @@ auth_repositories!(
     "db-postgres",
     sqlx::Postgres,
     DatabaseKind::Postgres,
+    // The no-op upsert that guarantees an abuse row exists. PostgreSQL names the conflict target.
+    " ON CONFLICT (dimension, bucket) DO NOTHING",
     "The PostgreSQL repositories. Placeholders are numbered (`$1`), which is why the statements are composed rather than written once."
 );
 auth_repositories!(
@@ -984,5 +1190,10 @@ auth_repositories!(
     "db-mysql",
     sqlx::MySql,
     DatabaseKind::MySql,
+    // MySQL has no `ON CONFLICT`. `expires_at = expires_at` is chosen over `dimension = dimension`
+    // deliberately: assigning to a primary-key column, even its own value, is not something to ask
+    // an engine to reason about. `INSERT IGNORE` was rejected outright — it downgrades EVERY error
+    // to a warning, so it would swallow a CHECK violation as readily as a duplicate key.
+    " ON DUPLICATE KEY UPDATE expires_at = expires_at",
     "The MySQL repositories. Placeholders are positional (`?`), which is why the statements are composed rather than written once."
 );

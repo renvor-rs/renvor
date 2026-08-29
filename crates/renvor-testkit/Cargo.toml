@@ -69,9 +69,15 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-mu
 [features]
 default = []
 
+# The AUTHENTICATION contracts that need no token mode: the abuse-control suite. Split out from
+# `tokens` so a consumer measuring abuse controls does not resolve `jsonwebtoken` or `aws-lc-sys`
+# — the native build behind them is exactly what `renvor-auth`'s `tokens` flag exists to keep
+# optional, and folding the two features together here would have undone that from the test side.
+auth = ["dep:renvor-auth", "dep:chrono"]
+
 # The refresh-rotation contract. Names `renvor-auth`'s `tokens` half, which is where the JWT
 # dependency lives — so a build without this feature resolves no `jsonwebtoken` through this crate.
-tokens = ["dep:renvor-auth", "dep:chrono", "renvor-auth/tokens"]
+tokens = ["auth", "renvor-auth/tokens"]
 
 [lints]
 workspace = true

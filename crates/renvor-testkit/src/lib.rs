@@ -12,6 +12,9 @@
 //!
 //! **This surface is explicitly unstable.** See the `renvor` facade documentation.
 
+/// The bounded abuse-control contract. Needs `renvor-auth` but **not** its `tokens` half.
+#[cfg(feature = "auth")]
+pub mod abuse;
 pub mod clock;
 pub mod concurrency;
 pub mod domain;
