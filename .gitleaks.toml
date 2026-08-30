@@ -99,3 +99,45 @@ regexTarget = "match"
 [[allowlists]]
 description = "FP-002: rustdoc's generated search index under target/, which is gitignored build output and is never committed"
 paths = ['''^target/''']
+
+# ---------------------------------------------------------------------------
+# FP-003 — the synthetic opaque-token fixture in the auth transport's test application
+# ---------------------------------------------------------------------------
+# Rule        : generic-api-key
+# Location    : crates/renvor-auth-http/tests/test_application.rs, two occurrences
+# Fingerprint : 2ab05ae7b84d…:crates/renvor-auth-http/tests/test_application.rs:generic-api-key
+# Entropy     : 4.00 — the MAXIMUM a 64-character hex string can score, and the reason
+#               the rule fires. Every one of the sixteen nibbles appears exactly four
+#               times, which is what a uniform distribution looks like to a Shannon
+#               calculation and what a keyboard walk looks like to a human.
+#
+# The flagged value is `0123456789abcdef` repeated four times, posted as the `token`
+# member of a password-reset and a verification-completion request body:
+#   {"token":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+# The rule keys off `token":"` followed by 64 hex characters. It is a placeholder that
+# the test expects to be REFUSED — both assertions require a 4xx — so it is not merely
+# not a credential, it is a value the system under test is proven to reject.
+#
+# Why an allowlist rather than a different fixture: the match is in committed history
+# (`2ab05ae`, batch J), so `gitleaks git .` re-reads it on every run regardless of what
+# the working tree says today. Changing the literal now would silence the working-tree
+# scan and leave the history scan reporting two findings forever. The only alternatives
+# are rewriting published history or suppressing the match, and suppression is narrower.
+#
+# Scope: matched CONTENT only — the literal repeated-nibble string. Deliberately no
+# `paths` entry, for the reason FP-001 records and proved empirically: a `paths`
+# allowlist makes gitleaks skip the file before scanning it, which would hide any real
+# credential added to this test application later. This test application is exactly the
+# file where a real credential is most likely to be pasted by accident.
+#
+# Verification: with this entry active, a canary credential injected into the same file
+# is still detected, and both scans report the two fixture matches suppressed.
+#
+# Removable when: the reset and verification-completion cases stop posting a literal
+# token — for example if the test application starts minting the token through the
+# repository it is testing — AND the commits carrying the literal have left the scanned
+# history. Deleting the fixture alone is not sufficient.
+[[allowlists]]
+description = "FP-003: synthetic '0123456789abcdef'x4 opaque-token fixture in renvor-auth-http's test application, which the test requires to be refused"
+regexes = ['''0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef''']
+regexTarget = "match"

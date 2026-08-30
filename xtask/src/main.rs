@@ -3588,6 +3588,55 @@ mod tests {
         );
     }
 
+    /// No allowlist in `.gitleaks.toml` excludes shipped source by **path**.
+    ///
+    /// # The fix this refuses
+    ///
+    /// Step 8 failed on 2026-08-30 with two `generic-api-key` matches on a synthetic
+    /// opaque-token fixture in `renvor-auth-http`'s test application. The narrow fix is a
+    /// content regex, which is what FP-003 uses.
+    ///
+    /// The TEMPTING fix is `paths = ['''^crates/renvor-auth-http/''']`, and it is the one this
+    /// test exists to refuse. Gitleaks skips an allowlisted path **before reading it**, so that
+    /// entry would stop the scanner opening the file for all time — and the file in question is a
+    /// test application, which is precisely where a real credential gets pasted by accident.
+    ///
+    /// This is not a hypothetical. FP-001 records the same property proven by experiment: a
+    /// `paths` form of that entry produced `scanned ~0 bytes` and let an injected canary through
+    /// undetected. That finding lived only in a comment, where the next person to hit a step 8
+    /// failure at 3am would not read it. This test is that comment made enforceable.
+    #[test]
+    fn no_gitleaks_allowlist_excludes_shipped_source_by_path() {
+        let root = super::workspace_root();
+        let config = std::fs::read_to_string(root.join(".gitleaks.toml"))
+            .expect(".gitleaks.toml is readable");
+
+        let mut path_entries = 0_usize;
+        for (index, line) in config.lines().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("paths") {
+                continue;
+            }
+            path_entries += 1;
+            assert!(
+                !trimmed.contains("crates"),
+                ".gitleaks.toml line {} excludes shipped source by PATH: `{trimmed}`. A path \
+                 allowlist stops gitleaks reading the file at all, so a real credential added to \
+                 it later would never be reported. Suppress the specific match with `regexes`",
+                index + 1
+            );
+        }
+
+        // Positive control: a scan that matched nothing would pass the loop above without
+        // examining anything. FP-002 declares `paths = ['''^target/''']`, so at least one entry
+        // must be seen — otherwise this test is reporting success for having read nothing.
+        assert!(
+            path_entries >= 1,
+            "no `paths` allowlist was found at all, so this check proved nothing — FP-002 \
+             declares one and the parser must be able to see it"
+        );
+    }
+
     /// `RELEASING.md`'s publishable-package headline agrees with the manifests.
     ///
     /// # The third occurrence of one failure
