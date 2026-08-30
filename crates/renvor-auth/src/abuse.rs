@@ -1812,9 +1812,19 @@ mod tests {
                 at(0),
             )
             .await;
+        // The label names the VARIANT and never its payload. `ServiceError`'s `Display` is
+        // careful — `Storage(_)` renders as "a storage operation failed" and deliberately drops
+        // the driver's text — but `{outcome:?}` uses the DERIVED `Debug`, which prints the
+        // `DatabaseError` whole. A failing assertion is captured and printed, so the two must not
+        // be confused. Every arm below is a `&'static str`.
+        let label = match &outcome {
+            Ok(_) => "an admission",
+            Err(ServiceError::Refused(_)) => "a refusal",
+            Err(ServiceError::Storage(_)) => "a storage refusal",
+        };
         assert!(
             matches!(outcome, Err(ServiceError::Storage(_))),
-            "expected a storage refusal, got {outcome:?}"
+            "expected a storage refusal, observed {label}"
         );
 
         // POSITIVE CONTROL: the same call against a working store is admitted, so the refusal

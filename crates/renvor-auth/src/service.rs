@@ -831,12 +831,20 @@ mod tests {
                 "a long enough passphrase",
             )
             .await;
+        // Same reason as `abuse.rs`: `{outcome:?}` would use the derived `Debug` and print a
+        // `DatabaseError` whole if the store ever failed here. `&'static str` only.
+        let label = match &outcome {
+            Ok(_) => "an admission",
+            Err(ServiceError::Refused(AuthError::PolicyMisconfigured)) => "the expected refusal",
+            Err(ServiceError::Refused(_)) => "another refusal",
+            Err(ServiceError::Storage(_)) => "a storage refusal",
+        };
         assert!(
             matches!(
                 outcome,
                 Err(ServiceError::Refused(AuthError::PolicyMisconfigured))
             ),
-            "a forgot-password admission opened a login: {outcome:?}"
+            "a forgot-password admission opened a login: observed {label}"
         );
 
         // POSITIVE CONTROL: the right admission works, so the refusal is about the flow rather
