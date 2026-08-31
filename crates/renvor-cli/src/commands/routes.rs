@@ -752,6 +752,87 @@ seed_data = false
         assert_eq!(error.code, Code::ManifestInvalid);
     }
 
+    /// The package and example the end-to-end proof compiles and then relays.
+    ///
+    /// Stated once because the warm-up and the relayed invocation below MUST name the same cargo
+    /// unit. If they ever named different ones the warm-up would compile something nobody runs,
+    /// the relay would meet a cold cache anyway, and the gate would fail for a reason the warm-up
+    /// appears to have already handled.
+    const RELAY_PACKAGE: &str = "renvor-http";
+    const RELAY_EXAMPLE: &str = "route_dump";
+
+    /// This file, for the guard that reads the shape of the proof below.
+    const SELF_SOURCE: &str = include_str!("routes.rs");
+
+    #[test]
+    fn the_example_is_compiled_before_the_relay_is_asked_to_run_it() {
+        // THE CONTROL FOR THE WARM-UP, and the reason it reads source shape rather than timing.
+        //
+        // Deleting the warm-up fails NOTHING on a warm target directory — the relay simply finds
+        // the artifact already built and answers in milliseconds. The defect would return silently
+        // and resurface only on the next cold gate, hours into a run. The ORDER is the property,
+        // so the order is what is asserted.
+        // ASSEMBLED, NOT WRITTEN. A guard that reads its own file cannot search for a literal it
+        // also contains: the first draft of this test split on
+        // `"fn the_relay_reads_what_the_real_library_actually_prints"` and matched the line above
+        // rather than the definition below, so it sliced its OWN tail — which contains the string
+        // `"Invocation::new"` — and the positive control passed vacuously while the real assertion
+        // failed. `concat!` folds at compile time, so the joined form appears in this file exactly
+        // once, at the definition.
+        const ANCHOR: &str = concat!(
+            "fn ",
+            "the_relay_reads_what_the_real_library_actually_prints",
+            "() {"
+        );
+        assert_eq!(
+            SELF_SOURCE.matches(ANCHOR).count(),
+            1,
+            "the anchor `{ANCHOR}` is no longer unique in this file, so the slice below is \
+             ambiguous and every assertion after it is untrustworthy"
+        );
+
+        let after = SELF_SOURCE
+            .split_once(ANCHOR)
+            .expect("the end-to-end proof still exists")
+            .1;
+        // Bounded to that one test, so this guard cannot match its own source and pass vacuously.
+        let body = &after[..after.find("\n    #[test]").unwrap_or(after.len())];
+
+        // POSITIVE CONTROL: without this the slice could be empty and every assertion below would
+        // hold for the wrong reason.
+        let relay = body
+            .find("Invocation::new")
+            .expect("the proof still builds a relay Invocation; the slice above captured nothing");
+
+        let warm = body.find("\"build\", \"-p\", RELAY_PACKAGE").expect(
+            "the end-to-end proof no longer compiles the example before relaying it. `cargo run` \
+             compiles before it runs and the relay deadline starts at `spawn`, so without this the \
+             300-second budget is charged for a cold build of a cargo unit that the \
+             `--all-features` step before it cannot produce",
+        );
+
+        assert!(
+            warm < relay,
+            "the example is compiled AFTER the relay is constructed, which warms nothing in time"
+        );
+    }
+
+    #[test]
+    fn the_relay_deadline_was_not_widened_to_paper_over_a_slow_build() {
+        // A TRIPWIRE AGAINST THE WRONG FIX.
+        //
+        // When this failed on 2026-08-31 the tempting change was to raise the number until the
+        // cold build fit underneath it. That hides the cause and costs the deadline the only thing
+        // it is for: bounding how long a binary may take to ANSWER. The build is warmed instead,
+        // and this pins the budget so a recurrence cannot be answered by widening it.
+        assert_eq!(
+            crate::commands::relay::DEFAULT_TIMEOUT,
+            std::time::Duration::from_secs(300),
+            "the relay deadline changed. If a build is slow, compile it before the relay rather \
+             than widening the budget that bounds how long a binary may take to ANSWER"
+        );
+    }
+
     #[test]
     #[ignore = "builds and runs a real example binary; run with --ignored or in the full gate"]
     fn the_relay_reads_what_the_real_library_actually_prints() {
@@ -766,15 +847,45 @@ seed_data = false
         // explicitly.
         let dir = project(MANIFEST, WITH_DEPENDENCY);
 
+        // COMPILE FIRST, RELAY SECOND. This is a fix for a real gate failure, not tidiness.
+        //
+        // `cargo run` compiles before it runs, and the relay's deadline starts at `spawn` (see
+        // `commands::relay`), so a cold compile is charged against a budget written to bound how
+        // long a project's binary takes to ANSWER. Those are different quantities, and conflating
+        // them makes the gate report `TransportNotWired` / `invocation_timed_out` for a transport
+        // that is wired perfectly.
+        //
+        // It is not a rare race. Verification step 4 builds the workspace `--all-features`, which
+        // compiles `renvor-auth` with `features = ["tokens"]`. This example resolves `renvor-auth`
+        // with `features = []` — a DIFFERENT cargo unit that `--all-features` never produces — and
+        // `renvor-http` carries `renvor-auth` in `[dev-dependencies]`, which `--example` builds.
+        // So the step immediately before this one GUARANTEES the cache miss. On 2026-08-31 that
+        // cold build was still running when the deadline fired; cargo's fingerprint log named the
+        // missing artifact outright: `FailedToReadMetadata { librenvor_auth-…rlib }`.
+        //
+        // The warm-up is deliberately unbounded. Compile time is not the property under test, and
+        // a slow build that merely takes longer is strictly better than a slow build reported as a
+        // transport defect. The 300-second deadline is untouched and still catches what it was
+        // written for: a binary that starts and never answers.
+        let warmed = std::process::Command::new("cargo")
+            .args(["build", "-p", RELAY_PACKAGE, "--example", RELAY_EXAMPLE])
+            .current_dir(workspace_root())
+            .status()
+            .expect("the example's compiler runs");
+        assert!(
+            warmed.success(),
+            "the real library's example must compile before it can be relayed"
+        );
+
         let real = crate::commands::relay::Invocation::new(
             "cargo",
             vec![
                 OsString::from("run"),
                 OsString::from("--quiet"),
                 OsString::from("-p"),
-                OsString::from("renvor-http"),
+                OsString::from(RELAY_PACKAGE),
                 OsString::from("--example"),
-                OsString::from("route_dump"),
+                OsString::from(RELAY_EXAMPLE),
                 OsString::from("--"),
                 OsString::from(DUMP_FLAG),
             ],
