@@ -55,9 +55,10 @@ pub mod document;
 
 pub use compat::{Change, ChangeClass, Severity, breaking, compare, is_breaking};
 pub use document::{
-    Components, Document, DocumentError, Info, JSON_MEDIA_TYPE, MediaType, OPENAPI_DIALECT,
-    OPENAPI_VERSION, Operation, PROBLEM_COMPONENT, Parameter, ParameterLocation, PathItem,
-    RequestBody, Response, Server, Tag, problem_schema,
+    ApiKeyLocation, Components, Document, DocumentError, Info, JSON_MEDIA_TYPE, MediaType,
+    OPENAPI_DIALECT, OPENAPI_VERSION, Operation, PROBLEM_COMPONENT, Parameter, ParameterLocation,
+    PathItem, RequestBody, Response, SecurityRequirement, SecurityScheme, Server, Tag,
+    problem_schema,
 };
 
 use renvor_validation::Declaration;

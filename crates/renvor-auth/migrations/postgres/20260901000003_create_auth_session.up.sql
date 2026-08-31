@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_session (id BYTEA PRIMARY KEY, user_id BYTEA NOT NULL REFERENCES rv_auth_user(id) ON DELETE CASCADE, token_hash BYTEA NOT NULL UNIQUE, created_at TIMESTAMPTZ NOT NULL, last_seen_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ);

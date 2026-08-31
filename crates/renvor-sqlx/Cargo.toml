@@ -33,6 +33,14 @@ include = [
 # database that cannot be reached fails BOOT rather than the first request, and so that readiness
 # cannot report ready before the database has answered. `renvor-database` deliberately does not
 # depend on this: the ports describe a shape, and only the adapter joins it to a lifecycle.
+# The authentication DOMAIN — its ports and value types, and no driver of its own. This adapter
+# implements the ports; the direction is adapter -> domain, which is the same direction
+# `renvor-database` is depended on in.
+# The instant type. `sqlx`'s `chrono` feature is already enabled below, so this names the crate
+# this adapter already binds rather than adding a second time library.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
@@ -69,7 +77,11 @@ tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # The SHARED persistence contract, the same functions `renvor-seaorm` calls.
-renvor-testkit = { path = "../renvor-testkit", version = "0.0.0" }
+# `auth` is on UNCONDITIONALLY, and `tokens` is not. The abuse-control contract needs
+# `renvor-auth`'s value types but none of its token half, so pulling it in here does not resolve
+# `jsonwebtoken` or `aws-lc-sys` — which is what keeps the native build optional from the test side
+# too, and what the token-isolation rows in `xtask` step 7 assert.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["auth"] }
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt",
     "rt-multi-thread",
@@ -87,6 +99,11 @@ default = []
 # is a third thing to keep correct.
 db-postgres = ["sqlx/postgres"]
 db-mysql = ["sqlx/mysql"]
+
+# API token mode. Selects `renvor-auth`'s `tokens` half, which is where the JWT backend lives —
+# so a build of this adapter WITHOUT it resolves neither `jsonwebtoken` nor `aws-lc-rs`, and the
+# refresh repositories below do not exist. Naming a database is still a separate decision.
+tokens = ["renvor-auth/tokens", "renvor-testkit/tokens"]
 
 [lints]
 workspace = true

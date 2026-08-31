@@ -1,7 +1,7 @@
 ---
 description: "Contract C-13 — the public API error registry and RFC 9457 Problem Details responses"
-version: "1.1.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-08-27) WITHDRAWS the permission for the operator-facing detail to be arbitrary runtime text, on the finding that CONSTITUTION.md principle VI names telemetry and exempts no consumer; the detail is now a closed enum. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
+version: "1.2.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.2.0 (2026-08-29) ADDS three codes for authentication and abuse-control refusals, which the table below records as a NON-breaking operation; no existing code changed. 1.1.0 (2026-08-27) WITHDRAWS the permission for the operator-facing detail to be arbitrary runtime text, on the finding that CONSTITUTION.md principle VI names telemetry and exempts no consumer; the detail is now a closed enum. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
 ---
 
 # Contract C-13 — Public API errors and Problem Details
@@ -32,6 +32,9 @@ the two describe different surfaces that change for different reasons — a code
 | `payload_too_large` | 413 | The body exceeded the configured limit |
 | `request_timeout` | 408 | The request exceeded the configured timeout |
 | `unavailable` | 503 | The application is draining, or at its concurrency ceiling |
+| `authentication_required` | 401 | The request presented no usable credential. **One code for "absent", "did not authenticate", and "no longer valid"** — separating them would tell a caller which of the three it was, which is the enumeration oracle `renvor-auth`'s fieldless `AuthError` exists to close |
+| `not_permitted` | 403 | The subject is authenticated and may not perform the operation. **403 and never 404**: choosing between them discloses whether the resource exists |
+| `too_many_attempts` | 429 | A bound was exceeded. **Does not say which**, and carries no retry hint — a hint would tell an attacker the window |
 | `internal_error` | 500 | **Unclassified. A defect.** Its `detail` is a fixed constant |
 
 **The status column lives in `renvor-http`, not in the registry.** A status code is transport

@@ -11,53 +11,19 @@
 //! from the coding standard.
 
 use core::fmt;
-use std::net::IpAddr;
 
 use renvor_core::{CancelScope, RunIdentifier};
 
 /// Who Renvor believes is asking.
 ///
-/// The variants are deliberately distinguishable: an operator reading a log can tell whether an
-/// address was observed directly or was accepted from a trusted proxy, which is exactly the
-/// question an incident asks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClientIdentity {
-    /// The address of the socket Renvor is talking to. Always a fact.
-    DirectPeer(IpAddr),
-    /// An address taken from a forwarding header, because the direct peer was explicitly trusted.
-    ViaTrustedProxy {
-        /// The address the trusted proxy reported.
-        client: IpAddr,
-        /// The trusted peer that reported it.
-        proxy: IpAddr,
-    },
-}
-
-impl ClientIdentity {
-    /// The address to attribute the request to.
-    #[must_use]
-    pub const fn address(self) -> IpAddr {
-        match self {
-            Self::DirectPeer(address) => address,
-            Self::ViaTrustedProxy { client, .. } => client,
-        }
-    }
-
-    /// Whether this identity came from a forwarding header.
-    #[must_use]
-    pub const fn is_forwarded(self) -> bool {
-        matches!(self, Self::ViaTrustedProxy { .. })
-    }
-}
-
-impl fmt::Display for ClientIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DirectPeer(address) => write!(f, "{address}"),
-            Self::ViaTrustedProxy { client, proxy } => write!(f, "{client} (via {proxy})"),
-        }
-    }
-}
+/// **Re-exported from [`renvor_core::identity`].** The type moved down to the kernel in Phase 009
+/// so that `renvor-auth`'s abuse controls could count a network dimension without depending on a
+/// transport; the *classification* — [`crate::identity::resolve`], [`crate::TrustedProxies`], and
+/// the `Forwarded` / `X-Forwarded-For` parsers — did not move and stays here.
+///
+/// This path is kept so existing callers and `renvor`'s facade re-export continue to name it where
+/// they always have.
+pub use renvor_core::identity::ClientIdentity;
 
 /// An opaque per-request correlation identifier.
 ///
@@ -231,22 +197,24 @@ mod tests {
     }
 
     #[test]
-    fn direct_peer_identity_is_not_marked_forwarded() {
-        let direct = ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)));
+    fn the_re_exported_identity_is_the_kernels_type_and_not_a_second_one() {
+        // The behavioural assertions moved to `renvor_core::identity` with the type. What this
+        // file still owns is the claim that `renvor_http::context::ClientIdentity` NAMES that type
+        // rather than a look-alike — because a duplicated enum would compile, satisfy every caller
+        // here, and silently stop agreeing with the one `renvor-auth` counts.
+        //
+        // The annotation is the assertion: it is a type error if the two ever diverge.
+        let direct: renvor_core::identity::ClientIdentity =
+            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)));
         assert!(!direct.is_forwarded());
-        assert_eq!(direct.address(), IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)));
 
-        // POSITIVE CONTROL: the forwarded variant IS marked, and reports the client rather than
-        // the proxy — reporting the proxy would attribute every request to the load balancer.
-        let forwarded = ClientIdentity::ViaTrustedProxy {
+        // POSITIVE CONTROL: the conversion goes the other way too, so the annotation above is an
+        // identity rather than a one-directional coercion that a `From` impl could also satisfy.
+        let forwarded: ClientIdentity = renvor_core::identity::ClientIdentity::ViaTrustedProxy {
             client: IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7)),
             proxy: IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
         };
         assert!(forwarded.is_forwarded());
-        assert_eq!(
-            forwarded.address(),
-            IpAddr::V4(Ipv4Addr::new(198, 51, 100, 7))
-        );
     }
 
     #[tokio::test]

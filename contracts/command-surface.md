@@ -1,7 +1,7 @@
 ---
 description: "Contract C-1 — CLI command surface, exit codes, and stream discipline"
-version: "1.0.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-08-29) CORRECTS the phase the reserved-flag paragraph names — Phase 011 delivers the flag, Phase 009 delivers only the library the flag would generate against — and adds the rule that a reserved message must name the phase that delivers the FLAG. No exit code, stream rule, or flag changed. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-1 — Command surface, exit codes, and stream discipline
@@ -175,8 +175,14 @@ Flags for later-phase choices — `--auth`, `--frontend`,
 exit `3` and a message naming the choice and the phase that will support it.
 
 They are **not** rejected as unknown flags, because "unknown flag" tells a user their command is
-wrong while "not supported until Phase 009" tells them when it will be right. They are **not**
+wrong while "not supported until Phase 011" tells them when it will be right. They are **not**
 silently ignored, because that would let a Phase 003 command line quietly change meaning later.
+
+> **The phase a message names must be the phase that delivers the flag, not the phase that delivers
+> the subject.** `--auth` named Phase 009 until Phase 009 corrected it: Phase 009 ships the
+> authentication library, and the flag asks for a **generated project** that uses it, which is
+> Phase 011. Naming the library's phase would have made the message expire the day that phase
+> merged — an operator would read it, try the flag, and find it still refused.
 
 ## Interaction and terminals
 

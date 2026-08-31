@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_password_reset (id BINARY(16) PRIMARY KEY, user_id BINARY(16) NOT NULL, token_hash BINARY(32) NOT NULL UNIQUE, expires_at DATETIME(6) NOT NULL, consumed_at DATETIME(6), CONSTRAINT fk_auth_password_reset_user FOREIGN KEY (user_id) REFERENCES rv_auth_user(id) ON DELETE CASCADE);

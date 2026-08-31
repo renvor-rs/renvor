@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_refresh (id BYTEA PRIMARY KEY, family_id BYTEA NOT NULL REFERENCES rv_auth_refresh_family(id) ON DELETE CASCADE, token_hash BYTEA NOT NULL UNIQUE, issued_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ, replaced_by BYTEA, revoked_at TIMESTAMPTZ);

@@ -51,6 +51,7 @@ pub mod cancel;
 pub mod config_port;
 pub mod error;
 pub mod health;
+pub mod identity;
 pub mod lifecycle;
 pub mod observe;
 pub mod provider;
@@ -63,6 +64,7 @@ pub use health::{
     ContributorFault, ContributorVerdict, HealthState, Liveness, Readiness, ReadinessContributor,
     ReadinessReport,
 };
+pub use identity::ClientIdentity;
 pub use lifecycle::{
     Application, ApplicationBuilder, BootFailure, BuildError, DrainOutcome, LifecyclePhase,
     PhaseLog, RollbackReport, ShutdownReport, WorkGate, WorkPermit,

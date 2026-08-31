@@ -113,6 +113,9 @@
               "payload_too_large",
               "request_timeout",
               "unavailable",
+              "authentication_required",
+              "not_permitted",
+              "too_many_attempts",
               "internal_error"
             ],
             "type": "string"

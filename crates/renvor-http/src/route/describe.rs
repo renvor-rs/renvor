@@ -211,6 +211,7 @@ fn operation_for(route: &Route) -> Result<Operation, DescribeError> {
         // A route with no specification: described honestly as an operation whose inputs are
         // undeclared, with the framework failures it can still produce.
         return Ok(Operation {
+            security: Vec::new(),
             operation_id,
             summary: None,
             description: None,
@@ -295,6 +296,7 @@ fn operation_for(route: &Route) -> Result<Operation, DescribeError> {
     }
 
     Ok(Operation {
+        security: Vec::new(),
         operation_id,
         summary: spec.summary.clone(),
         description: spec.description.clone(),
@@ -374,6 +376,9 @@ pub const fn status_for(code: ApiErrorCode) -> u16 {
         ApiErrorCode::PayloadTooLarge => 413,
         ApiErrorCode::RequestTimeout => 408,
         ApiErrorCode::Unavailable => 503,
+        ApiErrorCode::AuthenticationRequired => 401,
+        ApiErrorCode::NotPermitted => 403,
+        ApiErrorCode::TooManyAttempts => 429,
         ApiErrorCode::InternalError => 500,
         // `ApiErrorCode` is `#[non_exhaustive]`, so this arm is required by the language rather
         // than chosen. 500 is the safe answer for a code this build does not recognise — but it is
@@ -465,6 +470,12 @@ mod tests {
             (ApiErrorCode::PayloadTooLarge, 413),
             (ApiErrorCode::RequestTimeout, 408),
             (ApiErrorCode::Unavailable, 503),
+            // Added in Phase 009 batch J, when the registry gained no authentication codes at all
+            // and FR-081 needed somewhere correct to map a refused login. This assertion is what
+            // caught the omission: the mapping was updated and this list was not.
+            (ApiErrorCode::AuthenticationRequired, 401),
+            (ApiErrorCode::NotPermitted, 403),
+            (ApiErrorCode::TooManyAttempts, 429),
             (ApiErrorCode::InternalError, 500),
         ];
 

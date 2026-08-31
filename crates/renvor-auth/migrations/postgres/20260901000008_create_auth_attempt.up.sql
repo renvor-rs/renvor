@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_attempt (dimension SMALLINT NOT NULL CHECK (dimension BETWEEN 1 AND 12), bucket INTEGER NOT NULL CHECK (bucket >= 0 AND bucket < 1048576), window_start TIMESTAMPTZ NOT NULL, current_count BIGINT NOT NULL CHECK (current_count >= 0), previous_count BIGINT NOT NULL CHECK (previous_count >= 0), expires_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (dimension, bucket));

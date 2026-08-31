@@ -12,6 +12,9 @@
 //!
 //! **This surface is explicitly unstable.** See the `renvor` facade documentation.
 
+/// The bounded abuse-control contract. Needs `renvor-auth` but **not** its `tokens` half.
+#[cfg(feature = "auth")]
+pub mod abuse;
 pub mod clock;
 pub mod concurrency;
 pub mod domain;
@@ -19,6 +22,12 @@ pub mod harness;
 pub mod injection;
 pub mod persistence;
 pub mod portability;
+/// The refresh-rotation contract, behind `tokens` because it names `renvor-auth`'s API token half.
+///
+/// A crate that does not use API tokens resolves neither this module nor the JWT dependency
+/// behind it — the same rule the adapters apply to their drivers.
+#[cfg(feature = "tokens")]
+pub mod refresh;
 pub mod upgrade;
 
 pub use clock::TestClock;
@@ -28,3 +37,5 @@ pub use harness::{Harness, HarnessRun, Outcome};
 pub use injection::{Behaviour, FailureInjectionPoint};
 pub use persistence::PersistenceFixture;
 pub use portability::PortabilityFixture;
+#[cfg(feature = "tokens")]
+pub use refresh::{RefreshFixture, StoredRefreshToken};

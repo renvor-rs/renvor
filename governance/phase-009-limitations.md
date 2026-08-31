@@ -1,0 +1,55 @@
+# Phase 009 — Limitations
+
+**Companion to**: [`phase-009-evidence.md`](phase-009-evidence.md)
+**Phase**: 009 — Authentication, sessions, tokens, and policies
+**Count**: **23 retained limitations**, none closed by this phase.
+
+Every row states **what**, **why it was not closed**, and **who it belongs to**, as PLAN §6.2
+requires. Nothing here is a note to self; each is something a reader should know before relying on
+this code.
+
+> **Why this file exists at all.** The phase's working record — 28 documents — lives under `specs/`,
+> which is **gitignored**. `git ls-files specs` returning **0** is a *required* closing state for
+> this phase, not an accident, and it is itself recorded below as **L-21**. Without this mirror the
+> phase would close with its entire written record invisible to anyone who clones the repository.
+
+Ordered by how much each would matter to someone deploying this.
+
+---
+## Security-relevant
+
+| # | Limitation | Why not closed | Owner |
+|---|---|---|---|
+| **L-1** | **A password reset revokes nothing.** `reset_password` consumes the token and writes the new credential. It does **not** revoke the subject's sessions, refresh families, or other outstanding single-use tokens. A reset performed *because* the old password was compromised leaves every session and every refresh family the attacker holds fully live. | Batch E's operation. `SessionRepository::revoke_all_for` and `RefreshRotation::revoke` both exist and are simply not called from here. Fixing it means reopening batch E and re-running its mutations. | **Stage 8 / a follow-up batch.** The most consequential open finding in the phase. |
+| **L-2** | **FR-011 is not implemented.** `PasswordService::needs_rehash` exists and is mutation-proven, and **nothing calls it**. `log_in` never consults the stored parameters, so an account hashed under obsolete parameters stays that way forever. | Batch B. The ledger row (T012) is at **`needs_fixes`** rather than corrected, because rehash-on-login changes the login path and belongs with a batch that re-runs batch B's mutations. | **A follow-up batch.** |
+| **L-3** | **MySQL's default collation and the abuse key disagree about accents.** `email` has no `COLLATE` clause, so MySQL applies `utf8mb4_0900_ai_ci` — accent-**insensitive** — while the bucket key lowercases without stripping accents. On MySQL, accent variants of one address resolve to one account but land in different buckets, multiplying the per-account mail limit by the number of variants. On PostgreSQL they are different accounts entirely. | A genuine cross-engine divergence that `contracts/database-portability.md` neither eliminates nor names. Closing it is a **collation decision**, which is a contract amendment. | **Stage 8.** |
+| **L-4** | **No `Origin` check anywhere.** FR-031 explicitly permits this — the CSRF property is stated not to depend on one — but no transport implements one either, so it is absent rather than layered. | Deliberate at the module level; simply never added at the transport. | **Phase 010 / the transport.** |
+| **L-5** | **The Ed25519 signing seed is overwritten only on the success path**, with a plain `fill(0)` the optimiser is not obliged to keep. The two `?` returns in `generate_ed25519` leave it on the stack. | Batch G. The module already records that it holds the seed under the same terms as `Opaque`; the **error paths** are the part not covered. | **Stage 8.** |
+| **L-6** | **The signing key has no rotation path.** `SQ-2` in the security checklist, and `threat-model.md` records it as an **unmitigated threat**. | Never resolved. It is an open question, not a deferred task. | **Open. Named in the threat model.** |
+| **L-7** | **The session concurrency bound is per-login and not atomic.** Two simultaneous logins for one subject can momentarily leave `bound + 1` live sessions; the next login corrects it. | Making it atomic means serialising every login for a subject. | **Accepted, stated.** |
+| **L-8** | **Bucketing is lossy, so strangers share abuse counters.** An attacker who spends `buckets × limit` requests degrades service for a fraction of users. | Answered rather than eliminated: the mapping is HMAC-keyed so collisions are accidents not targets, the refusal is a windowed limit rather than a lockout, and the network axis charges the attacker throughout. See `sq-4-bounded-abuse-state.md` §5. | **Accepted, priced.** |
+| **L-9** | **Rotating the abuse key re-randomises every bucket**, discarding counts and failing **open** for one window. | Same cost as restarting with an empty table. The operator's decision. | **Accepted, documented.** |
+| **L-10** | **An audit event can carry 16 attacker-chosen bytes.** `CredentialRef::from_bytes` takes an arbitrary `[u8; 16]`. `Copy` excludes heap-owned data and nothing else. | Every shipped call site passes an identifier that came from a store, and restricting the constructor would break the adapters that legitimately build one. The module header states the bound rather than the API being changed. | **Accepted, stated.** |
+| **L-11** | **A storage failure produces no audit record.** `AbuseGuard::admit` returns on the store error before reaching the sink, so a database outage leaves a gap in the trail for the six flows. | The failure is **loud to the caller**, and the audit vocabulary has no outcome meaning "infrastructure broke" — adding one would be a `reason` field by another name. | **Phase 010** (FR-075 owns infrastructure observability). |
+| **L-12** | **PostgreSQL's `ON CONFLICT DO NOTHING` takes no row lock**, so the `"Unreachable"` branch in the abuse transition's step 2 is reachable if a concurrent `prune` deletes the row between statements. Fails **closed** (a 500), not a bypass. `prune` has no caller in shipped code. | Fixing it means either locking in step 1 or accepting a retry — both are transition changes that would invalidate the ten adapter mutations. | **Stage 8**, with the mutation cost stated. |
+
+## Correctness and coverage
+
+| # | Limitation | Why not closed | Owner |
+|---|---|---|---|
+| **L-13** | **FR-079's "one shared application-level suite" did not ship.** `auth_repositories.rs` exists twice — 881 and 869 lines, the same 15 test names, two independent implementations. Every suite written since (`abuse_controls`, `refresh_rotation`, `shared_contract`) delegates to `renvor-testkit` correctly; these two predate the habit. | Converting them is a batch of its own. | **A follow-up batch.** |
+| **L-14** | **12 of 15 `auth_repositories` tests are uncensused**, including FR-080's entire duplicate-registration race proof; `auth_migrations.rs` — FR-078's proof — has no census entry at all. Deleting FR-080's race test leaves both `cargo test` and the census green. | Real. Extending the census across those suites is T055 scope and T055 is closed; reopening it would mix a census change into a review-response commit. | **Stage 8.** |
+| **L-15** | **The test application completes no mailed flow and never calls `/auth/token/refresh`.** It sends invented tokens and asserts 401; `RecordingMailSink` holds the real secrets and the test does not use them. `token_routes` builds a separate group the test does not register, so SC-010's transport half is untested. | Found by requirements review after the suite was written. | **A follow-up batch.** |
+| **L-16** | **Nothing assembles an OpenAPI document.** `security_schemes()` is correct and asserted in both directions; no route declares a `SecurityRequirement` and no code builds a `Document`. The routes also declare no `OperationSpec`, so `renvor-http`'s declared-constraint validation does not run for them. | FR-082 asks that the *declaration* match the implementation; the declaration exists as a function and has no document to appear in. | **A follow-up batch.** |
+| **L-17** | **The password-rejection reason names the field, not the rule.** FR-010 says a rejection *"SHALL state its reason"*; `AuthError::PasswordRejected` is fieldless by FR-013 and covers three rules with one value. | A **tension between two requirements**, not an omission. Not resolvable at the transport boundary without giving the error a field. | **Needs a spec decision.** |
+| **L-18** | **SC-009's "five rejection cases" are four rejections and one deliberate acceptance.** A CSRF token reused *within its own session* verifies, with a stated rationale (per-request tokens break parallel requests and the back button). | The engineering call is right; the **spec line** is what is wrong. | **Spec correction.** |
+| **L-19** | **`renvor-auth-http` is not reachable through the `renvor` facade**, so an author names the crate directly — as they already do for `renvor-sqlx`. | Consistent with the persistence adapters, but it means the facade still exposes no authentication at all. | **A follow-up batch.** |
+| **L-20** | **`TokenLifetime::new` reuses `AuthError::PasswordRejected`** for a configuration refusal, where batch F later introduced `PolicyMisconfigured` for the same class. | Batch E was not reopened. | **Stage 8.** |
+| **L-21** | **FR-086's deliverables are untracked.** Every evidence document lives under `specs/`, which is gitignored — and `git ls-files specs` returning **0** is a *required* state for this phase, not an accident. So the phase's written record exists in the working tree and not in the repository. | This is the phase's own governance rule. It means the tracked artefacts are the doc comments, the contracts, and the ADRs. | **By design; named so it is not a surprise.** |
+
+## Gate gaps
+
+| # | Limitation | Why not closed | Owner |
+|---|---|---|---|
+| **L-22** | **`xtask` step 9 runs rustdoc without `--all-features`**, so any module behind a feature is invisible to it. It has now hidden broken intra-doc links in **three consecutive batches** — five in G, six in G2, two of five in I/J. | The links are fixed each time by running rustdoc with the feature on by hand. **The gate has not been changed**, because changing a gate mid-batch is not a batch's authority. | **Stage 8.** Three data points. |
+| **L-23** | **The census's bidirectional drift test covers only the two `error_classification` suites.** Nothing compares `auth_repositories`, `abuse_controls`, `refresh_rotation` or `test_application` against their census rows, so a test added to one of those and not censused is invisible. Its own doc comment describes exactly this failure mode. | Same reason as L-14. | **Stage 8.** |

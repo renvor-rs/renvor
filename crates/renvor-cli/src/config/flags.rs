@@ -300,13 +300,19 @@ pub struct NewArgs {
 /// asserts the table covers the struct.
 const RESERVED: [(&str, &str); 5] = [
     // `--orm` and `--database` left this table in Phase 006, which is when persistence shipped.
-    // `--auth` names Phase 009, which is the phase PLAN.md actually assigns authentication — it
-    // said Phase 013 until Phase 006 checked it against the roadmap. A reserved flag that names
-    // the wrong phase is a false statement about when support arrives, which is why the phase
-    // column is read from the roadmap rather than remembered.
+    //
+    // `--auth` named Phase 009 until Phase 009 itself corrected it, and the correction is the point
+    // of FR-085. **This flag does not turn authentication on — it generates a project that already
+    // has it.** Phase 009 ships the authentication *library*; a `renvor new --auth session` that
+    // scaffolds a working starter is generation, and PLAN.md assigns generation to Phase 011.
+    //
+    // So the flag was about to become *more* wrong at exactly the moment it looked right: with
+    // Phase 009 merged, an operator reading "reserved for Phase 009" would try the flag and find it
+    // still refused. It said Phase 013 before Phase 006 checked it against the roadmap; this is the
+    // second correction, and the drift test below is what makes it the last.
     (
         "--auth",
-        "Phase 009 (authentication, sessions, tokens, and policies)",
+        "Phase 011 (project generation and the authenticated starter)",
     ),
     ("--frontend", "Phase 019 (full-stack architecture)"),
     ("--styling", "Phase 019 (full-stack architecture)"),
@@ -391,6 +397,78 @@ impl NewArgs {
 
 #[cfg(test)]
 mod tests {
+    /// FR-085 — the `--auth` message names the same phase in **all three** places that state it.
+    ///
+    /// # Why a drift test rather than a constant
+    ///
+    /// The three statements live in three languages: a Rust table, a published Markdown contract,
+    /// and a JSON fixture that pins the CLI's machine-readable output. There is no type that spans
+    /// them, so nothing but this test notices when one is edited and the others are not.
+    ///
+    /// It has already been needed twice. The flag said **Phase 013** until Phase 006 checked it
+    /// against the roadmap, and **Phase 009** until Phase 009 itself did — the second time because
+    /// the message named the phase that delivers *authentication* rather than the phase that
+    /// delivers the *flag*. Merging Phase 009 would have made an operator read "reserved for
+    /// Phase 009", try `--auth`, and find it still refused.
+    ///
+    /// The table in this file is the single source; the other two are checked against it.
+    ///
+    /// # There is a fourth site, and it is deliberately not checked
+    ///
+    /// `tests/cmd/exit-codes.trycmd` also exercises `--auth`, but it wildcards both `message` and
+    /// `phase` with `[..]`. It is demonstrating the **exit code** for a reserved flag, not the text
+    /// — so it cannot drift, and asserting the text there would give the phase string a fourth
+    /// place to be edited for no additional guarantee. FR-085 names three, and three is right.
+    #[test]
+    fn the_reserved_auth_phase_is_stated_identically_everywhere() {
+        let table = RESERVED
+            .iter()
+            .find(|(flag, _)| *flag == "--auth")
+            .map(|(_, phase)| *phase)
+            .expect("`--auth` is a reserved flag");
+        assert_eq!(
+            table, "Phase 011 (project generation and the authenticated starter)",
+            "the reserved phase changed; update the contract and the fixture with it"
+        );
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..");
+
+        // SITE 2 — the JSON fixture, which pins the machine-readable output byte for byte.
+        let fixture =
+            std::fs::read_to_string(root.join("crates/renvor-cli/tests/json/reserved-auth.json"))
+                .expect("the reserved-auth fixture is readable");
+        assert!(
+            fixture.contains(table),
+            "the JSON fixture does not state {table:?}"
+        );
+        assert!(
+            !fixture.contains("Phase 009") && !fixture.contains("Phase 013"),
+            "the JSON fixture still names a superseded phase"
+        );
+
+        // SITE 3 — the published contract's prose.
+        let contract = std::fs::read_to_string(root.join("contracts/command-surface.md"))
+            .expect("the command-surface contract is readable");
+        assert!(
+            contract.contains("not supported until Phase 011"),
+            "the contract's reserved-flag paragraph does not name Phase 011"
+        );
+
+        // POSITIVE CONTROL: both files were genuinely read and are the ones intended. Without
+        // this, a path typo would make every `contains` above pass vacuously on an empty string —
+        // which is the failure mode this repository has already been bitten by twice.
+        assert!(
+            fixture.contains("reserved_for_later_phase"),
+            "the fixture read is not the reserved-flag fixture"
+        );
+        assert!(
+            contract.contains("## Reserved flags"),
+            "the contract read is not the command-surface contract"
+        );
+    }
+
     use super::*;
     use clap::CommandFactory;
 

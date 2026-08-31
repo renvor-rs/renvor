@@ -24,6 +24,7 @@
 //! offline cache, and a framework compiling against two backends would need two caches kept in
 //! step.
 
+pub mod auth;
 pub mod error;
 pub mod migrate;
 pub mod page;
@@ -259,6 +260,51 @@ impl<DB: sqlx::Database> SqlxUnitOfWork<'_, DB> {
     }
 }
 
+impl<'c, DB: sqlx::Database> SqlxUnitOfWork<'c, DB>
+where
+    for<'e> &'e mut DB::Connection: sqlx::Executor<'e, Database = DB>,
+{
+    /// Opens a transaction on `pool` directly.
+    ///
+    /// # Why a repository needs this and cannot call [`Database::begin`]
+    ///
+    /// A repository holds a **pool**, not a `SqlxDatabase` — that is what lets one repository be
+    /// constructed against a transaction the application already owns. An operation that must be
+    /// atomic in its own right, with no application transaction to join, therefore has no `begin`
+    /// to reach: `renvor_auth::repository::RefreshTokenRepository::advance` is one, and its
+    /// atomicity is the whole of its contract.
+    ///
+    /// This is the same body [`Database::begin`] used to hold, extracted rather than copied, so
+    /// the cancellation discipline `SqlxUnitOfWork` documents has exactly one implementation.
+    pub(crate) async fn begin_on(
+        pool: &'c sqlx::Pool<DB>,
+        kind: DatabaseKind,
+    ) -> Result<Self, DatabaseError> {
+        // Acquire the connection ourselves rather than calling `Pool::begin`, which would hand
+        // ownership to a `sqlx::Transaction` and leave no way to discard the connection when a
+        // future is cancelled. See `SqlxUnitOfWork` for what that costs.
+        let mut connection = pool
+            .acquire()
+            .await
+            .map_err(|error| error::classify_error(&error))?;
+        // `Executor::execute` with a bare string uses the TEXT protocol. `sqlx::query`
+        // would prepare the statement, and MySQL's prepared-statement protocol does not
+        // accept `BEGIN` — this is the same call shape `sqlx`'s own transaction manager uses.
+        if let Err(error) = sqlx::Executor::execute(&mut *connection, BEGIN).await {
+            let _ = error::classify_error(&error);
+            // The transaction never opened, so this connection is discarded rather than returned:
+            // its protocol state is unknown for exactly the same reason.
+            drop(connection.detach());
+            return Err(DatabaseError::new(DatabaseErrorKind::StatementRejected));
+        }
+        Ok(Self {
+            connection: Some(connection),
+            kind,
+            borrow: core::marker::PhantomData,
+        })
+    }
+}
+
 impl<DB: sqlx::Database> UnitOfWork for SqlxUnitOfWork<'_, DB>
 where
     for<'e> &'e mut DB::Connection: sqlx::Executor<'e, Database = DB>,
@@ -422,29 +468,7 @@ where
     }
 
     async fn begin(&self) -> Result<Self::UnitOfWork<'_>, DatabaseError> {
-        // Acquire the connection ourselves rather than calling `Pool::begin`, which would hand
-        // ownership to a `sqlx::Transaction` and leave no way to discard the connection when a
-        // future is cancelled. See `SqlxUnitOfWork` for what that costs.
-        let mut connection = self
-            .pool
-            .acquire()
-            .await
-            .map_err(|error| error::classify_error(&error))?;
-        // `Executor::execute` with a bare string uses the TEXT protocol. `sqlx::query`
-        // would prepare the statement, and MySQL's prepared-statement protocol does not
-        // accept `BEGIN` — this is the same call shape `sqlx`'s own transaction manager uses.
-        if let Err(error) = sqlx::Executor::execute(&mut *connection, BEGIN).await {
-            let _ = error::classify_error(&error);
-            // The transaction never opened, so this connection is discarded rather than returned:
-            // its protocol state is unknown for exactly the same reason.
-            drop(connection.detach());
-            return Err(DatabaseError::new(DatabaseErrorKind::StatementRejected));
-        }
-        Ok(SqlxUnitOfWork {
-            connection: Some(connection),
-            kind: self.kind,
-            borrow: core::marker::PhantomData,
-        })
+        SqlxUnitOfWork::begin_on(&self.pool, self.kind).await
     }
 
     async fn check(&self) -> Result<(), DatabaseError> {

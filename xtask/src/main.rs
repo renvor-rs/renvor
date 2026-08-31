@@ -657,6 +657,7 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
 /// | neither adapter resolves the other | each resolves `renvor-database` |
 /// | `renvor-database` resolves no driver and no ORM under **any** feature | it resolves itself |
 /// | the banned crates are absent workspace-wide | the permitted near-namesakes are present |
+/// | no crate resolves `jsonwebtoken` or `aws-lc-*` without `tokens` | the same crate WITH `tokens` resolves all three |
 /// One isolation row: a label, the `cargo tree` arguments, what must be absent, what must be
 /// present.
 ///
@@ -681,7 +682,135 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 7] = [
+    let checks: [IsolationCheck<'_>; 18] = [
+        // ---- API TOKEN MODE (FR-035, SC-011) ----------------------------------------------
+        //
+        // Added in batch G2, and the reason is that this property was TRUE and UNASSERTED. Batch G
+        // measured it by hand, recorded that it held, and left T039 at `todo` with the note that
+        // "an unasserted property is not evidence". This is the assertion.
+        //
+        // It matters more than an ordinary feature boundary. `tokens` is the only thing in this
+        // workspace that resolves `jsonwebtoken`, and behind it `aws-lc-sys` — which **compiles C
+        // and assembly** and therefore imposes a toolchain on every consumer who resolves it. A
+        // consumer who is not using API tokens must not pay that, and the only way to be sure is to
+        // walk the graph.
+        //
+        // Every row has its mirror image: the same package WITH the feature, asserting the same
+        // crates are present. Without that, a typo in a package name would make both the absence
+        // and its control vacuous.
+        (
+            "renvor-auth (no tokens)",
+            &["-p", "renvor-auth"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["renvor-database", "subtle"],
+        ),
+        (
+            "renvor-auth (--features tokens)",
+            &["-p", "renvor-auth", "--features", "tokens"],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+        ),
+        // BATCH I. `renvor-testkit` gained an `auth` feature so the abuse-control contract could be
+        // hosted without the token half — and `renvor-sqlx` and `renvor-seaorm` now turn it on
+        // UNCONDITIONALLY in their dev-dependencies. If `auth` reached `renvor-auth/tokens`, every
+        // adapter's test build would resolve `aws-lc-sys` and compile C and assembly, whether or
+        // not the consumer asked for API tokens. That would be the native-build cost `tokens`
+        // exists to keep optional, reintroduced through the test side where nobody was looking.
+        // BATCH J. `renvor-auth`'s manifest header has said since batch A that "there is no router
+        // here, no status code, no `sqlx`, and no `sea-orm`" — and until now nothing checked the
+        // first two. The claim is what forced `renvor-auth-http` to exist as a separate crate
+        // rather than as an optional feature on either side, so it had better be true.
+        //
+        // `--all-features` deliberately: a feature that pulled a transport in would otherwise be
+        // invisible here, which is precisely the evasion the placement decision refused.
+        (
+            "renvor-auth (--all-features) resolves no transport",
+            &["-p", "renvor-auth", "--all-features"],
+            &["axum", "hyper", "tower-http", "renvor-http"],
+            &["renvor-database", "renvor-config"],
+        ),
+        (
+            "renvor-auth-http resolves BOTH sides",
+            &["-p", "renvor-auth-http"],
+            &[],
+            &[
+                "renvor-auth",
+                "renvor-http",
+                "renvor-error",
+                "renvor-openapi",
+            ],
+        ),
+        (
+            "renvor-testkit (--features auth)",
+            &["-p", "renvor-testkit", "--features", "auth"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["renvor-auth", "chrono"],
+        ),
+        (
+            "renvor-testkit (--features tokens)",
+            &["-p", "renvor-testkit", "--features", "tokens"],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "renvor-auth"],
+        ),
+        (
+            "renvor-sqlx + db-postgres (no tokens)",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["sqlx", "renvor-auth"],
+        ),
+        (
+            "renvor-sqlx + db-postgres,tokens",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-postgres,tokens",
+            ],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs"],
+        ),
+        (
+            "renvor-seaorm + db-postgres (no tokens)",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-postgres",
+            ],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys"],
+            &["sea-orm", "renvor-auth"],
+        ),
+        (
+            "renvor-seaorm + db-postgres,tokens",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-postgres,tokens",
+            ],
+            &[],
+            &["jsonwebtoken", "aws-lc-rs"],
+        ),
+        // The shared contract crate is a dev-dependency of both adapters, so its own `tokens`
+        // feature is a third place the JWT backend could arrive from. `--edges normal` already
+        // excludes dev-dependencies; this asserts the crate itself is clean rather than relying on
+        // the walk's edge filter to hide it.
+        (
+            "renvor-testkit (no tokens)",
+            &["-p", "renvor-testkit"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "renvor-auth"],
+            &["renvor-database", "renvor-core"],
+        ),
+        // ---- PERSISTENCE (Phase 007) -------------------------------------------------------
         (
             "renvor-seaorm + db-postgres",
             &[
@@ -1605,7 +1734,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 ///
 /// # The rows are not symmetric, and the asymmetry is real rather than an omission
 ///
-/// Each direct-SQLx row carries **eleven** required tests and each SeaORM row **ten**. The
+/// Each direct-SQLx row carries **twelve** required tests and each SeaORM row **eleven**. The
 /// difference is the transaction-conflict test: a deadlock is provoked by two sessions taking two
 /// row locks in opposite orders, which `renvor-sqlx` does through `sqlx::Pool` directly.
 /// `renvor-seaorm`'s suite classifies a `DbErr` through the idiomatic `Statement` path and has no
@@ -1632,115 +1761,235 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// so that a reader comparing this against phase evidence written earlier sees the change rather
 /// than a discrepancy.
 ///
-/// Forty-two entries, and a missing one fails the gate whichever suite it belongs to.
-const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
+/// **Forty-six before batch F**, and the prose above said "forty-two" while the array said
+/// forty-six — a stale count left by an earlier batch. Corrected here rather than left to be
+/// noticed again: a missing entry fails the gate whichever suite it belongs to.
+///
+/// # The refresh-rotation pair, added in batch G2
+///
+/// **Fifty-four became fifty-eight.** `renvor_testkit::refresh` is the shared contract behind the
+/// refresh-token transition, and it is here for a reason narrower than symmetry: the defect it was
+/// written for — a successor inserted into a family a concurrent replay had already revoked —
+/// **cannot be reproduced without a real server**. The unit test that was supposed to catch it
+/// raced two rotations against an in-memory store whose `async fn`s contain no `.await`, so
+/// `tokio::join!` ran them one after the other and nothing interleaved.
+///
+/// One row per adapter-engine pair, matching every other shared suite here. The runner itself
+/// asserts it called all twelve of its assertions, because a census entry is one line per row and
+/// cannot see inside the function it names.
+///
+/// This pair is also why the census invocation carries `tokens`: see `the_four_rows_all_ran`.
+/// The database-backed suites that must report in, with the features each needs.
+///
+/// # The feature string moved from the invocation to the row, and the reason is `renvor-auth-http`
+///
+/// Every entry used to be run with one hard-coded `db-postgres,db-mysql,tokens`, with a comment
+/// saying the other suites were unaffected by it. That stopped being true the moment a required
+/// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
+/// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
+/// extra — it is an error, and the census would have failed to run rather than failed to find.
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
+    // THE TEST APPLICATION (FR-083). Not a four-row entry — it exercises the ROUTES, and the thing
+    // that varies by engine is the adapter, which the four-row suites already measure. It reaches
+    // PostgreSQL through a dev-dependency, so it takes NO database feature of its own; passing one
+    // is what the per-row feature string above exists to avoid.
+    (
+        "renvor-auth-http",
+        "test_application",
+        "every_flow_answers_and_nothing_secret_comes_back",
+        "tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "abuse_controls",
+        "postgres::the_shared_abuse_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "abuse_controls",
+        "mysql::the_shared_abuse_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "abuse_controls",
+        "postgres::the_shared_abuse_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "abuse_controls",
+        "mysql::the_shared_abuse_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "refresh_rotation",
+        "postgres::the_shared_refresh_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "refresh_rotation",
+        "mysql::the_shared_refresh_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "refresh_rotation",
+        "postgres::the_shared_refresh_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "refresh_rotation",
+        "mysql::the_shared_refresh_contract_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
     (
         "renvor-sqlx",
         "shared_contract",
         "postgres::the_shared_persistence_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "shared_contract",
         "mysql::the_shared_persistence_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "contract",
         "postgres::the_shared_persistence_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "contract",
         "mysql::the_shared_persistence_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "domain",
         "postgres::the_shared_domain_example_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "domain",
         "mysql::the_shared_domain_example_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_shared_domain_example_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "domain",
         "mysql::the_shared_domain_example_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "domain",
         "postgres::the_shared_concurrency_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "domain",
         "mysql::the_shared_concurrency_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_shared_concurrency_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "domain",
         "mysql::the_shared_concurrency_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "portability",
         "postgres::the_portability_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "portability",
         "mysql::the_portability_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "portability",
         "postgres::the_portability_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "portability",
         "mysql::the_portability_contract_holds",
+        "db-postgres,db-mysql,tokens",
     ),
-    ("renvor-sqlx", "domain", "postgres::the_upgrade_path_holds"),
-    ("renvor-sqlx", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-sqlx",
+        "domain",
+        "postgres::the_upgrade_path_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "domain",
+        "mysql::the_upgrade_path_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_upgrade_path_holds",
+        "db-postgres,db-mysql,tokens",
     ),
-    ("renvor-seaorm", "domain", "mysql::the_upgrade_path_holds"),
+    (
+        "renvor-seaorm",
+        "domain",
+        "mysql::the_upgrade_path_holds",
+        "db-postgres,db-mysql,tokens",
+    ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "postgres::a_failed_start_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "mysql::a_failed_start_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "postgres::a_failed_start_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "mysql::a_failed_start_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     // The server-side refusal rows, added by Phase 008's correction cycle. A refused socket and a
     // refused credential reach different code — the I/O arm and `classify_connect_error` — so a
@@ -1749,21 +1998,25 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-sqlx",
         "startup_diagnostic",
         "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
+        "db-postgres,db-mysql,tokens",
     ),
     // The error-classification rows, added by Phase 008's second correction cycle on the finding
     // that `PLAN.md` §819's "database error normalization" deliverable had its real-database
@@ -1772,21 +2025,25 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::each_constraint_violation_is_classified_as_itself",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::each_constraint_violation_is_classified_as_itself",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::each_constraint_violation_is_classified_as_itself",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::each_constraint_violation_is_classified_as_itself",
+        "db-postgres,db-mysql,tokens",
     ),
     // The control for the four above. Without its own entry it could be deleted while the census
     // stayed green, and a mapping that collapsed the four kinds onto one would then be caught by
@@ -1795,21 +2052,25 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::the_four_violations_do_not_collapse_onto_one_kind",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::the_four_violations_do_not_collapse_onto_one_kind",
+        "db-postgres,db-mysql,tokens",
     ),
     // Transaction conflict: DIRECT-SQLX ROWS ONLY, and that is measured rather than overlooked.
     // Provoking a deadlock takes two sessions holding two row locks in opposite orders, which the
@@ -1819,11 +2080,13 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::a_lost_conflict_is_retryable_rather_than_a_rejection",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::a_lost_conflict_is_retryable_rather_than_a_rejection",
+        "db-postgres,db-mysql,tokens",
     ),
     // The redaction rows. Differently named per adapter because they defend against different
     // text: the driver's message on one side, SeaORM's — which also carries the generated SQL —
@@ -1832,21 +2095,114 @@ const ROW_EVIDENCE: [(&str, &str, &str); 42] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::a_violation_never_carries_the_server_text",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::a_violation_never_carries_the_server_text",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::a_violation_never_carries_the_seaorm_text",
+        "db-postgres,db-mysql,tokens",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::a_violation_never_carries_the_seaorm_text",
+        "db-postgres,db-mysql,tokens",
+    ),
+    // ---- PHASE 009: the authentication rows ----
+    //
+    // Four entries, one per row, all naming the SAME test — because the assertion is that the four
+    // rows agree, and a census that named a different test per adapter could not tell agreement
+    // from coincidence. `renvor-auth` itself resolves no driver, so these suites are the only place
+    // its ports meet a real server.
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
+        "db-postgres,db-mysql,tokens",
+    ),
+    // ---- PHASE 009 BATCH F: the session rows ----
+    //
+    // Two tests, four rows each. The first is the revocation race — exactly one of four concurrent
+    // logouts may revoke a live session, and that is a property of the database rather than of the
+    // code that calls it.
+    //
+    // The second exists because of a difference between the engines that no unit test can reach:
+    // `touch` decides liveness from `rows_affected`, and MySQL reports rows *changed* unless the
+    // client negotiated `CLIENT_FOUND_ROWS`. Two requests in one microsecond write `last_seen_at`
+    // the value it already holds — zero changed, one matched — and the user is signed out. Reading
+    // `sqlx-mysql`'s source says the flag is set; only this says it stayed set.
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::two_concurrent_logouts_revoke_exactly_once",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::two_concurrent_logouts_revoke_exactly_once",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::two_concurrent_logouts_revoke_exactly_once",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::two_concurrent_logouts_revoke_exactly_once",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "postgres::touching_twice_at_one_instant_keeps_the_session_live",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-sqlx",
+        "auth_repositories",
+        "mysql::touching_twice_at_one_instant_keeps_the_session_live",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "postgres::touching_twice_at_one_instant_keeps_the_session_live",
+        "db-postgres,db-mysql,tokens",
+    ),
+    (
+        "renvor-seaorm",
+        "auth_repositories",
+        "mysql::touching_twice_at_one_instant_keeps_the_session_live",
+        "db-postgres,db-mysql,tokens",
     ),
 ];
 
@@ -1914,23 +2270,27 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
     }
 
     // Group the rows by the binary that carries them, so each binary runs once.
-    let mut binaries: Vec<(&str, &str)> = ROW_EVIDENCE
+    let mut binaries: Vec<(&str, &str, &str)> = ROW_EVIDENCE
         .iter()
-        .map(|(package, binary, _)| (*package, *binary))
+        .map(|(package, binary, _, features)| (*package, *binary, *features))
         .collect();
     // Sorted before `dedup`, which only removes ADJACENT duplicates. Unsorted, a binary named
     // again later in the table would be run twice.
     binaries.sort_unstable();
     binaries.dedup();
 
-    for (package, binary) in binaries {
+    for (package, binary, features) in binaries {
         let output = Command::new("cargo")
             .args([
                 "test",
                 "-p",
                 package,
+                // PER ROW, not one string for every binary. `tokens` is needed by the
+                // refresh-rotation pair — a census row for a test compiled out is a row that can
+                // never report in — and the test application takes no database feature at all,
+                // because it has none to take.
                 "--features",
-                "db-postgres,db-mysql",
+                features,
                 "--test",
                 binary,
             ])
@@ -1959,7 +2319,7 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             return false;
         }
 
-        for (expected_package, expected_binary, test) in ROW_EVIDENCE {
+        for (expected_package, expected_binary, test, _) in ROW_EVIDENCE {
             if expected_package != package || expected_binary != binary {
                 continue;
             }
@@ -1986,8 +2346,9 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         4,
         TITLE,
         &format!(
-            "all {} row-suite pairs reported in (11 required tests on each direct-SQLx row, \
-             10 on each SeaORM row)",
+            "all {} required suites reported in (12 tests on each direct-SQLx row, 11 on each \
+             SeaORM row, the refresh-rotation and abuse-control contracts on every row, and the \
+             end-to-end test application)",
             ROW_EVIDENCE.len()
         ),
     );
@@ -2456,8 +2817,8 @@ mod tests {
 
         let censused: Vec<(&str, &str)> = super::ROW_EVIDENCE
             .iter()
-            .filter(|(_, binary, _)| *binary == "error_classification")
-            .map(|(package, _, test)| (*package, *test))
+            .filter(|(_, binary, _, _)| *binary == "error_classification")
+            .map(|(package, _, test, _)| (*package, *test))
             .collect();
 
         let mut expected = 0_usize;
@@ -3204,14 +3565,75 @@ mod tests {
         let examined = super::required_metadata_is_declared(&manifests, &root_manifest)
             .expect("every publishable package satisfies the metadata contract");
 
-        // ELEVEN since Phase 007: `renvor-seaorm` joined the ten Phase 006 left. The number is
-        // asserted rather than inferred so that adding a publishable package without adding it to
-        // the release ordering fails here — which is exactly what happened when this count was
-        // five and three packages had just been added, again at Phase 006, and again here: this
-        // assertion is what first reported the new crate, before any manual list was touched.
+        // THIRTEEN since Phase 009 batch J: `renvor-auth-http` joined the twelve that earlier
+        // Phase 009 work left, which were themselves the eleven Phase 007 ended with plus
+        // `renvor-auth`. The number is asserted rather than inferred so that adding a publishable
+        // package without adding it to the release ordering fails here — which is exactly what
+        // happened when this count was five and three packages had just been added, again at
+        // Phase 006, again at Phase 007, again earlier in Phase 009 for `renvor-auth`, and AGAIN
+        // at batch J for `renvor-auth-http`.
+        //
+        // That fifth occurrence is the instructive one. Batch J *did* add the crate to
+        // `RELEASING.md`'s ordered table and to the release rehearsal's `CRATES` list — the two
+        // lists a publication actually reads — and still left both spelled counts at twelve. The
+        // structural lists agreed with the manifests while two sentences did not, which is the
+        // failure mode a count derived from `cargo metadata` cannot have and a sentence always
+        // can. Raising the pin is the correct response only once those lists are confirmed to
+        // already carry the new package, which they were.
+        //
+        // It is the cheapest test in this file and the one that has caught the most.
         assert_eq!(
-            examined, 11,
-            "the workspace publishes eleven packages; the scan examined {examined}"
+            examined, 13,
+            "the workspace publishes thirteen packages; the scan examined {examined}"
+        );
+    }
+
+    /// No allowlist in `.gitleaks.toml` excludes shipped source by **path**.
+    ///
+    /// # The fix this refuses
+    ///
+    /// Step 8 failed on 2026-08-30 with two `generic-api-key` matches on a synthetic
+    /// opaque-token fixture in `renvor-auth-http`'s test application. The narrow fix is a
+    /// content regex, which is what FP-003 uses.
+    ///
+    /// The TEMPTING fix is `paths = ['''^crates/renvor-auth-http/''']`, and it is the one this
+    /// test exists to refuse. Gitleaks skips an allowlisted path **before reading it**, so that
+    /// entry would stop the scanner opening the file for all time — and the file in question is a
+    /// test application, which is precisely where a real credential gets pasted by accident.
+    ///
+    /// This is not a hypothetical. FP-001 records the same property proven by experiment: a
+    /// `paths` form of that entry produced `scanned ~0 bytes` and let an injected canary through
+    /// undetected. That finding lived only in a comment, where the next person to hit a step 8
+    /// failure at 3am would not read it. This test is that comment made enforceable.
+    #[test]
+    fn no_gitleaks_allowlist_excludes_shipped_source_by_path() {
+        let root = super::workspace_root();
+        let config = std::fs::read_to_string(root.join(".gitleaks.toml"))
+            .expect(".gitleaks.toml is readable");
+
+        let mut path_entries = 0_usize;
+        for (index, line) in config.lines().enumerate() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("paths") {
+                continue;
+            }
+            path_entries += 1;
+            assert!(
+                !trimmed.contains("crates"),
+                ".gitleaks.toml line {} excludes shipped source by PATH: `{trimmed}`. A path \
+                 allowlist stops gitleaks reading the file at all, so a real credential added to \
+                 it later would never be reported. Suppress the specific match with `regexes`",
+                index + 1
+            );
+        }
+
+        // Positive control: a scan that matched nothing would pass the loop above without
+        // examining anything. FP-002 declares `paths = ['''^target/''']`, so at least one entry
+        // must be seen — otherwise this test is reporting success for having read nothing.
+        assert!(
+            path_entries >= 1,
+            "no `paths` allowlist was found at all, so this check proved nothing — FP-002 \
+             declares one and the parser must be able to see it"
         );
     }
 

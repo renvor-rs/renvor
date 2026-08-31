@@ -56,6 +56,7 @@ fn baseline() -> Document {
     item.set(
         "GET",
         Operation {
+            security: Vec::new(),
             operation_id: "getItem".to_owned(),
             summary: Some("Get an item".to_owned()),
             description: None,
@@ -85,6 +86,7 @@ fn baseline() -> Document {
     item.set(
         "POST",
         Operation {
+            security: Vec::new(),
             operation_id: "createItem".to_owned(),
             summary: None,
             description: None,

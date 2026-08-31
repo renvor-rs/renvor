@@ -85,6 +85,24 @@ pub enum ApiErrorCode {
     RequestTimeout,
     /// The application is draining, or is at its concurrency ceiling.
     Unavailable,
+    /// The request presented no usable credential.
+    ///
+    /// **Covers "no credential", "the credential did not authenticate", and "the credential is no
+    /// longer valid" with one code**, deliberately. `renvor-auth` already collapses an unknown
+    /// account and a wrong password into one value on the reasoning that *"distinguishing them at
+    /// the type level is how an enumeration oracle gets built by accident three layers up"*. The
+    /// wire is three layers up.
+    AuthenticationRequired,
+    /// The subject is authenticated and is not permitted to perform the operation.
+    ///
+    /// **403, and never 404.** Choosing between them would disclose whether the resource exists,
+    /// which is exactly what a policy failure must not do.
+    NotPermitted,
+    /// A bound was exceeded — attempts, resends, or concurrent sessions.
+    ///
+    /// **Does not say which.** Naming the dimension tells a caller which control they tripped and
+    /// therefore which one to work around.
+    TooManyAttempts,
     /// An unclassified failure. **A defect.**
     ///
     /// Its `detail` is a fixed constant and carries nothing about the cause.
@@ -103,7 +121,7 @@ impl ApiErrorCode {
     ///
     /// The length assertion below moves with this array, so an edit that adds a variant without
     /// updating the contract still fails loudly. This mirrors `renvor-core`'s `ErrorCategory::ALL`.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::ValidationFailed,
         Self::MalformedBody,
         Self::UnsupportedMediaType,
@@ -116,6 +134,9 @@ impl ApiErrorCode {
         Self::PayloadTooLarge,
         Self::RequestTimeout,
         Self::Unavailable,
+        Self::AuthenticationRequired,
+        Self::NotPermitted,
+        Self::TooManyAttempts,
         Self::InternalError,
     ];
 
@@ -138,6 +159,9 @@ impl ApiErrorCode {
             Self::OriginRejected => "origin_rejected",
             Self::PayloadTooLarge => "payload_too_large",
             Self::RequestTimeout => "request_timeout",
+            Self::AuthenticationRequired => "authentication_required",
+            Self::NotPermitted => "not_permitted",
+            Self::TooManyAttempts => "too_many_attempts",
             Self::Unavailable => "unavailable",
             Self::InternalError => "internal_error",
         }
@@ -164,6 +188,9 @@ impl ApiErrorCode {
             Self::PayloadTooLarge => "Payload too large",
             Self::RequestTimeout => "Request timeout",
             Self::Unavailable => "Service unavailable",
+            Self::AuthenticationRequired => "Authentication required",
+            Self::NotPermitted => "Not permitted",
+            Self::TooManyAttempts => "Too many attempts",
             Self::InternalError => "Internal error",
         }
     }
@@ -204,6 +231,16 @@ impl ApiErrorCode {
             Self::PayloadTooLarge => "The request body exceeds the configured limit.",
             Self::RequestTimeout => "The request exceeded the configured timeout.",
             Self::Unavailable => "The application is not accepting requests.",
+            // ONE SENTENCE for every credential failure. It does not say whether the account
+            // exists, whether the password was wrong, or whether the token had expired, because a
+            // detail that distinguished them would be the enumeration oracle the code avoids.
+            Self::AuthenticationRequired => {
+                "The request did not present a usable credential for this operation."
+            }
+            // Says nothing about the resource — not that it exists, not that it does not.
+            Self::NotPermitted => "The operation is not permitted.",
+            // Names no dimension and no limit. A retry hint would tell an attacker the window.
+            Self::TooManyAttempts => "Too many attempts. Try again later.",
             // FIXED, and deliberately uninformative. An unclassified failure is a defect, and the
             // one thing a caller must not receive is the defect's details.
             Self::InternalError => "The request could not be completed.",
@@ -235,7 +272,12 @@ impl ApiErrorCode {
                 | Self::NotFound
                 | Self::ResourceNotFound
                 | Self::MethodNotAllowed
-                | Self::PayloadTooLarge
+                | Self::PayloadTooLarge // The three authentication codes are DELIBERATELY ABSENT.
+                                        //
+                                        // A caller can "correct" a refused login by supplying the right password, but treating
+                                        // that as ordinary traffic is exactly backwards: a burst of them is the signal an
+                                        // operator most wants surfaced. `not_permitted` and `too_many_attempts` are likewise
+                                        // things to look at rather than things to shrug at.
         )
     }
 }

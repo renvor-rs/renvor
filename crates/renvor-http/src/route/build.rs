@@ -63,7 +63,7 @@ use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::Instrument as _;
 
-use super::{Method, Next, Request, Response, RouteRegistry};
+use super::{Method, Next, PresentedCredentials, Request, Response, RouteRegistry};
 use crate::admission::Admission;
 use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
@@ -632,6 +632,30 @@ async fn dispatch(
 
     let query = parts.uri.query().unwrap_or_default().to_owned();
 
+    // THE TWO CREDENTIAL HEADERS, and no others.
+    //
+    // Read one at a time by name rather than from the full map the declared-constraint check
+    // builds below — that map is scoped to the validation block, and more importantly, taking two
+    // named values is a different act from handing a handler every header. `PresentedCredentials`
+    // records why a credential the application must validate is not the identity this layer
+    // resolved.
+    //
+    // A header whose bytes are not text becomes `""`, which presents nothing. That is the
+    // fail-closed direction: an unreadable credential refuses rather than being lossily repaired
+    // into one that might parse.
+    let credentials = PresentedCredentials::new(
+        parts
+            .headers
+            .get(header::COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default(),
+        parts
+            .headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default(),
+    );
+
     // VALIDATION, against the route's OWN declaration — the same value the description publishes.
     //
     // Before the handler, deliberately: an operation that declared its inputs should never receive
@@ -672,7 +696,8 @@ async fn dispatch(
     }
 
     let renvor_request = Request::new(context, collected, query, path_params)
-        .with_state(Arc::clone(&shared.config.state));
+        .with_state(Arc::clone(&shared.config.state))
+        .with_credentials(credentials);
 
     // 9. TRACE — nearest the handler, so the span covers handler execution. Structured fields
     // only, never an interpolated sentence, and every field is one Renvor generated.

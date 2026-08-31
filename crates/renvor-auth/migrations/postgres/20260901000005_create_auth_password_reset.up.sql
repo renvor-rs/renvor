@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_password_reset (id BYTEA PRIMARY KEY, user_id BYTEA NOT NULL REFERENCES rv_auth_user(id) ON DELETE CASCADE, token_hash BYTEA NOT NULL UNIQUE, expires_at TIMESTAMPTZ NOT NULL, consumed_at TIMESTAMPTZ);

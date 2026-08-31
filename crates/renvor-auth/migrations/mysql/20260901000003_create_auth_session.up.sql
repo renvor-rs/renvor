@@ -1,0 +1,1 @@
+CREATE TABLE rv_auth_session (id BINARY(16) PRIMARY KEY, user_id BINARY(16) NOT NULL, token_hash BINARY(32) NOT NULL UNIQUE, created_at DATETIME(6) NOT NULL, last_seen_at DATETIME(6) NOT NULL, revoked_at DATETIME(6), CONSTRAINT fk_auth_session_user FOREIGN KEY (user_id) REFERENCES rv_auth_user(id) ON DELETE CASCADE);

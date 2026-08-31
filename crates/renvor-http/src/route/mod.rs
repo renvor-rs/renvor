@@ -95,18 +95,109 @@ impl fmt::Display for Method {
     }
 }
 
+/// The credentials a request presented — **and nothing else**.
+///
+/// # Why this exists, and why it is not a header map
+///
+/// [`Request`] carries no headers on purpose: *"a handler never re-derives client identity from a
+/// header, because it never sees the headers that would let it."* That rule is Phase 004's, it is
+/// right, and it is unchanged.
+///
+/// But an authentication flow is defined by a credential the **application** must validate, and a
+/// session cookie is not client identity: it is opaque to this crate and meaningful only against a
+/// store this crate does not have. Validating one re-derives nothing — the [`ClientIdentity`] an
+/// abuse control counts still comes from [`RequestContext`], resolved by the layer that knows the
+/// trust configuration.
+///
+/// So exactly two values cross, and a general `Request::header(name)` deliberately does not exist:
+/// `Host`, `Origin`, `Forwarded` and `X-Forwarded-For` stay unreachable from a handler, which is
+/// what keeps Phase 004's property exactly as strong as it was.
+///
+/// Both values are **inert here**. This crate copies them and forms no opinion about either.
+///
+/// [`ClientIdentity`]: crate::ClientIdentity
+/// # `Debug` is hand-written, and `PartialEq` is deliberately absent
+///
+/// A derived `Debug` prints `cookie: "__Host-rv_session=<live session id>"` — a live credential, in
+/// whatever log or panic message formatted it. Every other type in this workspace that holds one
+/// refuses that: `renvor_auth::AttemptKeyring` renders `[redacted]`, `AuthenticationService` renders
+/// its type name and nothing else, `renvor_config::Secret` exists for it, and `SetCookie` makes the
+/// disclosure conspicuous by naming the method `expose_header_value`. This derived it, which was the
+/// one place in the diff that broke that discipline.
+///
+/// `PartialEq` is gone for a second reason: comparing credential material with `==` is a
+/// non-constant-time comparison, and offering one on a type that holds a session identifier invites
+/// exactly that.
+#[derive(Clone, Default)]
+pub struct PresentedCredentials {
+    cookie: String,
+    authorization: String,
+}
+
+impl fmt::Debug for PresentedCredentials {
+    /// Reports **whether** each credential was presented, never what it was.
+    ///
+    /// Presence is an operational fact worth having in a diagnostic; the value is the thing the
+    /// diagnostic must not carry.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PresentedCredentials")
+            .field("cookie", &presence(&self.cookie))
+            .field("authorization", &presence(&self.authorization))
+            .finish()
+    }
+}
+
+/// Whether a credential was presented, as the only thing safe to print about it.
+const fn presence(value: &str) -> &'static str {
+    if value.is_empty() {
+        "absent"
+    } else {
+        "present (redacted)"
+    }
+}
+
+impl PresentedCredentials {
+    /// Builds the pair from the two header values, absent ones as empty strings.
+    #[must_use]
+    pub fn new(cookie: impl Into<String>, authorization: impl Into<String>) -> Self {
+        Self {
+            cookie: cookie.into(),
+            authorization: authorization.into(),
+        }
+    }
+
+    /// The raw `Cookie:` header value, or `""`.
+    ///
+    /// **Unparsed.** Which cookie matters, and what a well-formed one looks like, are the
+    /// application's questions; `renvor-auth`'s cookie boundary answers them.
+    #[must_use]
+    pub fn cookie(&self) -> &str {
+        &self.cookie
+    }
+
+    /// The raw `Authorization:` header value, or `""`. Unparsed, for the same reason.
+    #[must_use]
+    pub fn authorization(&self) -> &str {
+        &self.authorization
+    }
+}
+
 /// What a handler receives.
 ///
 /// Deliberately small. Everything a handler needs about *who is asking* lives in
 /// [`RequestContext`], which is the value the security layers have already resolved — a handler
 /// never re-derives client identity from a header, because it never sees the headers that would
 /// let it.
+///
+/// The one exception is [`PresentedCredentials`], and its documentation explains why a credential
+/// the application must validate is not the same thing as an identity the transport resolved.
 pub struct Request {
     context: RequestContext,
     body: Vec<u8>,
     query: String,
     path_params: BTreeMap<String, String>,
     state: Arc<TypedStateMap>,
+    credentials: PresentedCredentials,
 }
 
 impl Request {
@@ -132,7 +223,27 @@ impl Request {
             query,
             path_params,
             state: Arc::new(TypedStateMap::new()),
+            // EMPTY BY DEFAULT, and that is the fail-closed direction: a request built without
+            // credentials presents none, so an authenticated route refuses rather than admitting
+            // whatever happened to be in memory.
+            credentials: PresentedCredentials::default(),
         }
+    }
+
+    /// Attaches the credentials the request presented.
+    ///
+    /// A builder rather than a parameter of [`Request::new`], so every existing construction site
+    /// keeps compiling and keeps presenting nothing.
+    #[must_use]
+    pub fn with_credentials(mut self, credentials: PresentedCredentials) -> Self {
+        self.credentials = credentials;
+        self
+    }
+
+    /// The credentials the request presented.
+    #[must_use]
+    pub const fn credentials(&self) -> &PresentedCredentials {
+        &self.credentials
     }
 
     /// Attaches the application's typed state.
@@ -479,6 +590,28 @@ impl Route {
         self.method
     }
 
+    /// Runs this route: its group middleware chain, then its handler.
+    ///
+    /// # Why this is public, and why it is not a way round the chain
+    ///
+    /// `RouteRegistry` is transport-neutral by design — no type in it names `axum`. Until this
+    /// method existed, the only thing that could actually *run* a registered route was the axum
+    /// bridge, so "transport-neutral" was true of the types and false of the crate: a second
+    /// transport, or a test that wanted to exercise a route table without binding a socket, had no
+    /// way in.
+    ///
+    /// It runs the **middleware first**, in the same onion order a served request takes, and there
+    /// is deliberately no accessor that hands out the bare handler. A caller cannot use this to
+    /// skip an authorisation middleware, because there is nothing here that skips one.
+    ///
+    /// What it does not do is the transport's own work — host validation, CORS, admission,
+    /// timeouts, request identity. Those are layers around the whole router, because they must run
+    /// for requests that match no route at all.
+    #[must_use]
+    pub fn dispatch(&self, request: Request) -> HandlerFuture {
+        Next::new(Arc::clone(&self.middleware), Arc::clone(&self.handler)).run(request)
+    }
+
     /// The full path, including any group prefix.
     #[must_use]
     pub fn path(&self) -> &str {
@@ -699,7 +832,7 @@ pub(crate) fn validate_path(path: &str) -> Result<(), RouteError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Method, Response, RouteError, join_paths, validate_path};
+    use super::{Method, PresentedCredentials, Response, RouteError, join_paths, validate_path};
 
     #[test]
     fn methods_render_canonically() {
@@ -736,6 +869,54 @@ mod tests {
         // POSITIVE CONTROL: a valid path passes, so the refusals above are about the inputs rather
         // than about `validate_path` rejecting everything.
         assert!(validate_path("/health").is_ok());
+    }
+
+    #[test]
+    fn a_request_presents_no_credential_by_default() {
+        // FAIL-CLOSED. `Request::new` attaches `PresentedCredentials::default()`, so a request
+        // built without credentials presents none and an authenticated route refuses rather than
+        // admitting whatever happened to be in memory.
+        let none = PresentedCredentials::default();
+        assert_eq!(none.cookie(), "");
+        assert_eq!(none.authorization(), "");
+
+        // POSITIVE CONTROL: the accessors DO return what was supplied, so the emptiness above is
+        // about the default rather than about accessors that always answer "".
+        let carrying = PresentedCredentials::new("__Host-rv_session=abc", "Bearer token");
+        assert_eq!(carrying.cookie(), "__Host-rv_session=abc");
+        assert_eq!(carrying.authorization(), "Bearer token");
+    }
+
+    #[test]
+    fn the_credential_pair_carries_two_values_and_offers_no_way_to_ask_for_a_third() {
+        // The WHOLE surface, enumerated. `PresentedCredentials` has exactly two accessors and no
+        // `get(name)`, so `Host`, `Origin`, `Forwarded` and `X-Forwarded-For` remain unreachable
+        // from a handler — which is the Phase 004 property this addition had to leave intact.
+        //
+        // This is a structural claim and the assertion below is only its shadow: what enforces it
+        // is that no other method exists. The test is here so that adding one is a deliberate act
+        // next to this comment rather than an unremarked line in an impl block.
+        let credentials = PresentedCredentials::new("__Host-rv_session=abc", "Bearer tok");
+        let rendered = format!("{credentials:?}");
+        assert!(rendered.contains("cookie"));
+        assert!(rendered.contains("authorization"));
+        for absent in ["host", "origin", "forwarded", "x-forwarded-for", "referer"] {
+            assert!(
+                !rendered.contains(absent),
+                "the credential pair grew a field it should not have"
+            );
+        }
+
+        // AND NEITHER VALUE IS RENDERED. A derived `Debug` printed both in full; a security review
+        // found it, and this is what stops it coming back.
+        assert!(!rendered.contains("abc"), "the cookie value was printed");
+        assert!(!rendered.contains("tok"), "the bearer token was printed");
+        assert!(rendered.contains("present (redacted)"));
+
+        // POSITIVE CONTROL: an absent credential is reported as absent rather than as redacted, so
+        // the marker above is about the value rather than about a constant string.
+        let empty = PresentedCredentials::default();
+        assert!(format!("{empty:?}").contains("absent"));
     }
 
     #[test]

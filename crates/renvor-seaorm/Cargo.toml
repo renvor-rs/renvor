@@ -36,6 +36,11 @@ include = [
 ]
 
 [dependencies]
+# The authentication DOMAIN — its ports and value types, and no driver of its own. This adapter
+# implements the ports. The direction is adapter -> domain, matching `renvor-database`, and it is
+# the SAME set of ports `renvor-sqlx` implements: that is what makes "all four rows pass the same
+# auth contract" a fact about the build rather than two suites that agree by inspection.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
@@ -85,13 +90,22 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 
 async-trait = { version = "0.1.92", default-features = false }
+
+# The instant type. `sea-orm`'s `with-chrono` feature is already enabled below, so this names the
+# crate this adapter is already bound to rather than adding a second time library.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "macros", "sync"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 # The SHARED persistence contract. Both adapters call the same functions, so the four matrix rows
 # are measured against one suite rather than two that agree by inspection.
-renvor-testkit = { path = "../renvor-testkit", version = "0.0.0" }
+#
+# `auth` is on UNCONDITIONALLY, and `tokens` is not. The abuse-control contract needs
+# `renvor-auth`'s value types but none of its token half, so pulling it in here does not resolve
+# `jsonwebtoken` or `aws-lc-sys` — which is what keeps the native build optional from the test side
+# too, and what the token-isolation rows in `xtask` step 7 assert.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["auth"] }
 tokio = { version = "1.53.1", default-features = false, features = [
     "rt",
     "rt-multi-thread",
@@ -108,6 +122,11 @@ default = []
 # then fail at run time on a backend mismatch, which is why both appear on each line.
 db-postgres = ["sea-orm/sqlx-postgres", "sea-query-sqlx/sqlx-postgres", "sqlx/postgres"]
 db-mysql = ["sea-orm/sqlx-mysql", "sea-query-sqlx/sqlx-mysql", "sqlx/mysql"]
+
+# API token mode, exactly as in `renvor-sqlx`. Selects `renvor-auth`'s `tokens` half, which is where
+# the JWT backend lives — so a build of this adapter WITHOUT it resolves neither `jsonwebtoken` nor
+# `aws-lc-rs`, and the refresh repositories do not exist. Naming a database stays a separate choice.
+tokens = ["renvor-auth/tokens", "renvor-testkit/tokens"]
 
 [lints]
 workspace = true

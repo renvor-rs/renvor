@@ -1,0 +1,177 @@
+# The authentication domain: subjects, credentials, sessions, tokens, and policies (Phase 009).
+#
+# # This crate names no transport and no driver
+#
+# The same argument `renvor-error` makes about error codes applies to authentication: a policy
+# decision is a property of an application operation, not of the protocol that reached it. Putting
+# any of this in `renvor-http` would make "who may do what" a fact about HTTP.
+#
+# The dependency list is the assertion. There is no router here, no status code, no `sqlx`, and no
+# `sea-orm` — the repository *traits* live here and their implementations live in the adapters.
+#
+# # What is reused rather than rebuilt
+#
+# Three things this phase would otherwise have written already exist, and building second copies
+# would be the same mistake as vendoring a crate that is already in the graph:
+#
+# - `renvor-core`'s `EntropySource`/`OsEntropy` — the randomness port. `OsEntropy` has no fields and
+#   `new()` takes zero arguments, so a seed has nowhere to enter. There is no fallback if the OS
+#   CSPRNG fails, which is what this phase needs for session and token generation.
+# - `renvor-config`'s `Secret<T>` — redacted `Debug` *and* `Display`, zeroized on drop, and with
+#   **no** `Serialize` implementation, so serialising one is a compile error rather than a runtime
+#   promise.
+# - `renvor-testkit`'s barrier-based concurrency assertions, reached from tests only. **This crate
+#   must never depend on `renvor-testkit`** — `xtask`'s crate-DAG gate fails the build if it does,
+#   because that would put `test-util` in a production graph.
+#
+# # `chrono` rather than `time`, and the reason is measured
+#
+# Neither was a direct dependency of any Renvor crate before this one. The choice is not a
+# preference: `renvor-sqlx` already enables sqlx's `chrono` feature and `renvor-seaorm` already
+# enables sea-orm's `with-chrono`, so `chrono` is the type **both** persistence adapters are
+# already bound to. Selecting `time` would have meant a conversion at every one of the four rows.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-auth"
+description = "Authentication, sessions, tokens, and authorization policies for the Renvor framework: a closed subject model, Argon2id credentials, revocable sessions, and deny-by-default policies, with no transport dependency."
+documentation = "https://docs.rs/renvor-auth"
+readme = "README.md"
+keywords = ["renvor", "framework", "authentication", "sessions", "authorization"]
+categories = ["web-programming", "authentication"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The database VOCABULARY only — `DatabaseError` and its kinds. **No driver and no pool**: the
+# repository traits below are ports, and their implementations live in `renvor-sqlx` and
+# `renvor-seaorm`. `renvor-database` is the crate that exists precisely so a port can name an error
+# without naming a driver, and `xtask`'s isolation gate asserts it resolves neither.
+renvor-database = { path = "../renvor-database", version = "0.0.0" }
+
+# The entropy port. This is the ONLY source of randomness in this crate.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `Secret<T>`. Every credential value in this crate is wrapped in one.
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+
+# The instant type both persistence adapters already bind. See the header.
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+
+# Constant-time comparison. Already in the graph transitively; this makes the edge explicit
+# because a secret comparison that is not constant-time is a defect, not a style choice.
+subtle = { version = "2.6.1", default-features = false }
+
+# Argon2id, at the newest STABLE version. `0.6.0-rc.8` exists and is deliberately not taken: a
+# release candidate is not something a framework pins its password hashing to. Verified from
+# crates.io rather than assumed — `0.5.3`, `MIT OR Apache-2.0`, `rust-version = 1.65` (well under
+# this workspace's 1.94.0 floor), and **no RustSec advisory** (checked with a positive control:
+# `openssl`, `time` and `smallvec` all return 200 from the advisory database where this returns 404).
+#
+# `rand` is deliberately NOT enabled. Salts come from `renvor-core`'s entropy port, so this crate
+# keeps ONE randomness site rather than two — the same argument `run_id` makes about having a single
+# generation site.
+argon2 = { version = "0.5.3", default-features = false, features = [
+    "alloc",
+    "password-hash",
+    "std",
+    "zeroize",
+] }
+
+# NFC normalization, which NIST SP 800-63B-4 §3.1.1.2 recommends by name. Already in `Cargo.lock`
+# at this exact version, so it adds an edge and no new package.
+unicode-normalization = { version = "0.1.25", default-features = false, features = ["std"] }
+
+# SHA-256, for the digests stored in a secret's place. **Already a direct dependency of
+# `renvor-cli` at this exact version**, so this adds an edge and no new package — checked with
+# `cargo tree -i sha2@0.11.0` rather than assumed.
+sha2 = { version = "0.11.0", default-features = false }
+
+# RFC 6265 cookie construction and `Cookie:` header parsing. **Default features off**: the
+# `signed`/`private` features want `hmac 0.12` + `sha2 0.10`, and this crate already has `sha2 0.11`
+# — so the signing below is done with `hmac 0.13` instead and the duplicate never appears. Verified
+# on crates.io rather than assumed: `0.18.2`, released 2026-08-08, `MIT OR Apache-2.0`,
+# `rust-version = 1.56`. `percent-encode` is also off: a session identifier is 64 lowercase hex
+# characters, every one of which is a bare `cookie-octet`, so nothing needs encoding — and on the
+# READ side that means a percent escape stays literal and fails the hex check rather than decoding
+# into something that passes it.
+cookie = { version = "0.18.2", default-features = false }
+
+# HMAC-SHA256 for the CSRF token. `0.13.0` pairs with the `sha2 0.11` already above; `cookie`'s
+# signing feature would have forced `hmac 0.12` beside it. Already present in `Cargo.lock`.
+hmac = { version = "0.13.0", default-features = false }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# ---- API token mode (batch G, FR-035 … FR-043). OFF BY DEFAULT. ----
+#
+# # The backend is pinned HERE, and that is a security property rather than tidiness
+#
+# `jsonwebtoken 11.0.0` ships **no** crypto backend by default — one of `aws_lc_rs` or `rust_crypto`
+# must be chosen. `rust_crypto`'s feature list is
+# `['dep:ed25519-dalek', 'dep:hmac', 'dep:p256', 'dep:p384', 'dep:rand', 'dep:rsa', 'dep:sha2']`,
+# and cargo features are additive at the crate level, so selecting it for EdDSA alone still resolves
+# `rsa 0.9.10` — which carries **RUSTSEC-2023-0071** (Marvin Attack) with an **empty `patched`
+# list**. `cargo deny` reports "No safe upgrade is available!". It would also duplicate `hmac 0.12`
+# and `sha2 0.10` beside the `0.13`/`0.11` above.
+#
+# The backend is therefore selected on THIS LINE and is reachable from no `renvor-auth` feature.
+# `deny.toml` sets `all-features = true`, so a feature that could turn on `rust_crypto` would put an
+# unpatched key-recovery advisory into every audit — **including a consumer's own**, for a backend
+# Renvor never uses. Measured, not assumed: with this exact line,
+# `cargo deny check advisories licenses bans` reports `advisories ok, bans ok, licenses ok`.
+#
+# The cost accepted in exchange is a **native build**: `aws-lc-sys` needs `cmake` and a C compiler.
+# That is real, and it is why `tokens` is off by default. See ADR-0028.
+jsonwebtoken = { version = "11.0.0", default-features = false, features = [
+    "aws_lc_rs",
+    "use_pem",
+], optional = true }
+
+# Key generation, so that no key material is ever committed to this repository. **Zero new
+# packages**: `aws-lc-rs` is already in the graph as `jsonwebtoken`'s selected backend, so this is
+# an edge and nothing more — the same argument the `sha2` and `unicode-normalization` rows make.
+# Its types appear in no public signature; `SigningKey` and `VerifyingKey` wrap them.
+aws-lc-rs = { version = "1.18.0", default-features = false, features = [
+    "aws-lc-sys",
+    "alloc",
+], optional = true }
+
+# Claims are JSON. Both are already in `Cargo.lock` at these exact versions.
+serde = { version = "1.0.229", default-features = false, features = [
+    "std",
+    "derive",
+], optional = true }
+serde_json = { version = "1.0.151", default-features = false, features = [
+    "std",
+], optional = true }
+
+[features]
+# API token mode. FR-035 and SC-011 require that a build without it resolve **none** of the above,
+# proven by the dependency graph rather than by this flag's presence — `xtask` reads the graph.
+tokens = ["dep:jsonwebtoken", "dep:aws-lc-rs", "dep:serde", "dep:serde_json"]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The async test harness. `renvor-auth` itself is runtime-agnostic — it has no `tokio` in
+# `[dependencies]` — so this is a test-only edge and does not reach a consumer's graph.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "macros"] }
