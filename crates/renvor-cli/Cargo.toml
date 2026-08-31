@@ -156,7 +156,14 @@ tempfile = { version = "3.27.0", default-features = false }
 #
 # It also replaces `walkdir` for the manifest walk: a `Dir`-relative recursive read_dir gives
 # deterministic traversal AND containment, where walkdir gave only the first.
-cap-std = { version = "4.0.2", default-features = false }
+#
+# SECURITY FLOOR. 4.0.3 is the patched release for GHSA-hp8f-xmx4-4qrg (critical, CVSS 3.1 9.0):
+# `manually::open` re-appended a trailing slash before `openat`, and on Unix a trailing slash makes
+# the kernel treat the final component as non-final and follow the symlink, defeating `O_NOFOLLOW`
+# and escaping the sandbox this crate is depended on to provide. `Cargo.lock` already resolved 4.0.3,
+# but a lockfile is not a policy: `"4.0.2"` means `>=4.0.2, <5.0.0`, so a re-resolve could legally
+# reintroduce the vulnerable version. The floor is the part that forbids it.
+cap-std = { version = "4.0.3", default-features = false }
 
 # THE SEMANTIC STYLE VOCABULARY. `anstyle::Style` is a value, not a writer: it carries a colour and
 # an effect and knows how to render its own on/off sequences, which is exactly the boundary

@@ -79,7 +79,20 @@ multiple-versions = "warn"
 # A wildcard requirement means "whatever resolves today", which is the unreviewed
 # floating update FR-020 prohibits.
 wildcards = "deny"
-deny = []
+# Version floors that must never be re-crossed, whichever path reintroduces them.
+#
+# The manifest floor in `crates/renvor-cli/Cargo.toml` constrains the direct REQUIREMENT.
+# This list constrains the RESOLVED GRAPH, so a transitive edge cannot reintroduce a version
+# the direct requirement already forbids. Both are needed; neither subsumes the other.
+#
+# cap-std / cap-primitives <= 4.0.2: GHSA-hp8f-xmx4-4qrg, critical (CVSS 3.1 9.0), sandbox escape
+# via `O_NOFOLLOW` defeated by a trailing slash in `manually::open`. Patched in 4.0.3.
+# This is the inverse of `[advisories].ignore`: an entry here TIGHTENS policy, so it needs no
+# waiver record — it is removable only when the crate is removed.
+deny = [
+    { name = "cap-std", version = "<4.0.3" },
+    { name = "cap-primitives", version = "<4.0.3" },
+]
 skip = []
 skip-tree = []
 
