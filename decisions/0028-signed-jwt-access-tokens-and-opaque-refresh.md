@@ -3,12 +3,25 @@
 | Field | Value |
 |---|---|
 | **ID** | 0028 |
-| **State** | `proposed` |
-| **Reviewer** | *(none — not reviewed)* |
-| **Review date** | *(not reviewed)* |
+| **State** | `accepted` |
+| **Reviewer** | Ahmed Anbar — self-review under W-019. **Not independent** |
+| **Review date** | 2026-08-31 |
 | **Superseded by** | *(not superseded)* |
 
-> **`proposed`, not `accepted`.** No independent review, and no authority has been given to accept.
+> **`accepted` under [W-019](../governance/waivers.md), and the review behind it was NOT
+> independent.** No independent human review of this record has occurred, and none is claimed.
+> The maintainer authored it and took every measurement it rests on; automated and maintainer
+> reviews are **advisory**, never independent.
+>
+> W-019 covers **ADR-0024 through ADR-0030 as one coupled cluster** — each depends on a boundary
+> another draws, so reviewing one alone would review a fragment — and it authorises nothing else.
+> It does **not** close Phase 009; [W-020](../governance/waivers.md) is a separate exception on a
+> separate axis.
+>
+> Accepted **2026-08-31** against head `0090c6784acdbfac863fc966e449245201a2b1fd`,
+> tree `dd1b27e32f79a41efaaaa6abc2e4d477262f326d`. W-019 expires **2027-02-11**, or
+> immediately when a qualified independent human reviewer becomes available — whichever
+> is first.
 
 ## Context
 
