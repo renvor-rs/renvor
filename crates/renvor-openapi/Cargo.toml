@@ -88,7 +88,7 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 #
 # Verified on 2026-08-23 to compile the official OAS 3.2 schema including its $dynamicRef and
 # $dynamicAnchor, and to reject four distinct malformed controls.
-jsonschema = { version = "0.50.1", default-features = false }
+jsonschema = { version = "0.52.0", default-features = false }
 
 [lints]
 workspace = true

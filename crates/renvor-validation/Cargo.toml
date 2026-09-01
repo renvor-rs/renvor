@@ -90,7 +90,7 @@ base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 # reason it is a dev one: Renvor's bounded interpreter is asserted to agree with it over generated
 # schema/instance pairs. A bounded subset that disagrees with the standard it publishes is worse
 # than no subset, and this is how that is caught rather than assumed.
-jsonschema = { version = "0.50.1", default-features = false }
+jsonschema = { version = "0.52.0", default-features = false }
 
 # Cursor decoding must not panic on ANY input, and a cursor is untrusted. PLAN.md §17.1 names
 # "property or fuzz tests for parsers, routing edge cases, pagination cursors, and untrusted
