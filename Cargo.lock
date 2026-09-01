@@ -2764,7 +2764,7 @@ dependencies = [
  "indicatif",
  "insta",
  "minijinja",
- "nix 0.28.0",
+ "nix 0.29.0",
  "portable-pty",
  "renvor-config",
  "renvor-core",
