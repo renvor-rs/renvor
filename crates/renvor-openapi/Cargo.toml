@@ -86,9 +86,15 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 # THE INDEPENDENT VALIDATOR. The whole 3.2 gate rests on a validator that is not this crate:
 # a generator that judged its own output would prove nothing.
 #
-# Verified on 2026-08-23 to compile the official OAS 3.2 schema including its $dynamicRef and
-# $dynamicAnchor, and to reject four distinct malformed controls.
-jsonschema = { version = "0.50.1", default-features = false }
+# What it must be able to do is asserted by the gate itself rather than by a dated note here, so the
+# claim is re-earned on every run instead of rotting against a version bump: `proof_2` compiles the
+# official OAS 3.2 schema — `$dynamicRef` and `$dynamicAnchor` included — and validates the document
+# against it, and `proof_5` requires it to reject four distinct malformed controls. A release that
+# lost either capability fails `openapi_3_2_gate`, which is the only signal worth trusting here.
+#
+# `default-features = false` is deliberate and is explained in renvor-validation's manifest: this
+# gate needs schema compilation and validation, not the optional format assertions.
+jsonschema = { version = "0.52.1", default-features = false }
 
 [lints]
 workspace = true

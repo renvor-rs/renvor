@@ -9,16 +9,25 @@
 #
 # # Why Renvor interprets the schema instead of using a JSON Schema validator at runtime
 #
-# MEASURED on 2026-08-23, not estimated:
+# MEASURED, not estimated. The figures below are a snapshot; the command is the durable part:
 #
-#     renvor-http's current runtime graph ....................  65 packages
-#     jsonschema 0.50.1, default-features = false ............ 103 packages
+#     cargo tree -p renvor-http --edges normal    # the transport's runtime graph
+#     cargo tree -p jsonschema                    # what the reference validator carries
 #
-# Validating a request body against its own schema with `jsonschema` would MORE THAN DOUBLE the
-# transport's dependency surface, pulling the entire ICU stack (icu_normalizer, icu_properties,
-# icu_collections, icu_provider), fancy-regex, num-bigint, uuid-simd, email_address, and
-# wasm-bindgen. Constitution principle XII requires "the smallest design satisfying the contract",
-# and PLAN.md §22 names dependency cost as a tracked program risk.
+# On 2026-09-01, at jsonschema 0.52.1, that is 77 packages against 65, of which 44 are not already
+# in the transport's graph. Validating a request body against its own schema with `jsonschema` would
+# therefore grow the transport's dependency surface by more than half, to carry fancy-regex,
+# num-bigint, uuid-simd and email_address that runtime validation has no use for. Constitution
+# principle XII requires "the smallest design satisfying the contract", and PLAN.md §22 names
+# dependency cost as a tracked program risk.
+#
+# The exact ratio moves with both graphs and is not the argument; the direction is, and it has held
+# at every measurement. Recording it this way also keeps the note honest when the number improves:
+# 0.52.1 gates `idn-hostname` and `idn-email` behind a new `idna` feature, which removed the entire
+# ICU stack (icu_normalizer, icu_properties, icu_collections, icu_provider) and wasm-bindgen from
+# this graph. An earlier revision of this note listed those as part of the cost, and they are no
+# longer in it. Renvor does not enable `idna` — it treats `format` as an annotation, so it has
+# nothing to assert with.
 #
 # So Renvor interprets a BOUNDED, DECLARED subset of JSON Schema — and `jsonschema` is a
 # DEV-dependency, where its weight is free, used for DIFFERENTIAL TESTING: for generated
@@ -72,7 +81,7 @@ renvor-error = { path = "../renvor-error", version = "0.0.0" }
 #
 # `default-features = false` plus `derive`: net new packages measured against the existing
 # lockfile are SEVEN — schemars, schemars_derive, serde_derive_internals, dyn-clone, ref-cast,
-# ref-cast-impl, zmij. Compare 103 for the runtime-validator alternative above.
+# ref-cast-impl, zmij. Compare 44 for the runtime-validator alternative above.
 schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
 
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
@@ -86,11 +95,11 @@ base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 [dev-dependencies]
 # THE REFERENCE IMPLEMENTATION, dev-only.
 #
-# Its 103-package graph is the reason it is not a runtime dependency, and its correctness is the
-# reason it is a dev one: Renvor's bounded interpreter is asserted to agree with it over generated
-# schema/instance pairs. A bounded subset that disagrees with the standard it publishes is worse
-# than no subset, and this is how that is caught rather than assumed.
-jsonschema = { version = "0.50.1", default-features = false }
+# The graph measured at the top of this manifest is the reason it is not a runtime dependency, and
+# its correctness is the reason it is a dev one: Renvor's bounded interpreter is asserted to agree
+# with it over generated schema/instance pairs. A bounded subset that disagrees with the standard
+# it publishes is worse than no subset, and this is how that is caught rather than assumed.
+jsonschema = { version = "0.52.1", default-features = false }
 
 # Cursor decoding must not panic on ANY input, and a cursor is untrusted. PLAN.md §17.1 names
 # "property or fuzz tests for parsers, routing edge cases, pagination cursors, and untrusted

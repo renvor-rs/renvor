@@ -3,9 +3,10 @@
 //! # What this test exists to catch
 //!
 //! Renvor interprets a **bounded subset** of JSON Schema at runtime rather than resolving
-//! `jsonschema` into the transport's dependency graph — measured at **103 packages** against
-//! `renvor-http`'s current **65**, which would more than double it for the ICU stack,
-//! `fancy-regex`, `num-bigint`, and `wasm-bindgen` among others.
+//! `jsonschema` into the transport's dependency graph. The measurement, and the command that
+//! reproduces it, live in `renvor-validation`'s manifest so there is one place to correct when the
+//! graphs move; the short version is that it would grow the transport's runtime dependencies by
+//! more than half for machinery runtime validation does not use.
 //!
 //! A bounded subset is only honest while it **agrees** with the standard on the keywords it
 //! claims. A subset that quietly diverges publishes a constraint and enforces a different one,
