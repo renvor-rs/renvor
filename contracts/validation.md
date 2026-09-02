@@ -60,6 +60,12 @@ rather than assertions: `$schema`, `$id`, `$comment`, `$defs`, `title`, `descrip
 2020-12 places `format` in the format-**annotation** vocabulary by default. Renvor publishes it and
 does not enforce it. Stated here because the opposite is the more common assumption.
 
+**`multipleOf` is decided exactly, on the decimal each number prints as — not against a
+tolerance.** `1070468.14` is a multiple of `0.01`, because `107046814 / 100` is one; `1000000.0001`
+is not a multiple of `1000000`, however small the difference looks. No tolerance can deliver both
+answers: the error in `value / step` is relative, so it grows with the quotient, and a single
+constant is at once too strict for large quotients and too generous for small ones.
+
 **A declaration using any other keyword is refused at declaration time**, naming the keyword.
 
 > That refusal is the whole difference between a bounded subset and a partial implementation. A
