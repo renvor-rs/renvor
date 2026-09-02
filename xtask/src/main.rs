@@ -2284,6 +2284,35 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
 /// rather than capturing it, which is the right behaviour for a step whose output a human is
 /// watching; capturing step 4 wholesale to satisfy this check would trade live test progress for a
 /// census. Two small binaries run twice is the cheaper trade.
+/// Every byte of `text` that is not part of an ANSI escape sequence.
+///
+/// Cargo colours its status lines when `CARGO_TERM_COLOR=always`, which GitHub Actions sets, and it
+/// closes the colour BEFORE the path: the bytes are `…Running\x1b[0m tests/name.rs`. A literal
+/// search for `Running tests/name.rs` therefore matches on a developer's machine, where output is
+/// piped and cargo disables colour, and fails in CI on the same commit. The census sets
+/// `CARGO_TERM_COLOR=never` so this should not arise, and strips escapes anyway rather than trust
+/// one environment variable to hold across every runner this project is verified on.
+fn without_ansi(text: &str) -> String {
+    let mut plain = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(character) = chars.next() {
+        if character != '\u{1b}' {
+            plain.push(character);
+            continue;
+        }
+        // CSI sequences end at the first byte in `@`..=`~`; anything else is a short escape whose
+        // next character is consumed with it.
+        if chars.next() == Some('[') {
+            for terminator in chars.by_ref() {
+                if ('@'..='~').contains(&terminator) {
+                    break;
+                }
+            }
+        }
+    }
+    plain
+}
+
 /// Whether a grouped `cargo test` run actually executed a given test binary.
 ///
 /// Cargo announces each binary with `Running tests/<name>.rs` on **stderr**, while the harness
@@ -2293,7 +2322,7 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
 /// header after every evidence line and made each "section" empty. The streams are therefore used
 /// for what each one actually carries: this function reads stderr to establish that a binary RAN.
 fn binary_ran(stderr: &str, binary: &str) -> bool {
-    stderr.contains(&format!("Running tests/{binary}.rs"))
+    without_ansi(stderr).contains(&format!("Running tests/{binary}.rs"))
 }
 
 /// Rows in one census group whose test names are not unique.
@@ -2385,7 +2414,12 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         }
 
         let started = Instant::now();
-        let output = Command::new("cargo").args(&args).current_dir(root).output();
+        let output = Command::new("cargo")
+            .args(&args)
+            // Deterministic output regardless of runner. See `without_ansi`.
+            .env("CARGO_TERM_COLOR", "never")
+            .current_dir(root)
+            .output();
         let elapsed = started.elapsed();
         timing(
             &format!("step 4 census {package} ({} binaries)", binaries.len()),
@@ -2401,7 +2435,7 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             return false;
         };
         // Kept SEPARATE. stderr says which binaries ran; stdout carries the evidence lines.
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stdout = without_ansi(&String::from_utf8_lossy(&output.stdout));
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if !output.status.success() {
             step_fail(
@@ -2871,6 +2905,34 @@ mod tests {
         assert_eq!(
             super::missing_database_prerequisites(&empty).len(),
             super::DATABASE_REQUIRED.len()
+        );
+    }
+
+    /// The census must see a binary run whether or not cargo coloured the line.
+    ///
+    /// This is a REGRESSION CONTROL for a failure that passed locally and failed in CI on the same
+    /// commit. Cargo closes the colour before the path — `Running\x1b[0m tests/x.rs` — so a literal
+    /// search for `Running tests/x.rs` matches only when colour is off, which is what happens when a
+    /// developer pipes the output and is NOT what happens under `CARGO_TERM_COLOR=always`, which
+    /// GitHub Actions sets. Both spellings are asserted so neither environment can regress alone.
+    #[test]
+    fn a_coloured_running_line_is_still_recognised() {
+        use crate::binary_ran;
+
+        let plain = "     Running tests/test_application.rs (target/debug/deps/test_application-1)";
+        let coloured = "\u{1b}[1m\u{1b}[92m     Running\u{1b}[0m tests/test_application.rs (target/debug/deps/x-1)";
+
+        assert!(
+            binary_ran(plain, "test_application"),
+            "the uncoloured line must be recognised"
+        );
+        assert!(
+            binary_ran(coloured, "test_application"),
+            "the coloured line must be recognised — this is the exact shape CI emits"
+        );
+        assert!(
+            !binary_ran(coloured, "some_other_binary"),
+            "a binary that did not run must not be credited by another binary's line"
         );
     }
 
