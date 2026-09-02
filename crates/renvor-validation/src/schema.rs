@@ -22,10 +22,10 @@
 //!
 //! # Why Renvor interprets rather than delegating at runtime
 //!
-//! Measured on 2026-08-23: `jsonschema` 0.50.1 resolves **103 packages**, against
-//! `renvor-http`'s current **65**. Validating a request body would more than double the
-//! transport's dependency surface — for the ICU stack, `fancy-regex`, `num-bigint`, and
-//! `wasm-bindgen` among others.
+//! `jsonschema` carries a large transitive graph. Resolving it into the transport's runtime
+//! dependencies, to check a request body against its own schema, would add a substantial number of
+//! packages that runtime validation does not otherwise need. `renvor-validation`'s manifest records
+//! the reasoning, and `cargo tree -p jsonschema` lists what it carries at the resolved version.
 //!
 //! It is a **dev-dependency** instead, and `tests/differential.rs` asserts that Renvor's verdict
 //! equals the reference implementation's over a **hand-written corpus** covering every enforced

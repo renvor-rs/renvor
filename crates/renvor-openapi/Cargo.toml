@@ -86,14 +86,21 @@ serde_json = { version = "1.0.151", default-features = false, features = ["std"]
 # THE INDEPENDENT VALIDATOR. The whole 3.2 gate rests on a validator that is not this crate:
 # a generator that judged its own output would prove nothing.
 #
-# What it must be able to do is asserted by the gate itself rather than by a dated note here, so the
-# claim is re-earned on every run instead of rotting against a version bump: `proof_2` compiles the
-# official OAS 3.2 schema — `$dynamicRef` and `$dynamicAnchor` included — and validates the document
-# against it, and `proof_5` requires it to reject four distinct malformed controls. A release that
-# lost either capability fails `openapi_3_2_gate`, which is the only signal worth trusting here.
+# What the gate establishes on every run, and no more than that: `proof_2` compiles the official OAS
+# 3.2 schema and validates the representative document against it, and `proof_5` requires four
+# malformed documents to be rejected. Stated as tests rather than as a dated note here, so the claim
+# is re-earned rather than rotting against a version bump.
 #
-# `default-features = false` is deliberate and is explained in renvor-validation's manifest: this
-# gate needs schema compilation and validation, not the optional format assertions.
+# It is worth being exact about the limit. The official schema does use `$dynamicRef` and
+# `$dynamicAnchor`, so compiling it exercises them at least to that extent — but no test here
+# isolates dynamic resolution, and the anchor those references reach is permissive, so a validator
+# that mishandled them would not reliably be caught by this gate.
+#
+# `default-features = false` is deliberate, and its main effect here is not weight. jsonschema's
+# default features are `resolve-http`, `resolve-file`, `tls-aws-lc-rs` and `idna`; disabling them
+# drops the HTTP and file reference resolvers and their TLS stack, so the validator cannot reach the
+# network. That is what keeps this gate consistent with the "Everything is offline" requirement in
+# `tests/openapi_3_2_gate.rs`.
 jsonschema = { version = "0.52.1", default-features = false }
 
 [lints]
