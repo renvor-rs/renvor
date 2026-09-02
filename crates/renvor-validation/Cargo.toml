@@ -9,21 +9,26 @@
 #
 # # Why Renvor interprets the schema instead of using a JSON Schema validator at runtime
 #
-# MEASURED on 2026-08-23, not estimated:
+# `jsonschema` carries a large transitive graph. Resolving it into the transport's RUNTIME
+# dependencies, to check a request body against its own schema, would add a substantial number of
+# packages that runtime validation does not otherwise need. What it carries, at whatever version is
+# resolved, is listed by:
 #
-#     renvor-http's current runtime graph ....................  65 packages
-#     jsonschema 0.50.1, default-features = false ............ 103 packages
+#     cargo tree -p jsonschema
 #
-# Validating a request body against its own schema with `jsonschema` would MORE THAN DOUBLE the
-# transport's dependency surface, pulling the entire ICU stack (icu_normalizer, icu_properties,
-# icu_collections, icu_provider), fancy-regex, num-bigint, uuid-simd, email_address, and
-# wasm-bindgen. Constitution principle XII requires "the smallest design satisfying the contract",
-# and PLAN.md §22 names dependency cost as a tracked program risk.
+# No package count is quoted here, deliberately. Any figure moves with both graphs, and the two
+# sides of the comparison cannot be produced by one command under one edge selection: `jsonschema`
+# is dev-only, so `cargo tree -p jsonschema --edges normal` prints nothing at all. A number that
+# cannot be reproduced the way it was taken goes stale without anyone noticing, which is what
+# happened to the previous revision of this note. Constitution principle XII requires "the smallest
+# design satisfying the contract", and PLAN.md §22 names dependency cost as a tracked program risk.
 #
 # So Renvor interprets a BOUNDED, DECLARED subset of JSON Schema — and `jsonschema` is a
-# DEV-dependency, where its weight is free, used for DIFFERENTIAL TESTING: for generated
-# schema/instance pairs, Renvor's verdict must equal the reference implementation's. That is what
-# stops the bounded interpreter from quietly diverging from the standard it publishes.
+# DEV-dependency, where its weight is free, used for DIFFERENTIAL TESTING against the hand-written
+# corpus in `tests/differential.rs`: for every pair in it, Renvor's verdict must equal the reference
+# implementation's. That is what stops the bounded interpreter from quietly diverging from the
+# standard it publishes. The corpus is curated rather than generated, and `schema.rs` states
+# precisely what that does and does not assure.
 #
 # # Why not `validator` or `garde`
 #
@@ -70,9 +75,11 @@ renvor-error = { path = "../renvor-error", version = "0.0.0" }
 # reading the emitted `$schema` — which is the exact dialect base OpenAPI 3.2 declares. Its output
 # was verified to embed as a VALID OAS 3.2 Schema Object against the official schema.
 #
-# `default-features = false` plus `derive`: net new packages measured against the existing
-# lockfile are SEVEN — schemars, schemars_derive, serde_derive_internals, dyn-clone, ref-cast,
-# ref-cast-impl, zmij. Compare 103 for the runtime-validator alternative above.
+# `default-features = false` plus `derive`: schema PRODUCTION is the cheap half of the choice
+# discussed at the top of this manifest, and emitting a schema costs far less than resolving a
+# validator to enforce one. No package delta is quoted, because several of the crates a previous
+# revision attributed to `schemars` are also reachable from the dev-only validator graph, which
+# makes any single number depend on what else is resolved rather than on this dependency.
 schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
 
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
@@ -86,11 +93,12 @@ base64 = { version = "0.23.1", default-features = false, features = ["std"] }
 [dev-dependencies]
 # THE REFERENCE IMPLEMENTATION, dev-only.
 #
-# Its 103-package graph is the reason it is not a runtime dependency, and its correctness is the
-# reason it is a dev one: Renvor's bounded interpreter is asserted to agree with it over generated
-# schema/instance pairs. A bounded subset that disagrees with the standard it publishes is worse
-# than no subset, and this is how that is caught rather than assumed.
-jsonschema = { version = "0.50.1", default-features = false }
+# Its transitive weight, discussed at the top of this manifest, is why it is not a runtime
+# dependency; its correctness is why it is a dev one. Renvor's bounded interpreter is asserted to
+# agree with it over the hand-written corpus in `tests/differential.rs`. A bounded subset that
+# disagrees with the standard it publishes is worse than no subset, and this is how that is caught
+# rather than assumed.
+jsonschema = { version = "0.52.1", default-features = false }
 
 # Cursor decoding must not panic on ANY input, and a cursor is untrusted. PLAN.md §17.1 names
 # "property or fuzz tests for parsers, routing edge cases, pagination cursors, and untrusted

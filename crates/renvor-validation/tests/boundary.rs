@@ -480,6 +480,85 @@ fn a_multiple_of_that_is_not_strictly_positive_is_refused() {
 }
 
 #[test]
+fn multiple_of_is_decided_exactly_rather_than_against_a_tolerance() {
+    // The previous implementation compared `value / step` to the nearest integer against an
+    // ABSOLUTE 1e-9. The error in that quotient is RELATIVE, so it grows with the quotient, and a
+    // constant was wrong at BOTH ends of the range at once (#50).
+    //
+    // These cases are asserted here, against Renvor alone, as well as in `tests/differential.rs`
+    // against the reference implementation. The differential suite is the stronger oracle, but it
+    // only speaks while that dev-dependency is present and correct — and #50 exists precisely
+    // because the reference agreed with Renvor for as long as BOTH were wrong. This test keeps the
+    // property pinned when the oracle cannot.
+    for (step, instance, valid, why) in [
+        // ---- the two regressions, one at each end of the quotient range ----
+        (
+            json!(0.01),
+            json!(1070468.14),
+            true,
+            "107046814 x 0.01; the old quotient error was 1.49e-8, so it was REJECTED",
+        ),
+        (
+            json!(1000000),
+            json!(1000000.0001),
+            false,
+            "not a multiple; the old quotient error was 1e-10, so it was ACCEPTED",
+        ),
+        // The same step as the first case, on a value the old code happened to get right. This is
+        // what makes the defect so hard to notice from the outside: it was value-dependent, not a
+        // clean threshold, so a money schema validated most amounts and rejected occasional ones.
+        (json!(0.01), json!(12345678.91), true, "1234567891 x 0.01"),
+        (
+            json!(0.01),
+            json!(1070468.145),
+            false,
+            "a third decimal place against a two-decimal step",
+        ),
+        // ---- the case the old comment was written for, which must not regress ----
+        (
+            json!(0.1),
+            json!(0.3),
+            true,
+            "0.3 / 0.1 is 2.9999999999999996 in binary floating point",
+        ),
+        (json!(0.1), json!(0.35), false, "0.35 is not 0.1 x n"),
+        // ---- the extremes, which is where the arithmetic has to justify itself ----
+        // Only the numerator scales here, by 600 decimal places. It is answered by reducing under
+        // the divisor rather than by computing a 600-digit product.
+        (json!(1e-300), json!(1e300), true, "1e300 is 1e600 x 1e-300"),
+        // Only the divisor scales, and past `i128`. A divisor larger than any possible numerator
+        // cannot divide a non-zero one, so that is an answer rather than a fallback.
+        (
+            json!(1),
+            json!(1e-300),
+            false,
+            "1e-300 is not a whole number",
+        ),
+        // ---- zero and negatives ----
+        (json!(5), json!(0), true, "zero is a multiple of everything"),
+        (json!(5), json!(-15), true, "-15 is 5 x -3"),
+        (json!(5), json!(-16), false, "-16 is not 5 x n"),
+    ] {
+        let declaration = Declaration::new(json!({"type": "number", "multipleOf": step}))
+            .expect("a strictly positive step is well-formed");
+        let issues = declaration.validate(Location::Body, &instance);
+
+        assert_eq!(
+            issues.is_empty(),
+            valid,
+            "multipleOf {step} against {instance}: expected valid={valid} because {why}"
+        );
+        if !valid {
+            assert_eq!(
+                issues[0].reason,
+                Reason::NotMultipleOf,
+                "multipleOf {step} against {instance} was rejected for the wrong reason"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_malformed_keyword_value_is_refused_rather_than_silently_unenforced() {
     // Checking keyword NAMES was not enough. Every read in the walker is `as_u64` / `as_bool` /
     // `as_array`, so a WRONG-TYPED value yielded `None` and the constraint was skipped — while

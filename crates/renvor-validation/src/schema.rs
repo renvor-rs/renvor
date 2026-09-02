@@ -22,10 +22,10 @@
 //!
 //! # Why Renvor interprets rather than delegating at runtime
 //!
-//! Measured on 2026-08-23: `jsonschema` 0.50.1 resolves **103 packages**, against
-//! `renvor-http`'s current **65**. Validating a request body would more than double the
-//! transport's dependency surface — for the ICU stack, `fancy-regex`, `num-bigint`, and
-//! `wasm-bindgen` among others.
+//! `jsonschema` carries a large transitive graph. Resolving it into the transport's runtime
+//! dependencies, to check a request body against its own schema, would add a substantial number of
+//! packages that runtime validation does not otherwise need. `renvor-validation`'s manifest records
+//! the reasoning, and `cargo tree -p jsonschema` lists what it carries at the resolved version.
 //!
 //! It is a **dev-dependency** instead, and `tests/differential.rs` asserts that Renvor's verdict
 //! equals the reference implementation's over a **hand-written corpus** covering every enforced
@@ -500,11 +500,11 @@ impl Walker<'_> {
         if let Some(step) = bound("multipleOf")
             && step > 0.0
         {
-            let quotient = value / step;
-            // A tolerance is unavoidable in binary floating point: 0.3 / 0.1 is 2.9999999999999996.
-            // The comparison is against the NEAREST integer rather than the truncated one, so a
-            // value just below a multiple is not reported as a violation of a rule it satisfies.
-            if (quotient - quotient.round()).abs() > 1e-9 {
+            // Decided EXACTLY, on the decimals both operands print as. `unwrap_or(false)` is
+            // fail-closed on purpose: a pair this cannot decide is reported as a violation rather
+            // than admitted, which is the safe direction for a boundary that publishes the
+            // constraint. See `is_exact_multiple` for why no tolerance can be correct here.
+            if !is_exact_multiple(value, step).unwrap_or(false) {
                 self.push(pointer, Reason::NotMultipleOf);
             }
         }
@@ -873,4 +873,101 @@ fn check_keyword_values(object: &Map<String, Value>, at: &str) -> Result<(), Dec
     }
 
     Ok(())
+}
+
+/// A finite `f64` as the decimal it prints as: `mantissa / 10^decimals`.
+///
+/// `{:e}` renders the SHORTEST form that round-trips, so `1070468.14` reads as
+/// `107046814 / 10^2` — the decimal the author wrote, not the binary the `f64` holds. That
+/// distinction is the whole point. The nearest `f64` to `1070468.14` is not exactly
+/// `107046814 / 100`, so a question asked of the binary value has no stable answer, while the
+/// same question asked of the decimal has exactly one.
+///
+/// `decimals` is NEGATIVE for magnitudes above the significant digits: `1e300` reads as
+/// `1 / 10^-300`, which is `1 * 10^300`. Rendering in scientific form rather than positional is
+/// what keeps that case a two-digit exponent instead of a 301-character mantissa.
+///
+/// `None` if a rendering does not parse as expected. An `f64` carries at most 17 significant
+/// digits, so the mantissa always fits `i128` — checked rather than assumed.
+fn decimal_parts(value: f64) -> Option<(i128, i32)> {
+    if !value.is_finite() {
+        return None;
+    }
+    let rendered = format!("{value:e}");
+    let (significand, exponent) = rendered.split_once('e')?;
+    let exponent: i32 = exponent.parse().ok()?;
+    let (whole, fraction) = significand.split_once('.').unwrap_or((significand, ""));
+    let places = i32::try_from(fraction.len()).ok()?;
+    let mantissa: i128 = format!("{whole}{fraction}").parse().ok()?;
+    Some((mantissa, places.checked_sub(exponent)?))
+}
+
+/// Whether `value` is an exact multiple of `step`, with no tolerance anywhere.
+///
+/// # Why a tolerance cannot be right
+///
+/// `value / step` carries a RELATIVE error, so the quotient's distance from the nearest integer
+/// grows with the quotient itself. A constant threshold is therefore wrong at both ends of the
+/// range at once. At `1e-9`, the previous implementation:
+///
+/// - REJECTED `1070468.14` against a step of `0.01`, which is a genuine multiple
+///   (`107046814 x 0.01`). The quotient lands on `107046813.9999999851`, an error of `1.49e-8`.
+/// - ACCEPTED `1000000.0001` against a step of `1000000`, which is not a multiple at all. The
+///   quotient is `1.0000000001`, an error of `1e-10` — well inside the threshold.
+///
+/// No constant fixes both, because the failures sit at opposite ends: raising the threshold widens
+/// the second, lowering it widens the first. The answer is to stop asking the binary value.
+///
+/// # What this does instead
+///
+/// With `value = Vm / 10^Vd` and `step = Sm / 10^Sd`,
+/// `value / step = (Vm * 10^Sd) / (Sm * 10^Vd)`. Cancelling the shared power of ten leaves at most
+/// ONE side scaled, and the question becomes an integer remainder — which is exact.
+///
+/// Neither scaled side is ever computed out of range:
+///
+/// - When only the numerator scales, the remainder is taken step by step UNDER the divisor. Every
+///   intermediate stays below `divisor * 10`, and the divisor is an `f64` mantissa, so below
+///   `10^18`.
+/// - When only the divisor scales and that scaling leaves `i128`, the divisor already exceeds any
+///   possible numerator. A non-zero numerator smaller than its divisor leaves itself as the
+///   remainder, so the answer is `false`. That is a derivation, not a fallback.
+///
+/// `None` only if a rendering does not parse, which no finite `f64` produces. The caller treats it
+/// as a violation rather than silently admitting the value.
+fn is_exact_multiple(value: f64, step: f64) -> Option<bool> {
+    // Zero is a multiple of every non-zero step, and it is the one numerator the remainder
+    // argument below does not cover.
+    if value == 0.0 {
+        return Some(true);
+    }
+
+    let (value_mantissa, value_decimals) = decimal_parts(value)?;
+    let (step_mantissa, step_decimals) = decimal_parts(step)?;
+    let numerator = value_mantissa.checked_abs()?;
+    let divisor = step_mantissa.checked_abs()?;
+    if divisor == 0 {
+        return None;
+    }
+
+    let shared = value_decimals.min(step_decimals);
+    let numerator_places = u32::try_from(step_decimals.checked_sub(shared)?).ok()?;
+    let divisor_places = u32::try_from(value_decimals.checked_sub(shared)?).ok()?;
+
+    if divisor_places == 0 {
+        let mut remainder = numerator % divisor;
+        for _ in 0..numerator_places {
+            remainder = remainder.checked_mul(10)? % divisor;
+        }
+        return Some(remainder == 0);
+    }
+
+    // `shared` is the smaller of the two, so reaching here means `numerator_places` is zero.
+    match 10_i128
+        .checked_pow(divisor_places)
+        .and_then(|scale| divisor.checked_mul(scale))
+    {
+        Some(scaled) => Some(numerator % scaled == 0),
+        None => Some(false),
+    }
 }

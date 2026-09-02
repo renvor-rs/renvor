@@ -3,9 +3,8 @@
 //! # What this test exists to catch
 //!
 //! Renvor interprets a **bounded subset** of JSON Schema at runtime rather than resolving
-//! `jsonschema` into the transport's dependency graph — measured at **103 packages** against
-//! `renvor-http`'s current **65**, which would more than double it for the ICU stack,
-//! `fancy-regex`, `num-bigint`, and `wasm-bindgen` among others.
+//! `jsonschema` into the transport's dependency graph: it carries a large transitive graph that
+//! runtime validation does not need. `renvor-validation`'s manifest records the reasoning.
 //!
 //! A bounded subset is only honest while it **agrees** with the standard on the keywords it
 //! claims. A subset that quietly diverges publishes a constraint and enforces a different one,
@@ -207,6 +206,41 @@ fn cases() -> Vec<(&'static str, Value, Value, bool)> {
             json!({"type": "number", "multipleOf": 0.1}),
             json!(0.3),
             true,
+        ),
+        (
+            // REGRESSION, fail-closed direction (#50). 1070468.14 is 107046814 x 0.01, so it is a
+            // multiple. Under an ABSOLUTE tolerance the quotient is 107046813.9999999851 and
+            // |q - round(q)| is 1.49e-8, which a 1e-9 threshold reports as a violation. The error
+            // in `value / step` scales with the QUOTIENT, so a constant cannot hold out here.
+            //
+            // It is value-dependent rather than a clean threshold: 12345678.91 against the same
+            // step gives |q - round(q)| = 0.0 and passes. A money schema at a two-decimal step
+            // would therefore reject occasional amounts for no reason the caller can infer.
+            "multipleOf accepts a large multiple of a small step",
+            json!({"type": "number", "multipleOf": 0.01}),
+            json!(1070468.14),
+            true,
+        ),
+        (
+            // REGRESSION, fail-open direction (#50), and the worse of the two. 1000000.0001 is not
+            // a multiple of 1000000, but the quotient is 1.0000000001, so |q - round(q)| is 1e-10
+            // and an absolute 1e-9 tolerance ACCEPTS it. Near a quotient of one that tolerance is
+            // enormous, and a validation boundary that admits input it publishes a constraint
+            // against is a worse failure than one that rejects too much.
+            "multipleOf refuses a near miss on a large step",
+            json!({"type": "number", "multipleOf": 1000000}),
+            json!(1000000.0001),
+            false,
+        ),
+        (
+            // A THIRD fail-open case, not recorded in #50 and found while writing the fix. Any
+            // value below the step is smaller than one whole step, so the only multiple it could
+            // be is zero. The old quotient was 1e-300, which an absolute 1e-9 threshold read as
+            // "close enough to an integer" and ACCEPTED.
+            "multipleOf refuses a value smaller than the step",
+            json!({"type": "number", "multipleOf": 1}),
+            json!(1e-300),
+            false,
         ),
         // ---- enum and const ----
         (
