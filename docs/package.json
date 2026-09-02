@@ -90,13 +90,40 @@
       "Remove when: a maintained image-size exists, or Docusaurus stops needing one. Restore",
       "the real package, drop this override, the `image-size` dependency entry and the vendored",
       "directory, and retire scripts/check-image-inputs.mjs in the same change — the guard and",
-      "the override only make sense together."
+      "the override only make sense together.",
+      "",
+      "qs: forced to ^6.16.0 to close GHSA-x5fp-wj9c-mxmx (moderate, array-limit bypass via",
+      "bracket-key comma parsing) and GHSA-4mjr-xmp4-gh2g (moderate, denial of service via an",
+      "attacker-controlled isBuffer). Both cover <= 6.15.3, which is exactly the version this tree",
+      "locked, and both are fixed in 6.16.0.",
+      "Reached only through the dev server: @docusaurus/core 3.10.2 -> webpack-dev-server ^5.2.2 ->",
+      "express ^4.22.1 -> body-parser ~1.20.5 -> qs ~6.15.1. Nothing in a production build imports",
+      "it.",
+      "No ordinary update reaches the fix, because both parents pin qs with a TILDE on the minor.",
+      "express 4.22.2 and body-parser 1.20.6 each declare `qs ~6.15.1`, which means >= 6.15.1 and",
+      "< 6.16.0 — so the patched floor is excluded by construction, not by chance. Those are the",
+      "newest releases on their lines (4.22.2 is the last express 4.x, 1.20.6 the last",
+      "body-parser 1.20.x), so there is no version to bump to. The maintained lines did move —",
+      "express 5.2.1 declares `qs ^6.14.0` and body-parser 2.3.0 declares `qs ^6.15.2`, carets that",
+      "would resolve 6.16.0 unaided — but webpack-dev-server 5 declares `express ^4.22.1`, and",
+      "Docusaurus 3.10.2 is the latest release and declares `webpack-dev-server ^5.2.2`. Every step",
+      "of that chain is at its newest published version and still lands on the vulnerable range.",
+      "The override is safe to force: 6.16.0 has the SAME module shape as 6.15.3 — no `type` field,",
+      "no exports map, `main` still lib/index.js — and the same `engines.node >= 0.6`, so every",
+      "`require('qs')` in the tree resolves exactly as it did before.",
+      "Verified by a frozen install, `npm ls qs --all` reporting only 6.16.0, `npm audit",
+      "--audit-level=moderate` at zero findings, the image-input test suite, a production build and",
+      "a link check.",
+      "Remove when: Docusaurus accepts a webpack-dev-server release that depends on express >= 5",
+      "(6.0.0 already declares `express ^5.2.1`, and express 5 carries `qs ^6.14.0`), or express 4.x",
+      "and body-parser 1.20.x republish with a range that admits 6.16.0."
     ]
   },
   "overrides": {
     "serialize-javascript": "^7.1.0",
     "uuid": "^11.1.1",
-    "image-size": "$image-size"
+    "image-size": "$image-size",
+    "qs": "^6.16.0"
   },
   "browserslist": {
     "production": [
