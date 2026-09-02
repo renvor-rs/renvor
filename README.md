@@ -44,7 +44,7 @@
 > **The honest limits, which are several.** The database adapters and authentication now exist
 > and are tested against real engines — but the `renvor` facade exposes **neither**. It depends on
 > the kernel, configuration, and the REST transport only, so neither subsystem has a supported
-> path through the facade. Pagination is no longer contracts-only: keyset cursors render real SQL,
+> path through the facade. Pagination is no longer contracts-only: keyset pagination helpers render real SQL,
 > and agreement between the engines is established by paging both and comparing. **Filtering still
 > is** — no filter reaches a query. The transport lives behind an **off-by-default** feature, so a
 > default build resolves none of it. And because **nothing is published**, a project the generator
