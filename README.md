@@ -2,6 +2,14 @@
   <img alt="Renvor" src="assets/renvor-lockup-v40-dark.svg" width="360">
 </p>
 
+<p align="center">
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/docs.yml"><img alt="Documentation" src="https://github.com/renvor-rs/renvor/actions/workflows/docs.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/security.yml"><img alt="Security" src="https://github.com/renvor-rs/renvor/actions/workflows/security.yml/badge.svg?branch=main"></a>
+  <a href="SUPPORT.md"><img alt="MSRV 1.94.0" src="https://img.shields.io/badge/MSRV-1.94.0-orange.svg"></a>
+  <a href="#licence"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
+</p>
+
 > ## ⚠️ Pre-release — Renvor does not work yet
 >
 > **Nothing is published.** Neither `renvor` nor `renvor-cli` exists on crates.io — verified
