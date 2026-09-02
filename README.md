@@ -32,13 +32,14 @@
 > Phases 006 and 007 add **persistence**: repository and unit-of-work ports in `renvor-database`
 > that name no driver, implemented twice — directly on SQLx, and on SeaORM — against the same
 > ports, the same migration engine, and the same driver underneath. Phase 008 hardens the **four
-> rows** those two models make with PostgreSQL and MySQL: a persistence census of 28 (row, test)
-> pairs, normalised database errors, startup diagnostics that name the selected provider, and a
-> portability contract fixing what the rows must agree about and what they may not. Phase 009 adds
-> **authentication**: Argon2id passwords at RFC 9106 parameters, opaque `__Host-` cookie sessions
-> with rotation and CSRF binding, optional signed JWT access tokens with one algorithm per key,
-> opaque refresh tokens whose replay revokes the whole family, abuse counters with a provable
-> finite bound, a closed audit vocabulary, and one migration set per engine.
+> rows** those two models make with PostgreSQL and MySQL: a persistence census naming the tests
+> each row must report, normalised database errors, startup diagnostics that name the selected
+> provider, and a portability contract fixing what the rows must agree about and what they may
+> not. Phase 009 adds **authentication**: Argon2id passwords at RFC 9106 parameters, opaque
+> `__Host-` cookie sessions with rotation and CSRF binding, optional signed JWT access tokens with
+> one algorithm per key, opaque refresh tokens whose replay revokes the whole family, abuse
+> counters with a provable finite bound, a closed audit vocabulary, and one migration set per
+> engine.
 >
 > **The honest limits, which are several.** The database adapters and authentication now exist
 > and are tested against real engines — but the `renvor` facade exposes **neither**. It depends on
