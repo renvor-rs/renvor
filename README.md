@@ -1,9 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/renvor-lockup-v21-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/renvor-lockup-v21-light.svg">
-    <img alt="Renvor" src="assets/renvor-lockup-v21-light.svg" width="360">
-  </picture>
+  <img alt="Renvor" src="assets/renvor-lockup-v40-dark.svg" width="360">
 </p>
 
 > ## ⚠️ Pre-release — Renvor does not work yet
@@ -136,8 +132,9 @@ present so this repository can identify itself, and for no other purpose:
 
 | File | Role |
 |---|---|
-| `assets/renvor-lockup-v21-light.svg` | The v21 lockup shown at the top of this file on a light background |
-| `assets/renvor-lockup-v21-dark.svg` | The same lockup for a dark background |
+| `assets/renvor-lockup-v40-dark.svg` | The approved v40 lockup shown at the top of this file |
+| `assets/renvor-lockup-v21-light.svg` | The superseded v21 lockup for a light background |
+| `assets/renvor-lockup-v21-dark.svg` | The superseded v21 lockup for a dark background |
 | `assets/renvor-mark-v7.svg` | The superseded v7 mark. **Retained deliberately**: `governance/phase-001-evidence.md` and ADR-0006 record its presence in this repository as dated evidence, and deleting it would make a checkable claim uncheckable |
 
 The dual licence above covers Renvor's **source and documentation**. It does not grant any
