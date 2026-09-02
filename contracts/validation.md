@@ -110,12 +110,10 @@ caller to correct a field in it would be nonsense.
 ## Agreement with the standard is asserted, not assumed
 
 Renvor interprets the subset itself rather than resolving a JSON Schema validator into the
-transport's dependency graph. Measured on 2026-08-23:
-
-```
-renvor-http's runtime graph ....................  65 packages
-jsonschema 0.50.1, default-features = false .... 103 packages
-```
+transport's dependency graph: a validator carries a large transitive graph that runtime validation
+does not otherwise need. This contract states the property, not a package count — a count is a
+snapshot of two graphs that both move, and `renvor-validation`'s manifest records the reasoning and
+the command that inspects it.
 
 The reference implementation is a **dev-dependency**, and `tests/differential.rs` asserts that
 Renvor's verdict equals it for every case in a corpus covering every enforced keyword. A bounded
