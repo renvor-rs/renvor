@@ -17,6 +17,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Every step ran and passed.
 const EXIT_OK: i32 = 0;
@@ -521,9 +522,14 @@ fn run(
         command.env(OsStr::new(key), OsStr::new(value));
     }
 
-    match command.status() {
+    let started = Instant::now();
+    let outcome = command.status();
+    let elapsed = started.elapsed();
+
+    match outcome {
         Ok(status) if status.success() => {
             step_ok(number, title, "passed");
+            timing(&format!("step {number} {title}"), elapsed);
             true
         }
         Ok(status) => {
@@ -545,6 +551,31 @@ fn run(
             false
         }
     }
+}
+
+/// Wall-clock, rendered the same way everywhere so two runs can be compared by eye.
+///
+/// `std::time::Instant` and nothing else. A verification sequence that needed a crate to time
+/// itself would have to justify that crate in the dependency inventory it exists to police, so the
+/// measurement is deliberately built from what the standard library already provides.
+fn humanise(elapsed: Duration) -> String {
+    let total = elapsed.as_secs();
+    let (hours, minutes, seconds) = (total / 3600, (total % 3600) / 60, total % 60);
+    if hours > 0 {
+        format!("{hours}h {minutes:02}m {seconds:02}s")
+    } else {
+        format!("{minutes}m {seconds:02}s")
+    }
+}
+
+/// One measured span, printed on its OWN line.
+///
+/// The `[n/11] title: ok — detail` and `FAILED` lines are load-bearing: `contracts/`, CI log
+/// scraping and every past evidence record quote them verbatim. Timing is therefore ADDITIVE —
+/// a new line beside them — rather than a suffix that would change the shape of a line other
+/// things parse. Nothing here can fail the sequence; it only reports.
+fn timing(label: &str, elapsed: Duration) {
+    println!("       timing  {label}: {}", humanise(elapsed));
 }
 
 fn step_ok(number: usize, title: &str, detail: &str) {
@@ -1048,14 +1079,23 @@ fn the_executable_is_named_renvor(root: &std::path::Path) -> bool {
 /// Separate from [`run`] because these are *probes*: one of them is expected to fail, and a probe
 /// that printed a step banner for its own expected failure would read as a broken run.
 fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
-    std::process::Command::new("cargo")
+    let started = Instant::now();
+    let succeeded = std::process::Command::new("cargo")
         .args(args)
         .current_dir(root)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|status| status.success())
-        .unwrap_or(false)
+        .unwrap_or(false);
+    // Every step-7 probe, timed individually. Several of them are real compiles under feature sets
+    // no other step uses, which is exactly the kind of cost that hides inside a single step banner.
+    // Reported whether the probe passed or failed, because a probe EXPECTED to fail still costs.
+    timing(
+        &format!("step 7 probe `cargo {}`", args.join(" ")),
+        started.elapsed(),
+    );
+    succeeded
 }
 
 /// T111: the facade **compiles** without default features, for every target.
@@ -2244,6 +2284,42 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
 /// rather than capturing it, which is the right behaviour for a step whose output a human is
 /// watching; capturing step 4 wholesale to satisfy this check would trade live test progress for a
 /// census. Two small binaries run twice is the cheaper trade.
+/// Whether a grouped `cargo test` run actually executed a given test binary.
+///
+/// Cargo announces each binary with `Running tests/<name>.rs` on **stderr**, while the harness
+/// writes `test <name> ... ok` to **stdout**. `Command::output` hands back two separate buffers, so
+/// the two streams cannot be interleaved after the fact — an earlier revision of this census
+/// concatenated them and tried to slice per-binary sections out of the result, which put every
+/// header after every evidence line and made each "section" empty. The streams are therefore used
+/// for what each one actually carries: this function reads stderr to establish that a binary RAN.
+fn binary_ran(stderr: &str, binary: &str) -> bool {
+    stderr.contains(&format!("Running tests/{binary}.rs"))
+}
+
+/// Rows in one census group whose test names are not unique.
+///
+/// **This is what keeps grouping honest.** Running several binaries in one invocation merges their
+/// stdout, so a row matched against the merged text could be satisfied by an identically named test
+/// in a sibling binary — quietly turning a per-binary requirement into a per-package one. Rather
+/// than assume that never happens, the census refuses to run a group in which it COULD: if two rows
+/// in the same group share a test name, attribution is ambiguous and this reports it instead of
+/// guessing. Today every group is collision-free, and this is what keeps that true after a rename.
+fn ambiguous_rows_in_group<'a>(package: &str, features: &str) -> Vec<&'a str> {
+    let mut names: Vec<&str> = ROW_EVIDENCE
+        .iter()
+        .filter(|(p, _, _, f)| *p == package && *f == features)
+        .map(|(_, _, test, _)| *test)
+        .collect();
+    names.sort_unstable();
+    let mut ambiguous = Vec::new();
+    for pair in names.windows(2) {
+        if pair[0] == pair[1] && !ambiguous.contains(&pair[0]) {
+            ambiguous.push(pair[0]);
+        }
+    }
+    ambiguous
+}
+
 fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> bool {
     const TITLE: &str = "tests (four-row persistence census)";
 
@@ -2269,72 +2345,120 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         return false;
     }
 
-    // Group the rows by the binary that carries them, so each binary runs once.
-    let mut binaries: Vec<(&str, &str, &str)> = ROW_EVIDENCE
+    // Group the rows by PACKAGE AND FEATURE SET, not by binary.
+    //
+    // Every binary in a group is handed to ONE `cargo test` invocation via repeated `--test`. The
+    // rows, the required output lines, and the failure conditions are unchanged; what changes is
+    // how many times Cargo is asked to resolve features and link a test harness for the same
+    // package. Seventeen invocations became three, and because the feature set is what varies
+    // between them, the seventeen were re-resolving and re-linking work the three now do once.
+    //
+    // Grouping is only safe because attribution survives it. Cargo prints a `Running tests/<name>.rs`
+    // header before each binary's block, so the combined output is SPLIT on those headers and every
+    // row is still checked against the output of its OWN binary. A row can therefore never be
+    // satisfied by an identically named test in a sibling binary — which is the property the
+    // per-binary invocation gave for free, and the one thing a naive merge would silently lose.
+    let mut groups: Vec<(&str, &str)> = ROW_EVIDENCE
         .iter()
-        .map(|(package, binary, _, features)| (*package, *binary, *features))
+        .map(|(package, _, _, features)| (*package, *features))
         .collect();
-    // Sorted before `dedup`, which only removes ADJACENT duplicates. Unsorted, a binary named
-    // again later in the table would be run twice.
-    binaries.sort_unstable();
-    binaries.dedup();
+    // Sorted before `dedup`, which only removes ADJACENT duplicates.
+    groups.sort_unstable();
+    groups.dedup();
 
-    for (package, binary, features) in binaries {
-        let output = Command::new("cargo")
-            .args([
-                "test",
-                "-p",
-                package,
-                // PER ROW, not one string for every binary. `tokens` is needed by the
-                // refresh-rotation pair — a census row for a test compiled out is a row that can
-                // never report in — and the test application takes no database feature at all,
-                // because it has none to take.
-                "--features",
-                features,
-                "--test",
-                binary,
-            ])
-            .current_dir(root)
-            .output();
+    for (package, features) in groups {
+        let mut binaries: Vec<&str> = ROW_EVIDENCE
+            .iter()
+            .filter(|(p, _, _, f)| *p == package && *f == features)
+            .map(|(_, binary, _, _)| *binary)
+            .collect();
+        binaries.sort_unstable();
+        binaries.dedup();
+
+        let mut args: Vec<&str> = vec!["test", "-p", package, "--features", features];
+        for binary in &binaries {
+            // PER ROW, not one string for every binary. `tokens` is needed by the refresh-rotation
+            // pair — a census row for a test compiled out is a row that can never report in — and
+            // the test application takes no database feature at all, because it has none to take.
+            args.push("--test");
+            args.push(binary);
+        }
+
+        let started = Instant::now();
+        let output = Command::new("cargo").args(&args).current_dir(root).output();
+        let elapsed = started.elapsed();
+        timing(
+            &format!("step 4 census {package} ({} binaries)", binaries.len()),
+            elapsed,
+        );
 
         let Ok(output) = output else {
             step_fail(
                 4,
                 TITLE,
-                &format!("`{package}/{binary}` could not be executed"),
+                &format!("`{package}` census group could not be executed"),
             );
             return false;
         };
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        // Kept SEPARATE. stderr says which binaries ran; stdout carries the evidence lines.
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         if !output.status.success() {
             step_fail(
                 4,
                 TITLE,
-                &format!("`{package}/{binary}` failed:\n{combined}"),
+                &format!("`{package}` census group failed:\n{stdout}{stderr}"),
+            );
+            return false;
+        }
+
+        // Refuse an ambiguous group rather than credit a row to the wrong binary.
+        let ambiguous = ambiguous_rows_in_group(package, features);
+        if !ambiguous.is_empty() {
+            step_fail(
+                4,
+                TITLE,
+                &format!(
+                    "the `{package}` census group contains rows sharing a test name ({}), so a \
+                     grouped run cannot attribute evidence to the binary that owns it. Give the \
+                     tests distinct names, or split the group",
+                    ambiguous.join(", ")
+                ),
             );
             return false;
         }
 
         for (expected_package, expected_binary, test, _) in ROW_EVIDENCE {
-            if expected_package != package || expected_binary != binary {
+            if expected_package != package {
                 continue;
+            }
+            // The binary has to have RUN. A binary deleted, renamed, or filtered out prints no
+            // `Running` line, and its rows must fail rather than be looked for elsewhere.
+            if !binary_ran(&stderr, expected_binary) {
+                step_fail(
+                    4,
+                    TITLE,
+                    &format!(
+                        "row `{package}::{test}` did not report in: the runner printed no \
+                         `Running tests/{expected_binary}.rs` line, so the binary carrying this \
+                         row never ran"
+                    ),
+                );
+                return false;
             }
             // The runner's own line for a test that RAN and passed. A row that was deleted,
             // renamed, or compiled out produces no such line.
             let evidence = format!("test {test} ... ok");
-            if !combined.contains(&evidence) {
+            if !stdout.contains(&evidence) {
                 step_fail(
                     4,
                     TITLE,
                     &format!(
                         "row `{package}::{test}` did not report in. Expected the line \
-                         `{evidence}` in the runner's output. The row was removed, renamed, or \
-                         feature-gated out — and without this census the workspace test run would \
-                         simply have executed one row fewer and reported success"
+                         `{evidence}` from `{expected_binary}` in the runner's output. The row was \
+                         removed, renamed, or feature-gated out — and without this census the \
+                         workspace test run would simply have executed one row fewer and reported \
+                         success"
                     ),
                 );
                 return false;
