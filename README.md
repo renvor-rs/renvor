@@ -1,9 +1,13 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/renvor-lockup-v21-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="assets/renvor-lockup-v21-light.svg">
-    <img alt="Renvor" src="assets/renvor-lockup-v21-light.svg" width="360">
-  </picture>
+  <img alt="Renvor" src="assets/renvor-lockup-v40-dark.svg" width="360">
+</p>
+
+<p align="center">
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/docs.yml"><img alt="Documentation" src="https://github.com/renvor-rs/renvor/actions/workflows/docs.yml/badge.svg?branch=main"></a>
+  <a href="https://github.com/renvor-rs/renvor/actions/workflows/security.yml"><img alt="Security" src="https://github.com/renvor-rs/renvor/actions/workflows/security.yml/badge.svg?branch=main"></a>
+  <a href="SUPPORT.md"><img alt="MSRV 1.94.0" src="https://img.shields.io/badge/MSRV-1.94.0-orange.svg"></a>
+  <a href="#licence"><img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg"></a>
 </p>
 
 > ## ⚠️ Pre-release — Renvor does not work yet
@@ -136,8 +140,9 @@ present so this repository can identify itself, and for no other purpose:
 
 | File | Role |
 |---|---|
-| `assets/renvor-lockup-v21-light.svg` | The v21 lockup shown at the top of this file on a light background |
-| `assets/renvor-lockup-v21-dark.svg` | The same lockup for a dark background |
+| `assets/renvor-lockup-v40-dark.svg` | The approved v40 lockup shown at the top of this file |
+| `assets/renvor-lockup-v21-light.svg` | The superseded v21 lockup for a light background |
+| `assets/renvor-lockup-v21-dark.svg` | The superseded v21 lockup for a dark background |
 | `assets/renvor-mark-v7.svg` | The superseded v7 mark. **Retained deliberately**: `governance/phase-001-evidence.md` and ADR-0006 record its presence in this repository as dated evidence, and deleting it would make a checkable claim uncheckable |
 
 The dual licence above covers Renvor's **source and documentation**. It does not grant any
