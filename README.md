@@ -29,24 +29,38 @@
 > they cannot disagree — RFC 9457 `application/problem+json` failures with a closed error registry,
 > **OpenAPI 3.2.0** generation proven against the official schema, a semantic compatibility gate,
 > bounded cursor pagination contracts, and `renvor openapi`. It runs, and it is tested.
+> Phases 006 and 007 add **persistence**: repository and unit-of-work ports in `renvor-database`
+> that name no driver, implemented twice — directly on SQLx, and on SeaORM — against the same
+> ports, the same migration engine, and the same driver underneath. Phase 008 hardens the **four
+> rows** those two models make with PostgreSQL and MySQL: a persistence census of 28 (row, test)
+> pairs, normalised database errors, startup diagnostics that name the selected provider, and a
+> portability contract fixing what the rows must agree about and what they may not. Phase 009 adds
+> **authentication**: Argon2id passwords at RFC 9106 parameters, opaque `__Host-` cookie sessions
+> with rotation and CSRF binding, optional signed JWT access tokens with one algorithm per key,
+> opaque refresh tokens whose replay revokes the whole family, abuse counters with a provable
+> finite bound, a closed audit vocabulary, and one migration set per engine.
 >
-> **The honest limits, which are several.** There is still no database adapter and no
-> authentication. Pagination and filtering define **contracts and ports only** — nothing queries
-> anything. The transport lives behind an **off-by-default** feature, so a default build resolves
-> none of it. And because **nothing is published**, a project the generator produces cannot yet
-> depend on the framework — it records its transport choice and documents the dependency to add
-> later, rather than emitting one that would not resolve. `renvor routes` and `renvor openapi`
-> therefore succeed against **no generated project**: the relays are implemented and tested
-> end to end against a real binary, and their reach across generated projects is zero because
-> nothing is published for them to depend on.
+> **The honest limits, which are several.** The database adapters and authentication now exist
+> and are tested against real engines — but the `renvor` facade exposes **neither**. It depends on
+> the kernel, configuration, and the REST transport only, so neither subsystem has a supported
+> path through the facade. Pagination is no longer contracts-only: keyset cursors render real SQL,
+> and agreement between the engines is established by paging both and comparing. **Filtering still
+> is** — no filter reaches a query. The transport lives behind an **off-by-default** feature, so a
+> default build resolves none of it. And because **nothing is published**, a project the generator
+> produces cannot yet depend on the framework — it records its transport choice and documents the
+> dependency to add later, rather than emitting one that would not resolve. `renvor routes` and
+> `renvor openapi` therefore succeed against **no generated project**: the relays are implemented
+> and tested end to end against a real binary, and their reach across generated projects is zero
+> because nothing is published for them to depend on.
 >
-> **Every API is explicitly unstable**, and Phase 005 does **not** change that. The instability
+> **Every API is explicitly unstable**, and Phase 009 does **not** change that. The instability
 > window has two closure conditions in [`contracts/api-stability.md`](contracts/api-stability.md);
 > a real transport exercising the surface satisfies the **first**. The second requires an accepted
 > decision record that supersedes ADR-0002, and none exists. **The window is open.**
 > **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework, currently in Phase 005 of its development programme.
+Renvor is a Rust framework. **Phase 009** of its development programme has closed; Phase 010
+has not started.
 
 ## The command is `renvor`
 
