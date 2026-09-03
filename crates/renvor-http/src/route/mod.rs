@@ -191,6 +191,108 @@ impl PresentedCredentials {
 ///
 /// The one exception is [`PresentedCredentials`], and its documentation explains why a credential
 /// the application must validate is not the same thing as an identity the transport resolved.
+/// The most bytes of an `Origin` value that are kept.
+pub const MAX_ORIGIN_BYTES: usize = 1024;
+
+/// The `Sec-Fetch-Site` header, as the Fetch Metadata specification enumerates it.
+///
+/// Sent by browsers on every request; a value outside the closed set is kept as
+/// [`SecFetchSite::Unrecognised`] rather than mapped to a neighbour, so a guard that refuses
+/// `cross-site` refuses exactly that and a new token is a visible unknown, not a silent allow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SecFetchSite {
+    /// `same-origin`.
+    SameOrigin,
+    /// `same-site`.
+    SameSite,
+    /// `cross-site`.
+    CrossSite,
+    /// `none`: a user-initiated navigation, not a page.
+    None,
+    /// A token the specification does not define.
+    Unrecognised,
+}
+
+impl SecFetchSite {
+    /// Parses one header value, trimmed and case-insensitively.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        let value = value.trim();
+        if value.eq_ignore_ascii_case("same-origin") {
+            Self::SameOrigin
+        } else if value.eq_ignore_ascii_case("same-site") {
+            Self::SameSite
+        } else if value.eq_ignore_ascii_case("cross-site") {
+            Self::CrossSite
+        } else if value.eq_ignore_ascii_case("none") {
+            Self::None
+        } else {
+            Self::Unrecognised
+        }
+    }
+}
+
+/// What the user agent said about where a request came from: the `Origin` header, bounded, and
+/// the `Sec-Fetch-Site` header, closed. Both absent when not sent.
+///
+/// Untrusted bounded input (FR-085): a value over the bound or holding a control character is
+/// treated as absent, never truncated into something that could match.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FetchMetadata {
+    origin: Option<String>,
+    sec_fetch_site: Option<SecFetchSite>,
+}
+
+impl FetchMetadata {
+    /// From the two header values as presented, or `None` for each that was absent.
+    #[must_use]
+    pub fn new(origin: Option<&str>, sec_fetch_site: Option<&str>) -> Self {
+        let origin = origin.and_then(|value| {
+            let value = value.trim();
+            let acceptable = !value.is_empty()
+                && value.len() <= MAX_ORIGIN_BYTES
+                && !value.bytes().any(|byte| byte < 0x20 || byte == 0x7f);
+            acceptable.then(|| value.to_owned())
+        });
+        Self {
+            origin,
+            sec_fetch_site: sec_fetch_site.map(SecFetchSite::parse),
+        }
+    }
+
+    /// The `Origin` header, when present and acceptable.
+    #[must_use]
+    pub fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
+    }
+
+    /// The `Sec-Fetch-Site` header, when present.
+    #[must_use]
+    pub const fn sec_fetch_site(&self) -> Option<SecFetchSite> {
+        self.sec_fetch_site
+    }
+
+    /// The authority (`host[:port]`) of the `Origin`, without scheme or port, or `None` when the
+    /// origin is absent or not a URL.
+    #[must_use]
+    pub fn origin_host(&self) -> Option<&str> {
+        let (_, authority) = self.origin.as_deref()?.split_once("://")?;
+        let authority = authority.split(['/', '?', '#']).next()?;
+        if let Some(rest) = authority.strip_prefix('[') {
+            return rest.split(']').next();
+        }
+        Some(
+            authority
+                .rsplit_once(':')
+                .map_or(authority, |(host, _)| host),
+        )
+    }
+}
+
+/// One request as a handler sees it: the validated context, the body, the query, the captured
+/// path parameters, the application state, the presented credentials, and what the user agent
+/// said about where it came from.
 pub struct Request {
     context: RequestContext,
     body: Vec<u8>,
@@ -198,6 +300,7 @@ pub struct Request {
     path_params: BTreeMap<String, String>,
     state: Arc<TypedStateMap>,
     credentials: PresentedCredentials,
+    fetch_metadata: FetchMetadata,
 }
 
 impl Request {
@@ -227,6 +330,7 @@ impl Request {
             // credentials presents none, so an authenticated route refuses rather than admitting
             // whatever happened to be in memory.
             credentials: PresentedCredentials::default(),
+            fetch_metadata: FetchMetadata::default(),
         }
     }
 
@@ -244,6 +348,19 @@ impl Request {
     #[must_use]
     pub const fn credentials(&self) -> &PresentedCredentials {
         &self.credentials
+    }
+
+    /// Attaches what the user agent said about the request's origin (FR-085).
+    #[must_use]
+    pub fn with_fetch_metadata(mut self, fetch_metadata: FetchMetadata) -> Self {
+        self.fetch_metadata = fetch_metadata;
+        self
+    }
+
+    /// What the user agent said about the request's origin: absent headers are `None`.
+    #[must_use]
+    pub const fn fetch_metadata(&self) -> &FetchMetadata {
+        &self.fetch_metadata
     }
 
     /// Attaches the application's typed state.

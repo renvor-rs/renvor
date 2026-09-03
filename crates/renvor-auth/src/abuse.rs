@@ -1039,7 +1039,7 @@ where
             let limit = self.contract.get(*dimension);
             let window_start = limit.window_start(now);
 
-            let outcome = self
+            let outcome = match self
                 .repository
                 .observe(AttemptObservation {
                     dimension: *dimension,
@@ -1048,7 +1048,25 @@ where
                     previous_window_start: window_start - limit.window(),
                     expires_at: window_start + limit.window() + limit.window(),
                 })
-                .await?;
+                .await
+            {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    // 009/L-11, CLOSED (FR-084): an infrastructure failure inside the guard left
+                    // no record anywhere. It now leaves one — a structured event with the
+                    // correlation identifier, the flow, and the CLOSED error kind. Never the
+                    // driver's text. The audit vocabulary is not widened: this is not a third
+                    // outcome of the flow, it is the reason there was no outcome.
+                    tracing::warn!(
+                        target: "renvor.auth",
+                        correlation = %correlation,
+                        flow = ?flow,
+                        database_error_kind = error.kind().as_str(),
+                        "the abuse guard could not reach its store; the request is refused closed"
+                    );
+                    return Err(ServiceError::Storage(error));
+                }
+            };
 
             // `|=`, never `return`. See the doc comment.
             refused |= match outcome {
@@ -1788,6 +1806,97 @@ mod tests {
             .max()
             .expect("a row exists");
         assert_eq!(account, 5, "a successful attempt cleared evidence");
+    }
+
+    /// One recorded event: its fields, rendered.
+    type RecordedEvent = Vec<(String, String)>;
+
+    /// A subscriber that records the events it receives, for FR-084.
+    #[derive(Clone, Default)]
+    struct RecordingSubscriber(std::sync::Arc<std::sync::Mutex<Vec<RecordedEvent>>>);
+
+    struct FieldCollector(Vec<(String, String)>);
+
+    impl tracing::field::Visit for FieldCollector {
+        fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn core::fmt::Debug) {
+            self.0.push((field.name().to_owned(), format!("{value:?}")));
+        }
+    }
+
+    impl tracing::Subscriber for RecordingSubscriber {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut collector = FieldCollector(vec![(
+                "target".to_owned(),
+                event.metadata().target().to_owned(),
+            )]);
+            event.record(&mut collector);
+            self.0.lock().expect("unpoisoned").push(collector.0);
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[tokio::test]
+    async fn a_store_failure_leaves_an_infrastructure_event_with_the_closed_kind() {
+        // 009/L-11 (FR-084): the failure that used to vanish is now one structured event carrying
+        // the correlation identifier, the flow, and the closed error kind — and no driver text.
+        let recorder = RecordingSubscriber::default();
+        let _guard = tracing::subscriber::set_default(recorder.clone());
+        let guard = AbuseGuard::new(
+            FakeAttempts::failing(),
+            keyring(65_536),
+            AbuseContract::default(),
+            RecordingAuditSink::new(),
+        );
+        let correlation = correlation();
+        let outcome = guard
+            .admit(
+                AttemptFlow::LogIn,
+                FlowKeys {
+                    account: Some("ada@example.test"),
+                    client: None,
+                    network: network(1),
+                },
+                correlation,
+                at(0),
+            )
+            .await;
+        assert!(matches!(outcome, Err(ServiceError::Storage(_))));
+        let events = recorder.0.lock().expect("unpoisoned").clone();
+        let event = events
+            .iter()
+            .find(|fields| {
+                fields
+                    .iter()
+                    .any(|(name, value)| name == "target" && value == "renvor.auth")
+            })
+            .expect("the guard emitted an infrastructure event");
+        let field = |name: &str| {
+            event
+                .iter()
+                .find(|(candidate, _)| candidate == name)
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default()
+        };
+        assert_eq!(field("correlation"), correlation.to_string());
+        assert_eq!(field("flow"), "LogIn");
+        assert!(
+            !field("database_error_kind").is_empty(),
+            "the closed kind is absent"
+        );
+        let rendered = format!("{events:?}");
+        assert!(
+            !rendered.contains("ada@example.test"),
+            "the account reached the event"
+        );
     }
 
     #[tokio::test]

@@ -63,7 +63,7 @@ use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing::Instrument as _;
 
-use super::{Method, Next, PresentedCredentials, Request, Response, RouteRegistry};
+use super::{FetchMetadata, Method, Next, PresentedCredentials, Request, Response, RouteRegistry};
 use crate::admission::Admission;
 use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
@@ -73,6 +73,7 @@ use crate::identity::{ForwardingHeaders, TrustedProxies, resolve};
 use crate::limits::Limits;
 use crate::problem;
 use crate::request_id;
+use renvor_core::observe::semconv;
 
 /// Everything the security layers need in order to resolve a request.
 ///
@@ -695,9 +696,28 @@ async fn dispatch(
         }
     }
 
+    // FETCH METADATA — `Origin` and `Sec-Fetch-Site` as the user agent presented them, bounded,
+    // for a transport-level cross-site decision downstream (FR-085). Absent stays absent.
+    let fetch_metadata = FetchMetadata::new(
+        parts
+            .headers
+            .get(header::ORIGIN)
+            .and_then(|value| value.to_str().ok()),
+        parts
+            .headers
+            .get("sec-fetch-site")
+            .and_then(|value| value.to_str().ok()),
+    );
+
+    // INBOUND TRACE CONTEXT — untrusted bounded input (FR-074). A valid pair becomes span
+    // fields; an invalid `traceparent` is ignored, counted, and never echoed. The request
+    // identifier is untouched either way (FR-075).
+    let inbound_trace = parse_inbound_trace(&parts.headers, &shared.config.state);
+
     let renvor_request = Request::new(context, collected, query, path_params)
         .with_state(Arc::clone(&shared.config.state))
-        .with_credentials(credentials);
+        .with_credentials(credentials)
+        .with_fetch_metadata(fetch_metadata);
 
     // 9. TRACE — nearest the handler, so the span covers handler execution. Structured fields
     // only, never an interpolated sentence, and every field is one Renvor generated.
@@ -706,7 +726,15 @@ async fn dispatch(
         route = %path,
         request_id = %request_id,
         run_id = %run_id,
+        trace_id = tracing::field::Empty,
+        parent_span_id = tracing::field::Empty,
+        trace_flags = tracing::field::Empty,
     );
+    if let Some(trace) = &inbound_trace {
+        span.record(semconv::renvor::TRACE_ID, trace.trace_id().encode());
+        span.record(semconv::renvor::PARENT_SPAN_ID, trace.parent_id().encode());
+        span.record(semconv::renvor::TRACE_FLAGS, trace.flags().encode());
+    }
 
     // THE PANIC BOUNDARY. Contract C-10: *"a handler panic is caught, contained, and reported as a
     // failure. It is never a hang, and its payload never reaches a response."*
@@ -876,6 +904,44 @@ fn is_same_origin(origin: &str, validated_host: &str) -> bool {
             )
         })
         .is_some_and(|host| host.eq_ignore_ascii_case(validated_host))
+}
+
+/// The name of the counter of ignored inbound trace contexts (FR-083).
+pub const TRACE_CONTEXT_INVALID_METRIC: &str = "renvor_trace_context_inbound_invalid_total";
+
+/// Parses `traceparent` and `tracestate` as untrusted bounded input.
+///
+/// Absent is `None` with no count; present and invalid is `None`, counted in the application's
+/// metrics registry when one is published in state, and reported as a closed-field event; valid
+/// is the parsed context. Nothing from the header is rendered anywhere.
+fn parse_inbound_trace(
+    headers: &HeaderMap,
+    state: &TypedStateMap,
+) -> Option<renvor_core::observe::TraceContext> {
+    let traceparent = headers.get("traceparent")?;
+    let tracestate = headers
+        .get("tracestate")
+        .and_then(|value| value.to_str().ok());
+    let parsed = traceparent
+        .to_str()
+        .ok()
+        .and_then(|value| renvor_core::observe::TraceContext::parse(value, tracestate).ok());
+    if parsed.is_none() {
+        if let Ok(registry) = state.get::<renvor_core::observe::metrics::Registry>()
+            && let Ok(counter) = registry.counter(
+                TRACE_CONTEXT_INVALID_METRIC,
+                "Inbound trace contexts ignored as invalid.",
+                &[],
+            )
+        {
+            counter.increment(&[], 1);
+        }
+        tracing::debug!(
+            target: "renvor.http",
+            "an inbound trace context was ignored as invalid"
+        );
+    }
+    parsed
 }
 
 /// A `500` with no body, for a failure that must not describe itself.

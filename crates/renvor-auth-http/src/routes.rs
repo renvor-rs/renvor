@@ -348,6 +348,16 @@ where
         csrf::Credential::BearerToken
     };
     if csrf::is_required("POST", credential) {
+        // 009/L-4, CLOSED AT THE TRANSPORT (FR-085): a cookie-authenticated unsafe request that
+        // the user agent itself marks `cross-site`, or whose `Origin` names another host than
+        // the one validated for this request, is refused before the body is read. Absent
+        // headers do not refuse — the session-bound CSRF token below stays the primary control.
+        if cross_site_refused(&request) {
+            return problem::render_service_error(
+                &ServiceError::Refused(AuthError::NotPermitted),
+                correlation,
+            );
+        }
         let body: dto::LogoutRequest = match read_body(&request, correlation) {
             Ok(body) => body,
             Err(response) => return response,
@@ -391,6 +401,21 @@ where
 }
 
 /// `GET /auth/me`.
+/// True when the user agent said the request is cross-site, or its `Origin` names a host other
+/// than the one this request was validated for (FR-085). Absent headers never refuse.
+pub(crate) fn cross_site_refused(request: &Request) -> bool {
+    let metadata = request.fetch_metadata();
+    if metadata.sec_fetch_site() == Some(renvor_http::SecFetchSite::CrossSite) {
+        return true;
+    }
+    match metadata.origin_host() {
+        Some(host) => !host.eq_ignore_ascii_case(request.context().host()),
+        // An `Origin` that is present but not a URL (`null`, or garbage) names no host this
+        // request was validated for.
+        None => metadata.origin().is_some(),
+    }
+}
+
 async fn current_user<U, C, B, S, T, M, R, A>(
     endpoints: &AuthEndpoints<U, C, B, S, T, M, R, A>,
     request: Request,

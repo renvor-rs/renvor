@@ -41,7 +41,7 @@ use renvor_core::identity::ClientIdentity;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
 use renvor_database::{ConnectionString, Database as _, MigrationSettings, PoolSettings};
 use renvor_http::route::{Method, PresentedCredentials, Request, RouteRegistry};
-use renvor_http::{RequestContext, RequestId};
+use renvor_http::{FetchMetadata, RequestContext, RequestId};
 use renvor_sqlx::Migrations;
 use renvor_sqlx::auth::TokenTable;
 use renvor_sqlx::auth::postgres::{
@@ -114,6 +114,19 @@ struct Application {
 impl Application {
     /// Sends one request through the real route table and records the response for the sweep.
     async fn send(&self, method: Method, route: &str, body: &str, cookie: &str) -> (u16, String) {
+        self.send_with_metadata(method, route, body, cookie, FetchMetadata::default())
+            .await
+    }
+
+    /// `send`, with what the user agent said about the request's origin (FR-085).
+    async fn send_with_metadata(
+        &self,
+        method: Method,
+        route: &str,
+        body: &str,
+        cookie: &str,
+        metadata: FetchMetadata,
+    ) -> (u16, String) {
         // THE METHOD IS MATCHED, not discarded.
         //
         // The first version located a route by path alone and threw the method away with
@@ -139,7 +152,8 @@ impl Application {
             String::new(),
             BTreeMap::new(),
         )
-        .with_credentials(PresentedCredentials::new(cookie, ""));
+        .with_credentials(PresentedCredentials::new(cookie, ""))
+        .with_fetch_metadata(metadata);
 
         let response = declared.dispatch(request).await;
         let status = response.status_code();
@@ -421,17 +435,62 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
     assert_eq!(status, 403, "a token bound to another session was accepted");
 
     // WITH the right token: accepted.
+    // 009/L-4 (FR-085): with a VALID token, the transport still refuses a request the user agent
+    // marks cross-site, or whose Origin names another host — and absent headers do not refuse.
+    let valid = format!(r#"{{"csrf_token":"{csrf}"}}"#);
     let (status, _body) = app
-        .send(
+        .send_with_metadata(
             Method::Post,
             "/auth/logout",
-            &format!(r#"{{"csrf_token":"{csrf}"}}"#),
+            &valid,
             &presented,
+            FetchMetadata::new(None, Some("cross-site")),
+        )
+        .await;
+    assert_eq!(
+        status, 403,
+        "a cross-site logout with a valid token was accepted"
+    );
+    let (status, _body) = app
+        .send_with_metadata(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("https://evil.example.test"), None),
+        )
+        .await;
+    assert_eq!(
+        status, 403,
+        "a foreign-Origin logout with a valid token was accepted"
+    );
+    let (status, _body) = app
+        .send_with_metadata(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("null"), None),
+        )
+        .await;
+    assert_eq!(status, 403, "an opaque `null` Origin was accepted");
+    let (status, _body) = app.send(Method::Get, "/auth/me", "", &presented).await;
+    assert_eq!(
+        status, 200,
+        "a refused cross-site logout ended the session anyway"
+    );
+    let (status, _body) = app
+        .send_with_metadata(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("https://example.test:8443"), Some("same-origin")),
         )
         .await;
     assert_eq!(
         status, 200,
-        "logout with a valid CSRF token did not succeed"
+        "logout with a valid CSRF token and a matching Origin did not succeed"
     );
 
     // The cookie is dead now, and the answer is the same one an absent cookie gets.

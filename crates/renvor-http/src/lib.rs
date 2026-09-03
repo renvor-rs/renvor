@@ -81,7 +81,7 @@ pub use limits::Limits;
 pub use problem::{code_for, status_of};
 pub use provider::{HttpServerConfig, HttpServerProvider};
 pub use route::{
-    Method, Middleware, Next, PresentedCredentials, Request, Response, Route, RouteError,
-    RouteGroup, RouteRegistry,
+    FetchMetadata, Method, Middleware, Next, PresentedCredentials, Request, Response, Route,
+    RouteError, RouteGroup, RouteRegistry, SecFetchSite,
 };
 pub use server::Server;
