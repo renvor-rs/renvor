@@ -48,6 +48,7 @@ compile_error!(
 );
 
 pub mod cancel;
+pub mod clock;
 pub mod config_port;
 pub mod error;
 pub mod health;
@@ -55,9 +56,11 @@ pub mod identity;
 pub mod lifecycle;
 pub mod observe;
 pub mod provider;
+pub mod retry;
 pub mod state;
 
 pub use cancel::{CancelScope, ProviderScope};
+pub use clock::{Clock, FixedClock, SystemClock};
 pub use config_port::{ConfigResolver, ConfigSource, ResolvedConfig, SourceLayer};
 pub use error::{ErrorCategory, KernelError};
 pub use health::{
@@ -74,4 +77,5 @@ pub use provider::{
     CapabilityId, InitContext, InitialisationOrder, Provider, ProviderId, ProviderRegistry,
     ResolutionReport,
 };
+pub use retry::{Jitter, RetryClass, RetryError, RetryPolicy, StopReason, retry};
 pub use state::TypedStateMap;

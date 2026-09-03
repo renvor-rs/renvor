@@ -2800,6 +2800,7 @@ version = "0.0.0"
 dependencies = [
  "getrandom 0.4.3",
  "petgraph",
+ "proptest",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
