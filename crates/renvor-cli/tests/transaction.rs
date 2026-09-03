@@ -29,7 +29,7 @@
 mod harness;
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use harness::{Terminal, renvor};
 
@@ -482,8 +482,11 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
                     "json",
                 ])
                 .current_dir(base.path())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null())
+                // These are flag-path runs even when `cargo test` itself inherited a terminal.
+                // `--yes` waives confirmation only; it deliberately does not suppress prompts.
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .expect("spawns"),
         );
@@ -508,7 +511,14 @@ fn concurrent_runs_at_one_destination_produce_one_project_and_no_corruption() {
                 failed_cleanly += 1;
             }
             other => {
-                panic!("a concurrent run exited {other:?}, which is neither a win nor a clean loss")
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                panic!(
+                    "a concurrent run exited {other:?}, which is neither a win nor a clean loss\n\
+                     --- stdout ---\n{}\n--- stderr ---\n{}",
+                    stdout.trim(),
+                    stderr.trim()
+                )
             }
         }
     }
@@ -559,8 +569,11 @@ fn a_killed_run_leaves_identifiable_residue_beside_the_destination_and_no_projec
     let mut child = Command::new(env!("CARGO_BIN_EXE_renvor"))
         .args(["new", "doomed", "--yes"])
         .current_dir(base.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        // This is a flag-path run even when `cargo test` itself inherited a terminal. `--yes`
+        // waives confirmation only; it deliberately does not suppress prompts.
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("spawns");
 
