@@ -31,7 +31,7 @@ use renvor_jobs::{
 pub const RACERS: usize = 4;
 
 /// How many assertions [`the_shared_jobs_contract_holds`] runs.
-pub const ASSERTIONS: usize = 15;
+pub const ASSERTIONS: usize = 16;
 
 /// What an implementation supplies.
 pub trait JobsFixture: Send + Sync {
@@ -612,6 +612,83 @@ pub async fn a_read_job_never_debugs_its_payload<F: JobsFixture>(fixture: &F) {
     );
 }
 
+/// FR-092: an expired lease at the last attempt dead-letters instead of returning to ready, so
+/// a handler that outlives its lease every time is bounded like any other failure. The control
+/// is the same shape one attempt short, which returns to ready.
+pub async fn an_expired_lease_at_the_last_attempt_dead_letters<F: JobsFixture>(fixture: &F) {
+    fixture.reset().await;
+    let store = fixture.store();
+    let last = store
+        .enqueue(
+            job(&fixture.bounds(), b"last")
+                .with_max_attempts(1)
+                .unwrap(),
+            at(1),
+        )
+        .await
+        .unwrap()
+        .id();
+    let control = store
+        .enqueue(
+            job(&fixture.bounds(), b"control")
+                .with_max_attempts(2)
+                .unwrap(),
+            at(2),
+        )
+        .await
+        .unwrap()
+        .id();
+    // Both are claimed and both leases expire.
+    assert!(
+        store
+            .claim(&queue(), at(10), LEASE)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .claim(&queue(), at(10), LEASE)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        store
+            .claim(&queue(), at(10), LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let expired = at(10) + LEASE;
+    // The control is reclaimed and handed out again; the last-attempt job is not.
+    let again = store
+        .claim(&queue(), expired, LEASE)
+        .await
+        .unwrap()
+        .expect("the control returns to ready and is claimable");
+    assert_eq!(again.job.id, control);
+    assert_eq!(again.job.attempts, 2);
+    assert_eq!(again.job.last_failure, Some(FailureKind::LeaseExpired));
+    assert!(
+        store
+            .claim(&queue(), expired, LEASE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let dead = store.read(&last).await.unwrap().unwrap();
+    assert_eq!(dead.state, JobState::Dead);
+    assert_eq!(dead.attempts, 1);
+    assert_eq!(dead.last_failure, Some(FailureKind::LeaseExpired));
+    assert_eq!(dead.finished_at, Some(expired));
+    assert_eq!(
+        store.depth(&queue()).await.unwrap(),
+        1,
+        "only the control is live"
+    );
+}
+
 /// Runs every assertion above and proves it ran all [`ASSERTIONS`] of them.
 pub async fn the_shared_jobs_contract_holds<F: JobsFixture>(fixture: &F) {
     let mut ran = 0_usize;
@@ -631,6 +708,7 @@ pub async fn the_shared_jobs_contract_holds<F: JobsFixture>(fixture: &F) {
     run!(failures_reschedule_then_dead_letter);
     run!(an_abandoned_job_dead_letters_immediately);
     run!(an_expired_lease_is_reclaimed_with_the_attempt_counted);
+    run!(an_expired_lease_at_the_last_attempt_dead_letters);
     run!(release_returns_the_job_to_ready_and_clears_the_lease);
     run!(the_depth_bound_refuses_and_finished_jobs_free_room);
     run!(revive_puts_a_dead_job_back_with_attempts_reset);

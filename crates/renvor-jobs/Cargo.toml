@@ -31,6 +31,7 @@ authors.workspace = true
 include = [
     "src/**/*.rs",
     "migrations/**/*.sql",
+    "migrations/**/*.sql",
     "Cargo.toml",
     "README.md",
     "LICENSE-MIT",

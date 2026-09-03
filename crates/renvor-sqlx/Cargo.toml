@@ -41,6 +41,9 @@ include = [
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 
 renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
+# The job port, present only under `jobs`: a consumer who has not asked for durable jobs resolves
+# none of the port (ADR-0031, FR-002).
+renvor-jobs = { path = "../renvor-jobs", version = "0.0.0", optional = true }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
@@ -104,6 +107,9 @@ db-mysql = ["sqlx/mysql"]
 # so a build of this adapter WITHOUT it resolves neither `jsonwebtoken` nor `aws-lc-rs`, and the
 # refresh repositories below do not exist. Naming a database is still a separate decision.
 tokens = ["renvor-auth/tokens", "renvor-testkit/tokens"]
+# The durable job store over this adapter (ADR-0032). Pulls the shared job-store contract into the
+# testkit for the four-row suite, exactly as `tokens` does for the refresh contract.
+jobs = ["dep:renvor-jobs", "renvor-testkit/jobs"]
 
 [lints]
 workspace = true

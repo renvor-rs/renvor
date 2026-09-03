@@ -40,6 +40,8 @@
 
 pub mod auth;
 pub mod error;
+#[cfg(feature = "jobs")]
+pub mod jobs;
 pub mod migrate;
 pub mod page;
 pub mod provider;

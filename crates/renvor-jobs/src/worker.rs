@@ -1140,10 +1140,14 @@ mod tests {
             Arc::new(FixedEntropy::new([0x44; 16]));
         let store = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
         let id = store.enqueue(new_job(1), clock.now()).await.unwrap().id();
+        // `drive` moves the injected clock 10 s per tick, so the default 60 s lease would expire
+        // — and an expired lease at the last attempt dead-letters as `LeaseExpired`. This test is
+        // about the HANDLER timeout, so the lease is longer than the clock can run here.
+        let config = config().with_lease(Duration::from_secs(60 * 60)).unwrap();
         let worker = Arc::new(
             Worker::new(
                 Arc::clone(&store),
-                config(),
+                config,
                 clock.clone(),
                 entropy,
                 &registry,

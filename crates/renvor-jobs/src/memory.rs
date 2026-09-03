@@ -87,7 +87,8 @@ impl MemoryJobStore {
         *self.table.lock().unwrap_or_else(PoisonError::into_inner) = Table::default();
     }
 
-    /// Returns leased jobs whose lease expired to the ready state, counting the lost attempt.
+    /// Returns leased jobs whose lease expired to the ready state — or, at the last attempt, to
+    /// the dead state — with the lost attempt already counted by the claim.
     fn reclaim_expired(table: &mut Table, queue: &QueueName, now: SystemTime) {
         let expired: Vec<JobId> = table
             .rows
@@ -102,12 +103,19 @@ impl MemoryJobStore {
             .collect();
         for id in expired {
             if let Some(row) = table.rows.get_mut(&id) {
-                row.job.state = JobState::Ready;
                 row.job.last_failure = Some(FailureKind::LeaseExpired);
                 row.job.updated_at = now;
                 row.lease = None;
                 row.lease_expires_at = None;
-                table.ready.insert((row.job.run_at, id), id);
+                // The lost attempt was counted at claim. At the last one the job dead-letters:
+                // a handler that outlives its lease every time must not be claimed without bound.
+                if row.job.attempts >= row.job.max_attempts {
+                    row.job.state = JobState::Dead;
+                    row.job.finished_at = Some(now);
+                } else {
+                    row.job.state = JobState::Ready;
+                    table.ready.insert((row.job.run_at, id), id);
+                }
             }
         }
     }
