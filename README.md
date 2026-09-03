@@ -1,6 +1,8 @@
-<p align="center">
-  <img alt="Renvor" src="assets/renvor-lockup-v40-dark.svg" width="360">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset=".github/assets/renvor-framework-readme-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset=".github/assets/renvor-framework-readme-light.svg">
+  <img alt="Renvor Framework" src=".github/assets/renvor-framework-readme-light.svg" width="100%">
+</picture>
 
 <p align="center">
   <a href="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/renvor-rs/renvor/actions/workflows/ci.yml/badge.svg?branch=main"></a>
