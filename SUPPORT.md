@@ -164,9 +164,9 @@ none has, on any platform. W-003, W-005, and W-008 are open for exactly that rea
 platform claim does not narrow any of them.
 
 It does **not** mean every platform receives the full verification sequence: `cargo xtask verify`
-also runs secret scanning, a link check, and a commit-history scan, which are properties of
-the repository rather than of the platform, and running them three times would triple a
-link check against github.com to learn nothing.
+also runs gitleaks over the repository history and working tree. Those scans are properties
+of the repository rather than of the platform, so repeating them on macOS and Windows would
+not exercise additional platform behaviour.
 
 Two behaviours are `#[cfg(unix)]`-gated and therefore verified on Linux and macOS only:
 the FIFO refusal, and the test that drives the non-Unicode environment-name path.

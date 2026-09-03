@@ -115,16 +115,16 @@ dependency and licence policy, architecture invariants, secret scanning, and wor
 cleanliness. The independently built and deployed Docusaurus site lives at
 [`docs.renvor.dev`](https://docs.renvor.dev).
 
-**A check that cannot run is a failure, never a skip.** If required tooling is missing the
-command exits `2`, names every missing tool with its install command, and prints
-`no checks were run` — because a partial run reported as success is the failure mode the
-whole sequence exists to prevent.
+**A check that cannot run is a failure, never a skip.** If a required tool or database
+prerequisite is missing, the command exits `2`, names every missing prerequisite and tells
+you how to provide it, and prints `no checks were run` — because a partial run reported as
+success is the failure mode the whole sequence exists to prevent.
 
 | Exit code | Meaning |
 |---|---|
 | `0` | Every step ran and passed |
 | `1` | A step ran and failed |
-| `2` | Required tooling missing — no steps ran |
+| `2` | Required tooling or database environment missing — no steps ran |
 | `3` | Working tree dirty after an otherwise successful run |
 
 ## Support
