@@ -1,5 +1,35 @@
-//! The object-storage capability: port, substitute, and the filesystem adapter.
+//! Object storage for Renvor: a narrow port whose keys cannot traverse and whose objects are
+//! bounded, an in-memory substitute with a byte capacity, a filesystem adapter rooted in a
+//! `cap-std` directory capability behind `filesystem`, and a provider that probes the backend at
+//! Boot.
 //!
-//! # Stability
+//! **Pre-release. Nothing here is published and no API is stable.**
 //!
-//! **This surface is explicitly unstable.** See the `renvor` facade documentation.
+//! # Where to start
+//!
+//! - [`port`] — [`ObjectStore`], [`ObjectKey`], [`ContentType`], the closed [`StorageError`].
+//! - [`memory`] — [`MemoryStore`], the deterministic substitute.
+//! - [`provider`] — [`StorageProvider`], which probes the backend at Boot.
+//! - `filesystem` (feature) — `FilesystemStore` on `cap-std` with atomic writes.
+//!
+//! # No object-storage service adapter ships in this phase
+//!
+//! ADR-0035 records the measurements: every S3-compatible candidate failed a licence, advisory,
+//! or root-store gate. The port is what makes that a later adapter rather than a later port.
+
+#![forbid(unsafe_code)]
+
+pub mod memory;
+pub mod port;
+pub mod provider;
+
+#[cfg(feature = "filesystem")]
+pub mod filesystem;
+
+pub use memory::MemoryStore;
+pub use port::{
+    ContentType, DEFAULT_MAX_OBJECT_BYTES, Deleted, MAX_KEY_BYTES, MAX_OBJECT_BYTES_CAP, Object,
+    ObjectKey, ObjectMeta, ObjectStore, StorageBounds, StorageError, StorageMetrics,
+    StorageRefusal,
+};
+pub use provider::{STORAGE_CAPABILITY, StorageBootError, StorageProvider, storage_capability};
