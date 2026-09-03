@@ -134,7 +134,10 @@ async fn set_get_delete_round_trip_and_the_namespace_is_applied() {
         .await
         .unwrap();
     assert_eq!(exists, 1, "the key is stored under its namespace");
-    assert!(qualified.starts_with("t-rt-"), "{qualified}");
+    assert!(
+        qualified.starts_with("t-rt-"),
+        "the qualified key does not carry the namespace prefix"
+    );
 
     assert_eq!(cache.delete(&key("a")).await.unwrap(), Deleted::Removed);
     assert_eq!(cache.delete(&key("a")).await.unwrap(), Deleted::Absent);
@@ -161,7 +164,7 @@ async fn the_server_receives_the_ttl_read_back_without_waiting() {
         .unwrap();
     assert!(
         (1..=30_000).contains(&remaining_ms),
-        "the server holds a TTL of {remaining_ms} ms, which is not the 30 s that was set"
+        "the server's TTL is not within the 30 s that was set"
     );
     cache.delete(&key("t")).await.unwrap();
 }
@@ -287,8 +290,7 @@ async fn an_unreachable_server_fails_boot_within_the_connect_timeout() {
     assert_eq!(error, CacheBootError::Unreachable);
     assert!(
         started.elapsed() < Duration::from_secs(5),
-        "the connect attempt was not bounded: {:?}",
-        started.elapsed()
+        "the connect attempt was not bounded"
     );
 }
 
@@ -327,12 +329,11 @@ async fn a_server_that_accepts_and_never_answers_fails_boot_within_the_bound() {
             error,
             CacheBootError::Unreachable | CacheBootError::Unanswered
         ),
-        "unexpected category {error:?}"
+        "the boot error is neither unreachable nor unanswered"
     );
     assert!(
         started.elapsed() < Duration::from_secs(5),
-        "the handshake wait was not bounded: {:?}",
-        started.elapsed()
+        "the handshake wait was not bounded"
     );
     stall.abort();
 }

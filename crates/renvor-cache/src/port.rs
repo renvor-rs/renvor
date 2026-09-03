@@ -549,11 +549,14 @@ mod tests {
 
     #[test]
     fn namespaces_are_lowercase_identifiers() {
-        for bad in ["", "Shop", "sh op", "a:b", &"n".repeat(65)] {
+        for (index, bad) in ["", "Shop", "sh op", "a:b", &"n".repeat(65)]
+            .into_iter()
+            .enumerate()
+        {
             assert_eq!(
                 Namespace::new(bad).unwrap_err(),
                 CacheError::Refused(Refusal::NamespaceInvalid),
-                "{bad:?} was accepted"
+                "rejected namespace case {index} was accepted"
             );
         }
         assert!(Namespace::new("shop.v2_eu-west").is_ok());
