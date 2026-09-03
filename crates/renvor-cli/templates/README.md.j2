@@ -219,10 +219,11 @@ forever.
 | Image | `{{ container_cache_image }}` |
 | Host port | `127.0.0.1:{{ container_cache_port }}` |
 
-**The cache container is optional local infrastructure. Renvor's runtime cache capability and
-adapter arrive in Phase 010.** Nothing in the generated source reads or writes it. It is here so
-that the container you will need then exists and is configured now — not because this project
-caches anything today.
+**The cache container is optional local infrastructure. Renvor's cache capability exists
+(`renvor-cache`, behind the facade's `capability-cache` feature); this generated project does not
+wire it.** Nothing in the generated source reads or writes it. It is here so that the container
+you will need when you do exists and is configured now — not because this project caches anything
+today.
 
 {{ container_cache_engine }} rather than Redis, and the reason is the licence. Redis Ltd.
 relicensed in March 2024 to RSALv2/SSPLv1, neither OSI-approved; Redis 8 added AGPLv3 as a

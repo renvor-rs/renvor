@@ -44,7 +44,7 @@ database_port = {{ container_database_port }}
 {% if container_cache %}cache_image = "{{ container_cache_image }}"
 cache_version = "{{ container_cache_version }}"
 cache_port = {{ container_cache_port }}
-# The cache container is optional local infrastructure. Renvor's runtime cache capability and
-# adapter arrive in Phase 010.
+# The cache container is optional local infrastructure. Renvor's cache capability exists
+# (`renvor-cache`, behind `capability-cache`); this generated project does not wire it.
 cache_wired_into_application = false
 {% endif %}{% endif %}

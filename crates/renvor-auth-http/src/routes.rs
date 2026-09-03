@@ -70,7 +70,8 @@ pub struct AuthEndpoints<U, C, B, S, T, M, R, A> {
     pub verifications: T,
     /// The **password-reset** token store. A different table; see [`Self::verifications`].
     pub resets: T,
-    /// Where mail goes. Phase 010 owns the operational adapter (FR-075).
+    /// Where mail goes. `renvor_mail::auth::AuthMailBridge` is the operational adapter over SMTP;
+    /// the recording sink stands in for tests (FR-075).
     pub mail: M,
     /// The abuse controls. **Every flow passes through this.**
     pub abuse: AbuseGuard<R, A>,

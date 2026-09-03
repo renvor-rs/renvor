@@ -239,6 +239,34 @@ pub use renvor_http::route::OperationSpec;
 #[cfg(feature = "transport-rest")]
 pub use renvor_validation::{Declaration, Reason};
 
+// THE PHASE 010 CAPABILITIES (PLAN §7.4, FR-005). Each behind its feature, each OFF by default;
+// a build without the feature resolves none of the crate. The root re-exports name each PORT and
+// its deterministic substitute; an adapter (Valkey, SMTP, the filesystem store, OTLP) is reached
+// through the module and its own feature, never from the root, so a name at the root is always
+// one that names no infrastructure type.
+#[cfg(feature = "capability-cache")]
+pub use renvor_cache as cache;
+#[cfg(feature = "capability-cache")]
+pub use renvor_cache::{Cache, CacheError, CacheKey, CacheValue, MemoryCache, Ttl};
+#[cfg(feature = "capability-jobs")]
+pub use renvor_jobs as jobs;
+#[cfg(feature = "capability-jobs")]
+pub use renvor_jobs::{
+    JobError, JobHandler, JobStore, MemoryJobStore, NewJob, Worker, WorkerConfig,
+};
+#[cfg(feature = "capability-mail")]
+pub use renvor_mail as mail;
+#[cfg(feature = "capability-mail")]
+pub use renvor_mail::{MailError, Mailer, Message, RecordingMailbox};
+#[cfg(feature = "observability")]
+pub use renvor_observability as observability;
+#[cfg(feature = "observability")]
+pub use renvor_observability::{LogSettings, Redaction};
+#[cfg(feature = "capability-storage")]
+pub use renvor_storage as storage;
+#[cfg(feature = "capability-storage")]
+pub use renvor_storage::{MemoryStore, ObjectKey, ObjectStore, StorageError};
+
 #[cfg(test)]
 mod tests {
     use super::*;

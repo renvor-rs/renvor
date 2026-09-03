@@ -95,6 +95,10 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "macro
 # through `renvor-config`; this adds an edge, not a package.
 serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
+# The observability example emits one span and one event through the facade `tracing` offers.
+# Already in the graph through `renvor-core`; this adds an edge, not a package.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
 # The Phase 005 example declares a type whose schema drives both validation and the description.
 # Already in the graph through `renvor-validation`; this adds an edge, not a package.
 schemars = { version = "1.2.2", default-features = false, features = ["derive"] }
@@ -116,6 +120,31 @@ required-features = ["config"]
 name = "described_api"
 path = "examples/described_api.rs"
 required-features = ["transport-rest"]
+
+[[example]]
+name = "cache"
+path = "examples/cache.rs"
+required-features = ["capability-cache"]
+
+[[example]]
+name = "jobs"
+path = "examples/jobs.rs"
+required-features = ["capability-jobs"]
+
+[[example]]
+name = "mail"
+path = "examples/mail.rs"
+required-features = ["capability-mail"]
+
+[[example]]
+name = "storage"
+path = "examples/storage.rs"
+required-features = ["capability-storage"]
+
+[[example]]
+name = "observability"
+path = "examples/observability.rs"
+required-features = ["observability"]
 
 [features]
 # `config` is DEFAULT-ON, so the out-of-the-box dependency footprint is the wider one and
