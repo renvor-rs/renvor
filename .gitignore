@@ -13,13 +13,6 @@ debug/
 *.rlib
 *.prof*
 
-# --- Node and documentation site output ---
-node_modules/
-.docusaurus/
-build/
-.cache/
-docs/build/
-
 # --- Editor and IDE state ---
 .idea/
 .vscode/

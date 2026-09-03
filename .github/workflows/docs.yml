@@ -1,9 +1,7 @@
-# Documentation site build and link check.
-#
-# This workflow BUILDS and VERIFIES. It does not deploy: the production documentation
-# site is a separate repository and a separate approval gate (PLAN.md Section 26).
-# `pages: write` and `id-token: write` are therefore not granted anywhere in this file.
-# They are added only when a deploy job actually exists, scoped to that job alone.
+# Rust API documentation. The Docusaurus source, build, link check, image construction, and
+# publication live in renvor-rs/renvor-docs. Staging and production deployment manifests and
+# Flux reconciliation live in renvor-rs/renvor-infra. This workflow keeps the required `docs`
+# context attached to the framework property this repository still owns: all-feature rustdoc.
 
 name: docs
 
@@ -27,44 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          node-version-file: .nvmrc
-          cache: npm
-          cache-dependency-path: docs/package-lock.json
+          toolchain: "1.94.0"
 
-      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
-        with:
-          tool: lychee
-
-      # `npm ci`, never `npm install`: the committed lockfile is the input, and a
-      # resolution that differs from it is a failure rather than a convenience.
-      - name: Build documentation site
-        working-directory: docs
-        run: |
-          npm ci
-          npm run build
-
-      # The image-input guard is the ONLY control that can fail a build over an image:
-      # the vendored image-size replacement throws, but mdx-loader catches that and
-      # continues, so a bypass ships a dimensionless image in a build reporting success
-      # (measured; see ADR-0009). The build step above exercises only the guard's passing
-      # path, where a guard broken to always exit 0 is indistinguishable from a working
-      # one. These controls plant each caught form and require a refusal.
-      - name: Image-input guard controls
-        working-directory: docs
-        run: npm run test:image-inputs
-
-      # npm-side advisory gate. cargo-deny covers Rust only, and dependency-review runs
-      # on pull_request alone, so before this step a newly published advisory against any
-      # npm dependency reached no gate at all. `moderate` rather than `high` because
-      # governance/dependency-advisory-policy.md requires a written, time-bounded
-      # exception even at Medium.
-      - name: npm advisories
-        working-directory: docs
-        run: npm audit --audit-level=moderate
-
-      # --root-dir is required. The built site uses root-relative links, and without
-      # it every internal link resolves as broken against the local filesystem.
-      - name: Link check
-        run: lychee --no-progress --require-https --config lychee.toml --root-dir "$GITHUB_WORKSPACE/docs/build" docs/build
+      - name: Build all-feature API documentation with warnings denied
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --workspace --all-features --no-deps

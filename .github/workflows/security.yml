@@ -44,26 +44,6 @@ jobs:
 
       - name: clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
-
-      # The scheduled sweep above existed to catch advisories published AFTER a merge —
-      # but cargo-deny is Rust-only, and `dependency-review` runs on pull_request alone,
-      # so until now a newly published advisory against any of the documentation site's
-      # npm dependencies reached no gate on any trigger. That is the gap that let two
-      # unfixable HIGH `image-size` advisories sit open (ADR-0009); the remedy is a gate,
-      # not a reminder.
-      #
-      # `npm audit` reads package.json and the committed lockfile and queries the registry
-      # advisory API — no `npm ci` needed, so this stays fast. `moderate` rather than
-      # `high` because governance/dependency-advisory-policy.md requires a written,
-      # time-bounded exception even at Medium.
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-
-      - name: npm advisories (documentation site)
-        working-directory: docs
-        run: npm audit --audit-level=moderate
-
   dependency-review:
     # Only meaningful on a pull request: it diffs the dependency graph against the base.
     if: github.event_name == 'pull_request'

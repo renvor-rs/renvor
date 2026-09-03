@@ -9,6 +9,13 @@
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
 
+> **Documentation deployment update 2026-09-03.** The historical observations in this record that
+> `renvor-docs` was commit-empty and `docs.renvor.dev` returned 404 were accurate when recorded and
+> are now superseded. The public repository has source, CI, and image publication; Flux serves image
+> digest `sha256:9240f8621a7bbfe735cb895298cc9fe6a75572e2e011a68d4405e11ee69ebfcd`
+> at `docs.renvor.dev` over a valid Let's Encrypt certificate. T108 is resolved late; the repository
+> protection/required-check gap remains open.
+
 > ## Revision 2026-08-12 — the edge model changed, by maintainer decision
 >
 > **This record originally specified a proxied Cloudflare edge with Full (strict) TLS,

@@ -691,7 +691,7 @@ Before a phase is accepted:
 
 Documentation is versioned and searchable. The documentation stack is selected and recorded in Phase 001 rather than assumed accepted.
 
-The production documentation site, its repository, its domain, and the rule that the API reference is generated from an immutable framework artifact are defined in Section 26. Section 26 also governs the temporary Phase 001 `docs/` directory and the single gate at which it is replaced.
+The production documentation site, its repository, its domain, and the rule that the API reference is generated from an immutable framework artifact are defined in Section 26. Section 26 also records the temporary Phase 001 `docs/` directory and its late replacement on 2026-09-03.
 
 Required sections by 1.0:
 
@@ -1124,8 +1124,8 @@ Four repositories, all public on GitHub, all canonical there:
 | Repository | Host | Visibility | Source of truth for | Must never contain |
 |---|---|---|---|---|
 | `renvor-rs/renvor` | GitHub | **Public** | Framework source, crate metadata, rustdoc inputs, governance, decision records, releases | Website source, brand assets, deployment configuration, infrastructure credentials |
-| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V7 landing page and approved V7 brand assets, **served at `renvor.dev` since 2026-08-17** | Framework source, documentation content, cluster credentials |
-| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | **Will be** the production documentation site at `docs.renvor.dev`; **commit-empty today**, so it is a reserved destination, not yet a source of truth | Framework source copied by hand, cluster credentials |
+| `renvor-rs/renvor-site` | GitHub | **Public** *(2026-08-14)* | The V40 landing page and approved V40 brand assets, **served at `renvor.dev`** | Framework source, documentation content, cluster credentials |
+| `renvor-rs/renvor-docs` | GitHub | **Public** *(2026-08-14)* | Production Docusaurus source, content controls, container build and publishing automation, **served at `docs.renvor.dev` since 2026-09-03** | Framework source copied by hand, cluster credentials |
 | `renvor-rs/renvor-infra` | GitHub | **Public** *(2026-08-15)* | Kubernetes deployment configuration, ingress and TLS configuration, and public operational documentation — **all three exist as of 2026-08-17** | Application source, plaintext secrets of any kind |
 
 > **Updated 2026-08-17.** The `renvor-site` row read "**to be served**" and the `renvor-infra` row
@@ -1135,12 +1135,18 @@ Four repositories, all public on GitHub, all canonical there:
 > commit-empty and `docs.renvor.dev` is not deployed. Evidence:
 > [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
 
-**GitHub is the source, review, and CI surface for all four repositories** — actual for three of
-them, future for `renvor-docs`. *("future" added 2026-08-15 — `renvor-docs` and `renvor-infra` had
+> **Updated 2026-09-03.** The `renvor-docs` row and the last two sentences of the 2026-08-17 note
+> are now superseded. The repository has a real `main` branch, source, CI, and publishing workflow;
+> its digest-pinned image is live at `docs.renvor.dev`. The dated note remains above because it was
+> accurate when recorded. Current deployment evidence is appended to
+> [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
+
+**GitHub is the source, review, and CI surface for all four repositories.** *("future" was added
+2026-08-15 — `renvor-docs` and `renvor-infra` had
 zero workflows and zero runs, so GitHub was not yet a CI surface for them. This matched ADR-0006
 D13 and [`phase-001-evidence.md` §3av](https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/governance/phase-001-evidence.md?plain=1#L3465). **Narrowed 2026-08-17**: `renvor-infra` now has
 the `infra-ci` workflow with a required `validate` check, so "future" applies to `renvor-docs`
-alone, which is still commit-empty.)* **No
+alone. **Superseded 2026-09-03:** `renvor-docs` now has both CI and publication workflows.)* **No
 Renvor process reads from, writes to, or depends on a GitLab instance** for source control,
 CI, registry, deployment, or disaster recovery.
 
@@ -1154,7 +1160,7 @@ false for two of the four.)* Observed 2026-08-15:
 | `renvor-rs/renvor` | yes — pull request, strict checks, administrators included, conversation resolution, force push and deletion blocked | 4 — `verify (1.94.0)`, `verify (stable)`, `security`, `docs` |
 | `renvor-rs/renvor-site` | yes — same controls | 5 — `build`, `accessibility`, `links`, `dependencies`, `container` |
 | `renvor-rs/renvor-infra` | yes, by ruleset `20889836` — pull request, signed commits, linear history, conversation resolution, force push and deletion blocked, zero bypass actors | **1 — `validate`**, strict, *added 2026-08-17T20:42:25Z; **none** until then* |
-| `renvor-rs/renvor-docs` | **no** — commit-empty, so no `main` branch exists to protect and no protection or ruleset is configured | **none** — no commits, no workflows |
+| `renvor-rs/renvor-docs` | **no** — `main` exists, but no branch protection or ruleset is configured as of 2026-09-03 | **none required** — `docs` and `container` CI contexts run, but neither is enforced by branch protection |
 
 > **Updated 2026-08-17.** The `renvor-infra` row read "**none** — the repository has no CI yet".
 > That is no longer true, and **the way it became untrue is itself the finding**: CI arrived in the
@@ -1164,19 +1170,19 @@ false for two of the four.)* Observed 2026-08-15:
 > late**. Recorded, not smoothed over, in
 > [`governance/deployment-evidence.md` §5](governance/deployment-evidence.md).
 
-`renvor-infra` reached the required-check half of the control set on 2026-08-17. **Bringing
-`renvor-docs` up to the full control set remains future work** gated on that repository acquiring
-content. **That gap is not closed by this record and may not be described as satisfied**, and
+`renvor-infra` reached the required-check half of the control set on 2026-08-17. `renvor-docs`
+acquired content and CI on 2026-09-03, but **bringing it up to the full protection and required-check
+control set remains future work**. **That gap is not closed by the migration and may not be
+described as satisfied**, and
 neither may the approval gap: `renvor-infra` and `renvor` both sit at
 `required_approving_review_count: 0`, which is the single-maintainer gap recorded in W-001.
 
-**`renvor-rs/renvor-docs` is the public canonical *destination* for the production
-documentation site, and it is deliberately commit-empty.** It has no commits and receives none
-— no README, licence, `.gitignore`, or workflow — until its **licence is decided** and **T108
-permits migration**. **Until that separately reviewed migration happens, `framework/docs` is
-the authoritative documentation content**, and the empty repository is a reserved name and a
-statement of intent rather than a source of truth. **Unchanged by D13.** See ADR-0006 D13 and
-§26.12.
+**`renvor-rs/renvor-docs` is the public canonical source for the production documentation site.**
+It carries the Docusaurus source, dual licence, lockfile, CI, image publication workflow, and
+deployment documentation. T108's runtime and SBOM conditions were measured against the published
+image and resolved late on 2026-09-03. The temporary `framework/docs` source is removed by the
+corresponding framework migration; the framework retains rustdoc inputs, contracts, governance,
+and decision records. See ADR-0006 D13, ADR-0009, and §26.12.
 
 **`renvor-rs/renvor-infra` is public and canonical**, published 2026-08-15 at signed commit
 `aa52237f4af421e089c31cfe306faa5db7c25e08`, protected by active ruleset `20889836` requiring
@@ -1207,6 +1213,11 @@ site visibility is a future gate, and neither implies the other.
 > half: **`docs.renvor.dev` still serves no Renvor content** and is not deployed. The heading above
 > this paragraph, "All source public. No site deployed.", is likewise half-superseded. Full
 > evidence: [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
+>
+> **Superseded again 2026-09-03.** The surviving half-clause is now false: `docs.renvor.dev`
+> serves the independently built documentation image over a publicly trusted certificate. The
+> struck 2026-08-15 sentence and this 2026-08-17 correction remain as dated history rather than
+> being rewritten into claims they did not make at the time.
 >
 > The struck text is kept rather than deleted because the paragraph is a dated record of a
 > correction, and rewriting it would erase the reasoning that produced it.
@@ -1316,6 +1327,10 @@ decision itself is unchanged)*
 > The four design properties above — digest pinning, signature, SBOM and provenance, pre-promotion
 > scanning — were all **observed** on the deployed image rather than merely intended. Evidence:
 > [`governance/deployment-evidence.md`](governance/deployment-evidence.md).
+>
+> **Superseded for the third hostname 2026-09-03.** `docs.renvor.dev` now serves Renvor
+> documentation over a Let's Encrypt certificate. The 2026-08-15 and 2026-08-17 observations above
+> remain accurate about their dates; neither describes current deployment state.
 
 **A private image would be the correct default for anything carrying configuration,
 credentials, or unreleased material.** The public choice here is specific to a static site
@@ -1368,7 +1383,8 @@ framework revision it describes.
 separate documentation site is an addition, never a replacement, and never a prerequisite for
 publishing a crate. *(Corrected 2026-08-15 — this read "The private documentation site". Wrong
 twice: `renvor-rs/renvor-docs` is public, and **no documentation site exists** — the
-repository is commit-empty.)*
+repository was commit-empty.)* **Updated 2026-09-03:** the site now exists and is live; the
+separation from framework publication remains unchanged.
 
 ### 26.8 How the website repositories consume the public framework
 
@@ -1423,10 +1439,10 @@ This section changes no phase boundary. It adds obligations to existing phases:
 
 ### 26.12 Phase 001 `docs/` directory — deliberate temporary duplication
 
-Phase 001 contains a working Docusaurus site at `docs/` that satisfies FR-054 and FR-056 and
-carries the T064–T069 evidence.
+Phase 001 introduced a working Docusaurus site at `docs/` that satisfied FR-054 and FR-056 and
+carried the T064–T069 evidence.
 
-It **stays where it is for the remainder of Phase 001.** Moving it now would invalidate
+It **stayed where it was for the remainder of Phase 001.** Moving it during that phase would have invalidated
 completed, dated verification evidence and would replace a proven artifact with an unproven
 one mid-phase.
 
@@ -1435,3 +1451,10 @@ prevent two long-lived sources of truth, the migration to `renvor-rs/renvor-docs
 reviewed gate, and on the day that gate passes the Phase 001 `docs/` directory is removed
 from the framework repository in the same change that stands up the replacement. The two
 never coexist as published sites.
+
+**Completed late on 2026-09-03.** The standalone repository was populated, verified, published by
+immutable image digest, and deployed before the framework cleanup landed. The literal
+same-change timing above was therefore missed: two source copies coexisted between those changes.
+They did **not** coexist as published sites — the framework copy had no deployment path — and this
+change removes that last source duplication. The miss is recorded rather than redefining
+"same change" to include separate repositories and pull requests.

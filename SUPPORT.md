@@ -164,9 +164,9 @@ none has, on any platform. W-003, W-005, and W-008 are open for exactly that rea
 platform claim does not narrow any of them.
 
 It does **not** mean every platform receives the full verification sequence: `cargo xtask verify`
-also runs secret scanning, a link check, and a commit-history scan, which are properties of
-the repository rather than of the platform, and running them three times would triple a
-link check against github.com to learn nothing.
+also runs gitleaks over the repository history and working tree. Those scans are properties
+of the repository rather than of the platform, so repeating them on macOS and Windows would
+not exercise additional platform behaviour.
 
 Two behaviours are `#[cfg(unix)]`-gated and therefore verified on Linux and macOS only:
 the FIFO refusal, and the test that drives the non-Unicode environment-name path.
@@ -207,12 +207,12 @@ measurement.
 |---|---|---|
 | Reusable library crates | Compatible requirements (`1.2`), not exact pins | Not committed |
 | Applications, generators, release tooling, automation | As resolved | **Committed** |
-| Documentation site | As resolved | **Committed** (`package-lock.json`) |
+| Documentation site | As resolved | **Committed in `renvor-rs/renvor-docs`** (`package-lock.json`) |
 
-Dependency updates arrive as reviewable pull requests through Dependabot across the
-`cargo`, `github-actions`, and `npm` ecosystems. **Unreviewed floating updates are
-prohibited.** The authoritative machine-readable licence and dependency policy is
-[`deny.toml`](deny.toml).
+Dependency updates arrive as reviewable pull requests through Dependabot. This repository's
+configuration covers `cargo` and `github-actions`; the `renvor-rs/renvor-docs` configuration covers
+its npm graph. **Unreviewed floating updates are prohibited.** The authoritative machine-readable
+licence and dependency policy is [`deny.toml`](deny.toml).
 
 ## Releases
 

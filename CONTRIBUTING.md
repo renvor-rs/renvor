@@ -18,11 +18,17 @@ Read [`GOVERNANCE.md`](GOVERNANCE.md) for who decides what, and
 cargo xtask verify
 ```
 
-That is the entire verification sequence — formatting, lint, tests, API documentation,
-dependency and licence policy, secret scanning, documentation build, link checking, and
-working-tree cleanliness. **CI runs this exact command.** Nothing in a workflow file
-duplicates it, because duplicated steps are how local and automated verification silently
-drift apart.
+That is the entire framework verification sequence — formatting, lint, tests, all-feature API
+documentation, dependency and licence policy, architecture checks, secret scanning, and
+working-tree cleanliness. **Both verification jobs run this exact command.** The separately
+required `docs` context deliberately repeats step 5 so all-feature, warning-denied rustdoc stays
+visible in branch protection; no workflow maintains a second copy of the full sequence.
+
+The Docusaurus source, content controls, rendered-link checks, image construction, and publication
+live in the separate [`renvor-rs/renvor-docs`](https://github.com/renvor-rs/renvor-docs)
+repository. Staging and production deployment manifests and Flux reconciliation live in
+[`renvor-rs/renvor-infra`](https://github.com/renvor-rs/renvor-infra). This command neither clones
+nor builds that site.
 
 Run it before you open a pull request. If it passes locally it should pass in CI.
 
@@ -48,8 +54,6 @@ see it, the output names everything that is missing and what to do about each on
 | clippy | `rustup component add clippy` |
 | cargo-deny | `cargo install cargo-deny --locked` |
 | gitleaks | `brew install gitleaks` (or see the gitleaks project) |
-| lychee | `cargo install lychee --locked` |
-| node, npm | see `.nvmrc` |
 
 The toolchain itself is pinned by `rust-toolchain.toml`; rustup will fetch it for you.
 
@@ -140,8 +144,9 @@ the enforced one, and reviewers then trust the wrong list. Read `deny.toml`.
 
 Rules:
 
-1. **Updates arrive as reviewable pull requests.** Dependabot covers the `cargo`,
-   `github-actions`, and `npm` ecosystems. Every update is reviewed like any other change.
+1. **Updates arrive as reviewable pull requests.** This repository's Dependabot configuration
+   covers `cargo` and `github-actions`; the documentation repository's configuration covers its
+   npm graph. Every update is reviewed like any other change.
 2. **Wildcard version requirements are denied.** A wildcard means "whatever resolves
    today", which is an unreviewed floating update by another name.
 3. **No git or path dependencies in a publishable package.** `xtask` is exempt because it
@@ -150,8 +155,8 @@ Rules:
    audit trail that comes with it.
 5. **Adding a licence to the allow-list is a policy change**, reviewed like any other, not
    a convenience edit to get CI green.
-6. **Lockfiles**: committed for applications, release tooling, automation, and the
-   documentation site; not committed for reusable library crates.
+6. **Lockfiles**: committed for applications, release tooling, and automation; not committed for
+   reusable library crates. The documentation site's lockfile lives with that site.
 
 ### Security advisories
 

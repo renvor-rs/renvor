@@ -9,6 +9,12 @@
 | **Superseded by** | — |
 | **Owner** | Ahmed Anbar |
 
+> **Implementation moved 2026-09-03.** The accepted platform decision remains in force, but its
+> source now lives in `renvor-rs/renvor-docs` and is served at `https://docs.renvor.dev`. Paths below
+> beginning with `docs/` describe the original Phase 001 implementation in this repository. The
+> framework copy and its Node/npm/lychee gate are removed; warning-denied all-feature rustdoc remains
+> a framework responsibility.
+
 ## Context
 
 Renvor needs a documentation site before it has documentation, because the *verification

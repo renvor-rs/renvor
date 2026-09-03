@@ -110,20 +110,21 @@ cargo xtask verify
 
 The ordered steps are defined by [`contracts/verification-sequence.md`](contracts/verification-sequence.md),
 which is the normative list — this page does not keep a second copy of the numbering. The
-categories it covers: toolchain probe, formatting, lint, tests, API documentation, dependency
-and licence policy, architecture invariants, secret scanning, documentation build, link
-checking, and working-tree cleanliness.
+categories it covers: toolchain probe, formatting, lint, tests, all-feature API documentation,
+dependency and licence policy, architecture invariants, secret scanning, and working-tree
+cleanliness. The independently built and deployed Docusaurus site lives at
+[`docs.renvor.dev`](https://docs.renvor.dev).
 
-**A check that cannot run is a failure, never a skip.** If required tooling is missing the
-command exits `2`, names every missing tool with its install command, and prints
-`no checks were run` — because a partial run reported as success is the failure mode the
-whole sequence exists to prevent.
+**A check that cannot run is a failure, never a skip.** If a required tool or database
+prerequisite is missing, the command exits `2`, names every missing prerequisite and tells
+you how to provide it, and prints `no checks were run` — because a partial run reported as
+success is the failure mode the whole sequence exists to prevent.
 
 | Exit code | Meaning |
 |---|---|
 | `0` | Every step ran and passed |
 | `1` | A step ran and failed |
-| `2` | Required tooling missing — no steps ran |
+| `2` | Required tooling or database environment missing — no steps ran |
 | `3` | Working tree dirty after an otherwise successful run |
 
 ## Support

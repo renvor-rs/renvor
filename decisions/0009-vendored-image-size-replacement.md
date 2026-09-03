@@ -8,6 +8,14 @@
 | **Review date** | 2026-08-17 |
 | **Superseded by** | — |
 
+> **Migration and T108 update 2026-09-03.** This decision now governs the implementation in
+> `renvor-rs/renvor-docs`. Its vendored replacement, image-input guard, npm lockfile, and controls
+> moved with the Docusaurus source; their `docs/`-prefixed paths below describe where they were first
+> accepted in the framework repository. The published production image and its SBOM contain no
+> `image-size` parser package, so the two remaining T108 observations are satisfied. T108 is
+> resolved late because the standalone site was deployed before the framework source copy was
+> removed.
+
 > **Accepted under waiver W-006, granted by Ahmed Anbar on 2026-08-17.**
 >
 > **No independent human review of ADR-0009 has occurred.** `GOVERNANCE.md` defines an independent
