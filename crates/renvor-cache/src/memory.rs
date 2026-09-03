@@ -27,7 +27,8 @@ use std::sync::{Mutex, PoisonError};
 use tokio::time::Instant;
 
 use crate::port::{
-    Cache, CacheBounds, CacheError, CacheKey, CacheValue, Deleted, Namespace, Stored, Ttl,
+    Cache, CacheBounds, CacheError, CacheKey, CacheMetrics, CacheValue, Deleted, Namespace, Stored,
+    Ttl,
 };
 
 /// The default entry capacity.
@@ -47,7 +48,11 @@ pub struct MemoryCache {
     bounds: CacheBounds,
     capacity: usize,
     entries: Mutex<HashMap<String, Entry>>,
+    metrics: Option<CacheMetrics>,
 }
+
+/// The backend label in metrics.
+pub const BACKEND: &str = "memory";
 
 impl MemoryCache {
     /// Creates a cache with [`DEFAULT_CAPACITY`] entries.
@@ -64,6 +69,7 @@ impl MemoryCache {
             namespace,
             bounds,
             capacity: capacity.max(1),
+            metrics: None,
             entries: Mutex::new(HashMap::new()),
         }
     }
@@ -136,8 +142,34 @@ impl MemoryCache {
     }
 }
 
-impl Cache for MemoryCache {
-    async fn get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
+impl MemoryCache {
+    /// Counts a read as a hit, a miss, or an error.
+    fn record_read(&self, outcome: &Result<Option<CacheValue>, CacheError>) {
+        if let Some(metrics) = &self.metrics {
+            match outcome {
+                Ok(Some(_)) => metrics.hit(BACKEND),
+                Ok(None) => metrics.miss(BACKEND),
+                Err(error) => metrics.error(BACKEND, *error),
+            }
+        }
+    }
+
+    /// Counts a failed write or delete by its closed category.
+    fn record<T>(&self, outcome: Result<T, CacheError>) -> Result<T, CacheError> {
+        if let (Some(metrics), Err(error)) = (&self.metrics, &outcome) {
+            metrics.error(BACKEND, *error);
+        }
+        outcome
+    }
+
+    /// Counts hits, misses, and errors in `metrics`.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: CacheMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    async fn raw_get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
         let qualified = self.namespace.qualify(key)?;
         let now = Instant::now();
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
@@ -152,11 +184,11 @@ impl Cache for MemoryCache {
         }
     }
 
-    async fn set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
+    async fn raw_set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
         self.write(key, value, ttl, false).map(|_| ())
     }
 
-    async fn set_if_absent(
+    async fn raw_set_if_absent(
         &self,
         key: &CacheKey,
         value: CacheValue,
@@ -165,7 +197,7 @@ impl Cache for MemoryCache {
         self.write(key, value, ttl, true)
     }
 
-    async fn delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
+    async fn raw_delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
         let qualified = self.namespace.qualify(key)?;
         let now = Instant::now();
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
@@ -174,6 +206,28 @@ impl Cache for MemoryCache {
             // An expired entry was never "there" to a caller; removing it is housekeeping.
             _ => Ok(Deleted::Absent),
         }
+    }
+}
+
+impl Cache for MemoryCache {
+    async fn get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
+        let outcome = self.raw_get(key).await;
+        self.record_read(&outcome);
+        outcome
+    }
+    async fn set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
+        self.record(self.raw_set(key, value, ttl).await)
+    }
+    async fn set_if_absent(
+        &self,
+        key: &CacheKey,
+        value: CacheValue,
+        ttl: Ttl,
+    ) -> Result<Stored, CacheError> {
+        self.record(self.raw_set_if_absent(key, value, ttl).await)
+    }
+    async fn delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
+        self.record(self.raw_delete(key).await)
     }
 }
 
@@ -347,6 +401,80 @@ mod tests {
         assert!(
             rendered.contains("MemoryCache"),
             "Debug does not name the type"
+        );
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use std::time::Duration;
+
+    use renvor_core::observe::metrics::{Registry, SeriesValue};
+
+    use super::{BACKEND, MemoryCache};
+    use crate::port::{
+        Cache as _, CacheBounds, CacheKey, CacheMetrics, CacheValue, Namespace, Ttl,
+    };
+
+    fn total(registry: &Registry, name: &str) -> f64 {
+        registry
+            .snapshot()
+            .families
+            .iter()
+            .filter(|family| family.name == name)
+            .flat_map(|family| family.series.iter())
+            .map(|series| match series.value {
+                SeriesValue::Scalar(value) => value,
+                SeriesValue::Histogram { .. } => 0.0,
+            })
+            .sum()
+    }
+
+    #[tokio::test]
+    async fn hits_misses_and_errors_are_counted_under_the_backend_label() {
+        let registry = Registry::new();
+        let metrics = CacheMetrics::register(&registry).unwrap();
+        let bounds = CacheBounds::new().with_max_value_bytes(4).unwrap();
+        let cache = MemoryCache::with_capacity(Namespace::new("m").unwrap(), bounds, 1)
+            .with_metrics(metrics);
+        let key = CacheKey::new("k").unwrap();
+        let ttl = Ttl::within(Duration::from_secs(60), &bounds).unwrap();
+        assert!(cache.get(&key).await.unwrap().is_none());
+        cache
+            .set(
+                &key,
+                CacheValue::within(b"v".to_vec(), &bounds).unwrap(),
+                ttl,
+            )
+            .await
+            .unwrap();
+        assert!(cache.get(&key).await.unwrap().is_some());
+        // Capacity 1: a second key is refused, and the refusal is an error series.
+        let other = CacheKey::new("other").unwrap();
+        assert!(
+            cache
+                .set(
+                    &other,
+                    CacheValue::within(b"w".to_vec(), &bounds).unwrap(),
+                    ttl
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(total(&registry, "renvor_cache_hits_total"), 1.0);
+        assert_eq!(total(&registry, "renvor_cache_misses_total"), 1.0);
+        assert_eq!(total(&registry, "renvor_cache_errors_total"), 1.0);
+        let snapshot = registry.snapshot();
+        let errors = snapshot
+            .families
+            .iter()
+            .find(|family| family.name == "renvor_cache_errors_total")
+            .unwrap();
+        assert!(
+            errors
+                .series
+                .iter()
+                .any(|series| series.labels.contains(&("backend", BACKEND.to_owned())))
         );
     }
 }

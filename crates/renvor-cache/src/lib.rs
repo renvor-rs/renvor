@@ -35,9 +35,10 @@ pub mod valkey;
 
 pub use memory::{DEFAULT_CAPACITY, MemoryCache};
 pub use port::{
-    Cache, CacheBounds, CacheError, CacheKey, CacheValue, DEFAULT_MAX_TTL, DEFAULT_MAX_VALUE_BYTES,
-    DEFAULT_OPERATION_TIMEOUT, Deleted, MAX_KEY_BYTES, MAX_NAMESPACE_BYTES, MAX_TTL_CAP,
-    MAX_VALUE_BYTES_CAP, MIN_TTL, Namespace, OPERATION_TIMEOUT_CAP, Refusal, Stored, Ttl,
+    Cache, CacheBounds, CacheError, CacheKey, CacheMetrics, CacheValue, DEFAULT_MAX_TTL,
+    DEFAULT_MAX_VALUE_BYTES, DEFAULT_OPERATION_TIMEOUT, Deleted, MAX_KEY_BYTES,
+    MAX_NAMESPACE_BYTES, MAX_TTL_CAP, MAX_VALUE_BYTES_CAP, MIN_TTL, Namespace,
+    OPERATION_TIMEOUT_CAP, Refusal, Stored, Ttl,
 };
 pub use provider::{
     BootPhase, CACHE_CAPABILITY, CacheBootError, MemoryCacheProvider, cache_capability,

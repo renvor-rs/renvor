@@ -36,7 +36,8 @@ use renvor_core::provider::ProviderId;
 use renvor_core::provider::registry::{CapabilityId, InitContext, Provider, ProviderFuture};
 
 use crate::port::{
-    Cache, CacheBounds, CacheError, CacheKey, CacheValue, Deleted, Namespace, Refusal, Stored, Ttl,
+    Cache, CacheBounds, CacheError, CacheKey, CacheMetrics, CacheValue, Deleted, Namespace,
+    Refusal, Stored, Ttl,
 };
 use crate::provider::{CacheBootError, CacheReadiness, cache_capability};
 
@@ -150,7 +151,11 @@ pub struct ValkeyCache {
     manager: ConnectionManager,
     namespace: Namespace,
     bounds: CacheBounds,
+    metrics: Option<CacheMetrics>,
 }
+
+/// The backend label in metrics.
+pub const BACKEND: &str = "valkey";
 
 impl core::fmt::Debug for ValkeyCache {
     /// Namespace and bounds only. The manager holds the address and the credential.
@@ -219,6 +224,7 @@ impl ValkeyCache {
             Err(_elapsed) => return Err(CacheBootError::Unreachable),
         };
         Ok(Self {
+            metrics: None,
             manager,
             namespace: settings.namespace.clone(),
             bounds: settings.bounds,
@@ -290,8 +296,34 @@ fn operation_category(error: &redis::RedisError) -> CacheError {
     }
 }
 
-impl Cache for ValkeyCache {
-    async fn get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
+impl ValkeyCache {
+    /// Counts a read as a hit, a miss, or an error.
+    fn record_read(&self, outcome: &Result<Option<CacheValue>, CacheError>) {
+        if let Some(metrics) = &self.metrics {
+            match outcome {
+                Ok(Some(_)) => metrics.hit(BACKEND),
+                Ok(None) => metrics.miss(BACKEND),
+                Err(error) => metrics.error(BACKEND, *error),
+            }
+        }
+    }
+
+    /// Counts a failed write or delete by its closed category.
+    fn record<T>(&self, outcome: Result<T, CacheError>) -> Result<T, CacheError> {
+        if let (Some(metrics), Err(error)) = (&self.metrics, &outcome) {
+            metrics.error(BACKEND, *error);
+        }
+        outcome
+    }
+
+    /// Counts hits, misses, and errors in `metrics`.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: CacheMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    async fn raw_get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
         let qualified = self.namespace.qualify(key)?;
         let bytes: Option<Vec<u8>> = self.run(redis::cmd("GET").arg(qualified).clone()).await?;
         match bytes {
@@ -303,7 +335,7 @@ impl Cache for ValkeyCache {
         }
     }
 
-    async fn set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
+    async fn raw_set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
         let qualified = self.namespace.qualify(key)?;
         let _: String = self
             .run(
@@ -318,7 +350,7 @@ impl Cache for ValkeyCache {
         Ok(())
     }
 
-    async fn set_if_absent(
+    async fn raw_set_if_absent(
         &self,
         key: &CacheKey,
         value: CacheValue,
@@ -344,7 +376,7 @@ impl Cache for ValkeyCache {
         })
     }
 
-    async fn delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
+    async fn raw_delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
         let qualified = self.namespace.qualify(key)?;
         let removed: i64 = self.run(redis::cmd("DEL").arg(qualified).clone()).await?;
         Ok(if removed > 0 {
@@ -352,6 +384,28 @@ impl Cache for ValkeyCache {
         } else {
             Deleted::Absent
         })
+    }
+}
+
+impl Cache for ValkeyCache {
+    async fn get(&self, key: &CacheKey) -> Result<Option<CacheValue>, CacheError> {
+        let outcome = self.raw_get(key).await;
+        self.record_read(&outcome);
+        outcome
+    }
+    async fn set(&self, key: &CacheKey, value: CacheValue, ttl: Ttl) -> Result<(), CacheError> {
+        self.record(self.raw_set(key, value, ttl).await)
+    }
+    async fn set_if_absent(
+        &self,
+        key: &CacheKey,
+        value: CacheValue,
+        ttl: Ttl,
+    ) -> Result<Stored, CacheError> {
+        self.record(self.raw_set_if_absent(key, value, ttl).await)
+    }
+    async fn delete(&self, key: &CacheKey) -> Result<Deleted, CacheError> {
+        self.record(self.raw_delete(key).await)
     }
 }
 

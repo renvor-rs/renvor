@@ -427,6 +427,61 @@ pub enum Deleted {
     Absent,
 }
 
+/// The cache counters (FR-083): `renvor_cache_hits_total{backend}`,
+/// `renvor_cache_misses_total{backend}`, and `renvor_cache_errors_total{backend, category}`.
+#[derive(Clone, Debug)]
+pub struct CacheMetrics {
+    hits: renvor_core::observe::metrics::Counter,
+    misses: renvor_core::observe::metrics::Counter,
+    errors: renvor_core::observe::metrics::Counter,
+}
+
+impl CacheMetrics {
+    /// Registers the three families, or returns the existing ones.
+    ///
+    /// # Errors
+    ///
+    /// [`renvor_core::observe::metrics::MetricsError`] when a family of the same name is
+    /// registered with another shape.
+    pub fn register(
+        registry: &renvor_core::observe::metrics::Registry,
+    ) -> Result<Self, renvor_core::observe::metrics::MetricsError> {
+        Ok(Self {
+            hits: registry.counter(
+                "renvor_cache_hits_total",
+                "Reads that found a value.",
+                &["backend"],
+            )?,
+            misses: registry.counter(
+                "renvor_cache_misses_total",
+                "Reads that found nothing.",
+                &["backend"],
+            )?,
+            errors: registry.counter(
+                "renvor_cache_errors_total",
+                "Operations that failed, by closed category.",
+                &["backend", "category"],
+            )?,
+        })
+    }
+
+    /// Counts a read that found a value.
+    pub fn hit(&self, backend: &str) {
+        self.hits.increment(&[("backend", backend)], 1);
+    }
+
+    /// Counts a read that found nothing.
+    pub fn miss(&self, backend: &str) {
+        self.misses.increment(&[("backend", backend)], 1);
+    }
+
+    /// Counts a failed operation by its closed category.
+    pub fn error(&self, backend: &str, error: CacheError) {
+        self.errors
+            .increment(&[("backend", backend), ("category", error.as_str())], 1);
+    }
+}
+
 /// The cache port.
 ///
 /// `Send + Sync` because a cache is shared across tasks. Native `async fn` in the trait, which
