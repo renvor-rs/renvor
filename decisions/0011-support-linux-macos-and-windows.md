@@ -10,6 +10,12 @@
 | **Supersedes** | **ADR-0003** *(2026-08-21)* |
 | **Owner** | Ahmed Anbar |
 
+> **Verification-surface update 2026-09-03.** Platform support and enforcement levels are
+> unchanged. The framework verification sequence now has nine steps after the standalone
+> documentation site moved to `renvor-rs/renvor-docs`; rustdoc covers all features. References
+> below to the former `docs/docs/support-policy.mdx` path and eleven-step sequence describe the
+> acceptance-time state unless a present-tense row explicitly says otherwise.
+
 > ## Accepted 2026-08-21 under waiver W-002. **This review is NOT independent.**
 >
 > Spec FR-013 requires a recorded **independent** review before acceptance.
@@ -117,16 +123,16 @@ record; see §Alternatives, option 2.
 
 | Job | Runs |
 |---|---|
-| `verify` (Linux) | The **complete** verification sequence defined by `contracts/verification-sequence.md` — all eleven steps |
+| `verify` (Linux) | The **complete** nine-step verification sequence defined by `contracts/verification-sequence.md` |
 | `platform` (macOS, Windows) | `cargo test --workspace --all-features -- --test-threads=1` and `cargo check -p renvor --no-default-features --all-targets` — **and nothing else** |
 
 `platform` is a **separate job from `verify` on purpose.** Adding an `os` dimension to
 `verify`'s matrix would have renamed its contexts to `verify (ubuntu-latest, 1.94.0)` and
 silently emptied the branch-protection rule, which matches contexts by name.
 
-The platform jobs deliberately omit gitleaks, lychee, the commit-history scan, and the
-documentation build. Those are properties of the **repository**, not of the platform; running
-a link check against github.com three times learns nothing three times.
+The platform jobs deliberately omit gitleaks, the commit-history scan, and rustdoc. Those are
+properties of the **repository**, not of the platform; repeating them across operating systems
+would not add platform evidence.
 
 ### What a support claim means, and what it does not
 
@@ -215,7 +221,7 @@ by implication:
 | The five rules for raising the MSRV — planned minor/major only, accepted decision record, documented in three places, six-month dwell time, passing run at the exact version | **Unchanged** |
 | Quarterly policy review that records an outcome and by itself changes nothing | **Unchanged** |
 | **Scheduled Phase 006 MSRV reassessment** against the actual persistence dependencies (FR-061), owner Ahmed Anbar | **Unchanged and still owed** |
-| Dependency and lockfile rules; `deny.toml` authoritative for licences and sources; wildcards denied; Dependabot across `cargo`, `github-actions`, `npm` | **Unchanged** |
+| Dependency and lockfile rules; `deny.toml` authoritative for licences and sources; wildcards denied; Dependabot ownership split across the framework (`cargo`, `github-actions`) and documentation (`npm`) repositories | **Unchanged in policy; repository ownership moved with the site on 2026-09-03** |
 | Security-advisory response windows, incorporated by reference to `governance/dependency-advisory-policy.md` | **Unchanged**, and still incorporated by reference rather than by copy |
 
 **What ADR-0003 said about platforms was one row of a Phase 001 table and is the only thing
@@ -228,7 +234,8 @@ admits no other mechanism.
 toolchains, supported platforms, the MSRV floor, and the rules for changing them.
 
 - `SUPPORT.md` is the **human-facing summary** and links to the contract.
-- `docs/docs/support-policy.mdx` is a **summary** and links to the contract.
+- The published page at <https://docs.renvor.dev/docs/support-policy> is a **summary** and links to
+  the contract.
 - Every other tracked mention is a pointer or a historical record.
 - **Any disagreement resolves in favour of `contracts/support-policy.md`.**
 

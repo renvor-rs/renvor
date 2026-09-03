@@ -25,11 +25,11 @@ const EXIT_OK: i32 = 0;
 const EXIT_STEP_FAILED: i32 = 1;
 /// A required toolchain or database prerequisite is missing; no steps ran.
 const EXIT_TOOLING_MISSING: i32 = 2;
-/// The working tree was dirty after an otherwise successful run (step 11).
+/// The working tree was dirty after an otherwise successful run (step 9).
 const EXIT_DIRTY_TREE: i32 = 3;
 
 /// Total number of steps in the sequence, used only for progress output.
-const TOTAL_STEPS: usize = 11;
+const TOTAL_STEPS: usize = 9;
 
 /// A tool the sequence needs, how to detect it, and how to install it.
 struct Tool {
@@ -106,7 +106,7 @@ const REQUIRED: &[Tool] = &[
         program: "git",
         probe: &["--version"],
         name: "git",
-        purpose: "secret scanning and working-tree cleanliness, steps 8 and 11",
+        purpose: "secret scanning and working-tree cleanliness, steps 8 and 9",
         install: "https://git-scm.com/downloads",
     },
     Tool {
@@ -136,27 +136,6 @@ const REQUIRED: &[Tool] = &[
         name: "gitleaks",
         purpose: "secret scan, step 8",
         install: "brew install gitleaks   (or see github.com/gitleaks/gitleaks)",
-    },
-    Tool {
-        program: "node",
-        probe: &["--version"],
-        name: "node",
-        purpose: "documentation site, step 9",
-        install: "see .nvmrc for the required version",
-    },
-    Tool {
-        program: "npm",
-        probe: &["--version"],
-        name: "npm",
-        purpose: "documentation site, step 9",
-        install: "ships with node — see .nvmrc",
-    },
-    Tool {
-        program: "lychee",
-        probe: &["--version"],
-        name: "lychee",
-        purpose: "link checking, step 10",
-        install: "cargo install lychee --locked",
     },
 ];
 
@@ -255,7 +234,7 @@ fn verify() -> i32 {
     // every relay assertion that actually executed fed the CLI a payload a human had written. A
     // change to `answer_dump_request`'s envelope would have broken the real protocol and left the
     // suite green. Named as its own line of output, counted inside step 4, so the sequence stays
-    // at eleven steps.
+    // at nine steps.
     if !the_end_to_end_relay_ran(&root) {
         return EXIT_STEP_FAILED;
     }
@@ -269,7 +248,7 @@ fn verify() -> i32 {
         5,
         "API documentation",
         "cargo",
-        &["doc", "--workspace", "--no-deps"],
+        &["doc", "--workspace", "--all-features", "--no-deps"],
         &root,
         &[("RUSTDOCFLAGS", "-D warnings")],
     ) {
@@ -324,81 +303,16 @@ fn verify() -> i32 {
         return EXIT_STEP_FAILED;
     }
 
-    // ---- Step 9: documentation site ----
-    let docs = root.join("docs");
-    if !docs.join("package.json").is_file() {
-        step_fail(
-            9,
-            "documentation site",
-            "docs/package.json not found — the documentation package is missing",
-        );
-        eprintln!();
-        eprintln!("This is a FAILURE, not a skip. The sequence has no conditional steps:");
-        eprintln!("a check that cannot run is a failure (FR-023). Steps 1-8 above did run");
-        eprintln!("and did pass; steps 9-11 did not run.");
-        return EXIT_STEP_FAILED;
-    }
-    if !run(
-        9,
-        "documentation site (install)",
-        "npm",
-        &["ci"],
-        &docs,
-        &[],
-    ) {
-        return EXIT_STEP_FAILED;
-    }
-    if !run(
-        9,
-        "documentation site (build)",
-        "npm",
-        &["run", "build"],
-        &docs,
-        &[],
-    ) {
-        return EXIT_STEP_FAILED;
-    }
-
-    // ---- Step 10: link check over the BUILT output ----
-    //
-    // `--root-dir` is required, not optional: the built site uses root-relative links
-    // (`/docs/intro`). Without it lychee cannot resolve a single one against the local
-    // filesystem and reports every internal link as broken — 142 false failures that
-    // would train a reader to ignore this step.
-    //
-    // Exclusions live in `lychee.toml`, each individually justified with a removal
-    // condition, rather than as flags buried here where nobody reviews them.
-    let link_root = docs.join("build");
-    let link_root = link_root.to_string_lossy().to_string();
-    if !run(
-        10,
-        "link check",
-        "lychee",
-        &[
-            "--no-progress",
-            "--require-https",
-            "--config",
-            "lychee.toml",
-            "--root-dir",
-            &link_root,
-            "docs/build",
-        ],
-        &root,
-        &[],
-    ) {
-        return EXIT_STEP_FAILED;
-    }
-
-    // ---- Step 11: working-tree cleanliness ----
+    // ---- Step 9: working-tree cleanliness ----
     // This is what proves the ignore rules are correct rather than merely present.
     match dirty_entries(&root) {
         Err(message) => {
-            step_fail(11, "working-tree cleanliness", &message);
+            step_fail(9, "working-tree cleanliness", &message);
             EXIT_STEP_FAILED
         }
         Ok(entries) if entries.is_empty() => {
             step_ok(
-                11,
+                9,
                 "working-tree cleanliness",
                 "no untracked or modified files",
             );
@@ -408,7 +322,7 @@ fn verify() -> i32 {
         }
         Ok(entries) => {
             step_fail(
-                11,
+                9,
                 "working-tree cleanliness",
                 "the working tree is not clean",
             );
@@ -3088,19 +3002,11 @@ mod tests {
     fn the_partial_migration_guidance_matches_what_the_runner_does() {
         /// `(name, source, the sentence that withdraws the instruction)`.
         ///
-        /// The guide has **no** withdrawal marker on purpose: it is a working page rather than a
-        /// record, so it simply states the current behaviour. A resumption phrase appearing there
-        /// has nothing to be quoted by, and fails.
-        const DOCUMENTS: [(&str, &str, Option<&str>); 3] = [
+        const DOCUMENTS: [(&str, &str, Option<&str>); 2] = [
             (
                 "contracts/database-portability.md",
                 include_str!("../../contracts/database-portability.md"),
                 Some("used to stand here was false"),
-            ),
-            (
-                "docs/docs/database-portability.mdx",
-                include_str!("../../docs/docs/database-portability.mdx"),
-                None,
             ),
             (
                 "decisions/0023-database-portability-across-the-four-rows.md",
@@ -3320,9 +3226,9 @@ mod tests {
     /// **What this does not do**, stated so the guard is not credited with more than it
     /// buys: binding 1 catches the label, not every conceivable false current-state claim
     /// phrased some other way; and binding 2 proves a *rule is present*, not that a given
-    /// path resolves as ignored. The end-to-end proof is step 11 itself, which runs
-    /// `git status --porcelain` on every invocation. This test guards the prose; step 11
-    /// guards the behaviour.
+    /// path resolves as ignored. The end-to-end proof is the working-tree step itself — now
+    /// step 9 — which runs `git status --porcelain` on every invocation. This test guards the
+    /// prose; the executable step guards the behaviour.
     #[test]
     fn the_contract_does_not_claim_the_sequence_currently_fails() {
         const CONTRACT: &str = include_str!("../../contracts/verification-sequence.md");
@@ -3356,7 +3262,7 @@ mod tests {
         for rule in [".idea/", ".DS_Store", ".playwright-mcp/"] {
             assert!(
                 IGNORE_RULES.lines().any(|line| line.trim() == rule),
-                "the tracked ignore file has no `{rule}` rule. Step 11 asserts the working \
+                "the tracked ignore file has no `{rule}` rule. Step 9 asserts the working \
                  tree is clean after a full run, so an uncovered editor or OS artefact fails \
                  the sequence — and the contract no longer warns anyone that it would."
             );
@@ -3371,66 +3277,12 @@ mod tests {
         );
     }
 
-    /// The published documentation site lists the same number of steps.
-    ///
-    /// The site's page duplicates the step table, and it has been left behind **three times**:
-    /// the constitution version, the amendment count, and the step list were each corrected in
-    /// `.md` sources while `docs/docs/*.mdx` kept the old values, because the sweeps that found
-    /// them globbed `*.md`. A reader following the published site was told the command runs ten
-    /// steps while it ran eleven, because the site's table omitted the architecture-invariants
-    /// step exactly as the contract's did.
-    ///
-    /// Checking it here is the only thing that has actually stopped that recurring.
-    #[test]
-    fn the_documentation_site_lists_the_same_step_count() {
-        const PAGE: &str = include_str!("../../docs/docs/verification.mdx");
-
-        let mut numbers: Vec<usize> = Vec::new();
-        for line in PAGE.lines() {
-            let trimmed = line.trim();
-            let Some(rest) = trimmed.strip_prefix('|') else {
-                continue;
-            };
-            let Some((first, _)) = rest.split_once('|') else {
-                continue;
-            };
-            if let Ok(number) = first.trim().parse::<usize>() {
-                numbers.push(number);
-            }
-        }
-
-        // POSITIVE CONTROL: a parse that matched nothing would pass every assertion below.
-        assert!(
-            numbers.len() >= super::TOTAL_STEPS,
-            "the site parse found only {} numbered rows; it is not reading the step table",
-            numbers.len()
-        );
-
-        let mut steps = 0usize;
-        for (index, number) in numbers.iter().enumerate() {
-            if *number == index + 1 {
-                steps = *number;
-            } else {
-                break;
-            }
-        }
-
-        assert_eq!(
-            steps,
-            super::TOTAL_STEPS,
-            "docs/docs/verification.mdx publishes {steps} steps but the command runs {}. The \
-             site is what a contributor reads before running anything.",
-            super::TOTAL_STEPS
-        );
-    }
-
     /// Every required tool names the step that actually consumes it.
     ///
     /// `report_missing` prints `Tool::purpose` verbatim, so these strings are **observable
     /// output**, and `contracts/verification-sequence.md` publishes an example of that output.
-    /// They drifted: after the architecture-invariants step was restored to the published table,
-    /// `gitleaks` still said step 7, `node` and `npm` said 8, and `lychee` said 9 — one behind
-    /// the sequence the command actually runs.
+    /// They drifted when the sequence changed, so the values remain bound to the executable
+    /// sequence rather than being trusted as prose.
     ///
     /// The step-count tests did not catch it and could not: they compare a **count**, and the
     /// count was right the whole time. A defect in which value sits next to which name is only
@@ -3442,15 +3294,12 @@ mod tests {
         const EXPECTED: &[(&str, &str)] = &[
             (
                 "git",
-                "secret scanning and working-tree cleanliness, steps 8 and 11",
+                "secret scanning and working-tree cleanliness, steps 8 and 9",
             ),
             ("rustfmt", "formatting, step 2"),
             ("clippy", "lint, step 3"),
             ("cargo-deny", "dependency and licence policy, step 6"),
             ("gitleaks", "secret scan, step 8"),
-            ("node", "documentation site, step 9"),
-            ("npm", "documentation site, step 9"),
-            ("lychee", "link checking, step 10"),
         ];
 
         // POSITIVE CONTROL: the expectation table must cover the real table exactly. Without
@@ -4115,95 +3964,6 @@ mod tests {
                     "{label} refers to {identifier}, which its own table does not grant"
                 );
             }
-        }
-    }
-
-    // ── published documentation agrees with the contracts it republishes ────────────────────
-
-    /// The error-code values of a registry table: rows shaped `| `code` | <exit> | ... |`.
-    ///
-    /// The exit-code column is what separates the registry from the several OTHER tables in these
-    /// documents whose first column is also a backticked identifier — `command`, `status`,
-    /// `result`, `error` are JSON FIELD names, not error codes, and an earlier version of this
-    /// parser collected them and reported four phantom omissions.
-    fn codes_in(markdown: &str) -> std::collections::BTreeSet<String> {
-        markdown
-            .lines()
-            .filter_map(|line| {
-                let rest = line.trim().strip_prefix("| `")?;
-                let (code, tail) = rest.split_once('`')?;
-                let exit = tail.trim_start().strip_prefix('|')?.trim();
-                let (exit, _) = exit.split_once('|')?;
-                exit.trim().parse::<u8>().ok()?;
-                code.chars()
-                    .all(|c| c.is_ascii_lowercase() || c == '_')
-                    .then(|| code.to_owned())
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_published_cli_page_lists_every_error_code_the_contract_publishes() {
-        // FR-036 / C-2. `docs/docs/cli.mdx` REPUBLISHES the closed error-code registry. On
-        // 2026-08-22 it carried 19 of the 20 codes — `transport_not_wired`, added by this phase,
-        // was missing — while `exit::tests::the_registry_matches_the_published_contract_exactly`
-        // checked only the contract file and passed.
-        //
-        // `xtask` already guards exactly this drift class for `docs/docs/verification.mdx`. Nothing
-        // guarded `cli.mdx`, which is how a published page went one code short.
-        let root = super::workspace_root();
-        let contract = std::fs::read_to_string(root.join("contracts/json-output.md"))
-            .expect("the JSON output contract is readable");
-        let page = std::fs::read_to_string(root.join("docs/docs/cli.mdx"))
-            .expect("the published CLI page is readable");
-
-        let published = codes_in(&contract);
-        assert!(
-            published.len() >= 15,
-            "only {} code(s) parsed from the contract, so the comparison would prove nothing: {:?}",
-            published.len(),
-            published
-        );
-
-        let on_the_page = codes_in(&page);
-        let missing: Vec<&String> = published.difference(&on_the_page).collect();
-
-        assert!(
-            missing.is_empty(),
-            "the published CLI page omits {} code(s) the contract publishes: {missing:?}. A \
-             reader of the site would not learn they exist",
-            missing.len()
-        );
-    }
-
-    #[test]
-    fn the_published_cli_page_does_not_call_a_shipped_command_absent() {
-        // FR-040 read for INTENT rather than only literally. The requirement names public
-        // statements that a capability "becomes available in Phase 004"; `cli.mdx` carried the
-        // CONVERSE falsehood — `routes` listed among commands "that later phases will add —
-        // absent, not stubbed", under a heading reading "Everything below is implemented and
-        // tested". Phase 004 shipped `routes`.
-        let root = super::workspace_root();
-        let page = std::fs::read_to_string(root.join("docs/docs/cli.mdx"))
-            .expect("the published CLI page is readable");
-        let surface = std::fs::read_to_string(root.join("contracts/command-surface.md"))
-            .expect("the command-surface contract is readable");
-
-        let later_phases = page
-            .lines()
-            .find(|line| line.contains("later phases will add"))
-            .expect("the page names the commands later phases will add");
-
-        for command in ["new", "doctor", "check", "dev", "docker", "tls", "routes"] {
-            let shipped = surface.contains(&format!("`renvor {command}"));
-            if !shipped {
-                continue;
-            }
-            assert!(
-                !later_phases.contains(&format!("`{command}`")),
-                "`renvor {command}` has shipped — the command-surface contract documents it — but \
-                 the published page still lists it among the commands later phases will add"
-            );
         }
     }
 

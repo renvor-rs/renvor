@@ -9,6 +9,13 @@
 | **Superseded by** | **ADR-0006 D13** *(2026-08-15)* — **partial: repository visibility, plus one deployment-status sentence.** Everything else in this record still stands, and this record is **not** in state `superseded` |
 | **Owner** | Ahmed Anbar |
 
+> **Deployment update 2026-09-03.** `renvor-rs/renvor-docs` is no longer a reserved empty
+> destination: it is the canonical documentation source, and its digest-pinned image is live at
+> `docs.renvor.dev`. The Phase 001 framework copy is removed by the corresponding migration. The
+> migration-timing rule below was missed literally — deployment preceded cleanup — so it is
+> recorded as completed late, not rewritten as an on-time same-change migration. The two copies
+> never coexisted as published sites.
+
 > ## Partial supersession 2026-08-15 — the visibility model changed; the separation did not
 >
 > **This record remains `accepted` and its central decision is unchanged**: the framework, the

@@ -122,7 +122,7 @@ macro_rules! migration_suite {
             /// engine's decision, and it is the decision the whole recovery procedure turns on.
             ///
             /// Built in a temporary directory rather than committed, for the reason the checksum
-            /// test gives: `xtask` step 11 treats a dirty tree as a failure, and a migration set
+            /// test gives: `xtask` step 9 treats a dirty tree as a failure, and a migration set
             /// that is *designed* to fail has no business in the repository's own fixtures.
             fn partial_set() -> PathBuf {
                 let directory = std::env::temp_dir().join(format!(
@@ -262,7 +262,7 @@ macro_rules! migration_suite {
             /// is unmodified.
             ///
             /// The mutated copy is built in a temporary directory rather than by editing the
-            /// committed set, so the test cannot leave the repository dirty — `xtask` step 11
+            /// committed set, so the test cannot leave the repository dirty — `xtask` step 9
             /// treats a dirty tree as a failure.
             #[tokio::test]
             async fn a_changed_applied_migration_fails_closed() {

@@ -69,13 +69,9 @@ jobs:
       # Widening the licence policy to obtain a build cache would weaken a control to buy
       # convenience, so the cache was dropped instead.
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version-file: .nvmrc
-
       - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
         with:
-          tool: cargo-deny,lychee
+          tool: cargo-deny
 
       # gitleaks is installed from a pinned release and the archive checksum is
       # verified before extraction. An unverified download in the job that performs
@@ -94,16 +90,6 @@ jobs:
           rm -f gitleaks gitleaks.tar.gz
           gitleaks version
 
-      # GITHUB_TOKEN is lychee's documented environment interface for `--github-token`.
-      # With it, a github.com link whose plain HTTP request fails is re-checked through the
-      # GitHub API, so a transport-level fault no longer decides whether a link is "broken".
-      # The fallback resolves repository URLs only — a URL naming a path inside a repository
-      # is still judged by its HTTP response, which is why the per-host limits in
-      # lychee.toml carry the actual determinism.
-      #
-      # This is the run's built-in installation token, scoped by the workflow-level
-      # `contents: read` above; it is not a stored secret and grants nothing beyond reading
-      # this repository. lychee holds it as a secret value and does not print it.
       # ── THE REAL DATABASES ──────────────────────────────────────────────────────────────
       #
       # THIS STEP DID NOT EXIST, AND ITS ABSENCE MADE THE DATABASE SUITE DECORATIVE.
@@ -280,8 +266,6 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: cargo xtask verify
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: cargo xtask verify
 
       # Named separately so a failure here is not mistaken for a verification failure.
@@ -309,9 +293,9 @@ jobs:
     #
     # # Why not `cargo xtask verify`
     #
-    # The verification sequence includes gitleaks, lychee, and a commit-history scan — tools
+    # The verification sequence includes gitleaks and a commit-history scan — tools
     # and checks that are properties of the repository, not of the platform, and running them
-    # three times would triple a link check against github.com to learn nothing. This job runs
+    # three times would repeat repository-wide work to learn nothing. This job runs
     # the parts whose behaviour can actually differ per platform.
     name: platform
     runs-on: ${{ matrix.os }}

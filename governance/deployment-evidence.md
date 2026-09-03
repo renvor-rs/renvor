@@ -467,3 +467,52 @@ Recorded so that no later reader infers more than was measured:
   host is reversible without downtime for Renvor.
 - **The independent-review gap is untouched.** Every review supporting this deployment was an
   automated advisory review, explicitly **NON-INDEPENDENT**. W-001 through W-006 remain active.
+
+## 8 — Documentation-site deployment, 2026-09-03
+
+This section is a later observation. It does not rewrite the 2026-08-17 deployment record above;
+in particular, the statements that `docs.renvor.dev` was not deployed and T108 remained open were
+true on that date.
+
+### 8.1 Source, image, and rollout
+
+| Evidence | Observed value |
+|---|---|
+| Canonical source | `renvor-rs/renvor-docs` at `26eb0e414113e01c38827ded969f928a4c0b9fb5` |
+| Published image | `ghcr.io/renvor-rs/renvor-docs@sha256:9240f8621a7bbfe735cb895298cc9fe6a75572e2e011a68d4405e11ee69ebfcd` |
+| Publication | workflow run `33731148884`, including image scan, SBOM, provenance, and anonymous digest pull |
+| Deployment source | `renvor-rs/renvor-infra`; reviewed staging and production overlays, reconciled by Flux |
+| Runtime | one staging pod and two production pods Ready, zero restarts, all running the exact published digest |
+| Public route | `https://docs.renvor.dev` returns the Docusaurus site; nonexistent routes return the site's 404 |
+
+The documentation repository owns its npm lockfile, content controls, build, rendered-link check,
+container verification, and publication. The framework repository is not in that runtime path and
+does not clone or build the site.
+
+### 8.2 TLS
+
+The production endpoint serves a publicly trusted Let's Encrypt certificate issued by **YE1** with
+`docs.renvor.dev` in its subject alternative names. The certificate expires **2026-12-02** and its
+recorded renewal window begins **2026-11-02**. Verification through the public endpoint returned
+`ssl_verify_result=0`; plain HTTP redirects to HTTPS.
+
+### 8.3 T108 disposition
+
+**001-T108 is resolved late, not recorded as having run on time.** ADR-0009 removed the vulnerable
+`image-size` package from the resolved documentation dependency graph and installed the fail-closed
+image-input guard. The two observations that could not be made before a documentation image
+existed are now available:
+
+- the production runtime image contains no `image-size` parser package; and
+- the runtime SBOM contains no `image-size` package.
+
+The image was also scanned before publication, pulled anonymously by immutable digest, and promoted
+through staging before production. Those facts discharge T108's remaining substance. The process
+timing did not meet PLAN §26.12: the replacement was deployed before the framework copy was removed,
+so this is a late resolution and the mismatch is preserved explicitly.
+
+### 8.4 What remains open
+
+This deployment does not publish a crate, create a framework release or tag, complete the Phase 012
+documentation programme, or close the companion repository's protection gap. `renvor-docs` has CI,
+but as observed on 2026-09-03 its `main` branch has no protection rule and no required checks.

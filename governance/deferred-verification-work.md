@@ -67,16 +67,20 @@ that is wrong rather than of a fixed number of remaining bugs.
 
 Not designed in detail, and deliberately not part of the branch that withdrew the original:
 
-1. Parse Markdown with **`mdast-util-from-markdown`**, declared as a direct dependency in
-   `docs/package.json`. Node and `npm ci` are already required by step 9, so this adds a
-   dependency but no new toolchain.
+1. Re-evaluate maintained Markdown parsers before implementation. The earlier candidate was
+   **`mdast-util-from-markdown`**, but the framework gate no longer has a Node/npm prerequisite
+   after the documentation site moved repositories. Adding a parser now also adds a toolchain or
+   Rust dependency, so that cost must be decided explicitly rather than inherited from a removed
+   site build.
 2. Keep only a **small custom policy layer** over the resulting syntax tree: resolve targets
    against `git ls-files -z`, and validate `blob/<sha>/<path>` citations with `git cat-file -e`.
    That layer is the part with genuine project-specific value and no off-the-shelf equivalent.
 3. **No hand-written Markdown grammar**, in any language.
 
 Whether the result becomes a step of `cargo xtask verify` is a separate decision, to be made
-against the same standard this check failed.
+against the same standard this check failed. The documentation repository's rendered-site link
+check does not close this gap: it validates generated site links, not the framework repository's
+contracts, governance records, or decisions.
 
 ### Where the withdrawn implementation lives, and how durable that is
 

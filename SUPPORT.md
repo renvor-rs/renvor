@@ -207,12 +207,12 @@ measurement.
 |---|---|---|
 | Reusable library crates | Compatible requirements (`1.2`), not exact pins | Not committed |
 | Applications, generators, release tooling, automation | As resolved | **Committed** |
-| Documentation site | As resolved | **Committed** (`package-lock.json`) |
+| Documentation site | As resolved | **Committed in `renvor-rs/renvor-docs`** (`package-lock.json`) |
 
-Dependency updates arrive as reviewable pull requests through Dependabot across the
-`cargo`, `github-actions`, and `npm` ecosystems. **Unreviewed floating updates are
-prohibited.** The authoritative machine-readable licence and dependency policy is
-[`deny.toml`](deny.toml).
+Dependency updates arrive as reviewable pull requests through Dependabot. This repository's
+configuration covers `cargo` and `github-actions`; the `renvor-rs/renvor-docs` configuration covers
+its npm graph. **Unreviewed floating updates are prohibited.** The authoritative machine-readable
+licence and dependency policy is [`deny.toml`](deny.toml).
 
 ## Releases
 

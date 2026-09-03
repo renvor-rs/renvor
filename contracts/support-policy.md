@@ -10,8 +10,9 @@ status: "normative — a public promise and a release contract under principle V
 
 > **This is the sole normative current authority** for supported toolchains, supported platforms,
 > the MSRV floor, and the rules for changing them. [`SUPPORT.md`](../SUPPORT.md) is the
-> human-facing summary and `docs/docs/support-policy.mdx` is the published summary; both link
-> here, and **any disagreement resolves in favour of this document**.
+> human-facing summary and the public documentation site carries a published summary at
+> <https://docs.renvor.dev/docs/support-policy>; both link here, and **any disagreement resolves
+> in favour of this document**.
 >
 > The governing record is
 > [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md), **accepted 2026-08-21 under
@@ -135,7 +136,8 @@ This is stated rather than assumed because the distinction decays: adding a job 
 
 `platform` is a **separate job from `verify` deliberately.** Adding an `os` dimension to `verify`'s matrix would rename its contexts to `verify (ubuntu-latest, 1.94.0)` and silently empty the branch-protection rule, which matches contexts by name.
 
-The platform jobs omit gitleaks, lychee, the commit-history scan, and the documentation build. Those are properties of the **repository**, not of the platform.
+The platform jobs omit gitleaks, the commit-history scan, and rustdoc. Those are properties of the
+**repository**, not of the platform.
 
 ### Known platform evidence limitations
 
@@ -177,9 +179,11 @@ Recorded rather than dropped now that the platforms are claimed:
 |---|---|---|
 | Reusable library crates | Compatible requirements (`1.2`), not exact pins | Not committed |
 | Applications, generators, release tooling, automation | As resolved | **Committed** |
-| Documentation site | As resolved | **Committed** (`package-lock.json`) |
+| Documentation site | As resolved | **Committed in `renvor-rs/renvor-docs`** (`package-lock.json`) |
 
-Dependency updates arrive as reviewable pull requests through Dependabot across the `cargo`, `github-actions`, and `npm` ecosystems. Unreviewed floating updates are prohibited in generated output (FR-020).
+Dependency updates arrive as reviewable pull requests through Dependabot. This repository's
+configuration covers `cargo` and `github-actions`; the `renvor-rs/renvor-docs` configuration covers
+its npm graph. Unreviewed floating updates are prohibited in generated output (FR-020).
 
 ### Security advisories against dependencies
 

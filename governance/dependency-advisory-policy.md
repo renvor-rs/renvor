@@ -17,7 +17,10 @@
 
 Advisories from **RustSec**, **`cargo-deny`**, **Dependabot**, the **GitHub Advisory
 Database**, and equivalent verified sources, affecting any dependency in any ecosystem the
-project uses — `cargo`, `github-actions`, and `npm`.
+project uses — `cargo`, `github-actions`, and `npm`. Repository ownership is split: the framework
+repository's Dependabot configuration tracks `cargo` and `github-actions`, while the
+`renvor-rs/renvor-docs` configuration tracks its npm graph and that repository runs the npm
+advisory gate.
 
 ## 2. Triage windows — maximum time to first assessment
 

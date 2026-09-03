@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "1.2.1"
-status: "normative — enforced executably by `xtask`. 1.2.1 (2026-08-26) corrects the exit-code table and the fail-closed sample output, which still described exit 2 as a toolchain-only condition and printed a message the command no longer emits; a review found the drift, and it is a DOCUMENTATION correction with no change to verification behaviour. 1.2.0 (2026-08-26) makes step 1 refuse a run without the four-row database environment, correcting a step 4 that was conditional in a sequence this contract says has no conditional steps; it is a BEHAVIOUR change and the exit code it produces is the existing 2. 1.1.2 (2026-08-23) records that step 6 does not cover dev-only dependencies, which it never did; no verification behaviour changes. 1.1.1 (2026-08-21) is a factual documentation correction with NO change to verification behaviour: it removes a stale claim that step 11 currently fails. 1.1.0 (2026-08-20) restored the architecture-invariants step the table had omitted. This version identifies the contract text, not a stability promise"
+version: "2.0.0"
+status: "normative — enforced executably by `xtask`. 2.0.0 (2026-09-03) transfers the Docusaurus build and rendered-site link check to the now-live `renvor-rs/renvor-docs` repository, removes those two checks and their Node/npm/lychee prerequisites from this framework sequence, renumbers working-tree cleanliness to step 9, and makes rustdoc cover all features. This is a BEHAVIOUR change: the framework gate now owns only framework verification, while the independently required `docs` context keeps warning-denied all-feature rustdoc visible in branch protection. 1.2.1 (2026-08-26) corrected the exit-code table and fail-closed sample output. 1.2.0 (2026-08-26) made the four-row database environment mandatory. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -14,7 +14,10 @@ One command, one behaviour, locally and in automation:
 cargo xtask verify
 ```
 
-CI invokes the same entry point. That is the point — duplicated shell steps in workflow files are how local and automated verification silently diverge, and divergence is how a skipped check gets reported as a pass.
+The two verification jobs invoke the same entry point. That is the point — a second copy of the
+full sequence in workflow files would silently diverge, and divergence is how a skipped check gets
+reported as a pass. The separately required `docs` context repeats step 5 alone so all-feature,
+warning-denied rustdoc remains visible in branch protection.
 
 ## Steps
 
@@ -22,17 +25,28 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Prerequisite probe | — | Rust (pinned), Node LTS, **and a PostgreSQL and MySQL the census can reach** |
+| 1 | Prerequisite probe | — | Rust (pinned), **and a PostgreSQL and MySQL the census can reach** |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
-| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 28 required (row, test) pairs must report in | Rust, both databases |
-| 5 | API documentation | `cargo doc --workspace --no-deps` with warnings denied | Rust |
+| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 63 required (row, test) pairs must report in | Rust, both databases |
+| 5 | API documentation | `cargo doc --workspace --all-features --no-deps` with warnings denied | Rust |
 | 6 | Dependency and licence policy | `cargo deny check` | `cargo-deny` |
 | 7 | Architecture invariants | crate DAG, transport and persistence isolation, per-driver adapter compiles, facade isolation, lean compile, publishable dependencies, required package metadata, instability wording, executable name — each with a control | Rust |
 | 8 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
-| 9 | Documentation site | `npm ci && npm run build` in `docs/` | Node LTS |
-| 10 | Link check | `lychee` over the built documentation output | `lychee` |
-| 11 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+| 9 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
+
+### Documentation-site ownership changed on 2026-09-03
+
+The earlier eleven-step sequence built the temporary Docusaurus site under `docs/` and checked its
+rendered links. That source has moved to the public `renvor-rs/renvor-docs` repository, and
+`https://docs.renvor.dev` now serves the replacement. Keeping the framework copy or continuing to
+make a Rust gate install the site would create two sources of truth and couple crate verification to
+another repository's release cadence.
+
+The documentation repository now owns its frozen npm install, content controls, production build,
+rendered-site link check, container verification, advisory scan, image publication, and deployment.
+This repository still owns Rust API documentation. Step 5 and the separately required `docs` check
+both run warning-denied rustdoc with every feature enabled.
 
 ### Step 1 refuses a run without the database environment — added 2026-08-26
 
@@ -75,8 +89,7 @@ between the two is the defect, whichever side it opens on.
 
 ### There is no repository cross-reference step
 
-Step 10 runs `lychee` over `docs/build` — the **built site**. Nothing in this sequence validates
-the repository's own references: relative links between `governance/`, `contracts/`, and
+Nothing in this sequence validates the repository's own Markdown references: relative links between `governance/`, `contracts/`, and
 `decisions/`, `specs/`-shaped path references in tracked text, or same-repository `blob/` URLs.
 That gap is real and is recorded, with the withdrawn implementation and the intended replacement,
 in [`governance/deferred-verification-work.md`](../governance/deferred-verification-work.md).
@@ -132,11 +145,8 @@ missing and what to do about each one (FR-055). The observable contract:
 $ cargo xtask verify
 error: verification cannot run — a required prerequisite is missing
 
-  missing tool: lychee (link checking, step 10)
-    install: cargo install lychee --locked
-
-  missing tool: node (documentation site, step 9)
-    install: see .nvmrc for the required version
+  missing tool: cargo-deny (dependency and licence policy, step 6)
+    install: cargo install cargo-deny --locked
 
   missing environment: RENVOR_TEST_POSTGRES_URL (the PostgreSQL half of the four-row census)
     setup: export RENVOR_TEST_POSTGRES_URL=postgres://user:pass@127.0.0.1:5432/renvor_test
@@ -162,15 +172,15 @@ The last line matters. A partial run that reports success is the failure mode th
 | 0 | Every step ran and passed |
 | 1 | A step ran and failed |
 | 2 | A mandatory verification prerequisite is missing — a required tool, or the four-row database environment; no steps ran |
-| 3 | The working tree was dirty after a successful run (step 11) |
+| 3 | The working tree was dirty after a successful run (step 9) |
 
 ## Working-tree cleanliness
 
-Step 11 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, documentation output, `node_modules/`, editor state, OS artefacts, and local environment files must all be ignored.
+Step 9 enforces FR-024: after the full sequence, `git status --porcelain` must be empty. This is what proves the ignore rules are correct rather than merely present. Build output, editor state, OS artefacts, and local environment files must all be ignored.
 
 **Historical note, dated.** When this contract was first written the repository contained `.DS_Store`, `.idea/`, and `.playwright-mcp/` while the ignore rules did not cover all of them, and step 11 failed on that account — correctly, because publishing editor and OS artefacts to a public repository is exactly what it should catch.
 
-**That was fixed. It is no longer true, and this contract said otherwise until 2026-08-21.** All three are covered by the tracked ignore rules — `.gitignore:24` (`.idea/`), `.gitignore:31` (`.DS_Store`), `.gitignore:71` (`.playwright-mcp/`), and `docs/.gitignore:12` — verified with `git check-ignore -v`, with `README.md` as a negative control confirming the probe discriminates rather than reporting everything ignored. **Step 11 passes at the current head**, and `cargo xtask verify` exits 0 on both toolchains.
+**That was fixed. It is no longer true, and this contract said otherwise until 2026-08-21.** All three are covered by the tracked root ignore rules, verified with `git check-ignore -v`, with `README.md` as a negative control confirming the probe discriminates rather than reporting everything ignored. **The working-tree step passes at the current head.**
 
 A contract that describes its own subject as currently failing, while the command it governs succeeds, is a false statement in a normative document — the same defect class as a step the table omits. It is corrected here and the correction is dated rather than the sentence being quietly deleted.
 
@@ -185,8 +195,8 @@ These check names must be listed as required in the protection baseline, so the 
 - `verify (1.94.0)` — full sequence at the declared MSRV
 - `verify (stable)` — full sequence at current stable
 - `security` — `cargo deny`, dependency review, CodeQL, clippy SARIF upload
-- `docs` — documentation build and link check
+- `docs` — warning-denied, all-feature Rust API documentation
 
 ## Consumers
 
-Contributors run it before pushing. CI runs it on every pull request. The Phase 001 evidence pack records a dated run of it. Later phases extend the step list but must not weaken the fail-closed rule or make any step conditional.
+Contributors run it before pushing. CI runs it on every pull request. The Phase 001 evidence pack records a dated run of it. Later phases may change the step list only through a versioned contract change; they must not weaken the fail-closed rule or make any step conditional.
