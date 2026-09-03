@@ -194,8 +194,11 @@ These check names must be listed as required in the protection baseline, so the 
 
 - `verify (1.94.0)` — full sequence at the declared MSRV
 - `verify (stable)` — full sequence at current stable
-- `security` — `cargo deny`, dependency review, CodeQL, clippy SARIF upload
+- `security` — `cargo deny` plus all-target, all-feature clippy with warnings denied
 - `docs` — warning-denied, all-feature Rust API documentation
+
+The pull-request-only `dependency-review` job and GitHub's default CodeQL analyses are separate
+checks. They are valuable, but they are not hidden inside the required `security` context.
 
 ## Consumers
 
