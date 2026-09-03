@@ -1,0 +1,79 @@
+# The cache capability (Phase 010): a narrow port, a deterministic substitute, and one adapter.
+#
+# # This crate names no driver and no transport
+#
+# The port is `Cache`; the substitute is `MemoryCache`; the adapter is the `valkey` module, behind
+# the OFF-BY-DEFAULT feature of the same name. A build without `valkey` resolves no RESP client
+# and no TLS crate through this package — asserted by `xtask` step 7 against the resolved graph,
+# in both directions (ADR-0031, ADR-0033).
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-cache"
+description = "Cache capability for the Renvor framework: a narrow key-value port with required TTLs and bounded keys and values, a deterministic in-memory substitute, and a Valkey (RESP) adapter behind an off-by-default feature. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-cache"
+readme = "README.md"
+keywords = ["renvor", "framework", "cache", "valkey"]
+categories = ["caching"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel: `Provider`, `ReadinessContributor`, the entropy port, and the metrics port.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `Secret<T>`, for the credential a cache server is reached with.
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# Runtime primitives for the substitute's TTL clock and the adapter's timeouts. `net` is NOT here:
+# the RESP client owns its socket, behind the feature.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+# Instrumentation only. This crate never installs a subscriber (contract C-O7).
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+# ---- Valkey adapter (ADR-0033). OFF BY DEFAULT. ----
+#
+# `redis` 1.6.0 (BSD-3-Clause, MSRV 1.88, no advisory). `tls-rustls` — implied by
+# `tokio-rustls-comp` — loads the platform trust store through `rustls-native-certs`; the
+# separate `tls-rustls-webpki-roots` feature is the only path to the banned `webpki-roots` and is
+# never enabled. `rustls` arrives with `default-features = false`, so no crypto provider is added
+# and the workspace keeps exactly one (`ring`), which `xtask` step 7 asserts. `connection-manager`
+# is the bounded reconnect; its bounds are set from configuration in `valkey.rs`.
+#
+# Measured against this workspace's resolved graph on 2026-09-03: +10 packages, of which
+# `xxhash-rust` is BSL-1.0 — allowed in `deny.toml` for this crate, by name.
+redis = { version = "1.6.0", default-features = false, features = [
+    "tokio-rustls-comp",
+    "connection-manager",
+], optional = true }
+
+[features]
+# The adapter. FR-004 and SC-005 require that a build without it resolve **none** of the above,
+# proven by the dependency graph rather than by this flag's presence — `xtask` reads the graph.
+valkey = ["dep:redis"]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+[lints]
+workspace = true

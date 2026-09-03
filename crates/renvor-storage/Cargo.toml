@@ -1,0 +1,69 @@
+# The object-storage capability (Phase 010): a narrow port with traversal-proof keys and bounded
+# objects, an in-memory substitute, and a filesystem adapter rooted in a capability.
+#
+# # No S3 adapter ships in this phase, and this file says so
+#
+# Every S3-compatible candidate failed this repository's licence or advisory gate when measured
+# against the real resolved graph (ADR-0035). The port is complete; the remote adapter is a
+# recorded limitation with an owner, not an omission.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-storage"
+description = "Object storage capability for the Renvor framework: a narrow put/get/head/delete port whose keys cannot traverse and whose objects are bounded, an in-memory substitute, and a filesystem adapter rooted in a cap-std capability with atomic writes, behind an off-by-default feature. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-storage"
+readme = "README.md"
+keywords = ["renvor", "framework", "storage", "filesystem"]
+categories = ["filesystem"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel: `Provider`, readiness, the metrics port.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# `spawn_blocking` for the filesystem adapter's synchronous I/O, and timers.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+# Instrumentation only. This crate never installs a subscriber (contract C-O7).
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+# ---- Filesystem adapter (ADR-0035). OFF BY DEFAULT. ----
+#
+# `cap-std` is already in the workspace graph through `renvor-cli`, at the version `deny.toml`
+# floors after GHSA-hp8f-xmx4-4qrg; a `Dir` cannot open a path outside itself, which is the second
+# layer under the key validator. `cap-tempfile` is the one new package: a temporary file created
+# in the same directory and `replace`d into its final name, so a reader never sees a partial object.
+cap-std = { version = "4.0.3", default-features = false, optional = true }
+cap-tempfile = { version = "4.0.3", default-features = false, optional = true }
+
+[features]
+# The adapter. A build without it resolves neither capability crate through this package.
+filesystem = ["dep:cap-std", "dep:cap-tempfile"]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+# A throwaway directory for the filesystem adapter's tests. Dev-only.
+tempfile = { version = "3.27.0", default-features = false }
+
+[lints]
+workspace = true

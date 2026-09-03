@@ -1,0 +1,134 @@
+# The observability capability (Phase 010): a JSON subscriber the author installs, central
+# redaction, a Prometheus renderer over the kernel's metrics port, health documents, and OTLP
+# export behind a feature (ADR-0036).
+#
+# # This crate never installs a global subscriber
+#
+# Every function here RETURNS a value; installation is `renvor_core::observe::try_init_global`,
+# called from `main` (contract C-O7). It depends inward on the kernel only; `renvor-http` is
+# reached only behind `http`, for two health routes, in the direction adapters already point.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-observability"
+description = "Observability for the Renvor framework: a structured JSON subscriber with central field-name redaction, a Prometheus text renderer over the kernel's bounded metrics port, liveness and readiness documents, and OpenTelemetry OTLP trace export behind an off-by-default feature. Returns values for the application to install; never installs a global subscriber itself. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-observability"
+readme = "README.md"
+keywords = ["renvor", "framework", "observability", "tracing", "opentelemetry"]
+categories = ["development-tools::debugging"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel: the metrics port, the run identifier, `HealthState`, `try_init_global`.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `Secret<T>`, for exporter header values.
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+# The subscriber machinery. `json` brings only `tracing-serde` into this workspace's graph
+# (measured 2026-09-03); `ansi` is excluded so no terminal escape reaches a log line. The JSON
+# EVENT formatter is Renvor's own (`format.rs`): the crate's formatter writes event fields through
+# `tracing-serde` and bypasses any custom field formatter, so redaction could not be applied to
+# events through it — measured in `json.rs:272` before this decision was made (ADR-0036).
+tracing-subscriber = { version = "0.3.23", default-features = false, features = [
+    "std",
+    "fmt",
+    "env-filter",
+    "json",
+    "registry",
+] }
+
+# JSON escaping for the formatter and the health documents. Already in the workspace graph.
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+# ---- Health routes (FR-073). OFF BY DEFAULT. ----
+renvor-http = { path = "../renvor-http", version = "0.0.0", optional = true }
+
+# ---- OpenTelemetry OTLP export (ADR-0036). OFF BY DEFAULT. ----
+#
+# OTLP over HTTP/protobuf through `hyper`, because every `reqwest` configuration pulls
+# `rustls-platform-verifier` and fails this repository's all-target licence gate (a wasm32-only
+# CDLA crate), and `tonic` adds five more packages for the same protocol over gRPC. The connector
+# is built by Renvor with `with_provider_and_native_roots(ring)` — native roots, one provider.
+# The exporter's batch thread drives an async client through a blocking executor, so Renvor wraps
+# the client in an `HttpClient` bound to the Tokio runtime handle (`otel.rs`).
+#
+# Measured against this workspace's resolved graph on 2026-09-03: +23 packages, no banned crate,
+# `cargo deny` clean.
+opentelemetry = { version = "0.32.0", default-features = false, features = ["trace"], optional = true }
+opentelemetry_sdk = { version = "0.32.1", default-features = false, features = ["trace"], optional = true }
+opentelemetry-otlp = { version = "0.32.0", default-features = false, features = [
+    "http-proto",
+    "trace",
+    "hyper-client",
+], optional = true }
+opentelemetry-http = { version = "0.32.0", default-features = false, features = ["hyper"], optional = true }
+opentelemetry-semantic-conventions = { version = "0.32.1", default-features = false, optional = true }
+tracing-opentelemetry = { version = "0.33.0", default-features = false, optional = true }
+hyper = { version = "1.7.0", default-features = false, features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1.19", default-features = false, features = ["client-legacy", "http1", "tokio"], optional = true }
+hyper-rustls = { version = "0.27.9", default-features = false, features = [
+    "native-tokio",
+    "http1",
+    "tls12",
+    "ring",
+], optional = true }
+http = { version = "1.3.1", default-features = false, features = ["std"], optional = true }
+http-body-util = { version = "0.1.5", default-features = false, optional = true }
+bytes = { version = "1.10.1", default-features = false, optional = true }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"], optional = true }
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+[features]
+# `/healthz` and `/readyz` as a `RouteGroup` over a cloned `HealthState`.
+http = ["dep:renvor-http"]
+
+# OTLP trace export. A build without it resolves no `opentelemetry*` crate, no `hyper-rustls`,
+# and no `prost` through this package (SC-005).
+otel = [
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-http",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:hyper-rustls",
+    "dep:http",
+    "dep:http-body-util",
+    "dep:bytes",
+    "dep:rustls",
+]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util", "net", "io-util"] }
+# The DIFFERENTIAL CONTROL for the Prometheus renderer: the official client's encoder is run over
+# the same sample and the two documents are compared. Dev-only; the port is Renvor's because the
+# official client's `Family` cannot bound cardinality (ADR-0036).
+prometheus-client = { version = "0.25.1", default-features = false }
+
+[lints]
+workspace = true

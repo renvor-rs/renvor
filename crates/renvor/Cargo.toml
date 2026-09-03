@@ -69,6 +69,23 @@ renvor-error = { path = "../renvor-error", version = "0.0.0", optional = true }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0", optional = true }
 renvor-openapi = { path = "../renvor-openapi", version = "0.0.0", optional = true }
 
+# The Phase 010 capabilities, each OFF by default behind the feature vocabulary PLAN.md §7.4
+# fixes. Every one is a port crate with a deterministic substitute; the production adapters sit
+# behind the capability crate's own feature (`valkey`, `smtp`, `filesystem`, `otel`), which an
+# application enables on the capability crate directly, exactly as it enables `db-postgres` on
+# `renvor-sqlx`. The facade re-exports each port narrowly and never a third-party type — asserted
+# by `tests/facade_boundary.rs`.
+#
+# `renvor-observability` is optional too, behind `observability`, because it resolves
+# `tracing-subscriber` and `serde_json`, and the lean facade must keep resolving neither `serde`
+# nor a subscriber stack (`xtask` step 7's lean row). `observability-otel` — the §7.4 name — turns
+# on both the crate and its OTLP feature.
+renvor-cache = { path = "../renvor-cache", version = "0.0.0", optional = true }
+renvor-jobs = { path = "../renvor-jobs", version = "0.0.0", optional = true }
+renvor-mail = { path = "../renvor-mail", version = "0.0.0", optional = true }
+renvor-storage = { path = "../renvor-storage", version = "0.0.0", optional = true }
+renvor-observability = { path = "../renvor-observability", version = "0.0.0", optional = true }
+
 # Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
 # dependency EDGE and no new package — checked against the lockfile rather than assumed.
 [dev-dependencies]
@@ -116,6 +133,16 @@ transport-rest = [
     "dep:renvor-validation",
     "dep:renvor-openapi",
 ]
+
+# The Phase 010 capabilities (PLAN.md §7.4). Each is a DECISION and is off by default; a build
+# that does not enable one resolves none of its crates — asserted by `xtask` step 7 with a mirror
+# control per feature.
+capability-cache = ["dep:renvor-cache"]
+capability-jobs = ["dep:renvor-jobs"]
+capability-mail = ["dep:renvor-mail"]
+capability-storage = ["dep:renvor-storage"]
+observability = ["dep:renvor-observability"]
+observability-otel = ["observability", "renvor-observability/otel"]
 
 [lints]
 workspace = true

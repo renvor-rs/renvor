@@ -3617,9 +3617,15 @@ mod tests {
         // already carry the new package, which they were.
         //
         // It is the cheapest test in this file and the one that has caught the most.
+        //
+        // EIGHTEEN since Phase 010: the five capability crates — `renvor-cache`, `renvor-jobs`,
+        // `renvor-mail`, `renvor-storage`, `renvor-observability` — joined the thirteen Phase 009
+        // ended with. Their skeletons, this pin, `RELEASING.md`'s table and sentence, and the
+        // rehearsal's `CRATES` list landed in ONE commit, so no state ever existed in which the
+        // manifests and the two spelled counts disagreed.
         assert_eq!(
-            examined, 13,
-            "the workspace publishes thirteen packages; the scan examined {examined}"
+            examined, 18,
+            "the workspace publishes eighteen packages; the scan examined {examined}"
         );
     }
 
@@ -3695,8 +3701,27 @@ mod tests {
             .expect("every publishable package satisfies the metadata contract");
 
         let words = [
-            "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-            "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+            "Zero",
+            "One",
+            "Two",
+            "Three",
+            "Four",
+            "Five",
+            "Six",
+            "Seven",
+            "Eight",
+            "Nine",
+            "Ten",
+            "Eleven",
+            "Twelve",
+            "Thirteen",
+            "Fourteen",
+            "Fifteen",
+            "Sixteen",
+            "Seventeen",
+            "Eighteen",
+            "Nineteen",
+            "Twenty",
         ];
         let spelled = words
             .get(examined)
