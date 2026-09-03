@@ -1,6 +1,7 @@
-# Rust API documentation. The Docusaurus source, build, link check, image publication, and
-# deployment live in renvor-rs/renvor-docs. This workflow keeps the required `docs` context
-# attached to the framework property this repository still owns: all-feature rustdoc.
+# Rust API documentation. The Docusaurus source, build, link check, image construction, and
+# publication live in renvor-rs/renvor-docs. Staging and production deployment manifests and
+# Flux reconciliation live in renvor-rs/renvor-infra. This workflow keeps the required `docs`
+# context attached to the framework property this repository still owns: all-feature rustdoc.
 
 name: docs
 

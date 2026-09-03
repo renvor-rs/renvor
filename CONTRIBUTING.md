@@ -24,9 +24,11 @@ working-tree cleanliness. **Both verification jobs run this exact command.** The
 required `docs` context deliberately repeats step 5 so all-feature, warning-denied rustdoc stays
 visible in branch protection; no workflow maintains a second copy of the full sequence.
 
-The Docusaurus source, content controls, rendered-link checks, and deployment live in the separate
-[`renvor-rs/renvor-docs`](https://github.com/renvor-rs/renvor-docs) repository. This command neither
-clones nor builds that site.
+The Docusaurus source, content controls, rendered-link checks, image construction, and publication
+live in the separate [`renvor-rs/renvor-docs`](https://github.com/renvor-rs/renvor-docs)
+repository. Staging and production deployment manifests and Flux reconciliation live in
+[`renvor-rs/renvor-infra`](https://github.com/renvor-rs/renvor-infra). This command neither clones
+nor builds that site.
 
 Run it before you open a pull request. If it passes locally it should pass in CI.
 

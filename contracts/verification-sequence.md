@@ -44,9 +44,10 @@ make a Rust gate install the site would create two sources of truth and couple c
 another repository's release cadence.
 
 The documentation repository now owns its frozen npm install, content controls, production build,
-rendered-site link check, container verification, advisory scan, image publication, and deployment.
-This repository still owns Rust API documentation. Step 5 and the separately required `docs` check
-both run warning-denied rustdoc with every feature enabled.
+rendered-site link check, container verification, advisory scan, image construction, and
+publication. The infrastructure repository owns the staging and production deployment manifests
+and Flux reconciliation. This repository still owns Rust API documentation. Step 5 and the
+separately required `docs` check both run warning-denied rustdoc with every feature enabled.
 
 ### Step 1 refuses a run without the database environment — added 2026-08-26
 
