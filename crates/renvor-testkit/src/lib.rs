@@ -20,6 +20,9 @@ pub mod concurrency;
 pub mod domain;
 pub mod harness;
 pub mod injection;
+/// The job-store contract, behind `jobs`. Runs against the memory substitute and all four rows.
+#[cfg(feature = "jobs")]
+pub mod jobs;
 pub mod persistence;
 pub mod portability;
 /// The refresh-rotation contract, behind `tokens` because it names `renvor-auth`'s API token half.

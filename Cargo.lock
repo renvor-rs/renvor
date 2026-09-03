@@ -3203,6 +3203,7 @@ name = "renvor-jobs"
 version = "0.0.0"
 dependencies = [
  "renvor-core",
+ "renvor-testkit",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3314,6 +3315,7 @@ dependencies = [
  "renvor-auth",
  "renvor-core",
  "renvor-database",
+ "renvor-jobs",
  "tokio",
  "tracing",
  "tracing-subscriber",

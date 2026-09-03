@@ -53,5 +53,11 @@ tracing = { version = "0.1.44", default-features = false, features = ["std", "at
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
 
+# The SHARED job-store contract, run here against the memory substitute so it cannot drift from
+# what the four persistence rows promise (FR-040). A dev-dependency cycle — `renvor-testkit`
+# depends on this crate — which cargo permits because dev-dependencies are outside the
+# publication graph; the same shape `renvor-sqlx` has with the testkit.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["jobs"] }
+
 [lints]
 workspace = true
