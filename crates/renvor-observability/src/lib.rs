@@ -31,6 +31,8 @@ pub mod text;
 
 #[cfg(feature = "http")]
 pub mod http;
+#[cfg(feature = "otel")]
+pub mod otel;
 
 pub use redaction::{MAX_VALUE_BYTES, REDACTED, Redaction};
 pub use subscriber::{

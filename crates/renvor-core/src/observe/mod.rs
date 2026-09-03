@@ -11,6 +11,7 @@ pub mod bootstrap;
 pub mod entropy;
 pub mod metrics;
 pub mod run_id;
+pub mod semconv;
 pub mod spans;
 pub mod trace_context;
 
