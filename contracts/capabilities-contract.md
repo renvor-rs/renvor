@@ -1,7 +1,7 @@
 ---
 description: "Contract — the cache, mail, and storage capability ports, their substitutes, bounds, closed errors, idempotency statements, and feature isolation"
-version: "1.0.0"
-status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise. 1.1.0 (2026-09-04, the Phase 010 correction round): corrects the cache TTL default to 7 days (the code and the specification always said 7 days; 1.0.0's `24 h` was a transcription error), extends C-C7's plaintext double opt-in to the cache adapter, states that a credential is a `Secret` setting beside the endpoint and never part of a URL (constitution VI), makes the storage adapter's object bytes and content type one atomic unit (C-C5), rejects Unicode whitespace in cache keys (C-C2), and adds C-C11 (typed configuration sections, FR-011)"
 ---
 
 # Contract: Capabilities — Cache, Mail, Storage
@@ -30,7 +30,7 @@ passed and do not re-check.
 
 | Port | Bounds |
 |---|---|
-| Cache | key ≤ 512 bytes, no control character, no whitespace; namespace `[a-z0-9_.-]{1,64}` counted toward the key bound; value ≤ configured ceiling (default 1 MiB); TTL 1 s … configured ceiling (default 24 h); operation timeout ≤ 30 s; reconnect attempts and delays capped |
+| Cache | key ≤ 512 bytes, no control character (C0 or C1), no whitespace (the Unicode White_Space property, so `U+00A0` and `U+3000` are whitespace, not only the ASCII blanks); namespace `[a-z0-9_.-]{1,64}` counted toward the key bound; value ≤ configured ceiling (default 1 MiB, cap 8 MiB); TTL 1 s … configured ceiling (default **7 days**, cap 30 days); operation timeout ≤ 30 s; reconnect attempts and delays capped |
 | Mail | address ≤ 254 octets, exactly one `@`, non-empty halves, no control or structural character; display name ≤ 128 bytes; ≥ 1 and ≤ 32 recipients; subject ≤ 998 bytes, no control character; text and HTML bodies ≤ 1 MiB; SMTP timeout 1 s…5 min; pool 1…64 |
 | Storage | key 1–1024 bytes, `/`-separated segments, none empty, `.` or `..`, no control character, no `\ : * ? " < > \|`, no segment ending in `.` or space, no Windows reserved device name as a stem; object ≤ configured ceiling (default 64 MiB, cap 1 GiB) on write **and on read**; content type an RFC 9110 media type ≤ 255 bytes |
 
@@ -57,7 +57,7 @@ counts**; a lease or a secret prints nothing but its width. No port type impleme
 |---|---|---|
 | Cache | `set_if_absent` stores exactly once while the key lives; `set` and `delete` are idempotent | four barrier racers on the real server → exactly one `Stored` |
 | Mail | **not idempotent**; the port makes no retry; at-least-once delivery is a durable job with an idempotency key | the contract text and the adapter's single `send` |
-| Storage | `put` is last-writer-wins, whole, never interleaved (atomic write); `delete` of an absent key is `Absent`, not an error | the filesystem suite (atomic rename, no temporary file survives) |
+| Storage | `put` is last-writer-wins, whole, never interleaved (atomic write) — **the bytes and the content type together**, as one file carried by one rename, so no reader pairs one writer's bytes with another's content type; `delete` of an absent key is `Absent`, not an error | the filesystem suite (atomic rename, no temporary file survives, a barrier race of two writers and concurrent readers observing only consistent pairs) |
 | Jobs | `(queue, idempotency_key)` unique; concurrent enqueues store one row | `jobs-contract.md` |
 
 ## C-C6 — No implicit retry
@@ -66,14 +66,22 @@ The cache adapter never retries an operation (a retry under a failing backend am
 latency). The mail and storage adapters expose no retry. An application that wants one composes
 `renvor_core::retry` visibly (FR-093).
 
-## C-C7 — TLS by default; plaintext is a double opt-in
+## C-C7 — TLS by default; plaintext is a double opt-in; a credential is never part of a URL
 
-The cache adapter connects with rustls and the native root store; the SMTP adapter uses
-implicit TLS for `smtps://` and required STARTTLS for `smtp://`, and accepts a plaintext session
-only when the host is loopback **and** the configuration says `allow_insecure_loopback`; the
-OTLP exporter accepts `http://` only to loopback. Exactly one crypto provider (`ring`) is
-compiled into `rustls` anywhere in the graph, asserted by `xtask` step 7; each adapter names it
-on its own feature so a consumer building the crate alone gets the same.
+The cache adapter and the SMTP adapter each take an **endpoint** (host, port, and the security
+the session gets) and, beside it, an optional **credential** whose password is a
+`renvor_config::Secret` — never a `redis://:password@host` or `smtp://user:password@host` URL,
+because constitution VI says a secret enters no URL whatever type wraps it. The credential is
+exposed exactly once, into the driver, and no error, event, or `Debug` renders it or the address.
+
+Both adapters default to TLS with rustls and the native root store (the SMTP adapter: implicit
+TLS or required STARTTLS). A **plaintext** endpoint is accepted only when the host is loopback
+**and** the settings say `allow_insecure_loopback` — both, on both adapters — and is refused
+otherwise at the settings boundary, before any socket exists (`CacheBootError::PlaintextRefused`,
+`MailRefusal::PlaintextNotPermitted`) or at Validate when it comes from a configuration section
+(C-C11). The OTLP exporter accepts `http://` only to loopback. Exactly one crypto provider
+(`ring`) is compiled into `rustls` anywhere in the graph, asserted by `xtask` step 7; each
+adapter names it on its own feature so a consumer building the crate alone gets the same.
 
 ## C-C8 — Boot proves the backend
 
@@ -103,10 +111,30 @@ Every S3-compatible candidate failed a licence, advisory, root-store, or MSRV ga
 (`decisions/0035`). The port is what makes that a later adapter rather than a later port; the
 routes a later phase may take are recorded in the ADR and the phase limitations.
 
+## C-C11 — Typed configuration sections (FR-011)
+
+Each capability with an adapter ships a typed configuration section — `CacheSection`,
+`JobsSection`, `MailSection`, `StorageSection`, `OtlpSection` in each crate's `config` module —
+decoded by `renvor-config` against the section's type before any merging, defaulted from the
+section's own `DEFAULTS`, and checked against the same hard caps the settings builders enforce.
+A section registered as a lifecycle source (`Section::source`) is refused in the kernel's
+**Validate** phase — a bound above its cap, a required key nobody supplied, a credential of the
+wrong shape (present-and-empty included, C-C11 of the configuration contract), a plaintext
+endpoint the double opt-in refuses — naming the key, the constraint, and the layer that supplied
+the value, before any provider is constructed, task spawned, or socket opened. A provider built
+`from_config` reads the validated section at Boot. A section nested in a larger schema reports
+its keys under its table prefix (`cache.port`). The OTLP section is the one resolved before the
+lifecycle, because the subscriber it configures precedes the kernel; its diagnostics are the
+same and the exporter opens no socket until its first export.
+
 ## Where this is enforced
 
 - `crates/renvor-cache`, `crates/renvor-mail`, `crates/renvor-storage` unit and real-server
-  suites (Valkey, Mailpit, a temporary directory), each with a redaction canary sweep;
+  suites (Valkey, Mailpit, a temporary directory), each with a redaction canary sweep, each
+  booting its provider from a validated section as well as from settings built in code;
+- each crate's `config` module tests: a bound over its cap, a missing key, a malformed
+  credential, and a refused plaintext endpoint each fail Validate naming key, constraint, and
+  layer with **0** providers initialised;
 - `crates/renvor/tests/capability_boundary.rs`;
 - `xtask` step 7 capability rows and the single-provider check;
 - `xtask` step 1, which refuses to run without the capability endpoints and the require flag.

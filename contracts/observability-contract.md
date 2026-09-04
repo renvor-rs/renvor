@@ -1,7 +1,7 @@
 ---
 description: "Phase 002 contract — lifecycle spans, structured fields, run identifier, health and readiness"
-version: "2.0.0"
-status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise"
+version: "2.1.0"
+status: "unstable — the surface it describes is explicitly unstable under FR-036; this version identifies the contract text, not a stability promise. 2.1.0 (2026-09-04, the Phase 010 correction round): the OTLP shutdown that misses its bound aborts and joins the drain, counts the unexported spans (`renvor_otel_spans_unexported_total`), and returns `OtelShutdownError::FlushTimedOut`; a dropped handle aborts the drain; inbound trace context follows W3C Level 1 exactly (a repeated `traceparent` is invalid, `tracestate` fields are combined in arrival order, key grammar and one-entry-per-key enforced, undefined flag bits zeroed on the outbound form)"
 ---
 
 # Contract: Observability, Health, and Readiness
@@ -163,6 +163,7 @@ The families Renvor emits, with their label sets:
 | `renvor_storage_operations_total` | `backend`, `op`, `outcome` |
 | `renvor_trace_context_inbound_invalid_total` | — |
 | `renvor_otel_spans_dropped_total` | — |
+| `renvor_otel_spans_unexported_total` | — (spans accepted for export whose export had not concluded when the drain was stopped) |
 | `renvor_otel_exports_total` | `outcome` (`ok`, `failed`, `timed_out`) |
 
 ### C-O12 — Health documents and routes
@@ -180,9 +181,18 @@ no, the document either way, over a cloned `HealthState`.
 identifiers, at most 55 bytes; `tracestate` ≤ 512 bytes and ≤ 32 members. A valid `traceparent`
 is recorded on the handler span as `trace_id`, `parent_span_id`, `trace_flags`. An invalid
 `traceparent` is ignored, counted (`renvor_trace_context_inbound_invalid_total`, when the
-application publishes a `Registry` in state), and never echoed. An invalid or oversized
-`tracestate` is dropped **alone**; the `traceparent` verdict is unaffected. The request identifier
-is never derived from either.
+application publishes a `Registry` in state), and never echoed; a **repeated** `traceparent`
+field is invalid and counted the same way. Every `tracestate` field is combined with `,` in
+arrival order before parsing (§3.3.1.1, RFC 7230); a field that is not visible ASCII makes the
+whole `tracestate` invalid. A `tracestate` key follows the Level 1 ABNF (§3.3.1.3.1: a simple
+key and a system-id begin with a lowercase letter; only a tenant-id may begin with a digit) and
+appears at most once (§3.3.1.4). An invalid or oversized `tracestate` is dropped **alone**; the
+`traceparent` verdict is unaffected. The validated context reaches the handler through
+`Request::trace_context`, which is how a job enqueued from a request carries it (C-J8); the
+**outbound** form Renvor renders (`render_traceparent`, stored on a job) carries only the flag
+bits this version defines — every undefined bit is zero (§3.2.2.5.2, §4.3) — while the handler
+span's `trace_flags` records the byte as received. The request identifier is never derived from
+either.
 
 ### C-O14 — Names
 
@@ -202,7 +212,14 @@ and the `ring` provider. An `http://` endpoint only to loopback. Header values a
 Queue default 2048 (cap 65 536); batch default 512 (cap 4096, ≤ queue); export, scheduled-delay,
 and shutdown bounds each 1 ms…60 s. A full queue **drops** the span, counts it, and emits a
 closed-field event; it never blocks the request. The processor is Renvor's, on the Tokio runtime;
-`force_flush` from the SDK is a no-op and the handle's `shutdown` is the bounded flush.
+`force_flush` from the SDK is a no-op and the handle's `shutdown` is the bounded flush. A flush
+that finishes within its bound returns `Ok` with nothing unexported; one that misses it **aborts
+and joins** the drain task, counts every span accepted for export whose export had not concluded
+(`renvor_otel_spans_unexported_total`), emits one closed-field event, and returns
+`OtelShutdownError::FlushTimedOut { unexported }` — never `Ok` after the bound (FR-012, C-L2). A
+drain that ends abnormally is `DrainFailed { unexported }`. The queue is closed before the final
+sweep, so a span ending after it is a counted drop rather than a silent loss. A handle dropped
+without `shutdown` aborts the drain and counts its spans; no drain task outlives its handle.
 
 ### C-O16 — Capability events
 

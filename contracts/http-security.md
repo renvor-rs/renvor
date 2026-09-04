@@ -1,7 +1,7 @@
 ---
 description: "Contract C-11 — middleware order, request identity, client identity, trusted proxies, host validation, and CORS"
-version: "1.0.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
+version: "1.1.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-09-04, the Phase 010 correction round): the same-origin carve-out and the cookie-authenticated cross-site gate compare the complete effective origin — scheme, validated host, effective port — not the host alone; a `Host` port that is not a valid non-zero port refuses the request; the request's scheme is the configured public scheme or a trusted proxy's `proto`. This version identifies the contract text, not a stability promise; the surface it describes is explicitly unstable under C-S1"
 ---
 
 # Contract C-11 — HTTP security defaults
@@ -149,12 +149,26 @@ CORS.
 ### The same-origin carve-out
 
 Browsers send `Origin` on same-origin `POST`, `PUT`, `PATCH`, and `DELETE` as well as on
-cross-origin requests. A request whose `Origin` matches the host it was addressed to is by
+cross-origin requests. A request whose `Origin` **is** the origin it was addressed to is by
 definition **not** cross-origin, and CORS governs cross-origin access only — so it is not refused.
 
-The comparison is against the **validated** host, the value host validation already accepted. An
-attacker therefore cannot satisfy the carve-out without first satisfying host validation, which is
-what keeps it from being a bypass.
+An origin is the RFC 6454 triple: **scheme, host, and effective port**, compared field by field
+(`renvor_http::EffectiveOrigin`). The request's own origin is resolved once by the transport: the
+scheme is the server's configured public scheme (`HttpServerConfig::public_scheme`, `http` unless
+told otherwise, because the listener speaks HTTP) or, when the client identity was resolved
+through a trusted proxy, that proxy's single `Forwarded: proto=` / `X-Forwarded-Proto` value
+(`http`/`https` only; anything else leaves the configured scheme; an untrusted peer's proto is
+never read); the host is the **validated** `Host`, the value host validation already accepted;
+the port is the `Host` port, else the scheme's default. A `Host` whose port is not a valid
+non-zero port is refused outright rather than stripped. The `Origin` header is parsed by the
+same host normaliser (ASCII, lowercase, trailing dots removed, bracketed IPv6 kept) with the
+same default-port rule; `null`, a missing scheme, userinfo, a path, query, or fragment is not an
+origin and falls through to the CORS policy exactly as a foreign origin does. So
+`https://app.example` is not `http://app.example`, and `app.example:8443` is not
+`app.example:443`; the host-only comparison the reviewed head made was the defect (Phase 010
+correction round, finding 1). An attacker cannot satisfy the carve-out without first satisfying
+host validation, which is what keeps it from being a bypass; the same comparison is the
+cookie-authenticated cross-site gate in `renvor-auth-http` (009/L-4).
 
 ### `OPTIONS` cannot carry an application route
 

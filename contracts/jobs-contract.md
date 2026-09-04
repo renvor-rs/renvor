@@ -1,7 +1,7 @@
 ---
 description: "Contract — the durable job store: transitions, the claim statement, leases and reclaim, the depth bound, the worker's bounds, and what is emitted"
-version: "1.0.0"
-status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise. 1.1.0 (2026-09-04, the Phase 010 correction round): the depth bound is enforced under concurrency by a per-queue lock row (`rv_job_queue`, migration 5) so the guarantee is `depth ≤ bound` rather than `depth ≤ bound + writers − 1`; the shared contract gains an eight-racer depth race (17 assertions); the worker proves its store answers at Boot; lease releases at Stop are bounded, counted, and reported through the provider's stop error"
 ---
 
 # Contract: Durable Jobs
@@ -9,10 +9,10 @@ status: "unstable — the surface it describes is explicitly unstable (pre-relea
 **Feature**: Phase 010 | **Satisfies**: FR-022…FR-042, FR-076, FR-083, FR-089…FR-095 | **Decision**:
 `decisions/0032` (jobs live in the application's own database), `decisions/0037` (retry policy)
 
-One shared contract — `renvor_testkit::jobs`, **16 assertions** including two four-racer barrier
-races — runs against the memory substitute and all four persistence rows (PostgreSQL and MySQL
-through `renvor-sqlx` and `renvor-seaorm`). The census in `xtask` step 4 requires each row to
-report in.
+One shared contract — `renvor_testkit::jobs`, **17 assertions** including two four-racer barrier
+races and one eight-racer depth race — runs against the memory substitute and all four
+persistence rows (PostgreSQL and MySQL through `renvor-sqlx` and `renvor-seaorm`). The census in
+`xtask` step 4 requires each row to report in.
 
 ## C-J1 — States and transitions
 
@@ -58,9 +58,18 @@ not an error. `release` returns a leased job to ready at `now` and keeps the att
 
 `UNIQUE (queue, idempotency_key)`: concurrent enqueues with one key store **one** row and every
 caller learns the same identifier (a unique violation under the race resolves to the existing
-id). NULL keys never collide. The queue depth (ready + leased) is counted **inside the enqueue
-transaction** against the configured bound; under READ COMMITTED the guarantee is
-`depth ≤ bound + writers − 1`, stated rather than pretended away.
+id). NULL keys never collide. The queue depth (ready + leased) is counted **under a per-queue
+row lock**: every enqueue upserts the queue's row in `rv_job_queue` as its own autocommit
+statement, then takes `SELECT queue FROM rv_job_queue WHERE queue = ? FOR UPDATE` as the
+**first** statement of its transaction, then reads the key, counts, and inserts. Enqueues on one
+queue therefore serialise, the count is taken after every earlier writer committed, and the
+guarantee is `depth ≤ bound` on both engines — proven by an eight-racer barrier race against a
+bound of 3, three rounds, half the racers keyed. The lock is the first statement on purpose:
+under InnoDB's REPEATABLE READ a consistent read taken before it pins a snapshot that predates
+the previous holder's commit, and a count from that snapshot admits one job too many (measured:
+with the lock after the key read, MySQL held 5–6 against 3 in three of three runs while
+PostgreSQL passed). 1.0.0 stated `depth ≤ bound + writers − 1`; that was the defect, not a
+property.
 
 ## C-J6 — Bounds
 
@@ -77,9 +86,19 @@ grace ≤ 25 s. Every running job holds a kernel `WorkPermit`, so `Drain` sees i
 handler runs in its own task under a child cancel scope: a panic is contained as `panicked` and
 its payload reaches no row or record; a timeout aborts the task as `timed_out`. Retries follow
 the kernel's `RetryPolicy` (`delay(attempt)` sets the next `run_at`); `HandlerError::Abandon`
-dead-letters at once. At stop, jobs still running past the grace are aborted and their leases
-released. A job claimed as shutdown begins is given back and the loop ends — it does not spin
-re-claiming with a closed gate.
+dead-letters at once. **Boot proves the store answers**: before the loop is spawned or any
+readiness contributor registered, the provider reads the queue's depth under
+`STORE_PROBE_TIMEOUT` (10 s) and fails Boot with `WorkerBootError::StoreNotAnswering(category)`
+when the store refuses or does not answer — bad credentials, a missing schema, a permission, or
+no route fail at Boot, not as an endless warning loop. At stop, jobs still running past the grace
+are aborted and their leases released **concurrently, each under `RELEASE_TIMEOUT` (2 s)**, so N
+leases against a silent store cost one bound; `MAX_STOP_GRACE + RELEASE_TIMEOUT ≤ 30 s` (the
+kernel's provider deadline) is pinned at compile time. A release the store refuses or does not
+answer is counted (`WorkerReport::{released, release_failed, release_timed_out}`), never marks
+the lease released, and is reported by the provider's Stop as
+`WorkerBootError::LeasesNotReleased { failed, timed_out }` — an unclean stop the kernel records,
+never a swallowed one (FR-012). A job claimed as shutdown begins is given back the same bounded,
+counted way and the loop ends — it does not spin re-claiming with a closed gate.
 
 ## C-J8 — Trace context
 
@@ -90,14 +109,21 @@ execution span `renvor.job` records `trace_id`, `parent_span_id`, `trace_flags` 
 
 Per attempt, one event on `renvor.jobs`: `job_id`, `queue`, `kind`, `attempt`, `max_attempts`,
 `outcome` (`completed`, `retried`, `dead_lettered`), `failure` (the closed kind), `next_run_at_unix_ms`
-(absent when none), `duration_ms`. Counters `renvor_jobs_{enqueued,claimed,released}_total{queue}`,
-`renvor_jobs_attempts_total{queue,kind,outcome}`, `renvor_jobs_store_errors_total{queue,category}`,
-and the histogram `renvor_jobs_duration_seconds{queue,kind}`.
+(absent when none), `duration_ms`. Counters `renvor_jobs_{enqueued,claimed,released}_total{queue}`
+(`released` counts **confirmed** releases only), `renvor_jobs_attempts_total{queue,kind,outcome}`,
+`renvor_jobs_store_errors_total{queue,category}` (a refused release by its category, a release
+that did not answer as `timed_out`), and the histogram `renvor_jobs_duration_seconds{queue,kind}`
+(the code registered `renvor_job_duration_seconds` until the correction round; the contract's
+name is the family's and is now the code's). Also on `renvor.jobs`: one `info` event when the
+store answers the Boot probe (`queue`, `depth`), one `warn` per lease not released at stop
+(`queue`, `category`), and the `worker stopped` event with `claimed`, `aborted`, `released`,
+`release_failed`, `release_timed_out`.
 
 ## C-J10 — The migration set
 
-`crates/renvor-jobs/migrations/{postgres,mysql}`: four up/down pairs, one statement per file
-(`database-portability.md` §7), versions `20260904000001…4`. An application has **one** migration
+`crates/renvor-jobs/migrations/{postgres,mysql}`: five up/down pairs, one statement per file
+(`database-portability.md` §7), versions `20260904000001…5` — the fifth creates `rv_job_queue`,
+the per-queue lock row C-J5 takes. An application has **one** migration
 set and one ledger: copy the engine's files beside your own; a second `Migrations::load` at this
 directory is refused by SQLx's ledger check.
 
@@ -105,5 +131,6 @@ directory is refused by SQLx's ledger check.
 
 - `renvor_testkit::jobs` on `MemoryJobStore` and the four rows (`tests/jobs.rs` in each adapter);
 - `renvor-jobs` unit tests (exact retry counts, panic containment, timeout, shutdown release, the
-  claim/permit window) and `tests/worker_events.rs` (the subscriber's view);
+  claim/permit window, the Boot probe against a refusing and a hanging store, bounded and counted
+  releases, the provider's stop error) and `tests/worker_events.rs` (the subscriber's view);
 - `xtask` step 4 census rows `jobs::{postgres,mysql}::the_shared_jobs_contract_holds` × 2 adapters.
