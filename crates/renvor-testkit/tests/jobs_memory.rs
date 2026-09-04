@@ -2,6 +2,12 @@
 //!
 //! The same functions the four persistence rows call, so the substitute cannot promise anything
 //! the rows do not, or fail to promise something they do.
+//!
+//! It lives here, not in `renvor-jobs`, because this crate depends on `renvor-jobs` under `jobs`:
+//! a dev-dependency from `renvor-jobs` back onto this crate closed a cycle that `cargo package
+//! --workspace` resolved by packaging this crate first, where `renvor-jobs` was not yet
+//! resolvable (pull request #61), and a versionless dev-dependency is a wildcard `deny.toml` bans.
+#![cfg(feature = "jobs")]
 
 use std::sync::Arc;
 
