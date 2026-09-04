@@ -141,3 +141,41 @@ paths = ['''^target/''']
 description = "FP-003: synthetic '0123456789abcdef'x4 opaque-token fixture in renvor-auth-http's test application, which the test requires to be refused"
 regexes = ['''0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef''']
 regexTarget = "match"
+
+# ---------------------------------------------------------------------------
+# FP-004 — the redaction canary the observability crate plants to prove it never leaks
+# ---------------------------------------------------------------------------
+# Rule        : generic-api-key
+# Locations   : crates/renvor-observability/src/redaction.rs line 131 (commit ee7720e),
+#               crates/renvor-observability/src/subscriber.rs lines 228 and 299 (ee7720e),
+#               crates/renvor-observability/src/otel.rs line 871 (d66b413),
+#               crates/renvor-observability/tests/otlp.rs line 107 (d66b413)
+# Entropy     : 3.8 – 4.0
+#
+# The flagged value is the literal `hunter2CanaryDoNotLeak`, alone or with a `-span` or
+# `-attr` suffix, assigned to a field the redaction rule must catch by NAME (`password`,
+# `token`, `secret`). The rule keys off that field name followed by a high-entropy value —
+# which is the point of the fixture: every one of the five sites is a test that asserts the
+# value is replaced by `[REDACTED]` before it reaches a log line, a span field, or the OTLP
+# wire. It is not a credential; it is the value the system under test is proven to hide.
+#
+# Why an allowlist rather than a different fixture: the literal is in committed history
+# (`ee7720e`, batch G; `d66b413`, batch H), which `gitleaks git .` re-reads on every run.
+# Changing it now would silence the working-tree scan and leave the history scan reporting
+# five findings forever, and this repository does not rewrite published history.
+#
+# Scope: matched CONTENT only — the literal canary word. Deliberately no `paths` entry, for
+# the reason FP-001 records and proved empirically: a `paths` allowlist makes gitleaks skip
+# the file before scanning it, and these are precisely the files where a real credential
+# would do the most damage if pasted by accident.
+#
+# Verification, performed 2026-09-04, to be repeated after any edit to this file: with this
+# entry active both scans report zero findings, and a canary `api_key` injected into
+# `crates/renvor-observability/src/redaction.rs` IS still reported by `gitleaks dir .`.
+#
+# Removable when: the redaction tests stop using this literal AND the commits carrying it
+# have left the scanned history. Deleting the fixture alone is not sufficient.
+[[allowlists]]
+description = "FP-004: the 'hunter2CanaryDoNotLeak' redaction canary in renvor-observability, which every test at those sites requires to be redacted"
+regexes = ['''hunter2CanaryDoNotLeak''']
+regexTarget = "match"
