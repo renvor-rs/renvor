@@ -58,7 +58,13 @@ tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-mu
 # what the four persistence rows promise (FR-040). A dev-dependency cycle — `renvor-testkit`
 # depends on this crate — which cargo permits because dev-dependencies are outside the
 # publication graph; the same shape `renvor-sqlx` has with the testkit.
-renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["jobs"] }
+# No `version` here, on purpose. cargo strips a versionless path dev-dependency at publish and
+# therefore draws no edge for it when ordering `cargo package --workspace`; with a version the
+# edge exists, and because the testkit depends on this crate under `jobs` it closed a cycle
+# that the release dry run resolved by packaging the testkit first, where `renvor-jobs` was
+# not yet resolvable (pull request #61). `xtask` step 7 exempts dev-dependencies for the same
+# reason.
+renvor-testkit = { path = "../renvor-testkit", features = ["jobs"] }
 
 [lints]
 workspace = true
