@@ -132,7 +132,7 @@ fn job_from_row(row: &sea_orm::QueryResult, bounds: &JobBounds) -> Result<Job, J
 
 /// Generates the store for one engine.
 macro_rules! job_store {
-    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $reclaim:literal, $engine_doc:literal) => {
+    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $reclaim:literal, $queue_upsert:literal, $engine_doc:literal) => {
         #[cfg(feature = $feature)]
         #[doc = $engine_doc]
         pub mod $module {
@@ -243,10 +243,40 @@ macro_rules! job_store {
 
             impl JobStore for SeaOrmJobStore {
                 async fn enqueue(&self, job: NewJob, now: SystemTime) -> Result<Enqueued, JobError> {
+                    // 0. THE QUEUE ROW, as its own autocommit statement (`renvor_sqlx::jobs`
+                    //    explains why not inside the transaction).
+                    {
+                        let connection = self.database.acquire().await.map_err(|e| job_error(&e))?;
+                        let backend = connection.get_database_backend();
+                        connection
+                            .execute_raw(statement(
+                                backend,
+                                format!($queue_upsert, KIND.placeholder(1)),
+                                [job.queue().as_str().into()],
+                            ))
+                            .await
+                            .map_err(|error| failed(&error))?;
+                    }
+
                     let unit = self.database.begin().await.map_err(|e| job_error(&e))?;
                     let backend = unit.get_database_backend();
 
-                    // 1. THE KEY, if any.
+                    // 1. THE LOCK, first, so the count below is taken after every earlier
+                    //    writer on this queue committed (FR-026).
+                    let lock = statement(
+                        backend,
+                        format!(
+                            "SELECT queue FROM rv_job_queue WHERE queue = {} FOR UPDATE",
+                            KIND.placeholder(1),
+                        ),
+                        [job.queue().as_str().into()],
+                    );
+                    unit.query_one_raw(lock)
+                        .await
+                        .map_err(|error| failed(&error))?
+                        .ok_or(JobError::Unavailable)?;
+
+                    // 2. THE KEY, if any.
                     if let Some(key) = job.idempotency_key() {
                         let select = statement(
                             backend,
@@ -270,7 +300,7 @@ macro_rules! job_store {
                         }
                     }
 
-                    // 2. THE DEPTH, in this transaction (FR-026).
+                    // 3. THE DEPTH, under the queue lock (FR-026): `depth ≤ bound`.
                     let depth = self
                         .count(
                             &unit,
@@ -286,7 +316,7 @@ macro_rules! job_store {
                         return Err(JobError::QueueFull);
                     }
 
-                    // 3. THE ROW.
+                    // 4. THE ROW.
                     let id = JobId::generate(&*self.entropy)?;
                     let run_at = job.run_at().unwrap_or(now);
                     let max_attempts = i32::try_from(job.max_attempts())
@@ -667,6 +697,7 @@ job_store!(
     sqlx::Postgres,
     DatabaseKind::Postgres,
     "UPDATE rv_job SET state = CASE WHEN attempts >= max_attempts THEN 3 ELSE 0 END, lease_token = NULL, lease_expires_at = NULL, last_failure = 4, updated_at = {}, completed_at = CASE WHEN attempts >= max_attempts THEN {} ELSE NULL END WHERE id IN (SELECT id FROM rv_job WHERE queue = {} AND state = 1 AND lease_expires_at <= {} LIMIT {})",
+    "INSERT INTO rv_job_queue (queue) VALUES ({}) ON CONFLICT (queue) DO NOTHING",
     "The store on PostgreSQL."
 );
 job_store!(
@@ -675,5 +706,6 @@ job_store!(
     sqlx::MySql,
     DatabaseKind::MySql,
     "UPDATE rv_job SET state = CASE WHEN attempts >= max_attempts THEN 3 ELSE 0 END, lease_token = NULL, lease_expires_at = NULL, last_failure = 4, updated_at = {}, completed_at = CASE WHEN attempts >= max_attempts THEN {} ELSE NULL END WHERE queue = {} AND state = 1 AND lease_expires_at <= {} LIMIT {}",
+    "INSERT INTO rv_job_queue (queue) VALUES ({}) ON DUPLICATE KEY UPDATE queue = queue",
     "The store on MySQL."
 );

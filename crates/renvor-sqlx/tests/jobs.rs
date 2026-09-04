@@ -45,7 +45,7 @@ macro_rules! jobs_suite {
                 let database = $connect(&dsn, &support::settings())
                     .await
                     .expect("connects");
-                for table in ["rv_job", "_sqlx_migrations"] {
+                for table in ["rv_job", "rv_job_queue", "_sqlx_migrations"] {
                     sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
                         .execute(database.pool())
                         .await
@@ -77,10 +77,12 @@ macro_rules! jobs_suite {
                 }
 
                 async fn reset(&self) {
-                    sqlx::query(sqlx::AssertSqlSafe("DELETE FROM rv_job".to_owned()))
-                        .execute(self.database.pool())
-                        .await
-                        .expect("clears");
+                    for table in ["rv_job", "rv_job_queue"] {
+                        sqlx::query(sqlx::AssertSqlSafe(format!("DELETE FROM {table}")))
+                            .execute(self.database.pool())
+                            .await
+                            .expect("clears");
+                    }
                 }
             }
 
@@ -116,7 +118,7 @@ macro_rules! jobs_suite {
                         seen += 1;
                     }
                 }
-                assert_eq!(seen, 8, "four up and four down files");
+                assert_eq!(seen, 10, "five up and five down files");
             }
 
             /// FR-023: the set applies, is idempotent on a second run, and leaves the table.

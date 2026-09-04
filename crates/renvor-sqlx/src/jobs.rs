@@ -14,6 +14,18 @@
 //! ever surprise, the transition still cannot double-claim: `rows_affected = 0` means the row was
 //! taken, the transaction rolls back, and the caller sees "nothing claimable now" (FR-028).
 //!
+//! # The depth bound is serialised per queue
+//!
+//! Every enqueue takes a row lock on the queue's row in `rv_job_queue` (`SELECT … FOR UPDATE`,
+//! the first statement of its transaction) before it counts, so two writers cannot both count
+//! `bound − 1` and both insert: the second waits for the first to commit and then counts the
+//! first's row. The queue row is upserted by its own autocommit statement before the
+//! transaction, for the reason the reclaim below is — a range statement inside the transaction
+//! gap-locks on InnoDB. The lock is the first statement on purpose: under REPEATABLE READ a
+//! consistent read taken before the lock would pin a snapshot that does not include the row the
+//! previous holder committed, and the count would be stale. The guarantee is `depth ≤ bound`,
+//! proven by an eight-racer barrier race in the shared contract (FR-026).
+//!
 //! # `rows_affected` is safe here
 //!
 //! Every transition changes `state` or `attempts`, so MySQL's "changed rows, not matched rows"
@@ -172,7 +184,7 @@ fn job_from_row(row: Row, bounds: &JobBounds) -> Result<Job, JobError> {
 
 /// Generates the store for one engine.
 macro_rules! job_store {
-    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $reclaim:literal, $engine_doc:literal) => {
+    ($module:ident, $feature:literal, $driver:ty, $kind:expr, $reclaim:literal, $queue_upsert:literal, $engine_doc:literal) => {
         #[cfg(feature = $feature)]
         #[doc = $engine_doc]
         pub mod $module {
@@ -250,9 +262,30 @@ macro_rules! job_store {
 
             impl JobStore for SqlxJobStore {
                 async fn enqueue(&self, job: NewJob, now: SystemTime) -> Result<Enqueued, JobError> {
+                    // 0. THE QUEUE ROW, as its own autocommit statement (see the module docs for
+                    //    why not inside the transaction), so the lock below has a row to take.
+                    let upsert = format!($queue_upsert, KIND.placeholder(1));
+                    sqlx::query(sqlx::AssertSqlSafe(upsert))
+                        .bind(job.queue().as_str())
+                        .execute(&self.pool)
+                        .await
+                        .map_err(|error| failed(&error))?;
+
                     let mut transaction = self.pool.begin().await.map_err(|e| failed(&e))?;
 
-                    // 1. THE KEY, if any. Answered from the row rather than from a failed insert
+                    // 1. THE LOCK, first: every enqueue on this queue serialises here, so the
+                    //    count in step 3 is taken after every earlier writer committed.
+                    let lock = format!(
+                        "SELECT queue FROM rv_job_queue WHERE queue = {} FOR UPDATE",
+                        KIND.placeholder(1),
+                    );
+                    let _held: String = sqlx::query_scalar(sqlx::AssertSqlSafe(lock))
+                        .bind(job.queue().as_str())
+                        .fetch_one(&mut *transaction)
+                        .await
+                        .map_err(|error| failed(&error))?;
+
+                    // 2. THE KEY, if any. Answered from the row rather than from a failed insert
                     //    when it can be, so the common duplicate costs no constraint violation.
                     if let Some(key) = job.idempotency_key() {
                         let select = format!(
@@ -274,9 +307,7 @@ macro_rules! job_store {
                         }
                     }
 
-                    // 2. THE DEPTH, counted in this transaction (FR-026). Under READ COMMITTED
-                    //    two writers may both count `bound − 1`; the guarantee is therefore
-                    //    `depth ≤ bound + writers − 1`, as the data model records.
+                    // 3. THE DEPTH, counted under the queue lock (FR-026): `depth ≤ bound`.
                     let count = format!(
                         "SELECT COUNT(*) FROM rv_job WHERE queue = {} AND state IN (0, 1)",
                         KIND.placeholder(1),
@@ -290,7 +321,7 @@ macro_rules! job_store {
                         return Err(JobError::QueueFull);
                     }
 
-                    // 3. THE ROW. The identifier is entropy, never a sequence (FR-042).
+                    // 4. THE ROW. The identifier is entropy, never a sequence (FR-042).
                     let id = JobId::generate(&*self.entropy)?;
                     let run_at = job.run_at().unwrap_or(now);
                     let insert = format!(
@@ -632,6 +663,8 @@ job_store!(
     // the engine accepts. Placeholders: updated_at, completed_at, queue, the expiry cutoff; the
     // batch size is a literal.
     "UPDATE rv_job SET state = CASE WHEN attempts >= max_attempts THEN 3 ELSE 0 END, lease_token = NULL, lease_expires_at = NULL, last_failure = 4, updated_at = {}, completed_at = CASE WHEN attempts >= max_attempts THEN {} ELSE NULL END WHERE id IN (SELECT id FROM rv_job WHERE queue = {} AND state = 1 AND lease_expires_at <= {} LIMIT {})",
+    // The queue row an enqueue locks: created once, then a no-op.
+    "INSERT INTO rv_job_queue (queue) VALUES ({}) ON CONFLICT (queue) DO NOTHING",
     "The store on PostgreSQL."
 );
 job_store!(
@@ -642,5 +675,8 @@ job_store!(
     // MySQL takes `LIMIT` on the UPDATE itself and refuses a subselect on the table being
     // updated. Same placeholders in the same order, so the macro body binds identically.
     "UPDATE rv_job SET state = CASE WHEN attempts >= max_attempts THEN 3 ELSE 0 END, lease_token = NULL, lease_expires_at = NULL, last_failure = 4, updated_at = {}, completed_at = CASE WHEN attempts >= max_attempts THEN {} ELSE NULL END WHERE queue = {} AND state = 1 AND lease_expires_at <= {} LIMIT {}",
+    // MySQL has no `ON CONFLICT`; a duplicate-key update that sets the key to itself is the
+    // narrowest no-op (`INSERT IGNORE` would also swallow unrelated errors).
+    "INSERT INTO rv_job_queue (queue) VALUES ({}) ON DUPLICATE KEY UPDATE queue = queue",
     "The store on MySQL."
 );

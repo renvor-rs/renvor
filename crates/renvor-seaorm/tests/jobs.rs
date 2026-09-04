@@ -48,7 +48,7 @@ macro_rules! jobs_suite {
                     .expect("connects");
                 {
                     let connection = database.acquire().await.expect("acquires");
-                    for table in ["rv_job", "_sqlx_migrations"] {
+                    for table in ["rv_job", "rv_job_queue", "_sqlx_migrations"] {
                         connection
                             .execute_unprepared(&format!("DROP TABLE IF EXISTS {table}"))
                             .await
@@ -82,10 +82,12 @@ macro_rules! jobs_suite {
 
                 async fn reset(&self) {
                     let connection = self.database.acquire().await.expect("acquires");
-                    connection
-                        .execute_unprepared("DELETE FROM rv_job")
-                        .await
-                        .expect("clears");
+                    for table in ["rv_job", "rv_job_queue"] {
+                        connection
+                            .execute_unprepared(&format!("DELETE FROM {table}"))
+                            .await
+                            .expect("clears");
+                    }
                 }
             }
 
@@ -121,7 +123,7 @@ macro_rules! jobs_suite {
                         seen += 1;
                     }
                 }
-                assert_eq!(seen, 8, "four up and four down files");
+                assert_eq!(seen, 10, "five up and five down files");
             }
 
             /// FR-023: the set applies, is idempotent on a second run, and leaves the table.

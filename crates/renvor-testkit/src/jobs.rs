@@ -27,11 +27,17 @@ use renvor_jobs::{
     JobKind, JobPayload, JobState, JobStore, LeaseToken, NewJob, QueueName,
 };
 
-/// How many concurrent callers race in the two race assertions.
+/// How many concurrent callers race in the two identity race assertions.
 pub const RACERS: usize = 4;
 
+/// How many concurrent callers race against the depth bound, per round.
+pub const DEPTH_RACERS: usize = 8;
+
+/// How many rounds the depth race runs: each starts from an empty queue.
+pub const DEPTH_ROUNDS: usize = 3;
+
 /// How many assertions [`the_shared_jobs_contract_holds`] runs.
-pub const ASSERTIONS: usize = 16;
+pub const ASSERTIONS: usize = 17;
 
 /// What an implementation supplies.
 pub trait JobsFixture: Send + Sync {
@@ -536,6 +542,66 @@ pub async fn the_depth_bound_refuses_and_finished_jobs_free_room<F: JobsFixture>
     assert!(store.enqueue(other, at(7)).await.is_ok());
 }
 
+/// FR-026 under concurrency: the depth bound is a bound, not an estimate. Eight racers enqueue
+/// into an empty queue bounded at 3 after a barrier; the queue never holds more than 3, and
+/// every racer beyond the bound is told `QueueFull`. A count taken under READ COMMITTED with no
+/// serialisation lets two writers both see `bound − 1` and both insert, which the first version
+/// of this contract stated as `depth ≤ bound + writers − 1` — a bound that grows with the load
+/// it exists to bound.
+pub async fn concurrent_enqueues_never_exceed_the_depth_bound<F: JobsFixture>(fixture: &F) {
+    let bounds = fixture.bounds();
+    let bound = bounds.max_queue_depth();
+    assert_eq!(bound, 3, "the fixture must build its store with depth 3");
+    for round in 0..DEPTH_ROUNDS {
+        fixture.reset().await;
+        let store = fixture.store();
+        let barrier = Arc::new(tokio::sync::Barrier::new(DEPTH_RACERS));
+        let mut handles = Vec::new();
+        for racer in 0..DEPTH_RACERS {
+            let store = Arc::clone(&store);
+            let barrier = Arc::clone(&barrier);
+            // Half the racers carry a distinct idempotency key, so the keyed path — which reads
+            // the key's row before counting — races too. On InnoDB a consistent read taken
+            // BEFORE the queue lock pins a snapshot that predates the previous holder's commit,
+            // and a count from that snapshot admits one job too many; the keyed racers are the
+            // ones that would show it.
+            let mut new_job = job(&bounds, b"depth");
+            if racer % 2 == 0 {
+                new_job = new_job.with_idempotency_key(
+                    IdempotencyKey::new(&format!("depth-{round}-{racer}")).unwrap(),
+                );
+            }
+            handles.push(tokio::spawn(async move {
+                barrier.wait().await;
+                store.enqueue(new_job, at(10)).await
+            }));
+        }
+        let (mut created, mut full) = (0_u64, 0_u64);
+        for handle in handles {
+            match handle.await.unwrap() {
+                Ok(Enqueued::Created(_)) => created += 1,
+                Ok(Enqueued::Duplicate(_)) => panic!("a distinct key was reported as a duplicate"),
+                Err(JobError::QueueFull) => full += 1,
+                Err(_) => panic!("an enqueue failed for a reason other than a full queue"),
+            }
+        }
+        let depth = store.depth(&queue()).await.unwrap();
+        assert!(
+            depth <= bound,
+            "round {round}: the queue holds more jobs than its bound"
+        );
+        assert_eq!(
+            created, bound,
+            "round {round}: the number of admitted enqueues is not the bound"
+        );
+        assert_eq!(
+            full,
+            DEPTH_RACERS as u64 - bound,
+            "round {round}: the racers beyond the bound were not all told the queue is full"
+        );
+    }
+}
+
 /// FR-029: a dead job is revived explicitly, with its attempts reset; a live one is not.
 pub async fn revive_puts_a_dead_job_back_with_attempts_reset<F: JobsFixture>(fixture: &F) {
     fixture.reset().await;
@@ -711,6 +777,7 @@ pub async fn the_shared_jobs_contract_holds<F: JobsFixture>(fixture: &F) {
     run!(an_expired_lease_at_the_last_attempt_dead_letters);
     run!(release_returns_the_job_to_ready_and_clears_the_lease);
     run!(the_depth_bound_refuses_and_finished_jobs_free_room);
+    run!(concurrent_enqueues_never_exceed_the_depth_bound);
     run!(revive_puts_a_dead_job_back_with_attempts_reset);
     run!(queues_are_isolated);
     run!(a_read_job_never_debugs_its_payload);
