@@ -24,8 +24,12 @@ versions are chosen not to collide with `renvor-auth`'s (`20260901…`).
 
 `JobsWorkerProvider` proves the configured store answers before its loop exists: one bounded read
 of the queue's depth at Boot, and a store that refuses or does not answer fails Boot with a closed
-category rather than polling for ever. At Stop, leases of jobs aborted at the grace are released
-concurrently under one bound; a release the store refuses or does not answer is counted in the
-`WorkerReport` and reported by Stop as `LeasesNotReleased`, never swallowed. The `[jobs]` section
+category rather than polling for ever. At Stop, a job still running at the grace has its
+handler's own task aborted and joined before its lease is released — never the wrapper task
+around it, whose abort would leave the handler running with no owner — and a handler that
+cannot be dropped keeps its lease to expire rather than having it released under it. The
+releases run concurrently under one bound; a release the store refuses or does not answer, and
+a lease withheld this way, are counted in the `WorkerReport` and reported by Stop as
+`LeasesNotReleased`, never swallowed. The `[jobs]` section
 in `config` carries every bound with its default and hard cap and is refused at Validate by key,
 constraint, and layer.

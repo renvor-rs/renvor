@@ -1,7 +1,7 @@
 ---
 description: "Contract — the durable job store: transitions, the claim statement, leases and reclaim, the depth bound, the worker's bounds, and what is emitted"
-version: "1.1.0"
-status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise. 1.1.0 (2026-09-04, the Phase 010 correction round): the depth bound is enforced under concurrency by a per-queue lock row (`rv_job_queue`, migration 5) so the guarantee is `depth ≤ bound` rather than `depth ≤ bound + writers − 1`; the shared contract gains an eight-racer depth race (17 assertions); the worker proves its store answers at Boot; lease releases at Stop are bounded, counted, and reported through the provider's stop error"
+version: "1.2.0"
+status: "unstable — the surface it describes is explicitly unstable (pre-release, `0.0.0`); this version identifies the contract text, not a stability promise. 1.2.0 (2026-09-04, the L-16 correction): at the stop grace the handler's own task is aborted and joined under `ABORT_JOIN_TIMEOUT` before its lease is released; a handler whose task does not terminate keeps its lease (`release_withheld`) and the provider's stop reports it. 1.1.0 (2026-09-04, the Phase 010 correction round): the depth bound is enforced under concurrency by a per-queue lock row (`rv_job_queue`, migration 5) so the guarantee is `depth ≤ bound` rather than `depth ≤ bound + writers − 1`; the shared contract gains an eight-racer depth race (17 assertions); the worker proves its store answers at Boot; lease releases at Stop are bounded, counted, and reported through the provider's stop error"
 ---
 
 # Contract: Durable Jobs
@@ -90,15 +90,25 @@ dead-letters at once. **Boot proves the store answers**: before the loop is spaw
 readiness contributor registered, the provider reads the queue's depth under
 `STORE_PROBE_TIMEOUT` (10 s) and fails Boot with `WorkerBootError::StoreNotAnswering(category)`
 when the store refuses or does not answer — bad credentials, a missing schema, a permission, or
-no route fail at Boot, not as an endless warning loop. At stop, jobs still running past the grace
-are aborted and their leases released **concurrently, each under `RELEASE_TIMEOUT` (2 s)**, so N
-leases against a silent store cost one bound; `MAX_STOP_GRACE + RELEASE_TIMEOUT ≤ 30 s` (the
-kernel's provider deadline) is pinned at compile time. A release the store refuses or does not
-answer is counted (`WorkerReport::{released, release_failed, release_timed_out}`), never marks
-the lease released, and is reported by the provider's Stop as
-`WorkerBootError::LeasesNotReleased { failed, timed_out }` — an unclean stop the kernel records,
-never a swallowed one (FR-012). A job claimed as shutdown begins is given back the same bounded,
-counted way and the loop ends — it does not spin re-claiming with a closed gate.
+no route fail at Boot, not as an endless warning loop. At stop, a job still running past the
+grace is handled in a fixed order: its scope is cancelled, **the handler's own task is aborted**
+(never only the wrapper task around it, whose abort would drop the handle and leave the handler
+running with no owner), that task is **joined** under `ABORT_JOIN_TIMEOUT` (2 s) — its
+`JoinHandle` resolves only once the future has been dropped — and only then is its lease
+released. A handler that holds its thread inside a poll cannot be dropped by anything and does
+not terminate within the bound; its lease is **kept**, to expire and be reclaimed with the
+attempt counted (C-J4) as if the worker had died, and counted as `release_withheld` — a release
+under a handler that may still be running would hand the job to a second execution while the
+first is alive. The same abort-then-join order applies at the handler timeout, before the
+attempt is recorded. The releases run **concurrently, each under `RELEASE_TIMEOUT` (2 s)**, so
+N leases against a silent store cost one bound; `MAX_STOP_GRACE + ABORT_JOIN_TIMEOUT +
+RELEASE_TIMEOUT ≤ 30 s` (the kernel's provider deadline) is pinned at compile time. A release
+the store refuses or does not answer is counted (`WorkerReport::{released, release_failed,
+release_timed_out, release_withheld}`), never marks the lease released, and is reported by the
+provider's Stop as `WorkerBootError::LeasesNotReleased { failed, timed_out, withheld }` — an
+unclean stop the kernel records, never a swallowed one (FR-012). A job claimed as shutdown
+begins is given back the same bounded, counted way and the loop ends — it does not spin
+re-claiming with a closed gate.
 
 ## C-J8 — Trace context
 
@@ -116,8 +126,10 @@ that did not answer as `timed_out`), and the histogram `renvor_jobs_duration_sec
 (the code registered `renvor_job_duration_seconds` until the correction round; the contract's
 name is the family's and is now the code's). Also on `renvor.jobs`: one `info` event when the
 store answers the Boot probe (`queue`, `depth`), one `warn` per lease not released at stop
-(`queue`, `category`), and the `worker stopped` event with `claimed`, `aborted`, `released`,
-`release_failed`, `release_timed_out`.
+(`queue`, `category`), one `warn` per lease withheld at stop under a handler that did not
+terminate (`queue`), one `warn` when a timed-out handler does not terminate after its abort
+(`job_id`, `queue`, `kind`), and the `worker stopped` event with `claimed`, `aborted`,
+`released`, `release_failed`, `release_timed_out`, `release_withheld`.
 
 ## C-J10 — The migration set
 

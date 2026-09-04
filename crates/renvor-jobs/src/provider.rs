@@ -12,12 +12,14 @@
 //! opposite; nothing is spawned and readiness is never Ready when the probe fails.
 //!
 //! Stop cancels the scope and waits for the loop to finish — which the worker bounds by its stop
-//! grace, aborting what is left and releasing each lease under
+//! grace, then aborts and **joins** each handler task left under
+//! [`ABORT_JOIN_TIMEOUT`](crate::worker::ABORT_JOIN_TIMEOUT) and releases each lease under
 //! [`RELEASE_TIMEOUT`](crate::worker::RELEASE_TIMEOUT) (FR-033) — so a provider deadline is
-//! never the thing that ends it. A release the store refused or did not answer is **reported**:
-//! Stop returns [`WorkerBootError::LeasesNotReleased`] with the counts, and the kernel records
-//! an unclean stop naming this provider (C-L2: a forced close is reported, never swallowed). The
-//! report is kept on the handle either way.
+//! never the thing that ends it. A release the store refused or did not answer, and a lease
+//! withheld under a handler that did not terminate, are **reported**: Stop returns
+//! [`WorkerBootError::LeasesNotReleased`] with the counts, and the kernel records an unclean
+//! stop naming this provider (C-L2: a forced close is reported, never swallowed). The report is
+//! kept on the handle either way.
 //!
 //! # It depends on what the application says it depends on
 //!
@@ -67,12 +69,14 @@ pub enum WorkerBootError {
         .0.as_str()
     )]
     StoreNotAnswering(JobError),
-    /// Stop aborted running jobs whose leases the store did not then confirm released. Reported
-    /// rather than swallowed (FR-012, C-L2: a forced close is reported): the kernel records an
-    /// unclean stop naming this provider, and the counts say what is left leased.
+    /// Stop aborted running jobs and left some leased: releases the store refused or did not
+    /// answer, and leases deliberately withheld under a handler whose task did not terminate.
+    /// Reported rather than swallowed (FR-012, C-L2: a forced close is reported): the kernel
+    /// records an unclean stop naming this provider, and the counts say what is left leased.
     #[error(
-        "jobs worker stop failed: {failed} lease release(s) failed and {timed_out} timed out; \
-         those jobs stay leased until the lease expires and is reclaimed"
+        "jobs worker stop failed: {failed} lease release(s) failed, {timed_out} timed out, and \
+         {withheld} withheld under a handler that did not terminate; those jobs stay leased \
+         until the lease expires and is reclaimed"
     )]
     LeasesNotReleased {
         /// Releases the store refused.
@@ -80,6 +84,9 @@ pub enum WorkerBootError {
         /// Releases that did not answer within
         /// [`RELEASE_TIMEOUT`](crate::worker::RELEASE_TIMEOUT).
         timed_out: u64,
+        /// Leases kept because the handler's task did not terminate within
+        /// [`ABORT_JOIN_TIMEOUT`](crate::worker::ABORT_JOIN_TIMEOUT) after its abort.
+        withheld: u64,
     },
 }
 
@@ -220,20 +227,26 @@ impl<S: JobStore + 'static> Provider for JobsWorkerProvider<S> {
             let report = task
                 .await
                 .map_err(|_| Box::new(WorkerBootError::RunLoopDidNotFinish) as BoxedCause)?;
-            let (failed, timed_out) = (report.release_failed, report.release_timed_out);
+            let (failed, timed_out, withheld) = (
+                report.release_failed,
+                report.release_timed_out,
+                report.release_withheld,
+            );
             *self
                 .handle
                 .last_report
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = Some(report);
             // A forced close is reported, never swallowed (FR-012, C-L2): leases the store did
-            // not confirm released become the kernel's unclean stop, naming this provider, with
-            // the counts. The report is kept first so the handle tells the same story.
-            if failed > 0 || timed_out > 0 {
-                return Err(
-                    Box::new(WorkerBootError::LeasesNotReleased { failed, timed_out })
-                        as BoxedCause,
-                );
+            // not confirm released, and leases withheld under a handler that did not terminate,
+            // become the kernel's unclean stop, naming this provider, with the counts. The report
+            // is kept first so the handle tells the same story.
+            if failed > 0 || timed_out > 0 || withheld > 0 {
+                return Err(Box::new(WorkerBootError::LeasesNotReleased {
+                    failed,
+                    timed_out,
+                    withheld,
+                }) as BoxedCause);
             }
             Ok(())
         })
@@ -275,6 +288,7 @@ mod tests {
     use crate::job::{Job, JobBounds, JobKind, JobPayload, JobState, NewJob, QueueName};
     use crate::memory::MemoryJobStore;
     use crate::worker::faulty::{Fault, Faulty};
+    use crate::worker::witness::{Deaf, FreeOnDrop, Witness};
     use crate::worker::{HandlerFuture, JobHandler, STORE_PROBE_TIMEOUT, Worker, WorkerConfig};
 
     /// A provider that needs `jobs` and offers nothing.
@@ -639,7 +653,7 @@ mod tests {
             "the stop error does not name the release"
         );
         assert!(
-            rendered.contains("1 lease release(s) failed and 0 timed out"),
+            rendered.contains("1 lease release(s) failed, 0 timed out, and 0 withheld"),
             "the counts are not reported"
         );
         let run = handle
@@ -687,10 +701,92 @@ mod tests {
         );
         assert_eq!(run.release_failed, 0);
         assert_eq!(run.release_timed_out, 0);
+        assert_eq!(run.release_withheld, 0);
         assert_eq!(
             inner.read(&id).await.unwrap().unwrap().state,
             JobState::Ready,
             "the lease was not given back"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_provider_reports_a_lease_kept_under_a_handler_that_did_not_terminate() {
+        // A handler holding its thread inside a poll cannot be dropped by any abort. Stop must
+        // still end within its bounds, must not release the lease under it, and must say so.
+        let inner = store();
+        let id = enqueue(&inner, "hold").await;
+        let gate = Arc::new(std::sync::Barrier::new(2));
+        let witness = Arc::new(Witness {
+            poll_gate: Some(Arc::clone(&gate)),
+            ..Witness::default()
+        });
+        let free = FreeOnDrop {
+            gate,
+            witness: Arc::clone(&witness),
+        };
+        let worker = Worker::new(
+            Arc::clone(&inner),
+            config()
+                .with_handler_timeout(Duration::from_secs(60))
+                .unwrap(),
+            Arc::new(SystemClock::new()),
+            Arc::new(OsEntropy::new()),
+            &Registry::new(),
+        )
+        .unwrap()
+        .register(
+            JobKind::new("hold").unwrap(),
+            Arc::new(Deaf(Arc::clone(&witness))),
+        );
+        let provider = JobsWorkerProvider::new(ProviderId::new("jobs"), worker);
+        let handle = provider.handle();
+        let mut application = ApplicationBuilder::new()
+            .with_drain_budget(Duration::from_millis(200))
+            .with_provider(Box::new(provider))
+            .build()
+            .expect("register succeeds")
+            .boot()
+            .await
+            .expect("boot reaches Ready");
+        for _ in 0..500 {
+            if witness.blocked.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            witness.blocked.load(Ordering::SeqCst),
+            "the handler never blocked its thread"
+        );
+
+        let report = application.shutdown().await;
+        assert!(
+            !report.stop().is_clean(),
+            "a lease kept under a live handler was reported as a clean stop"
+        );
+        let rendered = report
+            .stop()
+            .failures()
+            .iter()
+            .map(|failure| chain(failure))
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(
+            rendered.contains("0 lease release(s) failed, 0 timed out, and 1 withheld"),
+            "the withheld count is not reported"
+        );
+        let run = handle.report().expect("the report is kept when Stop fails");
+        assert_eq!(run.aborted, 1);
+        assert_eq!(run.release_withheld, 1);
+        assert_eq!(
+            run.released, 0,
+            "the lease was released under a live handler"
+        );
+        assert_eq!(
+            inner.read(&id).await.unwrap().unwrap().state,
+            JobState::Leased,
+            "the lease was not kept"
+        );
+        drop(free);
     }
 }

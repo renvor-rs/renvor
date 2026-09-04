@@ -14,8 +14,13 @@
 //! Panic containment. A task that panics ends with a `JoinError` whose `is_panic()` is true; the
 //! worker records the attempt as [`FailureKind::Panicked`] and the payload never reaches a log or a
 //! row (FR-034). `std::panic::catch_unwind` cannot contain a panic that happens across an `.await`;
-//! a task boundary can. The same task is what the handler timeout aborts (FR-035), under the
-//! job's own cancellation scope — a child of the application's — so shutdown reaches it too.
+//! a task boundary can. The same task is what the handler timeout aborts (FR-035) and what the
+//! stop sweep aborts at the grace (FR-033), under the job's own cancellation scope — a child of
+//! the application's — so shutdown reaches it too. Either abort is followed by a **join** before
+//! anything is recorded or released: an aborted task terminates when its future is dropped, and
+//! its `JoinHandle` resolves only then. The wrapper task around the handler is never the thing
+//! aborted — dropping a `JoinHandle` detaches a task rather than ending it, so aborting the
+//! wrapper would leave the handler running with no owner while its lease was given away.
 //!
 //! # Retries are the policy's, not the worker's
 //!
@@ -26,15 +31,22 @@
 //!
 //! # Stop gives back what it aborts, bounded, and says how that went
 //!
-//! A job still running at the stop grace is aborted and its lease released — but a release is a
-//! store call, and the store is the one dependency most likely to be failing at the moment an
-//! application is stopping. So every release runs under [`RELEASE_TIMEOUT`], the aborted jobs'
-//! releases run concurrently so the phase costs one bound rather than their sum, and the
-//! outcome of each is **counted, never discarded**: only a release the store confirmed moves the
-//! `released` counter; a refusal or a silence is a store error under its closed category, one
-//! `warn` event, and a count in [`WorkerReport`] that the provider turns into an unclean stop
-//! (FR-025, FR-033, C-L2). `MAX_STOP_GRACE + RELEASE_TIMEOUT` fits under the kernel's provider
-//! deadline, checked at compile time.
+//! A job still running at the stop grace is handled in a fixed order: its scope is cancelled,
+//! its handler's own task is aborted, that task is **joined** under [`ABORT_JOIN_TIMEOUT`], and
+//! only then is its lease released. A lease released earlier would let the next claimant run the
+//! job while this handler was still executing — the overlap FR-033 exists to prevent. A handler
+//! that holds its thread inside a poll cannot be dropped by anything and does not terminate
+//! within the bound; its lease is deliberately **kept** to expire and be reclaimed with the
+//! attempt counted (C-J4), as if this worker had died, and counted as `release_withheld`.
+//!
+//! A release is a store call, and the store is the one dependency most likely to be failing at
+//! the moment an application is stopping. So every release runs under [`RELEASE_TIMEOUT`], the
+//! aborted jobs' releases run concurrently so the phase costs one bound rather than their sum,
+//! and the outcome of each is **counted, never discarded**: only a release the store confirmed
+//! moves the `released` counter; a refusal or a silence is a store error under its closed
+//! category, one `warn` event, and a count in [`WorkerReport`] that the provider turns into an
+//! unclean stop (FR-025, FR-033, C-L2). `MAX_STOP_GRACE + ABORT_JOIN_TIMEOUT + RELEASE_TIMEOUT`
+//! fits under the kernel's provider deadline, checked at compile time.
 //!
 //! # What is emitted
 //!
@@ -101,14 +113,27 @@ pub const RELEASE_TIMEOUT: Duration = Duration::from_secs(2);
 /// category that names the dependency — rather than as a kernel deadline that can only name the
 /// provider (FR-012, C-L7).
 pub const STORE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long an abort waits for the handler's own task to terminate — at the stop grace and at
+/// the handler timeout — before the worker stops waiting for it.
+///
+/// An aborted task terminates when its future is dropped, which happens as soon as its current
+/// poll returns: for a handler that yields, at once. A handler holding its thread inside a poll
+/// cannot be dropped by anything, and a stop must not wait on it past its budget (FR-025,
+/// C-L7). After this bound the worker treats it as a dead worker is treated: the lease is
+/// **kept**, to expire and be reclaimed with the attempt counted (C-J4), and the report says so
+/// — because a release under a handler that may still be running hands the job to a second
+/// execution while the first is alive, which is what FR-033 exists to prevent.
+/// `MAX_STOP_GRACE + ABORT_JOIN_TIMEOUT + RELEASE_TIMEOUT` fits under the kernel's provider
+/// deadline, pinned below.
+pub const ABORT_JOIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-// The two bounds above are promises about the kernel's deadline, so they are checked against it
-// where the compiler can see both: a future edit to either constant, or to the kernel's, fails
+// The bounds above are promises about the kernel's deadline, so they are checked against it
+// where the compiler can see both: a future edit to any constant, or to the kernel's, fails
 // here rather than at a provider deadline in production.
 const _: () = assert!(
-    MAX_STOP_GRACE.as_millis() + RELEASE_TIMEOUT.as_millis()
+    MAX_STOP_GRACE.as_millis() + ABORT_JOIN_TIMEOUT.as_millis() + RELEASE_TIMEOUT.as_millis()
         <= DEFAULT_PROVIDER_DEADLINE.as_millis(),
-    "the stop grace cap plus the release bound must fit under the kernel's provider deadline"
+    "the stop grace cap plus the abort-join and release bounds must fit under the kernel's provider deadline"
 );
 const _: () = assert!(
     STORE_PROBE_TIMEOUT.as_millis() < DEFAULT_PROVIDER_DEADLINE.as_millis(),
@@ -394,8 +419,53 @@ impl AttemptOutcome {
     }
 }
 
-/// Leases held by running tasks, so `stop` can release the ones it aborts.
-type InFlight = Arc<Mutex<HashMap<tokio::task::Id, LeaseToken>>>;
+/// Where one running job's handler task stands, as `stop` needs to know it.
+enum HandlerTask {
+    /// Not spawned yet, or none: the kind has no handler and the job is being dead-lettered.
+    NotStarted,
+    /// Spawned and not yet joined; the handle aborts it.
+    Running(tokio::task::AbortHandle),
+    /// Its `JoinHandle` resolved: the future has been dropped and cannot run again.
+    Terminated,
+}
+
+/// One running job: what `stop` cancels, aborts, and — once the handler has terminated —
+/// releases.
+struct InFlightJob {
+    lease: LeaseToken,
+    scope: CancelScope,
+    handler: HandlerTask,
+}
+
+/// The running jobs, keyed by the worker's own claim sequence (a job id can be claimed again by
+/// this worker once its lease has expired, so it is not the key).
+#[derive(Default)]
+struct InFlightState {
+    /// Set by the stop sweep under the same lock that registers a spawned handler, so a handler
+    /// spawned after the sweep is aborted at once by the wrapper that spawned it.
+    stopping: bool,
+    jobs: HashMap<u64, InFlightJob>,
+}
+
+type InFlight = Arc<Mutex<InFlightState>>;
+
+/// How one execution ended, as its wrapper task needs to know it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Settled {
+    /// The transition was recorded, or the store refused it; nothing is left to release.
+    Recorded,
+    /// The stop sweep aborted the handler and this wrapper joined it; the lease is `run`'s to
+    /// release.
+    AbortedAtStop,
+}
+
+/// How a handler's task ended from the wrapper's side.
+enum Attempt {
+    /// The handler returned, panicked, or timed out: `None` is success.
+    Ended(Option<FailureKind>),
+    /// The stop sweep aborted it.
+    AbortedAtStop,
+}
 
 /// How one lease release ended. Closed, so the report and the metric agree by construction on
 /// what "released" means: **the store confirmed it**.
@@ -432,7 +502,8 @@ pub struct WorkerReport {
     /// Jobs claimed over the run.
     pub claimed: u64,
     /// Jobs still running when the stop grace elapsed, and aborted. A release was attempted for
-    /// each; `released`, `release_failed`, and `release_timed_out` say how those ended.
+    /// each whose handler task terminated; `released`, `release_failed`, `release_timed_out`,
+    /// and `release_withheld` say how those ended.
     pub aborted: u64,
     /// Leases the store **confirmed** released — at the stop grace, or because shutdown began
     /// between a claim and its permit. Only a confirmed release counts.
@@ -443,6 +514,12 @@ pub struct WorkerReport {
     /// Releases that did not answer within [`RELEASE_TIMEOUT`]; the same consequence as a
     /// refusal, counted apart because a silent store and a refusing store are different faults.
     pub release_timed_out: u64,
+    /// Leases deliberately **kept** at stop: the handler's task did not terminate within
+    /// [`ABORT_JOIN_TIMEOUT`] after its abort — a handler holding its thread inside a poll — and
+    /// a release under a handler that may still be running would hand the job to a second
+    /// execution while the first is alive. Those jobs stay leased until the lease expires and
+    /// is reclaimed, with the attempt counted (C-J4), exactly as if this worker had died.
+    pub release_withheld: u64,
 }
 
 impl WorkerReport {
@@ -537,9 +614,10 @@ impl<S: JobStore + 'static> Worker<S> {
     /// a worker that will not run it without the report saying so.
     pub async fn run(self: Arc<Self>, gate: WorkGate, cancel: CancelScope) -> WorkerReport {
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
-        let in_flight: InFlight = Arc::new(Mutex::new(HashMap::new()));
+        let in_flight: InFlight = Arc::new(Mutex::new(InFlightState::default()));
         let mut tasks = tokio::task::JoinSet::new();
         let mut report = WorkerReport::default();
+        let mut sequence: u64 = 0;
 
         'outer: loop {
             if cancel.is_cancelled() {
@@ -598,20 +676,36 @@ impl<S: JobStore + 'static> Worker<S> {
                 let worker = Arc::clone(&self);
                 let scope = cancel.child(format!("job:{}", claimed.job.id));
                 let in_flight_for_task = Arc::clone(&in_flight);
-                let lease = claimed.lease;
-                let handle = tasks.spawn(async move {
-                    let _slot = slot;
-                    let _permit: WorkPermit = permit;
-                    worker.run_one(claimed, scope).await;
-                    in_flight_for_task
-                        .lock()
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .remove(&tokio::task::id());
-                });
+                sequence += 1;
+                let key = sequence;
+                // Registered before the wrapper exists, so the stop sweep sees every claimed
+                // job whether or not its wrapper has run yet.
                 in_flight
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(handle.id(), lease);
+                    .jobs
+                    .insert(
+                        key,
+                        InFlightJob {
+                            lease: claimed.lease,
+                            scope: scope.clone(),
+                            handler: HandlerTask::NotStarted,
+                        },
+                    );
+                tasks.spawn(async move {
+                    let _slot = slot;
+                    let _permit: WorkPermit = permit;
+                    let settled = worker
+                        .run_one(claimed, scope, &in_flight_for_task, key)
+                        .await;
+                    if settled == Settled::Recorded {
+                        in_flight_for_task
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .jobs
+                            .remove(&key);
+                    }
+                });
             }
 
             if !claimed_any {
@@ -628,23 +722,61 @@ impl<S: JobStore + 'static> Worker<S> {
         })
         .await;
         if graceful.is_err() {
-            tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
-            let leases: Vec<LeaseToken> = in_flight
+            // 1. The sweep: cancel every running job's scope and abort its handler's **own**
+            //    task. Aborting the wrapper around it would only drop the wrapper's handle and
+            //    leave the handler running with no owner — the defect this order exists to
+            //    close. Under the lock, with `stopping` set under the same lock, so a handler
+            //    spawned after this sweep is aborted at once by the wrapper that spawned it.
+            {
+                let mut state = in_flight.lock().unwrap_or_else(PoisonError::into_inner);
+                state.stopping = true;
+                for job in state.jobs.values() {
+                    job.scope.cancel();
+                    if let HandlerTask::Running(handler) = &job.handler {
+                        handler.abort();
+                    }
+                }
+                report.aborted = u64::try_from(state.jobs.len()).unwrap_or(u64::MAX);
+            }
+            // 2. The join: each wrapper is awaiting its handler's `JoinHandle`, which resolves
+            //    only once the aborted future has been dropped, and marks the handler terminated
+            //    before it returns. Bounded, because a handler holding its thread inside a poll
+            //    cannot be dropped by anything and must not hold the stop past its budget
+            //    (FR-025, C-L7); a wrapper still running at the bound is aborted, and what its
+            //    handler was doing is read from the map below.
+            let joined = tokio::time::timeout(ABORT_JOIN_TIMEOUT, async {
+                while tasks.join_next().await.is_some() {}
+            })
+            .await;
+            if joined.is_err() {
+                tasks.abort_all();
+                while tasks.join_next().await.is_some() {}
+            }
+            // 3. The releases, for the handlers that terminated — and only those. A lease under
+            //    a handler that may still be running is kept, to expire and be reclaimed with
+            //    the attempt counted (C-J4) as if this worker had died, and counted as withheld:
+            //    releasing it would hand the job to a second execution while the first is
+            //    alive (FR-033). The releases run concurrently, each under RELEASE_TIMEOUT, so
+            //    the phase is bounded by one RELEASE_TIMEOUT rather than by their sum: N leases
+            //    against a store that has stopped answering must not cost N × the bound, which
+            //    would be an unbounded wait in all but name (FR-025, C-L7) and would run the
+            //    provider past its deadline.
+            let jobs: Vec<InFlightJob> = in_flight
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
+                .jobs
                 .drain()
-                .map(|(_, lease)| lease)
+                .map(|(_, job)| job)
                 .collect();
-            // The releases run concurrently, each under RELEASE_TIMEOUT, so the whole phase is
-            // bounded by one RELEASE_TIMEOUT rather than by their sum: N leases against a store
-            // that has stopped answering must not cost N × the bound, which would be an unbounded
-            // wait in all but name (FR-025, C-L7) and would run the provider past its deadline.
             let mut releases = tokio::task::JoinSet::new();
-            for lease in leases {
-                report.aborted += 1;
+            for job in jobs {
+                if matches!(job.handler, HandlerTask::Running(_)) {
+                    report.release_withheld += 1;
+                    self.release_withheld();
+                    continue;
+                }
                 let worker = Arc::clone(&self);
-                releases.spawn(async move { worker.release_lease(&lease).await });
+                releases.spawn(async move { worker.release_lease(&job.lease).await });
             }
             while let Some(joined) = releases.join_next().await {
                 let outcome = joined.unwrap_or_else(|_did_not_finish| {
@@ -665,6 +797,7 @@ impl<S: JobStore + 'static> Worker<S> {
             released = report.released,
             release_failed = report.release_failed,
             release_timed_out = report.release_timed_out,
+            release_withheld = report.release_withheld,
             "worker stopped"
         );
         report
@@ -716,8 +849,28 @@ impl<S: JobStore + 'static> Worker<S> {
         );
     }
 
-    /// Runs one claimed job to a transition.
-    async fn run_one(&self, claimed: ClaimedJob, scope: CancelScope) {
+    /// Reports a lease deliberately kept at stop: its handler's task did not terminate after
+    /// the abort, so the lease is left to expire rather than released under it.
+    fn release_withheld(&self) {
+        tracing::warn!(
+            target: JOBS_EVENT_TARGET,
+            queue = %self.config.queue,
+            "a handler did not terminate after its abort at stop; its lease is kept until it expires"
+        );
+    }
+
+    /// Runs one claimed job to a transition, or to the stop sweep's abort.
+    ///
+    /// `key` is the job's entry in `in_flight`, where the handler's task is registered the moment
+    /// it exists — so the stop sweep can abort it — and marked terminated the moment its
+    /// `JoinHandle` resolves — so the sweep releases nothing under a handler that may still run.
+    async fn run_one(
+        &self,
+        claimed: ClaimedJob,
+        scope: CancelScope,
+        in_flight: &InFlight,
+        key: u64,
+    ) -> Settled {
         let job = claimed.job;
         let lease = claimed.lease;
         let queue = job.queue.clone();
@@ -760,23 +913,72 @@ impl<S: JobStore + 'static> Worker<S> {
             Some(handler) => {
                 let handler = Arc::clone(handler);
                 let task_scope = scope.clone();
-                let task = tokio::spawn(
+                let mut task = tokio::spawn(
                     async move { handler.handle(job, task_scope).await }.instrument(span.clone()),
                 );
-                let abort = task.abort_handle();
-                match tokio::time::timeout(self.config.handler_timeout, task).await {
-                    Ok(Ok(Ok(()))) => None,
-                    Ok(Ok(Err(HandlerError::Retry))) => Some(FailureKind::HandlerFailed),
-                    Ok(Ok(Err(HandlerError::Abandon))) => Some(FailureKind::Abandoned),
-                    Ok(Err(join)) if join.is_panic() => Some(FailureKind::Panicked),
-                    // Cancelled by shutdown before it finished: released by `run`'s abort path
-                    // if it was aborted there, otherwise treated as a retryable failure.
-                    Ok(Err(_cancelled)) => Some(FailureKind::HandlerFailed),
-                    Err(_elapsed) => {
-                        abort.abort();
-                        scope.cancel();
-                        Some(FailureKind::TimedOut)
+                {
+                    // Registered under the lock the stop sweep takes: a sweep that ran before
+                    // this registration set `stopping`, and the task is aborted here instead.
+                    let mut state = in_flight.lock().unwrap_or_else(PoisonError::into_inner);
+                    if let Some(entry) = state.jobs.get_mut(&key) {
+                        entry.handler = HandlerTask::Running(task.abort_handle());
                     }
+                    if state.stopping {
+                        task.abort();
+                    }
+                }
+                // `&mut task` rather than `task`: a timeout has to abort the task **and** await
+                // it, which needs the handle back after the timeout gives up on it.
+                let (attempt, joined) = match tokio::time::timeout(
+                    self.config.handler_timeout,
+                    &mut task,
+                )
+                .await
+                {
+                    Ok(Ok(Ok(()))) => (Attempt::Ended(None), true),
+                    Ok(Ok(Err(HandlerError::Retry))) => {
+                        (Attempt::Ended(Some(FailureKind::HandlerFailed)), true)
+                    }
+                    Ok(Ok(Err(HandlerError::Abandon))) => {
+                        (Attempt::Ended(Some(FailureKind::Abandoned)), true)
+                    }
+                    Ok(Err(join)) if join.is_panic() => {
+                        (Attempt::Ended(Some(FailureKind::Panicked)), true)
+                    }
+                    // Aborted by the stop sweep, and joined by this very resolution: the
+                    // future has been dropped. No transition — the lease is `run`'s to
+                    // release, now that nothing can run under it.
+                    Ok(Err(_cancelled)) => (Attempt::AbortedAtStop, true),
+                    Err(_elapsed) => {
+                        scope.cancel();
+                        task.abort();
+                        // Joined before the attempt is recorded, so the reschedule never
+                        // races the handler's last poll. Bounded like the stop's join, for
+                        // the same handler that cannot be dropped.
+                        let joined = tokio::time::timeout(ABORT_JOIN_TIMEOUT, &mut task)
+                            .await
+                            .is_ok();
+                        if !joined {
+                            tracing::warn!(
+                                target: JOBS_EVENT_TARGET,
+                                job_id = %id,
+                                queue = %queue,
+                                kind = %kind,
+                                "a timed-out handler did not terminate after its abort; its thread stays held"
+                            );
+                        }
+                        (Attempt::Ended(Some(FailureKind::TimedOut)), joined)
+                    }
+                };
+                if joined {
+                    let mut state = in_flight.lock().unwrap_or_else(PoisonError::into_inner);
+                    if let Some(entry) = state.jobs.get_mut(&key) {
+                        entry.handler = HandlerTask::Terminated;
+                    }
+                }
+                match attempt {
+                    Attempt::Ended(failure) => failure,
+                    Attempt::AbortedAtStop => return Settled::AbortedAtStop,
                 }
             }
         };
@@ -792,7 +994,7 @@ impl<S: JobStore + 'static> Worker<S> {
                 Ok(_) => (AttemptOutcome::Completed, None),
                 Err(error) => {
                     self.store_error(&queue, error);
-                    return;
+                    return Settled::Recorded;
                 }
             },
             Some(kind_of_failure) => {
@@ -813,7 +1015,7 @@ impl<S: JobStore + 'static> Worker<S> {
                     Ok(FailureOutcome::DeadLettered { .. }) => (AttemptOutcome::DeadLettered, None),
                     Err(error) => {
                         self.store_error(&queue, error);
-                        return;
+                        return Settled::Recorded;
                     }
                 }
             }
@@ -841,6 +1043,7 @@ impl<S: JobStore + 'static> Worker<S> {
             duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
             "job attempt finished"
         );
+        Settled::Recorded
     }
 
     fn store_error(&self, queue: &QueueName, error: JobError) {
@@ -987,9 +1190,103 @@ pub(crate) mod faulty {
     }
 }
 
+/// Handler doubles shared by this module's tests and the provider's: a handler that ignores its
+/// scope and witnesses its own life through counters, so a test can tell "aborted and joined"
+/// from "detached" without reading a clock.
+#[cfg(test)]
+pub(crate) mod witness {
+    use core::future::Future;
+    use core::pin::Pin;
+    use core::task::{Context, Poll};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    use renvor_core::cancel::CancelScope;
+
+    use super::{HandlerError, HandlerFuture, JobHandler};
+    use crate::job::Job;
+
+    /// A handler that ignores its scope and witnesses its own life: executions entered and
+    /// still alive, the most alive at once, futures dropped, polls. What the stop-grace tests
+    /// need to tell "aborted and joined" from "detached" without reading a clock.
+    #[derive(Default)]
+    pub(crate) struct Witness {
+        /// Executions whose future exists: +1 at `handle`, −1 when the future is dropped.
+        pub(crate) active: AtomicU32,
+        /// The highest `active` ever seen — 2 means two executions of one job overlapped.
+        pub(crate) peak: AtomicU32,
+        /// Futures dropped, whichever way.
+        pub(crate) dropped: AtomicU32,
+        /// Polls, over every execution.
+        pub(crate) polls: AtomicU32,
+        /// Re-wake on every poll, so an execution left alive keeps being polled.
+        pub(crate) hot: bool,
+        /// If set, the first poll signals `blocked` and then waits at this barrier **inside the
+        /// poll**: a handler holding its runtime thread, which no abort can drop until it returns.
+        pub(crate) poll_gate: Option<Arc<std::sync::Barrier>>,
+        pub(crate) blocked: AtomicBool,
+    }
+
+    pub(crate) struct Execution {
+        witness: Arc<Witness>,
+    }
+
+    impl Future for Execution {
+        type Output = Result<(), HandlerError>;
+
+        fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+            let witness = &self.witness;
+            witness.polls.fetch_add(1, Ordering::SeqCst);
+            if let Some(gate) = &witness.poll_gate
+                && !witness.blocked.swap(true, Ordering::SeqCst)
+            {
+                gate.wait();
+            }
+            if witness.hot {
+                cx.waker().wake_by_ref();
+            }
+            Poll::Pending
+        }
+    }
+
+    impl Drop for Execution {
+        fn drop(&mut self) {
+            self.witness.active.fetch_sub(1, Ordering::SeqCst);
+            self.witness.dropped.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Releases a [`Witness`]'s poll gate on drop if a poll is waiting at it.
+    pub(crate) struct FreeOnDrop {
+        pub(crate) gate: Arc<std::sync::Barrier>,
+        pub(crate) witness: Arc<Witness>,
+    }
+
+    impl Drop for FreeOnDrop {
+        fn drop(&mut self) {
+            if self.witness.blocked.load(Ordering::SeqCst) {
+                self.gate.wait();
+            }
+        }
+    }
+
+    /// The handler over a [`Witness`]: never watches its scope, never finishes.
+    pub(crate) struct Deaf(pub(crate) Arc<Witness>);
+
+    impl JobHandler for Deaf {
+        fn handle(&self, _: Job, _: CancelScope) -> HandlerFuture<'_> {
+            let witness = Arc::clone(&self.0);
+            let active = witness.active.fetch_add(1, Ordering::SeqCst) + 1;
+            witness.peak.fetch_max(active, Ordering::SeqCst);
+            Box::pin(Execution { witness })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::faulty::{Fault, Faulty};
+    use super::witness::{Deaf, FreeOnDrop, Witness};
     use super::{
         AttemptOutcome, DEFAULT_CONCURRENCY, HandlerError, HandlerFuture, JobHandler, JobsClient,
         MAX_CONCURRENCY, MAX_STOP_GRACE, POLL_INTERVAL_RANGE, RELEASE_TIMEOUT, Worker,
@@ -1134,15 +1431,17 @@ mod tests {
         run.await.unwrap()
     }
 
-    /// A store whose first successful claim closes the gate before returning, so the worker
-    /// meets a closed gate with a lease in hand — the window between claim and permit.
-    struct ClosingOnClaim {
+    /// A store whose first successful claim runs `action` before returning — closing the gate,
+    /// so the worker meets a closed gate with a lease in hand (the window between claim and
+    /// permit), or cancelling the run, so shutdown is observed with a wrapper spawned and not
+    /// yet run (the window between the stop sweep and a handler's registration).
+    struct OnClaim {
         inner: Arc<MemoryJobStore>,
-        gate: WorkGate,
-        closed: AtomicBool,
+        action: Box<dyn Fn() + Send + Sync>,
+        done: AtomicBool,
     }
 
-    impl JobStore for ClosingOnClaim {
+    impl JobStore for OnClaim {
         async fn enqueue(&self, job: NewJob, now: SystemTime) -> Result<Enqueued, JobError> {
             self.inner.enqueue(job, now).await
         }
@@ -1153,8 +1452,8 @@ mod tests {
             lease: Duration,
         ) -> Result<Option<ClaimedJob>, JobError> {
             let claimed = self.inner.claim(queue, now, lease).await?;
-            if claimed.is_some() && !self.closed.swap(true, Ordering::SeqCst) {
-                self.gate.close();
+            if claimed.is_some() && !self.done.swap(true, Ordering::SeqCst) {
+                (self.action)();
             }
             Ok(claimed)
         }
@@ -1199,10 +1498,13 @@ mod tests {
         let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
         let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
         let gate = WorkGate::new();
-        let store = Arc::new(ClosingOnClaim {
+        let closing = gate.clone();
+        let store = Arc::new(OnClaim {
             inner: Arc::clone(&inner),
-            gate: gate.clone(),
-            closed: AtomicBool::new(false),
+            action: Box::new(move || {
+                closing.close();
+            }),
+            done: AtomicBool::new(false),
         });
         let counting = Arc::new(Counting {
             calls: AtomicU32::new(0),
@@ -1712,5 +2014,456 @@ mod tests {
         let job = store.read(&id).await.unwrap().unwrap();
         assert_eq!(job.state, JobState::Completed);
         assert_eq!(job.trace.as_ref(), Some(&trace));
+    }
+
+    /// A handler that watches its scope and gives the job back as retryable when cancelled.
+    struct Cooperative;
+
+    impl JobHandler for Cooperative {
+        fn handle(&self, _: Job, cancel: CancelScope) -> HandlerFuture<'_> {
+            Box::pin(async move {
+                cancel.cancelled().await;
+                Err(HandlerError::Retry)
+            })
+        }
+    }
+
+    /// A store that records, at the moment `release` and `fail` are called, how many handler
+    /// futures the witness had dropped — the ordering "handler terminated, then the lease
+    /// moved" as a counter the store saw, not a clock the test read.
+    struct SeesDrops {
+        inner: Arc<MemoryJobStore>,
+        witness: Arc<Witness>,
+        release_calls: AtomicU32,
+        dropped_at_release: AtomicU32,
+        fail_calls: AtomicU32,
+        dropped_at_fail: AtomicU32,
+    }
+
+    impl SeesDrops {
+        fn new(inner: Arc<MemoryJobStore>, witness: Arc<Witness>) -> Self {
+            Self {
+                inner,
+                witness,
+                release_calls: AtomicU32::new(0),
+                dropped_at_release: AtomicU32::new(0),
+                fail_calls: AtomicU32::new(0),
+                dropped_at_fail: AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl JobStore for SeesDrops {
+        async fn enqueue(&self, job: NewJob, now: SystemTime) -> Result<Enqueued, JobError> {
+            self.inner.enqueue(job, now).await
+        }
+        async fn claim(
+            &self,
+            queue: &QueueName,
+            now: SystemTime,
+            lease: Duration,
+        ) -> Result<Option<ClaimedJob>, JobError> {
+            self.inner.claim(queue, now, lease).await
+        }
+        async fn complete(
+            &self,
+            lease: &LeaseToken,
+            now: SystemTime,
+        ) -> Result<Completion, JobError> {
+            self.inner.complete(lease, now).await
+        }
+        async fn fail(
+            &self,
+            lease: &LeaseToken,
+            failure: FailureKind,
+            next_run_at: SystemTime,
+            now: SystemTime,
+        ) -> Result<FailureOutcome, JobError> {
+            self.dropped_at_fail.store(
+                self.witness.dropped.load(Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
+            self.fail_calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.fail(lease, failure, next_run_at, now).await
+        }
+        async fn release(&self, lease: &LeaseToken, now: SystemTime) -> Result<(), JobError> {
+            self.dropped_at_release.store(
+                self.witness.dropped.load(Ordering::SeqCst),
+                Ordering::SeqCst,
+            );
+            self.release_calls.fetch_add(1, Ordering::SeqCst);
+            self.inner.release(lease, now).await
+        }
+        async fn revive(&self, id: &JobId, now: SystemTime) -> Result<bool, JobError> {
+            self.inner.revive(id, now).await
+        }
+        async fn read(&self, id: &JobId) -> Result<Option<Job>, JobError> {
+            self.inner.read(id).await
+        }
+        async fn depth(&self, queue: &QueueName) -> Result<u64, JobError> {
+            self.inner.depth(queue).await
+        }
+    }
+
+    /// Waits, bounded, until `condition` holds, and says whether it did; the bound is a failure
+    /// detector, not a measurement — the caller asserts on the answer with a fixed message.
+    async fn wait_until(condition: impl Fn() -> bool) -> bool {
+        for _ in 0..500 {
+            if condition() {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    /// One worker over `store` running a [`Deaf`] handler over `witness`, with a long handler
+    /// timeout so only the stop grace can end the execution.
+    fn deaf_worker<S: JobStore + 'static>(
+        store: Arc<S>,
+        witness: &Arc<Witness>,
+        clock: &Arc<FixedClock>,
+        registry: &Registry,
+    ) -> Arc<Worker<S>> {
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let config = config()
+            .with_handler_timeout(Duration::from_secs(60))
+            .unwrap()
+            .with_lease(Duration::from_secs(60 * 60))
+            .unwrap();
+        Arc::new(
+            Worker::new(store, config, clock.clone(), entropy, registry)
+                .unwrap()
+                .register(kind(), Arc::new(Deaf(Arc::clone(witness)))),
+        )
+    }
+
+    /// Runs `worker` until the job is leased, cancels it, and returns the report — bounded by
+    /// the stop grace plus the abort-join and release bounds plus a margin, or the test fails.
+    async fn lease_then_stop<S: JobStore + 'static>(
+        worker: Arc<Worker<S>>,
+        store: &Arc<S>,
+        id: JobId,
+    ) -> WorkerReport {
+        let cancel = CancelScope::root();
+        let run = tokio::spawn(Arc::clone(&worker).run(WorkGate::new(), cancel.clone()));
+        for _ in 0..500 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if store.read(&id).await.unwrap().unwrap().state == JobState::Leased {
+                break;
+            }
+        }
+        cancel.cancel();
+        let bound = Duration::from_millis(100) + Duration::from_secs(6);
+        tokio::time::timeout(bound, run)
+            .await
+            .expect("the stop did not end within its bounds")
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_handler_that_ignores_its_scope_cannot_run_after_the_worker_has_stopped() {
+        // FR-032, FR-033: at the stop grace the handler's own task is aborted and joined before
+        // `run` returns — not the wrapper around it. A future that was dropped cannot be polled.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let store = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = store.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let witness = Arc::new(Witness {
+            hot: true,
+            ..Witness::default()
+        });
+        let worker = deaf_worker(Arc::clone(&store), &witness, &clock, &registry);
+        let report = lease_then_stop(worker, &store, id).await;
+
+        assert_eq!(report.aborted, 1);
+        assert_eq!(
+            witness.dropped.load(Ordering::SeqCst),
+            1,
+            "the handler's future was still alive when run returned"
+        );
+        assert_eq!(witness.active.load(Ordering::SeqCst), 0);
+        // A hot future left alive would be polled during these yields; a dropped one cannot be.
+        let polls = witness.polls.load(Ordering::SeqCst);
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            witness.polls.load(Ordering::SeqCst),
+            polls,
+            "the handler was polled after the worker had stopped"
+        );
+        assert_eq!(report.released, 1);
+        let job = store.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Ready);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_lease_is_not_released_until_the_handler_task_has_terminated() {
+        // FR-033 and lease safety: the store must see the release only after the handler's
+        // future is gone. Counted by the store at the moment of the call.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let inner = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let witness = Arc::new(Witness::default());
+        let store = Arc::new(SeesDrops::new(Arc::clone(&inner), Arc::clone(&witness)));
+        let worker = deaf_worker(Arc::clone(&store), &witness, &clock, &registry);
+        let report = lease_then_stop(worker, &store, id).await;
+
+        assert_eq!(report.aborted, 1);
+        assert_eq!(report.released, 1, "the lease was not given back");
+        assert_eq!(store.release_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            store.dropped_at_release.load(Ordering::SeqCst),
+            1,
+            "the lease was released while the handler's future was still alive"
+        );
+        assert_eq!(store.fail_calls.load(Ordering::SeqCst), 0);
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Ready);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_new_claimant_cannot_overlap_with_the_old_handler_after_shutdown() {
+        // The consequence that matters: after one worker stops and gives the job back, the next
+        // claimant's execution is the only one alive. A peak of 2 is the overlap.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let store = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = store.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let witness = Arc::new(Witness::default());
+
+        let first = deaf_worker(Arc::clone(&store), &witness, &clock, &registry);
+        let report = lease_then_stop(first, &store, id).await;
+        assert_eq!(report.aborted, 1);
+        assert_eq!(report.released, 1);
+        assert_eq!(
+            store.read(&id).await.unwrap().unwrap().state,
+            JobState::Ready
+        );
+
+        // The second claimant: the same job, the same handler, a fresh worker.
+        let second = deaf_worker(Arc::clone(&store), &witness, &clock, &registry);
+        let report = lease_then_stop(second, &store, id).await;
+        assert_eq!(report.aborted, 1);
+
+        assert_eq!(
+            witness.peak.load(Ordering::SeqCst),
+            1,
+            "two executions of the job were alive at once"
+        );
+        assert_eq!(witness.dropped.load(Ordering::SeqCst), 2);
+        let job = store.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.attempts, 2);
+        assert_eq!(job.state, JobState::Ready);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cooperative_handler_still_stops_cleanly_within_the_grace() {
+        // The positive control: a handler that watches its scope ends inside the grace, records
+        // its own transition, and nothing is aborted, released, or withheld.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let store = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = store.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let config = config()
+            .with_handler_timeout(Duration::from_secs(60))
+            .unwrap();
+        let worker = Arc::new(
+            Worker::new(
+                Arc::clone(&store),
+                config,
+                clock.clone(),
+                entropy,
+                &registry,
+            )
+            .unwrap()
+            .register(kind(), Arc::new(Cooperative)),
+        );
+        let cancel = CancelScope::root();
+        let run = tokio::spawn(Arc::clone(&worker).run(WorkGate::new(), cancel.clone()));
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if store.read(&id).await.unwrap().unwrap().state == JobState::Leased {
+                break;
+            }
+        }
+        cancel.cancel();
+        let report = tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("the cooperative stop did not end")
+            .unwrap();
+        assert_eq!(report.claimed, 1);
+        assert_eq!(report.aborted, 0, "a cooperative handler was aborted");
+        assert_eq!(report.released, 0);
+        assert_eq!(report.release_failed, 0);
+        assert_eq!(report.release_timed_out, 0);
+        assert_eq!(report.release_withheld, 0);
+        let job = store.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Ready, "the handler's own transition");
+        assert_eq!(job.attempts, 1);
+        assert_eq!(job.last_failure, Some(FailureKind::HandlerFailed));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_handler_holding_its_thread_keeps_its_lease_rather_than_being_released_under_it() {
+        // A poll that never returns cannot be dropped by any abort. The one safe outcome is the
+        // dead-worker model: the lease is deliberately kept, to expire and be reclaimed with the
+        // attempt counted (C-J4), and the stop says so — never a release under a live handler.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let inner = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let gate = Arc::new(std::sync::Barrier::new(2));
+        let witness = Arc::new(Witness {
+            poll_gate: Some(Arc::clone(&gate)),
+            ..Witness::default()
+        });
+        let store = Arc::new(SeesDrops::new(Arc::clone(&inner), Arc::clone(&witness)));
+        let worker = deaf_worker(Arc::clone(&store), &witness, &clock, &registry);
+        // Frees the held thread on the way out, whichever way this test ends: a runtime cannot
+        // shut down while a worker thread is inside a poll, so a failed assertion must not
+        // leave the barrier waiting.
+        let free = FreeOnDrop {
+            gate: Arc::clone(&gate),
+            witness: Arc::clone(&witness),
+        };
+        let cancel = CancelScope::root();
+        let run = tokio::spawn(Arc::clone(&worker).run(WorkGate::new(), cancel.clone()));
+        let blocked = Arc::clone(&witness);
+        assert!(
+            wait_until(move || blocked.blocked.load(Ordering::SeqCst)).await,
+            "the handler never blocked its thread"
+        );
+        cancel.cancel();
+        let report = tokio::time::timeout(Duration::from_secs(10), run)
+            .await
+            .expect("the stop did not end while a handler held its thread")
+            .unwrap();
+
+        assert_eq!(report.aborted, 1);
+        assert_eq!(
+            report.released, 0,
+            "a lease was released under a live handler"
+        );
+        assert_eq!(store.release_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(report.release_failed, 0);
+        assert_eq!(report.release_timed_out, 0);
+        assert_eq!(report.release_withheld, 1, "the kept lease is not reported");
+        assert_eq!(witness.dropped.load(Ordering::SeqCst), 0);
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Leased, "the lease was not kept");
+        // Let the thread go; the aborted future is dropped once its poll returns.
+        drop(free);
+        let dropped = Arc::clone(&witness);
+        assert!(
+            wait_until(move || dropped.dropped.load(Ordering::SeqCst) == 1).await,
+            "the freed handler was never dropped"
+        );
+    }
+
+    // Single-threaded and paused: after `abort()`, a cancelled task is only dropped when this
+    // thread yields, so a transition recorded without joining the task sees `dropped == 0`
+    // every time, and one recorded after the join sees 1 every time.
+    #[tokio::test(start_paused = true)]
+    async fn a_timed_out_handler_is_joined_before_its_attempt_is_recorded() {
+        // FR-035: the failed attempt is recorded after the handler's future is dropped, not
+        // while it may still be running its last poll.
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let inner = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let witness = Arc::new(Witness::default());
+        let store = Arc::new(SeesDrops::new(Arc::clone(&inner), Arc::clone(&witness)));
+        let config = config().with_lease(Duration::from_secs(60 * 60)).unwrap();
+        let worker = Arc::new(
+            Worker::new(
+                Arc::clone(&store),
+                config,
+                clock.clone(),
+                entropy,
+                &registry,
+            )
+            .unwrap()
+            .register(kind(), Arc::new(Deaf(Arc::clone(&witness)))),
+        );
+        let cancel = CancelScope::root();
+        let run = tokio::spawn(Arc::clone(&worker).run(WorkGate::new(), cancel.clone()));
+        let failed = Arc::clone(&store);
+        assert!(
+            wait_until(move || failed.fail_calls.load(Ordering::SeqCst) == 1).await,
+            "the timeout never recorded the attempt"
+        );
+        cancel.cancel();
+        let report = tokio::time::timeout(Duration::from_secs(5), run)
+            .await
+            .expect("the run did not end")
+            .unwrap();
+        assert_eq!(
+            store.dropped_at_fail.load(Ordering::SeqCst),
+            1,
+            "the attempt was recorded while the handler's future was still alive"
+        );
+        assert_eq!(report.aborted, 0);
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.last_failure, Some(FailureKind::TimedOut));
+        assert_eq!(job.attempts, 1);
+    }
+
+    // Single-threaded and paused, with a zero stop grace: the run observes the cancel right
+    // after the claim, and `timeout(0, …)` elapses without yielding, so the sweep runs while the
+    // wrapper has been spawned and not yet polled — its handler is not registered and cannot be
+    // aborted by the sweep. Only the `stopping` mark, read under the same lock at registration,
+    // aborts it. Deterministic, because nothing here yields until the sweep is over.
+    #[tokio::test(start_paused = true)]
+    async fn a_handler_spawned_after_the_stop_sweep_is_aborted_by_its_own_wrapper() {
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x99; 16]));
+        let inner = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let cancel = CancelScope::root();
+        let cancelling = cancel.clone();
+        let store = Arc::new(OnClaim {
+            inner: Arc::clone(&inner),
+            action: Box::new(move || cancelling.cancel()),
+            done: AtomicBool::new(false),
+        });
+        let witness = Arc::new(Witness::default());
+        let config = config()
+            .with_handler_timeout(Duration::from_secs(60))
+            .unwrap()
+            .with_stop_grace(Duration::ZERO)
+            .unwrap();
+        let worker = Arc::new(
+            Worker::new(store, config, clock.clone(), entropy, &registry)
+                .unwrap()
+                .register(kind(), Arc::new(Deaf(Arc::clone(&witness)))),
+        );
+        let report = tokio::time::timeout(
+            Duration::from_secs(10),
+            Arc::clone(&worker).run(WorkGate::new(), cancel),
+        )
+        .await
+        .expect("the run did not end");
+        assert_eq!(report.claimed, 1);
+        assert_eq!(report.aborted, 1);
+        assert_eq!(
+            report.released, 1,
+            "the late-registered handler was not aborted, joined, and released"
+        );
+        assert_eq!(report.release_withheld, 0);
+        // Aborted before its first poll: the handler's future was never even constructed.
+        assert_eq!(witness.polls.load(Ordering::SeqCst), 0, "the handler ran");
+        assert_eq!(witness.active.load(Ordering::SeqCst), 0);
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Ready);
     }
 }
