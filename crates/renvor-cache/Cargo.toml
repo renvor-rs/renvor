@@ -66,11 +66,16 @@ redis = { version = "1.6.0", default-features = false, features = [
     "tokio-rustls-comp",
     "connection-manager",
 ], optional = true }
+# THE ONE CRYPTO PROVIDER, NAMED HERE (ADR-0033 decision 6). `redis`'s `tokio-rustls-comp`
+# enables `rustls` with NO provider feature; inside this workspace another crate's `ring` edge
+# made it work, and a consumer building this crate alone would get `ClientConfig::builder()`
+# panicking at boot with no provider compiled in. Found by `xtask` step 7's capability row.
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std", "tls12"], optional = true }
 
 [features]
 # The adapter. FR-004 and SC-005 require that a build without it resolve **none** of the above,
 # proven by the dependency graph rather than by this flag's presence — `xtask` reads the graph.
-valkey = ["dep:redis"]
+valkey = ["dep:redis", "dep:rustls"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }

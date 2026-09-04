@@ -98,6 +98,32 @@ const DATABASE_REQUIRED: &[Prerequisite] = &[
         setup: "set it to `1`. Without it the test harness SKIPS every real-database test and \
                 still prints `ok`, which is the condition this variable exists to end",
     },
+    // THE CAPABILITY ENDPOINTS (Phase 010, FR-104). The cache and mail adapters have real-server
+    // suites that skip quietly without their URL — and print `ok`. The require flag ends that
+    // the same way the database one does.
+    Prerequisite {
+        variable: "RENVOR_TEST_VALKEY_URL",
+        purpose: "the cache adapter's real-server suite, step 4",
+        setup: "start a Valkey (or Redis) the suite may write to and set this to its \
+                `redis://` URL — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_SMTP_URL",
+        purpose: "the mail adapter's real-sink suite, step 4",
+        setup: "start a Mailpit and set this to its `smtp://user:password@127.0.0.1:port` URL \
+                — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_SMTP_API_URL",
+        purpose: "the mail adapter's real-sink suite reads delivered messages back, step 4",
+        setup: "set this to the Mailpit HTTP API, `http://127.0.0.1:8025`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_REQUIRE_CAPABILITIES",
+        purpose: "turns a skipped real-server capability test into a failure, step 4",
+        setup: "set it to `1`. Without it the cache and mail suites SKIP without a server and \
+                still print `ok`",
+    },
 ];
 
 /// Everything step 1 probes for. Order matches the step that consumes each tool.
@@ -559,6 +585,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !lean_facade_compiles(root) {
         return false;
     }
+    if !rustls_has_one_crypto_provider(root) {
+        return false;
+    }
     if !publishable_dependencies_are_resolvable(root) {
         return false;
     }
@@ -574,8 +603,8 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     step_ok(
         7,
         "architecture invariants",
-        "crate DAG, transport and persistence isolation, per-driver adapter compiles, \
-         facade isolation, lean compile, \
+        "crate DAG, transport, persistence and capability isolation, per-driver adapter \
+         compiles, facade isolation, lean compile, one rustls crypto provider, \
          publishable dependencies, required package metadata, instability wording, and the \
          executable name all hold, each with a control",
     );
@@ -627,7 +656,7 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 18] = [
+    let checks: [IsolationCheck<'_>; 40] = [
         // ---- API TOKEN MODE (FR-035, SC-011) ----------------------------------------------
         //
         // Added in batch G2, and the reason is that this property was TRUE and UNASSERTED. Batch G
@@ -879,6 +908,273 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             ],
             &["renvor-validation", "renvor-error"],
         ),
+        // ── THE PHASE 010 CAPABILITIES (FR-002, FR-006, FR-102) ──────────────────────────
+        // Each port crate without its adapter feature resolves no adapter; each adapter feature
+        // resolves its adapter and nothing banned; the kernel and the auth domain resolve no
+        // adapter at all; a MySQL application choosing durable jobs acquires no PostgreSQL
+        // driver; and the facade resolves exactly the capability it asked for. Every row carries
+        // a control that must resolve, so an absence is a measured absence.
+        (
+            "renvor-cache (no valkey) resolves no client",
+            &["-p", "renvor-cache"],
+            &["redis", "renvor-http", "sqlx"],
+            &["renvor-core", "tokio"],
+        ),
+        (
+            "renvor-cache + valkey",
+            &["-p", "renvor-cache", "--features", "valkey"],
+            &["renvor-http", "webpki-roots", "rsa", "aws-lc-rs"],
+            &["redis", "rustls", "ring"],
+        ),
+        (
+            "renvor-mail (no smtp, no auth) resolves no transport and no auth",
+            &["-p", "renvor-mail"],
+            &["lettre", "renvor-auth", "renvor-http"],
+            &["renvor-core", "renvor-config"],
+        ),
+        (
+            "renvor-mail + smtp",
+            &["-p", "renvor-mail", "--features", "smtp"],
+            &[
+                "renvor-auth",
+                "webpki-roots",
+                "rsa",
+                "native-tls",
+                "openssl",
+                "boring",
+            ],
+            &["lettre", "rustls-native-certs", "ring"],
+        ),
+        (
+            "renvor-mail + auth resolves the auth port and no transport",
+            &["-p", "renvor-mail", "--features", "auth"],
+            &["lettre", "renvor-http"],
+            &["renvor-auth"],
+        ),
+        (
+            "renvor-storage (no filesystem) resolves no capability crate",
+            &["-p", "renvor-storage"],
+            &["cap-std", "cap-tempfile", "object_store", "opendal"],
+            &["renvor-core"],
+        ),
+        (
+            "renvor-storage + filesystem",
+            &["-p", "renvor-storage", "--features", "filesystem"],
+            &[
+                "object_store",
+                "opendal",
+                "aws-sdk-s3",
+                "rust-s3",
+                "reqwest",
+            ],
+            &["cap-std", "cap-tempfile"],
+        ),
+        (
+            "renvor-jobs resolves no driver and no adapter",
+            &["-p", "renvor-jobs", "--all-features"],
+            &["sqlx", "sea-orm", "redis", "lettre", "renvor-http"],
+            &["renvor-core", "tokio"],
+        ),
+        (
+            "renvor-observability (no otel, no http)",
+            &["-p", "renvor-observability"],
+            &[
+                "opentelemetry",
+                "opentelemetry_sdk",
+                "hyper",
+                "renvor-http",
+                "reqwest",
+            ],
+            &["tracing-subscriber", "tracing-serde", "serde_json"],
+        ),
+        (
+            "renvor-observability + otel",
+            &["-p", "renvor-observability", "--features", "otel"],
+            &[
+                "renvor-http",
+                "webpki-roots",
+                "reqwest",
+                "tonic",
+                "rustls-platform-verifier",
+            ],
+            &[
+                "opentelemetry",
+                "opentelemetry-otlp",
+                "hyper-rustls",
+                "ring",
+            ],
+        ),
+        (
+            "renvor-observability + http resolves the transport and no exporter",
+            &["-p", "renvor-observability", "--features", "http"],
+            &["opentelemetry", "hyper-rustls"],
+            &["renvor-http"],
+        ),
+        (
+            "renvor-sqlx + db-mysql,jobs acquires no PostgreSQL driver",
+            &[
+                "-p",
+                "renvor-sqlx",
+                "--no-default-features",
+                "--features",
+                "db-mysql,jobs",
+            ],
+            &["sqlx-postgres", "sea-orm", "renvor-seaorm"],
+            &["sqlx-mysql", "renvor-jobs"],
+        ),
+        (
+            "renvor-seaorm + db-mysql,jobs acquires no PostgreSQL driver",
+            &[
+                "-p",
+                "renvor-seaorm",
+                "--no-default-features",
+                "--features",
+                "db-mysql,jobs",
+            ],
+            &["sqlx-postgres", "renvor-sqlx"],
+            &["sqlx-mysql", "renvor-jobs", "sea-orm"],
+        ),
+        (
+            "renvor-core (--all-features) resolves no adapter",
+            &["-p", "renvor-core", "--all-features"],
+            &[
+                "redis",
+                "lettre",
+                "cap-std",
+                "opentelemetry",
+                "sqlx",
+                "tracing-subscriber",
+                "renvor-cache",
+                "renvor-jobs",
+            ],
+            &["tracing", "tokio"],
+        ),
+        (
+            "renvor-auth (--all-features) resolves no capability adapter",
+            &["-p", "renvor-auth", "--all-features"],
+            &["lettre", "redis", "cap-std", "opentelemetry", "renvor-mail"],
+            &["renvor-database", "tracing"],
+        ),
+        (
+            "renvor lean resolves no capability crate",
+            &["-p", "renvor", "--no-default-features"],
+            &[
+                "renvor-cache",
+                "renvor-jobs",
+                "renvor-mail",
+                "renvor-storage",
+                "renvor-observability",
+            ],
+            &["renvor-core"],
+        ),
+        (
+            "renvor + capability-cache resolves that crate alone",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "capability-cache",
+            ],
+            &[
+                "renvor-jobs",
+                "renvor-mail",
+                "renvor-storage",
+                "renvor-observability",
+                "redis",
+            ],
+            &["renvor-cache"],
+        ),
+        (
+            "renvor + capability-jobs resolves that crate alone",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "capability-jobs",
+            ],
+            &[
+                "renvor-cache",
+                "renvor-mail",
+                "renvor-storage",
+                "renvor-observability",
+                "sqlx",
+            ],
+            &["renvor-jobs"],
+        ),
+        (
+            "renvor + capability-mail resolves that crate alone",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "capability-mail",
+            ],
+            &[
+                "renvor-cache",
+                "renvor-jobs",
+                "renvor-storage",
+                "renvor-observability",
+                "lettre",
+            ],
+            &["renvor-mail"],
+        ),
+        (
+            "renvor + capability-storage resolves that crate alone",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "capability-storage",
+            ],
+            &[
+                "renvor-cache",
+                "renvor-jobs",
+                "renvor-mail",
+                "renvor-observability",
+                "cap-std",
+            ],
+            &["renvor-storage"],
+        ),
+        (
+            "renvor + observability resolves that crate and no exporter",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "observability",
+            ],
+            &[
+                "renvor-cache",
+                "renvor-jobs",
+                "renvor-mail",
+                "renvor-storage",
+                "opentelemetry",
+            ],
+            &["renvor-observability"],
+        ),
+        (
+            "renvor + observability-otel resolves the exporter",
+            &[
+                "-p",
+                "renvor",
+                "--no-default-features",
+                "--features",
+                "observability-otel",
+            ],
+            &[
+                "renvor-cache",
+                "renvor-jobs",
+                "renvor-mail",
+                "renvor-storage",
+                "reqwest",
+            ],
+            &["renvor-observability", "opentelemetry-otlp", "hyper-rustls"],
+        ),
     ];
 
     for (label, args, forbidden, controls) in checks {
@@ -948,6 +1244,65 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
 /// than implied. It is kept because the two mechanisms fail for different reasons — one on a
 /// compile-time macro, one on the manifest text — and a future change that drops the integration
 /// test would otherwise remove the only guard without anything noticing.
+/// `rustls` is compiled with the `ring` provider and NO second one (ADR-0033 decision 6).
+///
+/// The RESP client calls `ClientConfig::builder()`, which panics when two providers are compiled
+/// in; the SMTP client and the OTLP connector are told to use `ring` explicitly. A feature edge
+/// enabling `aws-lc-rs` or `fips` anywhere in the workspace under `--all-features` would turn a
+/// working cache adapter into a boot-time panic, so the edge is asserted absent — and `ring`
+/// asserted present, so the walk is known to see feature edges at all.
+fn rustls_has_one_crypto_provider(root: &std::path::Path) -> bool {
+    let output = std::process::Command::new("cargo")
+        .args([
+            "tree",
+            "--edges",
+            "features",
+            "--workspace",
+            "--all-features",
+            "--prefix",
+            "none",
+        ])
+        .current_dir(root)
+        .output()
+        .ok();
+    let Some(output) = output.filter(|o| o.status.success()) else {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the feature-edge tree query for `rustls` failed",
+        );
+        return false;
+    };
+    let tree = String::from_utf8_lossy(&output.stdout);
+    let feature = |name: &str| {
+        tree.lines()
+            .any(|line| line.trim_end_matches(" (*)") == format!("rustls feature \"{name}\""))
+    };
+    for banned in ["aws-lc-rs", "aws_lc_rs", "fips"] {
+        if feature(banned) {
+            step_fail(
+                7,
+                "architecture invariants",
+                &format!(
+                    "`rustls` is compiled with the `{banned}` feature somewhere under \
+                     --all-features; with `ring` also on, `ClientConfig::builder()` panics"
+                ),
+            );
+            return false;
+        }
+    }
+    if !feature("ring") {
+        step_fail(
+            7,
+            "architecture invariants",
+            "the feature walk cannot see `rustls feature \"ring\"`, so the absences above prove \
+             nothing",
+        );
+        return false;
+    }
+    true
+}
+
 fn the_executable_is_named_renvor(root: &std::path::Path) -> bool {
     let manifest = root.join("crates/renvor-cli/Cargo.toml");
     let Ok(text) = std::fs::read_to_string(&manifest) else {
@@ -1742,7 +2097,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
 /// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
 /// extra — it is an error, and the census would have failed to run rather than failed to find.
-const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 67] = [
     // THE TEST APPLICATION (FR-083). Not a four-row entry — it exercises the ROUTES, and the thing
     // that varies by engine is the adapter, which the four-row suites already measure. It reaches
     // PostgreSQL through a dev-dependency, so it takes NO database feature of its own; passing one
@@ -1757,193 +2112,193 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "abuse_controls",
         "postgres::the_shared_abuse_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "abuse_controls",
         "mysql::the_shared_abuse_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "abuse_controls",
         "postgres::the_shared_abuse_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "abuse_controls",
         "mysql::the_shared_abuse_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "refresh_rotation",
         "postgres::the_shared_refresh_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "refresh_rotation",
         "mysql::the_shared_refresh_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "refresh_rotation",
         "postgres::the_shared_refresh_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "refresh_rotation",
         "mysql::the_shared_refresh_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "shared_contract",
         "postgres::the_shared_persistence_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "shared_contract",
         "mysql::the_shared_persistence_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "contract",
         "postgres::the_shared_persistence_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "contract",
         "mysql::the_shared_persistence_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "postgres::the_shared_domain_example_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "mysql::the_shared_domain_example_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_shared_domain_example_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "mysql::the_shared_domain_example_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "postgres::the_shared_concurrency_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "mysql::the_shared_concurrency_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_shared_concurrency_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "mysql::the_shared_concurrency_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "portability",
         "postgres::the_portability_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "portability",
         "mysql::the_portability_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "portability",
         "postgres::the_portability_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "portability",
         "mysql::the_portability_contract_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "postgres::the_upgrade_path_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "domain",
         "mysql::the_upgrade_path_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "postgres::the_upgrade_path_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "domain",
         "mysql::the_upgrade_path_holds",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "postgres::a_failed_start_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "mysql::a_failed_start_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "postgres::a_failed_start_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "mysql::a_failed_start_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // The server-side refusal rows, added by Phase 008's correction cycle. A refused socket and a
     // refused credential reach different code — the I/O arm and `classify_connect_error` — so a
@@ -1952,25 +2307,25 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "startup_diagnostic",
         "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "startup_diagnostic",
         "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "postgres::a_server_side_refusal_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "startup_diagnostic",
         "mysql::a_server_side_refusal_names_the_provider_and_what_to_do",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // The error-classification rows, added by Phase 008's second correction cycle on the finding
     // that `PLAN.md` §819's "database error normalization" deliverable had its real-database
@@ -1979,25 +2334,25 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::each_constraint_violation_is_classified_as_itself",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::each_constraint_violation_is_classified_as_itself",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::each_constraint_violation_is_classified_as_itself",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::each_constraint_violation_is_classified_as_itself",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // The control for the four above. Without its own entry it could be deleted while the census
     // stayed green, and a mapping that collapsed the four kinds onto one would then be caught by
@@ -2006,25 +2361,25 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::the_four_violations_do_not_collapse_onto_one_kind",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::the_four_violations_do_not_collapse_onto_one_kind",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::the_four_violations_do_not_collapse_onto_one_kind",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::the_four_violations_do_not_collapse_onto_one_kind",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // Transaction conflict: DIRECT-SQLX ROWS ONLY, and that is measured rather than overlooked.
     // Provoking a deadlock takes two sessions holding two row locks in opposite orders, which the
@@ -2034,13 +2389,13 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::a_lost_conflict_is_retryable_rather_than_a_rejection",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::a_lost_conflict_is_retryable_rather_than_a_rejection",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // The redaction rows. Differently named per adapter because they defend against different
     // text: the driver's message on one side, SeaORM's — which also carries the generated SQL —
@@ -2049,25 +2404,25 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "error_classification",
         "postgres::a_violation_never_carries_the_server_text",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "error_classification",
         "mysql::a_violation_never_carries_the_server_text",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "postgres::a_violation_never_carries_the_seaorm_text",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "error_classification",
         "mysql::a_violation_never_carries_the_seaorm_text",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // ---- PHASE 009: the authentication rows ----
     //
@@ -2079,25 +2434,25 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "auth_repositories",
         "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "auth_repositories",
         "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "postgres::a_single_use_token_is_consumed_exactly_once_under_concurrency",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "mysql::a_single_use_token_is_consumed_exactly_once_under_concurrency",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     // ---- PHASE 009 BATCH F: the session rows ----
     //
@@ -2114,49 +2469,76 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 63] = [
         "renvor-sqlx",
         "auth_repositories",
         "postgres::two_concurrent_logouts_revoke_exactly_once",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "auth_repositories",
         "mysql::two_concurrent_logouts_revoke_exactly_once",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "postgres::two_concurrent_logouts_revoke_exactly_once",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "mysql::two_concurrent_logouts_revoke_exactly_once",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "auth_repositories",
         "postgres::touching_twice_at_one_instant_keeps_the_session_live",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-sqlx",
         "auth_repositories",
         "mysql::touching_twice_at_one_instant_keeps_the_session_live",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "postgres::touching_twice_at_one_instant_keeps_the_session_live",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
     (
         "renvor-seaorm",
         "auth_repositories",
         "mysql::touching_twice_at_one_instant_keeps_the_session_live",
-        "db-postgres,db-mysql,tokens",
+        "db-postgres,db-mysql,tokens,jobs",
+    ),
+    // THE FOUR JOB-STORE ROWS (Phase 010, FR-040): one shared contract, four rows. `jobs` joins
+    // the feature string of every row above rather than forming a second group, so the package
+    // compiles once for the census and the auth rows lose nothing by carrying it.
+    (
+        "renvor-sqlx",
+        "jobs",
+        "postgres::the_shared_jobs_contract_holds",
+        "db-postgres,db-mysql,tokens,jobs",
+    ),
+    (
+        "renvor-sqlx",
+        "jobs",
+        "mysql::the_shared_jobs_contract_holds",
+        "db-postgres,db-mysql,tokens,jobs",
+    ),
+    (
+        "renvor-seaorm",
+        "jobs",
+        "postgres::the_shared_jobs_contract_holds",
+        "db-postgres,db-mysql,tokens,jobs",
+    ),
+    (
+        "renvor-seaorm",
+        "jobs",
+        "mysql::the_shared_jobs_contract_holds",
+        "db-postgres,db-mysql,tokens,jobs",
     ),
 ];
 

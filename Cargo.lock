@@ -3102,6 +3102,7 @@ dependencies = [
  "redis",
  "renvor-config",
  "renvor-core",
+ "rustls",
  "thiserror 2.0.20",
  "tokio",
  "tracing",

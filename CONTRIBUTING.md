@@ -69,9 +69,16 @@ without them:
 | `RENVOR_TEST_POSTGRES_URL` | connection string for a PostgreSQL the suite may create and drop tables in |
 | `RENVOR_TEST_MYSQL_URL` | connection string for a MySQL, on the same terms |
 | `RENVOR_TEST_REQUIRE_DATABASE` | set to `1`. Turns a *skipped* real-database test into a failing one |
+| `RENVOR_TEST_VALKEY_URL` | `redis://` URL of a Valkey (or Redis) the cache suite may write to (Phase 010) |
+| `RENVOR_TEST_SMTP_URL` | `smtp://user:password@127.0.0.1:1025` of a Mailpit the mail suite may send through (Phase 010) |
+| `RENVOR_TEST_SMTP_API_URL` | Mailpit's HTTP API, `http://127.0.0.1:8025`, which the mail suite reads delivered messages from |
+| `RENVOR_TEST_REQUIRE_CAPABILITIES` | set to `1`. Turns a *skipped* real-server cache or mail test into a failing one |
 
-Any container runtime will do. CI pins `postgres:17.11-trixie` and `mysql:8.4.11`; matching those
-locally means a portability difference fails on your machine rather than in review.
+Any container runtime will do. CI pins `postgres:17.11-trixie` and `mysql:8.4.11`, and for the
+capability endpoints `valkey/valkey:9.1.1-alpine` and `axllent/mailpit:v1.29.1` (started with
+`MP_SMTP_AUTH="renvor:<password>"` and `MP_SMTP_AUTH_ALLOW_INSECURE=1`, because the loopback
+plaintext path is the one the suite exercises); matching those locally means a portability
+difference fails on your machine rather than in review.
 
 Use a throwaway database. The suite creates and drops its own tables, and the upgrade suite
 deliberately migrates a schema from a previous release.

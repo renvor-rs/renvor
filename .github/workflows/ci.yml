@@ -106,7 +106,7 @@ jobs:
       # and individually justified, and "we committed a password because the syntax made us" is
       # not a justification. Generating one per run and masking it costs six lines and commits
       # nothing.
-      - name: Start the real databases
+      - name: Start the real databases and capability endpoints
         run: |
           set -euo pipefail
           password="$(openssl rand -hex 24)"
@@ -254,10 +254,57 @@ jobs:
             exit 1
           fi
 
+          # ── THE CAPABILITY ENDPOINTS (Phase 010) ───────────────────────────────────────
+          #
+          # Valkey for the cache adapter's real-server suite; Mailpit for the mail adapter's
+          # real-sink suite, which reads delivered messages back through Mailpit's HTTP API.
+          # Same per-run masked password; the same rule about readiness: a real query, never
+          # a socket probe. `valkey-cli ping` authenticates and expects PONG; Mailpit's
+          # `/api/v1/info` answers only once its HTTP server is up.
+          docker run -d --name rv-valkey \
+            -p 127.0.0.1:6379:6379 valkey/valkey:9.1.1-alpine \
+            valkey-server --requirepass "$password"
+          docker run -d --name rv-mailpit \
+            -e MP_SMTP_AUTH="renvor:$password" -e MP_SMTP_AUTH_ALLOW_INSECURE=1 \
+            -p 127.0.0.1:1025:1025 -p 127.0.0.1:8025:8025 axllent/mailpit:v1.29.1
+
+          valkey_ready=""
+          for _ in $(seq 1 60); do
+            if docker exec -e REDISCLI_AUTH="$password" rv-valkey \
+                 valkey-cli -h 127.0.0.1 -p 6379 ping 2>/dev/null | grep -q PONG
+            then
+              valkey_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$valkey_ready" ]; then
+            echo "::error::Valkey never answered PONG in sixty attempts." >&2
+            docker logs --tail 50 rv-valkey || true
+            exit 1
+          fi
+          mailpit_ready=""
+          for _ in $(seq 1 60); do
+            if curl -fs http://127.0.0.1:8025/api/v1/info >/dev/null 2>&1; then
+              mailpit_ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ -z "$mailpit_ready" ]; then
+            echo "::error::Mailpit never answered its info endpoint in sixty attempts." >&2
+            docker logs --tail 50 rv-mailpit || true
+            exit 1
+          fi
+
           {
             echo "RENVOR_TEST_POSTGRES_URL=postgres://postgres:$password@127.0.0.1:5432/renvor_test"
             echo "RENVOR_TEST_MYSQL_URL=mysql://root:$password@127.0.0.1:3306/renvor_test"
             echo "RENVOR_TEST_REQUIRE_DATABASE=1"
+            echo "RENVOR_TEST_VALKEY_URL=redis://:$password@127.0.0.1:6379/0"
+            echo "RENVOR_TEST_SMTP_URL=smtp://renvor:$password@127.0.0.1:1025"
+            echo "RENVOR_TEST_SMTP_API_URL=http://127.0.0.1:8025"
+            echo "RENVOR_TEST_REQUIRE_CAPABILITIES=1"
           } >> "$GITHUB_ENV"
 
       - name: cargo xtask verify
