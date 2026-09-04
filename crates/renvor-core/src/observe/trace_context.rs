@@ -18,17 +18,21 @@
 //! | a 32-hex trace-id of all zeroes is invalid → ignore the header | §3.2.2.3 |
 //! | a 16-hex parent-id of all zeroes is invalid → ignore the header | §3.2.2.4 |
 //! | `trace-flags` is a bit field: mask, never compare | §3.2.2.5 |
+//! | outbound `trace-flags` carry only the bit this version defines; every other bit is set to zero | §3.2.2.5.2, §4.3 |
 //! | a `traceparent` that fails to parse means `tracestate` is not parsed | §3.3 |
 //! | a `tracestate` that fails to parse does **not** affect `traceparent` | §3.3 |
 //! | at most 32 list-members; keys and values have closed grammars; ≤ 512 bytes propagated | §3.3.1.1–§3.3.1.5 |
+//! | a simple key and a `system-id` begin with a lowercase letter; only a `tenant-id` may begin with a digit | §3.3.1.3.1 |
+//! | a key appears at most once in a `tracestate` | §3.3.1.4 |
 //!
 //! # What this module does not do
 //!
 //! It does not touch the request identifier. `RequestId` keeps its single entropy-only
 //! constructor (ADR-0012 Finding 1); an inbound trace context is *recorded beside* it, never
-//! adopted as it. And it does not propagate `tracestate` onward: Renvor emits no outbound HTTP,
-//! so the only consumer of a validated `tracestate` is a span field, and §4.3 permits a receiver
-//! to drop it.
+//! adopted as it. And it does not propagate `tracestate` onward: Renvor's only outbound HTTP is
+//! the OTLP exporter (C-O15), which carries no request trace context, so a validated `tracestate`
+//! reaches a span field's member count and the handler through `Request::trace_context`, and
+//! §4.3 permits a receiver to drop it.
 
 use core::fmt;
 
@@ -175,7 +179,9 @@ impl fmt::Debug for SpanId {
 ///
 /// Held as the byte, because §3.2.2.5 is explicit that *"you cannot interpret flags by decoding
 /// the hex value and looking at the resulting number"* — only masked bits mean anything, and this
-/// version of the specification defines one.
+/// version of the specification defines one. Inbound, the byte is kept whole
+/// ([`TraceFlags::as_byte`]) so the record says what was received; outbound, only the defined bit
+/// leaves ([`TraceFlags::supported`]; §3.2.2.5.2 and §4.3).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TraceFlags(u8);
 
@@ -184,6 +190,9 @@ impl TraceFlags {
     pub const SAMPLED: Self = Self(FLAG_SAMPLED);
     /// No flags set.
     pub const NONE: Self = Self(0);
+    /// The bits this version of the specification defines (§3.2.2.5.1): only `sampled`. What
+    /// [`TraceFlags::supported`] keeps and [`TraceContext::render_traceparent`] emits.
+    pub const SUPPORTED: Self = Self(FLAG_SAMPLED);
 
     /// Builds flags from the raw byte. Every bit pattern is representable; only `sampled` is
     /// interpreted.
@@ -192,7 +201,8 @@ impl TraceFlags {
         Self(byte)
     }
 
-    /// The raw byte.
+    /// The raw byte **as received**, undefined bits included: the inbound record. Not what
+    /// leaves — [`TraceContext::render_traceparent`] renders [`TraceFlags::supported`].
     #[must_use]
     pub const fn as_byte(self) -> u8 {
         self.0
@@ -202,6 +212,18 @@ impl TraceFlags {
     #[must_use]
     pub const fn sampled(self) -> bool {
         self.0 & FLAG_SAMPLED != 0
+    }
+
+    /// The flags with every bit this version of the specification does not define set to zero:
+    /// what leaves Renvor.
+    ///
+    /// §3.2.2.5.2: *"The behavior of other flags … is not defined and is reserved for future use.
+    /// Vendors MUST set those to zero."* §4.3: *"Vendors will set all unparsed / unknown
+    /// trace-flags to 0 on outgoing requests."* [`TraceContext::render_traceparent`] renders this;
+    /// [`TraceFlags::as_byte`] keeps the received byte for the inbound record.
+    #[must_use]
+    pub const fn supported(self) -> Self {
+        Self(self.0 & Self::SUPPORTED.0)
     }
 
     /// The 2 lowercase hex characters.
@@ -229,7 +251,8 @@ pub struct TraceState {
 }
 
 impl TraceState {
-    /// Parses a combined header value. Returns `None` for anything that fails §3.3.1.
+    /// Parses a combined header value. Returns `None` for anything that fails §3.3.1, a repeated
+    /// key included (§3.3.1.4).
     ///
     /// Multiple header fields must be combined by the caller with `,` before this is called
     /// (§3.3.1.1); this function sees one value.
@@ -238,7 +261,10 @@ impl TraceState {
         if value.len() > MAX_TRACESTATE_BYTES {
             return None;
         }
-        let mut members = Vec::new();
+        // Both vectors are bounded by the member cap, checked before every push, so the duplicate
+        // scan below is at most 32 × 32 comparisons and no input grows either.
+        let mut members: Vec<&str> = Vec::new();
+        let mut keys: Vec<&str> = Vec::new();
         for raw in value.split(',') {
             // OWS around a list-member is ignored (§3.3.1.1); empty members are allowed.
             let member = raw.trim_matches([' ', '\t']);
@@ -249,10 +275,17 @@ impl TraceState {
             if !valid_key(key) || !valid_value(member_value) {
                 return None;
             }
+            // §3.3.1.4: "Only one entry per key is allowed". Exact byte match; keys are lowercase
+            // by grammar, so there is no other equality. Empty members were skipped above and
+            // cannot hide a repeat (Phase 010 correction round, Finding 4).
+            if keys.contains(&key) {
+                return None;
+            }
+            if members.len() == MAX_TRACESTATE_MEMBERS {
+                return None;
+            }
+            keys.push(key);
             members.push(member);
-        }
-        if members.len() > MAX_TRACESTATE_MEMBERS {
-            return None;
         }
         Some(Self {
             canonical: members.join(","),
@@ -351,9 +384,12 @@ impl TraceContext {
     /// Renders a version-00 `traceparent` from the **validated** fields.
     ///
     /// This is the only way a `traceparent` leaves Renvor, so what leaves is what was checked:
-    /// exactly 55 bytes, lowercase, with the flags masked to the bits this version defines set
-    /// to their received values and everything else preserved as received (§3.2.2.5 asks that
-    /// unknown flags be carried, not invented).
+    /// exactly 55 bytes, lowercase, and the flags masked to [`TraceFlags::SUPPORTED`] — the bit
+    /// this version defines keeps its received value and every other bit is zero. §3.2.2.5.2:
+    /// *"Vendors MUST set those to zero"*; §4.3: *"Vendors will set all unparsed / unknown
+    /// trace-flags to 0 on outgoing requests."* The first version re-emitted the received byte and
+    /// claimed the specification asked for it (Phase 010 correction round, Finding 4). The
+    /// received byte stays available through [`TraceFlags::as_byte`] on [`Self::flags`].
     #[must_use]
     pub fn render_traceparent(&self) -> String {
         let mut out = String::with_capacity(TRACEPARENT_LEN);
@@ -362,7 +398,7 @@ impl TraceContext {
         out.push('-');
         out.push_str(&self.parent_id.encode());
         out.push('-');
-        out.push_str(&self.flags.encode());
+        out.push_str(&self.flags.supported().encode());
         out
     }
 }
@@ -430,23 +466,44 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// §3.3.1.3.1: a simple key or a multi-tenant `tenant@system` key, each part lowercase.
+///
+/// The Level 1 ABNF, verbatim: `simple-key = lcalpha 0*255( lcalpha / DIGIT / "_" / "-"/ "*" /
+/// "/" )`, `tenant-id = ( lcalpha / DIGIT ) 0*240( … )`, `system-id = lcalpha 0*13( … )`. So a
+/// simple key and a system-id begin with a lowercase letter, and only a tenant-id may begin with
+/// a digit. The first version let every part begin with a digit and accepted `9rojo` (Phase 010
+/// correction round, Finding 4).
 fn valid_key(key: &str) -> bool {
     if key.is_empty() || key.len() > MAX_MEMBER_PART {
         return false;
     }
     match key.split_once('@') {
-        None => valid_key_part(key, 256),
+        None => valid_key_part(key, 256, Lead::Letter),
         // `tenant` is 1–241 characters and `system` 1–14, per the ABNF.
-        Some((tenant, system)) => valid_key_part(tenant, 241) && valid_key_part(system, 14),
+        Some((tenant, system)) => {
+            valid_key_part(tenant, 241, Lead::LetterOrDigit)
+                && valid_key_part(system, 14, Lead::Letter)
+        }
     }
 }
 
-fn valid_key_part(part: &str, max: usize) -> bool {
+/// What the first character of a key part may be (§3.3.1.3.1).
+#[derive(Clone, Copy)]
+enum Lead {
+    /// `lcalpha`: a simple key or a system-id.
+    Letter,
+    /// `( lcalpha / DIGIT )`: a tenant-id.
+    LetterOrDigit,
+}
+
+fn valid_key_part(part: &str, max: usize, lead: Lead) -> bool {
     let bytes = part.as_bytes();
     if bytes.is_empty() || bytes.len() > max {
         return false;
     }
-    let first_ok = bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit();
+    let first_ok = match lead {
+        Lead::Letter => bytes[0].is_ascii_lowercase(),
+        Lead::LetterOrDigit => bytes[0].is_ascii_lowercase() || bytes[0].is_ascii_digit(),
+    };
     first_ok
         && bytes.iter().all(|byte| {
             byte.is_ascii_lowercase()
@@ -548,14 +605,38 @@ mod tests {
 
     #[test]
     fn flags_are_masked_not_compared() {
-        // §3.2.2.5: `09` carries the sampled bit beside an unknown one. The unknown bit is kept
-        // and re-rendered; the sampled bit is read by mask.
+        // §3.2.2.5: `09` carries the sampled bit beside a bit this version does not define. The
+        // sampled bit is read by mask; the received byte stays available as the inbound record;
+        // and what leaves carries only the defined bit. §3.2.2.5.2: "Vendors MUST set those to
+        // zero"; §4.3: "Vendors will set all unparsed / unknown trace-flags to 0 on outgoing
+        // requests." The first version re-emitted `09` and asserted `ends_with("-09")` (Phase
+        // 010 correction round, Finding 4).
         let context = parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-09")
             .expect("valid");
         assert!(context.flags().sampled());
-        assert_eq!(context.flags().as_byte(), 0x09);
-        assert!(context.render_traceparent().ends_with("-09"));
+        assert_eq!(
+            context.flags().as_byte(),
+            0x09,
+            "the inbound record is the received byte"
+        );
+        assert!(
+            context.render_traceparent().ends_with("-01"),
+            "an undefined flag bit left Renvor"
+        );
         assert!(!TraceFlags::from_byte(0x08).sampled());
+        assert_eq!(TraceFlags::from_byte(0x09).supported(), TraceFlags::SAMPLED);
+        assert_eq!(TraceFlags::from_byte(0x08).supported(), TraceFlags::NONE);
+        assert_eq!(TraceFlags::from_byte(0xff).supported(), TraceFlags::SAMPLED);
+        assert_eq!(TraceFlags::SUPPORTED, TraceFlags::SAMPLED);
+        // Every undefined bit, without and with the sampled bit.
+        let undefined_only =
+            parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-08")
+                .expect("valid");
+        assert!(undefined_only.render_traceparent().ends_with("-00"));
+        let all_bits = parse_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ff")
+            .expect("valid");
+        assert!(all_bits.render_traceparent().ends_with("-01"));
+        assert_eq!(all_bits.flags().as_byte(), 0xff);
     }
 
     #[test]
@@ -594,11 +675,26 @@ mod tests {
         assert!(TraceState::parse("@vendor=1").is_none());
         assert!(TraceState::parse("tenant@verylongsystemname=1").is_none());
 
-        // Keys start with a lowercase letter or digit and stay lowercase.
+        // §3.3.1.3.1, verbatim: `simple-key = lcalpha 0*255( lcalpha / DIGIT / "_" / "-"/ "*" /
+        // "/" )`, `tenant-id = ( lcalpha / DIGIT ) 0*240( … )`, `system-id = lcalpha 0*13( … )`.
+        // A simple key and a system-id begin with a lowercase letter; only a tenant-id may begin
+        // with a digit. The first version let every part begin with a digit and pinned `9rojo=1`
+        // as valid (Phase 010 correction round, Finding 4).
         assert!(TraceState::parse("Rojo=1").is_none());
         assert!(TraceState::parse("-rojo=1").is_none());
         assert!(TraceState::parse("rojo=1").is_some());
-        assert!(TraceState::parse("9rojo=1").is_some());
+        assert!(
+            TraceState::parse("9rojo=1").is_none(),
+            "a simple key began with a digit"
+        );
+        assert!(
+            TraceState::parse("9tenant@vendor=1").is_some(),
+            "a tenant-id may begin with a digit"
+        );
+        assert!(
+            TraceState::parse("tenant@9vendor=1").is_none(),
+            "a system-id began with a digit"
+        );
 
         // Values: printable ASCII except `,` and `=`, no control characters.
         assert!(TraceState::parse("a=b=c").is_none());
@@ -611,6 +707,33 @@ mod tests {
         assert_eq!(TraceState::parse("a=b ").unwrap().as_str(), "a=b");
         assert_eq!(TraceState::parse("a=b c").unwrap().as_str(), "a=b c");
         assert!(TraceState::parse("a=\u{e9}").is_none());
+    }
+
+    #[test]
+    fn a_tracestate_key_appears_at_most_once() {
+        // §3.3.1.4: "Only one entry per key is allowed because the entry represents that last
+        // position in the trace." A repeated key is a malformed list; the whole value is dropped,
+        // which §4.3 permits for a tracestate that cannot be parsed. Exact byte match: keys are
+        // lowercase by grammar, so there is no other equality (Phase 010 correction round,
+        // Finding 4).
+        assert!(
+            TraceState::parse("a=1,a=2").is_none(),
+            "a duplicate key was accepted"
+        );
+        assert!(
+            TraceState::parse("a=1, a=2").is_none(),
+            "optional whitespace hid a duplicate key"
+        );
+        assert!(
+            TraceState::parse("a=1,,a=2").is_none(),
+            "an empty member hid a duplicate key"
+        );
+        // POSITIVE CONTROLS: distinct keys are kept in order, and a multi-tenant key is not the
+        // simple key it begins with.
+        let state = TraceState::parse("a=1,b=2").expect("distinct keys");
+        assert_eq!(state.members(), 2);
+        assert_eq!(state.as_str(), "a=1,b=2");
+        assert_eq!(TraceState::parse("a@v=1,a=2").unwrap().members(), 2);
     }
 
     #[test]

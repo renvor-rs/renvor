@@ -23,17 +23,24 @@
 //!
 //! # Every wait here is bounded
 //!
-//! Each attempt runs under [`RetryPolicy::attempt_timeout`] through `tokio::time::timeout`, the
-//! sleeps are bounded by `max_delay`, the attempts by `max_attempts`, and an optional overall
-//! deadline bounds the whole helper. C-L7 makes this a requirement rather than a courtesy:
-//! `tests/deadlines.rs` discovers every kernel file that calls author code and requires a bounding
-//! construct in it, and this file calls the author's operation.
+//! Each attempt runs, through `tokio::time::timeout`, under the **shorter** of
+//! [`RetryPolicy::attempt_timeout`] and the budget left before the overall deadline. The sleeps
+//! are bounded by `max_delay` and clamped to that budget, the attempts by `max_attempts`, so the
+//! optional deadline bounds the whole helper, a running attempt included: an attempt it cuts is
+//! counted, reported as [`StopReason::DeadlineExceeded`], and followed by no sleep. The first
+//! version bounded only the gaps between attempts, so one hung attempt could overrun the deadline
+//! by a whole attempt timeout (Phase 010 correction round, Finding 7). C-L7 makes the bounding a
+//! requirement rather than a courtesy: `tests/deadlines.rs` discovers every kernel file that
+//! calls author code and requires a bounding construct in it, and this file calls the author's
+//! operation.
 //!
 //! # Observable
 //!
 //! Every retry emits one structured event on the `renvor.retry` target — operation, attempt,
 //! `max_attempts`, the delay as a number of milliseconds, and the closed reason — and increments
-//! the counter the caller supplied, if any. The message is a constant; nothing about the failure
+//! the counter the caller supplied, if any. A terminal failure, a last attempt, and an attempt the
+//! deadline cuts each emit one event with their closed reason and increment nothing: the counter
+//! counts retries, and none of those is one. The message is a constant; nothing about the failure
 //! is interpolated, because the failure is the author's error type and may carry anything.
 
 use core::fmt;
@@ -161,7 +168,8 @@ impl RetryPolicy {
         self
     }
 
-    /// Bounds the whole helper, attempts and sleeps together.
+    /// Bounds the whole helper, attempts and sleeps together: an attempt never runs past the
+    /// deadline, and no sleep starts after it.
     ///
     /// # Errors
     ///
@@ -296,9 +304,11 @@ pub enum StopReason {
     AttemptsExhausted,
     /// The last failure was classified [`RetryClass::Terminal`].
     Terminal,
-    /// The overall deadline elapsed before another attempt could start.
+    /// The overall deadline elapsed: before another attempt could start, or while one was
+    /// running, in which case that attempt was cut and is counted.
     DeadlineExceeded,
-    /// The last attempt ran past [`RetryPolicy::attempt_timeout`].
+    /// The last attempt ran past [`RetryPolicy::attempt_timeout`] with budget still left before
+    /// the deadline. An attempt the deadline itself cuts is [`Self::DeadlineExceeded`].
     AttemptTimedOut,
     /// The entropy port could not supply jitter bytes.
     EntropyUnavailable,
@@ -320,9 +330,9 @@ impl StopReason {
 
 /// The helper gave up. Carries the **last** failure the operation produced, if it produced one.
 ///
-/// `last` is `None` only when the stop was not caused by the operation — a deadline that elapsed
-/// before the first attempt, or an entropy failure — so a caller can always tell whether the
-/// operation ever ran.
+/// `last` is `None` only when the operation never returned a failure: every attempt that ran was
+/// cut by a bound (the attempt timeout or the overall deadline), or the deadline elapsed before
+/// the first attempt. So a caller can always tell whether the operation ever answered.
 #[derive(Debug)]
 pub struct RetryError<E> {
     attempts: u32,
@@ -373,9 +383,11 @@ impl<E: fmt::Debug> std::error::Error for RetryError<E> {}
 
 /// Runs `operation` at most `policy.max_attempts()` times.
 ///
-/// - Each attempt runs under `policy.attempt_timeout()`; a timed-out attempt counts as a
-///   [`RetryClass::Retryable`] failure with no error value and stops the helper only when it was
-///   the last attempt.
+/// - Each attempt runs under the shorter of `policy.attempt_timeout()` and the budget left before
+///   the deadline. An attempt the attempt timeout cuts counts as a [`RetryClass::Retryable`]
+///   failure with no error value and stops the helper only when it was the last attempt; an
+///   attempt the deadline cuts stops the helper there, as [`StopReason::DeadlineExceeded`], with
+///   the attempt counted and no sleep after it.
 /// - Between attempts the helper sleeps for [`RetryPolicy::delay`], through `tokio::time`, so a
 ///   paused runtime controls it.
 /// - `classify` decides retryability; a [`RetryClass::Terminal`] failure stops immediately.
@@ -404,23 +416,53 @@ where
     let mut last: Option<E> = None;
 
     for attempt in 1..=policy.max_attempts() {
-        if let Some(deadline) = deadline
-            && tokio::time::Instant::now() >= deadline
-        {
-            return Err(RetryError {
-                attempts: attempt - 1,
-                reason: StopReason::DeadlineExceeded,
-                last,
-            });
-        }
+        // The bound this attempt runs under: the attempt timeout, or the budget left before the
+        // overall deadline when that is shorter. Which one it was is remembered, so a cut is
+        // reported for what it is. A deadline that bounded only the gaps between attempts let one
+        // hung attempt overrun it by a whole attempt timeout (Phase 010 correction round, Finding
+        // 7). On a tie the deadline governs: the retry an attempt timeout would announce could not
+        // start, and announcing it would count a retry that never happens.
+        let (bound, deadline_governs) = match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(RetryError {
+                        attempts: attempt - 1,
+                        reason: StopReason::DeadlineExceeded,
+                        last,
+                    });
+                }
+                if remaining <= policy.attempt_timeout() {
+                    (remaining, true)
+                } else {
+                    (policy.attempt_timeout(), false)
+                }
+            }
+            None => (policy.attempt_timeout(), false),
+        };
 
-        let outcome = tokio::time::timeout(policy.attempt_timeout(), run(attempt)).await;
+        let outcome = tokio::time::timeout(bound, run(attempt)).await;
         let (class, reason_label) = match outcome {
             Ok(Ok(value)) => return Ok(value),
             Ok(Err(error)) => {
                 let class = classify(&error);
                 last = Some(error);
                 (class, class.as_str())
+            }
+            Err(_elapsed) if deadline_governs => {
+                tracing::warn!(
+                    target: RETRY_EVENT_TARGET,
+                    operation,
+                    attempt,
+                    max_attempts = policy.max_attempts(),
+                    reason = StopReason::DeadlineExceeded.as_str(),
+                    "operation was cut by the overall deadline"
+                );
+                return Err(RetryError {
+                    attempts: attempt,
+                    reason: StopReason::DeadlineExceeded,
+                    last,
+                });
             }
             Err(_elapsed) => (RetryClass::Retryable, StopReason::AttemptTimedOut.as_str()),
         };
@@ -507,11 +549,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::{
-        ATTEMPT_TIMEOUT_CAP, Jitter, MAX_ATTEMPTS_CAP, MAX_DELAY_CAP, PolicyError, RetryClass,
-        RetryPolicy, StopReason, retry,
+        ATTEMPT_TIMEOUT_CAP, Jitter, MAX_ATTEMPTS_CAP, MAX_DELAY_CAP, PolicyError,
+        RETRY_EVENT_TARGET, RetryClass, RetryPolicy, StopReason, retry,
     };
     use crate::observe::entropy::{EntropySource, EntropyUnavailable, FixedEntropy};
+    use crate::observe::metrics::{Counter, Registry, SeriesValue};
+    use core::fmt;
     use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
     fn policy(attempts: u32) -> RetryPolicy {
@@ -772,6 +817,288 @@ mod tests {
         assert!(
             !rendered.contains("hunter2"),
             "Display rendered the author's error value"
+        );
+    }
+
+    // ---- Finding 7 (Phase 010 correction round): the deadline bounds a RUNNING attempt ----
+
+    /// One `renvor.retry` event as a subscriber received it: the closed fields, by name.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    struct RetryEvent {
+        operation: Option<String>,
+        attempt: Option<u64>,
+        max_attempts: Option<u64>,
+        delay_ms: Option<u64>,
+        reason: Option<String>,
+    }
+
+    impl tracing::field::Visit for RetryEvent {
+        fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+            match field.name() {
+                "attempt" => self.attempt = Some(value),
+                "max_attempts" => self.max_attempts = Some(value),
+                "delay_ms" => self.delay_ms = Some(value),
+                _ => {}
+            }
+        }
+
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            match field.name() {
+                "operation" => self.operation = Some(value.to_owned()),
+                "reason" => self.reason = Some(value.to_owned()),
+                _ => {}
+            }
+        }
+
+        fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn fmt::Debug) {}
+    }
+
+    /// A subscriber that keeps every `renvor.retry` event it is told about.
+    ///
+    /// Hand-written for the reason `observe::spans` gives: this crate carries no
+    /// `tracing-subscriber`. Installed thread-scoped, not global: the process-wide slot is
+    /// claimed by `observe::bootstrap`'s test in this same binary, and two tests racing for one
+    /// slot would fail on scheduling. A scoped subscriber has a trap of its own;
+    /// [`Recorder::install`] closes it.
+    #[derive(Clone, Default)]
+    struct Recorder {
+        events: Arc<Mutex<Vec<RetryEvent>>>,
+    }
+
+    impl Recorder {
+        /// The events for `operation`, in order. Selected by the operation name, which is the
+        /// correlation identifier unique to one test.
+        fn events_for(&self, operation: &str) -> Vec<RetryEvent> {
+            self.events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .iter()
+                .filter(|event| event.operation.as_deref() == Some(operation))
+                .cloned()
+                .collect()
+        }
+
+        /// Installs this recorder for the current thread. The returned guards must live as long
+        /// as the events being asserted.
+        ///
+        /// `tracing-core` caches each callsite's interest process-wide. While at most one
+        /// dispatcher is registered, a callsite registering for the first time asks the
+        /// dispatcher of whichever thread hit it, so a neighbouring test with no subscriber
+        /// caches `never` and this thread's events vanish (renvor-auth's L-11 test lost one run
+        /// in twelve this way). Two live dispatchers — the scoped one and an anchor — make every
+        /// rebuild consult every registered dispatcher, and this recorder is always among them.
+        fn install(&self) -> (tracing::Dispatch, tracing::dispatcher::DefaultGuard) {
+            let anchor = tracing::Dispatch::new(self.clone());
+            let scoped = tracing::Dispatch::new(self.clone());
+            let guard = tracing::dispatcher::set_default(&scoped);
+            (anchor, guard)
+        }
+    }
+
+    impl tracing::Subscriber for Recorder {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            if event.metadata().target() != RETRY_EVENT_TARGET {
+                return;
+            }
+            let mut record = RetryEvent::default();
+            event.record(&mut record);
+            self.events
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(record);
+        }
+
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// A counter shaped as the helper labels it, with the registry to read it back.
+    fn retries_counter() -> (Registry, Counter) {
+        let registry = Registry::new();
+        let counter = registry
+            .counter("renvor_retries_total", "retries", &["operation", "reason"])
+            .expect("a valid counter shape");
+        (registry, counter)
+    }
+
+    /// Every retry the counter recorded, as `(operation, reason, value)`.
+    fn counted_retries(registry: &Registry) -> Vec<(String, String, SeriesValue)> {
+        registry
+            .snapshot()
+            .families
+            .into_iter()
+            .flat_map(|family| family.series)
+            .map(|series| {
+                (
+                    series.labels[0].1.clone(),
+                    series.labels[1].1.clone(),
+                    series.value,
+                )
+            })
+            .collect()
+    }
+
+    const CUT_ON_FIRST: &str = "finding7_deadline_cuts_a_pending_first_attempt";
+    const CUT_ON_THIRD: &str = "finding7_deadline_cuts_a_pending_third_attempt";
+    const BOUNDS_COINCIDE: &str = "finding7_both_bounds_end_together";
+
+    #[tokio::test(start_paused = true)]
+    async fn a_pending_attempt_is_cut_by_the_deadline_when_the_budget_is_the_shorter_bound() {
+        // Ten seconds of attempt timeout, one second of budget. The attempt ends when the budget
+        // does, is counted, and is reported as the deadline — not run to the attempt timeout and
+        // report the deadline nine seconds late.
+        let recorder = Recorder::default();
+        let _guards = recorder.install();
+        let (registry, retries) = retries_counter();
+        let entropy = FixedEntropy::new([0xff; 8]);
+        let policy = RetryPolicy::new(
+            3,
+            Duration::from_millis(100),
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        )
+        .expect("valid")
+        .with_deadline(Duration::from_secs(1))
+        .expect("valid");
+        let started = tokio::time::Instant::now();
+        let outcome: Result<(), _> = retry(
+            &policy,
+            &entropy,
+            CUT_ON_FIRST,
+            Some(&retries),
+            |_: &()| RetryClass::Retryable,
+            |_| async { std::future::pending::<Result<(), ()>>().await },
+        )
+        .await;
+        let error = outcome.unwrap_err();
+        assert_eq!(error.reason(), StopReason::DeadlineExceeded);
+        assert_eq!(error.attempts(), 1, "the cut attempt is counted");
+        assert!(
+            error.last().is_none(),
+            "a cut attempt produces no error value"
+        );
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_secs(1),
+            "the attempt outlived the deadline, or a sleep followed the cut"
+        );
+        // One event names the cut; nothing announces a retry that never came.
+        assert_eq!(
+            recorder.events_for(CUT_ON_FIRST),
+            vec![RetryEvent {
+                operation: Some(CUT_ON_FIRST.to_owned()),
+                attempt: Some(1),
+                max_attempts: Some(3),
+                delay_ms: None,
+                reason: Some("deadline_exceeded".to_owned()),
+            }]
+        );
+        assert!(
+            counted_retries(&registry).is_empty(),
+            "a cut is not a retry"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_cuts_whichever_attempt_is_running_when_it_arrives() {
+        // Attempt timeout 1 s, deadline 2.5 s, full delays of 100 ms then 200 ms. Two attempts
+        // are cut by the attempt timeout with budget to spare; the third is cut by the deadline
+        // 200 ms in: 1 + 0.1 + 1 + 0.2 + 0.2 = 2.5 s, and not a millisecond of sleep after.
+        let recorder = Recorder::default();
+        let _guards = recorder.install();
+        let (registry, retries) = retries_counter();
+        let entropy = FixedEntropy::new([0xff; 8]);
+        let policy = policy(3)
+            .with_deadline(Duration::from_millis(2_500))
+            .expect("valid");
+        let started = tokio::time::Instant::now();
+        let outcome: Result<(), _> = retry(
+            &policy,
+            &entropy,
+            CUT_ON_THIRD,
+            Some(&retries),
+            |_: &()| RetryClass::Retryable,
+            |_| async { std::future::pending::<Result<(), ()>>().await },
+        )
+        .await;
+        let error = outcome.unwrap_err();
+        assert_eq!(error.reason(), StopReason::DeadlineExceeded);
+        assert_eq!(error.attempts(), 3, "the third attempt ran and was cut");
+        assert!(error.last().is_none(), "no attempt produced an error value");
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_millis(2_500),
+            "the third attempt outlived the deadline, or a sleep followed the cut"
+        );
+        let events = recorder.events_for(CUT_ON_THIRD);
+        let reasons: Vec<Option<&str>> = events.iter().map(|e| e.reason.as_deref()).collect();
+        assert_eq!(
+            reasons,
+            vec![
+                Some("attempt_timed_out"),
+                Some("attempt_timed_out"),
+                Some("deadline_exceeded"),
+            ]
+        );
+        let delays: Vec<Option<u64>> = events.iter().map(|e| e.delay_ms).collect();
+        assert_eq!(delays, vec![Some(100), Some(200), None]);
+        assert_eq!(
+            counted_retries(&registry),
+            vec![(
+                CUT_ON_THIRD.to_owned(),
+                "attempt_timed_out".to_owned(),
+                SeriesValue::Scalar(2.0),
+            )],
+            "two retries happened; the cut is not a third"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn when_both_bounds_end_together_the_deadline_governs() {
+        // A 1 s attempt timeout under a 1 s deadline: both bounds fire at the same instant. The
+        // deadline governs, because the retry an attempt timeout would announce could not start
+        // — so no retry event, no counter increment, no zero-length sleep.
+        let recorder = Recorder::default();
+        let _guards = recorder.install();
+        let (registry, retries) = retries_counter();
+        let entropy = FixedEntropy::new([0xff; 8]);
+        let policy = policy(3)
+            .with_deadline(Duration::from_secs(1))
+            .expect("valid");
+        let started = tokio::time::Instant::now();
+        let outcome: Result<(), _> = retry(
+            &policy,
+            &entropy,
+            BOUNDS_COINCIDE,
+            Some(&retries),
+            |_: &()| RetryClass::Retryable,
+            |_| async { std::future::pending::<Result<(), ()>>().await },
+        )
+        .await;
+        let error = outcome.unwrap_err();
+        assert_eq!(error.reason(), StopReason::DeadlineExceeded);
+        assert_eq!(error.attempts(), 1);
+        assert_eq!(started.elapsed(), Duration::from_secs(1));
+        let reasons: Vec<Option<String>> = recorder
+            .events_for(BOUNDS_COINCIDE)
+            .into_iter()
+            .map(|e| e.reason)
+            .collect();
+        assert_eq!(reasons, vec![Some("deadline_exceeded".to_owned())]);
+        assert!(
+            counted_retries(&registry).is_empty(),
+            "a cut is not a retry"
         );
     }
 }
