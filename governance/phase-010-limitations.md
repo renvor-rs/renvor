@@ -2,9 +2,10 @@
 
 **Companion to**: [`phase-010-evidence.md`](phase-010-evidence.md)
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**Count**: **17 retained limitations** (13 at the checkpoint; L-14 to L-17 added by the
-2026-09-04 correction round); **2 Phase 009 limitations closed** (L-4, L-11) with measurement
-rather than prose.
+**Count**: **16 retained limitations** (13 at the checkpoint; L-14 to L-17 added by the
+2026-09-04 correction round; **L-16 closed the same day** by the maintainer-directed correction
+recorded below, with measurement); **2 Phase 009 limitations closed** (L-4, L-11) with
+measurement rather than prose.
 
 Every row states **what**, **why it was not closed**, and **who it belongs to**. The phase's
 working record — spec, clarifications, research, package decisions, plan, data model, threat
@@ -24,7 +25,6 @@ is the mirror.
 | **L-4** | **No browser is driven.** Fetch-metadata values are constructed as a user agent would send them. | Out of scope for a framework gate. | — |
 | **L-14** | **Constitution VII's generator obligation is unmet for the five shipped capabilities** (and, on the same reading, for Phase 009's `--auth`). Principle VII makes each governed choice mandatory in `renvor new`'s wizard and flags "on the day its capability ships"; ADR-0031 read "ships" as "generated projects gain the wiring" and made no change to the generator. The maintainer's review rejected that reading. | The narrowest literal implementation would solicit and record a `--capabilities` choice the generator cannot honour — a generated project declares no Renvor dependency until one is publishable — which principle VII also forbids; honouring it is Phase 011's generator scope. Not worked around; ADR-0031's compliance claim is withdrawn in place. | Maintainer: Phase 011 scope, a ruling on "ships" for library-only phases, or a waiver |
 | **L-15** | **The database connection strings still carry their credentials** (`RENVOR_TEST_POSTGRES_URL`, `RENVOR_TEST_MYSQL_URL`, and the persistence providers' DSN settings from Phase 006). The correction round split the Valkey and SMTP credentials into `Secret` settings beside their endpoints (constitution VI); the database shape predates this phase and was outside the round's sixteen findings. | Changing it is a persistence-layer API change under C-S1 with its own migration of the four-row environment; deliberately not folded into a bounded correction round. | `renvor-database`, `renvor-sqlx`, `renvor-seaorm`; Phase 011 |
-| **L-16** | **A handler task aborted at the stop grace is detached, not aborted.** When the grace elapses the worker aborts its wrapper task and releases the lease, but the handler's own `tokio::spawn` task keeps running until it observes its cancel scope or the runtime ends; a handler that ignores the scope can act after its lease was released and concurrently with the next claimant. (The timeout path does abort it, FR-035.) Found by slice D1 of the correction round while bounding the releases; outside finding 9. | Aborting the inner task from the wrapper needs the handle threaded through `run_one`; not folded into a bounded correction round. | `renvor-jobs`; Phase 011 |
 | **L-17** | **`from_forwarded` (the `Forwarded: for=` parser) refuses a parameter without `=` only when it precedes `for=`**; the loop returns at `for=`, so a malformed trailing parameter is not refused. The new `proto` parser scans the whole element. | Identity-resolution behaviour outside finding 1; noted by slice G. | `renvor-http`; Phase 011 |
 | **L-5** | **Intermediate symbolic links inside a storage root** (a linked directory, not a linked object) are resolved by the `cap-std` capability within the sandbox and not refused. A link **at** an object path is refused. | The capability cannot escape the root either way; refusing intermediate links would require walking every segment with `symlink_metadata`. Stated in the module documentation. | `renvor-storage`; Phase 011 if a threat model needs it |
 
@@ -44,6 +44,12 @@ is the mirror.
 The row drafted as L-13 at `73e4a9a` — the L-11 event test's single unexplained miss — was withdrawn
 before the gates closed: the final gate reproduced the miss, the cause was measured in `tracing-core`
 (`phase-010-review-record.md` §2, last row), and the test now records through one global subscriber.
+
+## Closed in this phase, with the measurement
+
+| Row | What it was | Closed by | Proof |
+|---|---|---|---|
+| **L-16** (drafted 2026-09-04 by the correction round, as retained) | **A handler task aborted at the stop grace was detached, not aborted.** `run_one` spawned the handler and awaited its `JoinHandle` inside a wrapper task; at the grace `run` aborted the *wrappers* and released the leases. Dropping a `JoinHandle` detaches a task, so the handler kept running with no owner while the next claimant could take the job — against FR-032, FR-033, bounded shutdown, and lease safety. The maintainer ruled it a correctness blocker, not a retainable limitation. | One narrowly scoped correction the same day (`phase-010-review-record.md` §3b): the handler's own task is registered in the in-flight state under the lock the stop sweep takes; at the grace each scope is cancelled, each handler task aborted and **joined** under `ABORT_JOIN_TIMEOUT` (2 s, pinned with the grace and release bounds under the provider deadline), and only then is its lease released; a handler that cannot be dropped keeps its lease (`release_withheld`, reported by the provider's Stop as `LeasesNotReleased { withheld }`). The handler timeout path joins the same way. No timeout increased; cooperative cancellation not relied on alone. | **Reproduced** against `538c423` by five tests written first, each failing on the defect's own assertion (a handler ignoring its scope alive after `run` returned; the store's `release` called with the handler future alive; two executions of one job alive at once; a lease released under a handler holding its thread; a timed-out attempt recorded with the future alive). Seven new tests GREEN, counters and barriers only; eight controlled mutations, eight killed (`phase-010-mutation-ledger.md`, the L-16 table), including "remove the abort", "remove the join", "move the join after the releases", and "release whether or not the handler terminated". |
 
 ## Closed from Phase 009, with the measurement
 

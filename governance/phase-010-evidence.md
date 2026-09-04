@@ -2,10 +2,10 @@
 
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
 **State**: **implemented on `feat/phase-010-operational-capabilities`, reviewed, corrected in one
-bounded round (2026-09-04); NOT closed.** Closure is the maintainer's decision at the
-merge-authority checkpoint.
+bounded round and then in one maintainer-directed L-16 correction (both 2026-09-04); NOT
+closed.** Closure is the maintainer's decision at the merge-authority checkpoint.
 **Base**: `c57b4fb131b1c254dd89ce21fd78aae2ac2f0b37` (origin/main)
-**Reviewed head**: `1328dd3` (the head Codex reviewed); **corrected source head**: `8099f017`, gate results in §3a
+**Reviewed head**: `1328dd3` (the head Codex reviewed); **correction-round source head**: `8099f017`, gate results in §3a; **L-16 correction source head**: `8b275803`, gate results in §3a′
 **Companions**: [`phase-010-limitations.md`](phase-010-limitations.md) ·
 [`phase-010-mutation-ledger.md`](phase-010-mutation-ledger.md) ·
 [`phase-010-review-record.md`](phase-010-review-record.md) ·
@@ -61,6 +61,31 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 | capability-disabled builds exclude their dependencies | **MET.** 22 new step 7 rows with controls; the lean facade resolves no capability crate; each `capability-*` feature resolves exactly its crate |
 
 ## 3. Verification — commands, platforms, results
+
+### 3a′. The L-16 correction's head, `8b275803` (2026-09-04, after the round)
+
+Both legs ran sequentially on `8b275803` — the one source commit of the L-16 correction, on top of
+`538c423` — with `CARGO_INCREMENTAL=0` and stdin detached, against the same live PostgreSQL 17,
+MySQL 8.4, Valkey 9.1.1, and Mailpit 1.29.1, one gate process at a time, with the capability
+credentials in their own variables. The commit that records this table differs from `8b275803`
+only by governance text. Leg B ran twice: the first attempt was killed by the session's tooling
+in its test step, ten minutes after the driver started (its partial log is kept beside the
+rerun's); the rerun, detached and alone, is the one in the table. Leg A's single run had
+completed before the kill.
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `8b275803` | `8b275803` |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2065 passed, 0 failed, 5 ignored (139 `test result` lines) | 2065 passed, 0 failed, 5 ignored (139 `test result` lines) |
+| Census | 67/67 rows reported in | 67/67 rows reported in |
+| Elapsed | 9 min 29 s (step 4: 7m 40s) | 8 min 55 s (step 4: 7m 23s) |
+
+The test total rose by the seven L-16 tests and the provider's withheld test; no test was
+removed. The eight mutations are in the ledger's L-16 table.
 
 ### 3a. The correction round's head, `8099f017` (2026-09-04)
 
@@ -125,6 +150,13 @@ this file's own acceptance table (the worker's Boot), one a contract stating a b
 enforce (`depth ≤ bound + writers − 1`), and one a specification requirement with no
 implementation (FR-011). Fifteen are corrected and pinned; one is L-14.
 
+**The maintainer's reading of L-16** (`phase-010-review-record.md` §3b): the correction round had
+recorded the handler task detached at the stop grace as a retained limitation; the maintainer
+ruled it a correctness blocker against FR-032, FR-033, bounded shutdown, and lease safety, and it
+was reproduced by five tests written first and corrected the same day at the root — the handler's
+own task aborted and joined before its lease is released, and a lease under a handler that cannot
+be dropped withheld and reported rather than released. Eight mutations, eight killed.
+
 See `phase-010-review-record.md` §2: ten defects found by the repository's own gates, real
 servers, and the pull request's platform legs after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
 credential-file diagnostics, a cache adapter with no crypto provider, a resource missing from
@@ -141,7 +173,8 @@ steps 7–9 before them, and no Windows leg had run at all.
 ## 6. Testing discipline
 
 - Red/green per batch with named mutations before each commit; **88 controlled mutations** in
-  the phase and **40 more in the correction round**, every one killed (`phase-010-mutation-ledger.md`).
+  the phase, **40 more in the correction round**, and **8 in the L-16 correction**, every one
+  killed (`phase-010-mutation-ledger.md`).
 - Every adapter against a real server: Valkey 9.1.1, PostgreSQL 17, MySQL 8.4, Mailpit 1.29.1,
   a local OTLP receiver, a real filesystem; each with a redaction canary sweep.
 - The four-row census extended to 67 rows and proved to fail on a misspelled row.
@@ -159,8 +192,9 @@ pre-release and truthful. No canonical documentation source is recreated in this
 
 ## 8. Limitations
 
-`phase-010-limitations.md`: 17 retained, each with owner and target (13 at the checkpoint; L-14
-to L-17 added by the correction round); 2 Phase 009 rows closed with measurement.
+`phase-010-limitations.md`: 16 retained, each with owner and target (13 at the checkpoint; L-14
+to L-17 added by the correction round, of which L-16 was closed the same day with measurement);
+2 Phase 009 rows closed with measurement.
 
 ## 9. What this phase did not do
 

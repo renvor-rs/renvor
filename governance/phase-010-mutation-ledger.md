@@ -2,10 +2,11 @@
 
 **Companion to**: [`phase-010-evidence.md`](phase-010-evidence.md)
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**Total**: **128 controlled mutations** — **88 in the phase** (85 killed by a named test, 1
+**Total**: **136 controlled mutations** — **88 in the phase** (85 killed by a named test, 1
 killed by the harness wall clock — a hang, recorded as such — 2 survived as predicted and
-investigated to a conclusion) and **40 in the 2026-09-04 correction round, every one killed by a
-named test** (the table at the end).
+investigated to a conclusion), **40 in the 2026-09-04 correction round, every one killed by a
+named test**, and **8 in the same day's L-16 correction, every one killed by a named test** (the
+two tables at the end).
 
 A mutation is applied to the implementation, the test that should notice is named **in advance**,
 the suite is run, and the pristine file is restored and re-run green. A mutation nothing catches is
@@ -121,3 +122,21 @@ reintroduced a defect verbatim are listed where they served as the mutation.
 Superseding note: the phase's batch I/J row (7 mutations on trace context and fetch metadata)
 stands as a dated record; R-A-M2…M4 and R-G-M1…M9 are the mutations that pin the corrected
 behaviour.
+
+## L-16 correction (2026-09-04, after the round) — 8 mutations, 8 killed
+
+Applied by a scratch driver (`l16/mutate.py`) to `crates/renvor-jobs/src/{worker,provider}.rs`
+at the GREEN state that became `8b27580`, the whole `renvor-jobs` unit suite run against
+each, the pristine files restored and byte-compared after every one. The tests named are the ones
+that failed; every mutant compiled.
+
+| # | Mutation | Killed by |
+|---|---|---|
+| R-L16-M1 | the stop sweep cancels the scope but never aborts the handler task (cooperative cancellation alone) | the three L-16 tests, the blocked-handler test, and the four older stop tests (every lease withheld instead of released) — 9 failures |
+| R-L16-M2 | the join step removed: the wrappers aborted right after the sweep | 8 failures: the L-16 tests and the older stop tests (withheld, not released) |
+| R-L16-M3 | every lease released, whether or not its handler terminated | `a_handler_holding_its_thread_keeps_its_lease_rather_than_being_released_under_it`, the provider's withheld test (the row was `Ready` under a live handler) |
+| R-L16-M4 | the handler marked terminated at registration, before any join | 6 failures: the L-16 tests, the blocked-handler tests, and the hanging-release test |
+| R-L16-M5 | the timeout path aborts without joining | `a_timed_out_handler_is_joined_before_its_attempt_is_recorded` alone |
+| R-L16-M6 | the `stopping` mark not read at registration | `a_handler_spawned_after_the_stop_sweep_is_aborted_by_its_own_wrapper` alone |
+| R-L16-M7 | the provider's stop ignores withheld leases | `the_provider_reports_a_lease_kept_under_a_handler_that_did_not_terminate` alone |
+| R-L16-M8 | the join moved after the releases | 8 failures, as M2 |

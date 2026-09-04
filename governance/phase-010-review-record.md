@@ -85,10 +85,34 @@ assertion changed — is `specs/010-…/evidence/correction-round.md` and `round
 `renvor_job_duration_seconds` where the contract and the family say `renvor_jobs_duration_seconds`
 (the code now matches the contract); ADR-0036's description of an `HttpClient` bridge the shipped
 design does not have (corrected in place, dated); the handler task detached at the stop grace
-(L-16); `from_forwarded`'s trailing-parameter leniency (L-17); the database connection strings
+(recorded as L-16 and then, on the maintainer's ruling that it is a correctness blocker,
+corrected the same day — §3b); `from_forwarded`'s trailing-parameter leniency (L-17); the database connection strings
 still carrying their credentials (L-15); the kernel's diagnostics gate, which rejected twenty-nine
 interpolated assertion messages the round's own tests had introduced — each rewritten to a fixed
 message or a case index before any gate run was cited.
+
+### 3b. The L-16 correction (2026-09-04, after the round) — one finding, one narrowly scoped correction
+
+The maintainer read L-16 — the handler task detached at the stop grace — as a Phase 010
+correctness blocker against FR-032, FR-033, bounded shutdown, and lease safety, not as a
+retainable limitation, and directed one narrowly scoped correction. Source head `8b27580`;
+gate results in `phase-010-evidence.md` §3a′. The working record is
+`specs/010-…/evidence/correction-round.md` (its last section); this is the mirror.
+
+| Finding | Verified as | Correction | Discriminating tests | Mutations |
+|---|---|---|---|---|
+| A handler task aborted at the stop grace is detached, not aborted; its lease is released while it may still run, concurrently with the next claimant | **confirmed** against `538c423`: `run_one` awaited the handler's `JoinHandle` inside the wrapper task; `run` aborted the wrappers with `abort_all()` and released the leases; dropping a `JoinHandle` detaches the task. Five tests written first failed on the defect's own assertions (RED in 0.49 s) | ownership of the handler task threaded through the in-flight state (`HandlerTask::{NotStarted, Running(AbortHandle), Terminated}`, registered under the lock the stop sweep takes, with a `stopping` mark read at registration); at the grace each job's scope is cancelled, its handler task aborted, the wrappers joined under a new `ABORT_JOIN_TIMEOUT` (2 s; `MAX_STOP_GRACE + ABORT_JOIN_TIMEOUT + RELEASE_TIMEOUT ≤ 30 s` pinned at compile time), and a lease released only for a handler marked terminated after its `JoinHandle` resolved; a handler holding its thread inside a poll keeps its lease (`WorkerReport::release_withheld`, one `warn`, the provider's `LeasesNotReleased { failed, timed_out, withheld }`); the handler timeout path joins the same way before the attempt is recorded. No timeout increased; cooperative cancellation not relied on alone | `a_handler_that_ignores_its_scope_cannot_run_after_the_worker_has_stopped` (the future dropped before `run` returns; not polled during 100 yields after), `the_lease_is_not_released_until_the_handler_task_has_terminated` (the store records the drop count at `release`), `a_new_claimant_cannot_overlap_with_the_old_handler_after_shutdown` (peak live executions 1 across two workers), `a_cooperative_handler_still_stops_cleanly_within_the_grace` (control: nothing aborted, released, or withheld), `a_handler_holding_its_thread_keeps_its_lease_rather_than_being_released_under_it` (a poll blocked at a barrier: withheld 1, `release` never called, row still leased; freed on the way out), `a_timed_out_handler_is_joined_before_its_attempt_is_recorded` (single-threaded, paused: `fail` sees the drop), `a_handler_spawned_after_the_stop_sweep_is_aborted_by_its_own_wrapper` (zero grace, paused: the sweep runs before registration; only the `stopping` mark aborts it), and the provider's `the_provider_reports_a_lease_kept_under_a_handler_that_did_not_terminate` | R-L16-M1…M8, all killed (the ledger's L-16 table) |
+
+Recorded as found, not erased: the blocked-handler test wedged its own binary in the first RED
+run (a Tokio runtime cannot shut down while a worker thread is inside a poll) and gained an
+unwind-safe guard; the race-window test's first assertion (`dropped == 1`) was wrong for the path
+it proves — a task aborted before its first poll never constructs the handler future — and reads
+`polls == 0` (deterministic: 20/20 alone, 5/5 under the full parallel suite); the overlap test's
+helper first waited on a count the defect itself satisfied early and now waits on the row's
+state; the kernel's diagnostics gate rejected one interpolated `panic!` in the bounded-wait helper
+before any gate run was cited. One provider text pin changed because the stop message now
+carries a third count ("… failed, 0 timed out, and 0 withheld"); it still requires the exact
+counts.
 
 ## 4. What this record does not claim
 
