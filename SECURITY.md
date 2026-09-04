@@ -54,9 +54,13 @@ again — a silent failure on our side should not cost you your report.
 
 ## Scope
 
-**In scope:** the `renvor` crate, the `renvor-cli` crate and the `renvor` executable it
-installs, the
-build and release automation in `.github/workflows/`, and this repository's supply chain.
+**In scope:** every crate in this workspace — the `renvor` facade, `renvor-cli` and the
+`renvor` executable it installs, and the kernel, transport, persistence, authentication, and
+capability crates it is built from (`renvor-core`, `renvor-config`, `renvor-error`,
+`renvor-validation`, `renvor-openapi`, `renvor-http`, `renvor-database`, `renvor-sqlx`,
+`renvor-seaorm`, `renvor-auth`, `renvor-auth-http`, `renvor-cache`, `renvor-jobs`,
+`renvor-mail`, `renvor-storage`, `renvor-observability`, `renvor-testkit`) — the build and
+release automation in `.github/workflows/`, and this repository's supply chain.
 
 **Out of scope:** vulnerabilities in third-party dependencies (report those upstream,
 though we do want to know so we can pin or patch), and issues in project code that Renvor
@@ -69,12 +73,38 @@ claim about the application built on top of it.
 `renvor` and `renvor-cli` are both absent from crates.io — so no version of Renvor can
 currently reach a user's dependency graph.
 
-The repository contains a working **transport-independent kernel** as of Phase 002. It
-**accepts no untrusted input over any network**: it has no transport, no listener, and no
-deserialisation of remote data. Its input surfaces are local configuration files, process
-environment variables, and code the application author writes. The security properties it does
-assert are secret redaction across every output form, bounded deadlines on every call into
-author code, and containment of a panicking provider or readiness check — each tested.
+The repository contains, as of Phase 010, a transport-independent kernel and the surfaces
+built on it. **It accepts untrusted input over the network** wherever an application enables
+the corresponding feature, and each surface is listed here so nobody relies on an older
+statement that it did not:
+
+- **Inbound HTTP** (`renvor-http`, Phase 004 onward): a listener over `axum` that validates the
+  `Host` header against a configured set, resolves client identity from trusted proxies only,
+  bounds bodies and concurrency, applies a deny-by-default CORS policy, parses inbound W3C
+  `traceparent`/`tracestate` and Fetch Metadata (`Origin`, `Sec-Fetch-Site`) as untrusted
+  bounded input, and refuses cookie-authenticated unsafe requests whose complete effective
+  origin (scheme, host, effective port) differs from the request's own.
+- **Authentication** (`renvor-auth`, `renvor-auth-http`, Phase 009): opaque server-side
+  sessions in `__Host-` cookies, CSRF double-submit bound to the session, Argon2id passwords,
+  single-use expiring verification and reset codes delivered by mail **as codes, never in a
+  link**, optional signed JWT access tokens, and bounded abuse controls.
+- **Outbound network clients** (Phase 010, each behind an off-by-default feature): a Valkey
+  client (`renvor-cache/valkey`), an SMTP submission client (`renvor-mail/smtp`), and an
+  OTLP/HTTP exporter (`renvor-observability/otel`). Each uses rustls with the native root store
+  and exactly one crypto provider; plaintext is refused unless the peer is loopback **and** the
+  configuration opts in; credentials are separate `Secret` settings, never part of a URL, and
+  are never rendered by any error, event, or `Debug`.
+- **Durable jobs** (`renvor-jobs` on `renvor-sqlx`/`renvor-seaorm`): payloads are bounded on
+  write and on read, never logged, and a handler runs in its own task under a timeout with panic
+  containment.
+- **Object storage** (`renvor-storage/filesystem`): keys cannot traverse (validated, and rooted
+  in a `cap-std` directory capability), objects are bounded on write and on read, symbolic
+  links are refused.
+
+The kernel's own properties hold underneath all of it: secret redaction across every output
+form, bounded deadlines on every call into author code, and containment of a panicking provider
+or readiness check — each tested. The Phase 010 evidence, limitations, and review record under
+`governance/` say what was measured and what was not.
 
 Panic containment is built on `catch_unwind`, so it holds under the **unwinding** panic strategy
 only. Rather than leave that as a caveat a build profile could silently violate, `panic = "abort"`
