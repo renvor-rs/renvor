@@ -46,7 +46,7 @@ thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 
 # Runtime primitives for the substitute's TTL clock and the adapter's timeouts. `net` is NOT here:
 # the RESP client owns its socket, behind the feature.
-tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros", "net"] }
 
 # Instrumentation only. This crate never installs a subscriber (contract C-O7).
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }

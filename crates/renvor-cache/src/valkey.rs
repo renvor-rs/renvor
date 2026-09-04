@@ -189,6 +189,18 @@ impl ValkeyCache {
         let client = redis::Client::open(settings.url.expose().as_str())
             .map_err(|_| CacheBootError::InvalidAddress)?;
 
+        // The transport probe first: a bounded plain TCP connect to the address. The driver
+        // reports its own connect bound and its response bound as the same timeout, so without
+        // this a port that is slow to refuse would surface as `Unanswered` — Windows retries a
+        // SYN to a closed loopback port for longer than the bound and did exactly that on the
+        // pull-request platform legs. A refusal, a dropped SYN, or no route is `Unreachable`
+        // everywhere; only an address that accepts goes on to the driver.
+        reach(
+            client.get_connection_info().addr(),
+            settings.reconnect.connect_timeout,
+        )
+        .await?;
+
         // The probe: one attempt, one classification.
         let probe_config = redis::AsyncConnectionConfig::new()
             .set_connection_timeout(Some(settings.reconnect.connect_timeout))
@@ -277,6 +289,25 @@ impl ValkeyCache {
 }
 
 /// Maps a driver error at Boot to a closed category. The error is **dropped**, never rendered.
+/// A bounded plain TCP connect to the address the driver would dial, classified as
+/// `Unreachable` on refusal, on no route, or on the bound elapsing. A socket address is left to
+/// the driver, as is any address form this probe does not know.
+async fn reach(address: &redis::ConnectionAddr, bound: Duration) -> Result<(), CacheBootError> {
+    let (host, port) = match address {
+        redis::ConnectionAddr::Tcp(host, port) => (host.as_str(), *port),
+        redis::ConnectionAddr::TcpTls { host, port, .. } => (host.as_str(), *port),
+        _ => return Ok(()),
+    };
+    match tokio::time::timeout(bound, tokio::net::TcpStream::connect((host, port))).await {
+        Ok(Ok(stream)) => {
+            drop(stream);
+            Ok(())
+        }
+        // A refusal, no route, or the bound elapsing: all `Unreachable`.
+        Ok(Err(_)) | Err(_) => Err(CacheBootError::Unreachable),
+    }
+}
+
 fn boot_category(error: &redis::RedisError) -> CacheBootError {
     if error.kind() == redis::ErrorKind::AuthenticationFailed {
         CacheBootError::CredentialRefused
