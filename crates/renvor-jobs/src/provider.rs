@@ -2,10 +2,22 @@
 //!
 //! # What Boot and Stop mean for a worker
 //!
-//! Boot spawns the run loop with the application's own `WorkGate` and a child of its
-//! cancellation scope, and reports ready once the loop is running. Stop cancels the scope and
-//! waits for the loop to finish — which the worker bounds by its stop grace, aborting and
-//! releasing what is left (FR-033) — so a provider deadline is never the thing that ends it.
+//! Boot first proves the store answers — one bounded `depth` probe under
+//! [`STORE_PROBE_TIMEOUT`](crate::worker::STORE_PROBE_TIMEOUT) — and fails with
+//! [`WorkerBootError::StoreNotAnswering`] if it does not: bad credentials, a missing schema, a
+//! permission failure, an unreachable backend, or a hang all fail Boot with a closed category
+//! (FR-012). Only then does it spawn the run loop with the application's own `WorkGate` and a
+//! child of its cancellation scope, and report ready. A worker that booted Ready over a store it
+//! could not use would warn "claim failed" every poll interval for ever while readiness said the
+//! opposite; nothing is spawned and readiness is never Ready when the probe fails.
+//!
+//! Stop cancels the scope and waits for the loop to finish — which the worker bounds by its stop
+//! grace, aborting what is left and releasing each lease under
+//! [`RELEASE_TIMEOUT`](crate::worker::RELEASE_TIMEOUT) (FR-033) — so a provider deadline is
+//! never the thing that ends it. A release the store refused or did not answer is **reported**:
+//! Stop returns [`WorkerBootError::LeasesNotReleased`] with the counts, and the kernel records
+//! an unclean stop naming this provider (C-L2: a forced close is reported, never swallowed). The
+//! report is kept on the handle either way.
 //!
 //! # It depends on what the application says it depends on
 //!
@@ -22,6 +34,7 @@ use renvor_core::health::{Readiness, ReadinessContributor};
 use renvor_core::provider::ProviderId;
 use renvor_core::provider::registry::{CapabilityId, InitContext, Provider, ProviderFuture};
 
+use crate::job::JobError;
 use crate::store::JobStore;
 use crate::worker::{Worker, WorkerReport};
 
@@ -44,6 +57,30 @@ pub enum WorkerBootError {
     /// The run loop task could not be joined at Stop.
     #[error("jobs worker stop failed: the run loop did not finish")]
     RunLoopDidNotFinish,
+    /// The job store did not answer the readiness probe at Boot: bad credentials, a missing
+    /// schema, a permission failure, an unreachable backend, or a hang past
+    /// [`STORE_PROBE_TIMEOUT`](crate::worker::STORE_PROBE_TIMEOUT), which is reported as
+    /// [`JobError::TimedOut`]. Closed: the category names the fault, never the store's own
+    /// message.
+    #[error(
+        "jobs worker boot failed: the job store did not answer the readiness probe ({})",
+        .0.as_str()
+    )]
+    StoreNotAnswering(JobError),
+    /// Stop aborted running jobs whose leases the store did not then confirm released. Reported
+    /// rather than swallowed (FR-012, C-L2: a forced close is reported): the kernel records an
+    /// unclean stop naming this provider, and the counts say what is left leased.
+    #[error(
+        "jobs worker stop failed: {failed} lease release(s) failed and {timed_out} timed out; \
+         those jobs stay leased until the lease expires and is reclaimed"
+    )]
+    LeasesNotReleased {
+        /// Releases the store refused.
+        failed: u64,
+        /// Releases that did not answer within
+        /// [`RELEASE_TIMEOUT`](crate::worker::RELEASE_TIMEOUT).
+        timed_out: u64,
+    },
 }
 
 /// The worker as a provider.
@@ -60,7 +97,9 @@ pub struct JobsWorkerProvider<S> {
 /// it is running, and the report of its finished run once Stop has completed.
 ///
 /// The application takes the provider by value, so this is the only way to read the outcome of
-/// a run afterwards — the number of jobs claimed and the number aborted at the stop grace.
+/// a run afterwards — the number of jobs claimed, the number aborted at the stop grace, and how
+/// many of their leases were released, refused, or not answered. The report is stored before
+/// Stop reports a failed release, so it is there whether or not the stop was clean.
 #[derive(Clone, Debug, Default)]
 pub struct WorkerHandle {
     ready: Arc<AtomicBool>,
@@ -147,6 +186,11 @@ impl<S: JobStore + 'static> Provider for JobsWorkerProvider<S> {
                 .unwrap_or_else(PoisonError::into_inner)
                 .take()
                 .ok_or_else(|| Box::new(WorkerBootError::AlreadyBooted) as BoxedCause)?;
+            // Prove the store answers BEFORE anything is spawned or registered (FR-012). A
+            // failed probe returns here with nothing running and readiness never Ready.
+            worker.probe_store().await.map_err(|error| {
+                Box::new(WorkerBootError::StoreNotAnswering(error)) as BoxedCause
+            })?;
             let gate = context.work().clone();
             let cancel = context.cancel().child("jobs-worker");
             let task = tokio::spawn(Arc::clone(&worker).run(gate, cancel.clone()));
@@ -176,11 +220,21 @@ impl<S: JobStore + 'static> Provider for JobsWorkerProvider<S> {
             let report = task
                 .await
                 .map_err(|_| Box::new(WorkerBootError::RunLoopDidNotFinish) as BoxedCause)?;
+            let (failed, timed_out) = (report.release_failed, report.release_timed_out);
             *self
                 .handle
                 .last_report
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = Some(report);
+            // A forced close is reported, never swallowed (FR-012, C-L2): leases the store did
+            // not confirm released become the kernel's unclean stop, naming this provider, with
+            // the counts. The report is kept first so the handle tells the same story.
+            if failed > 0 || timed_out > 0 {
+                return Err(
+                    Box::new(WorkerBootError::LeasesNotReleased { failed, timed_out })
+                        as BoxedCause,
+                );
+            }
             Ok(())
         })
     }
@@ -220,7 +274,8 @@ mod tests {
     use super::*;
     use crate::job::{Job, JobBounds, JobKind, JobPayload, JobState, NewJob, QueueName};
     use crate::memory::MemoryJobStore;
-    use crate::worker::{HandlerFuture, JobHandler, Worker, WorkerConfig};
+    use crate::worker::faulty::{Fault, Faulty};
+    use crate::worker::{HandlerFuture, JobHandler, STORE_PROBE_TIMEOUT, Worker, WorkerConfig};
 
     /// A provider that needs `jobs` and offers nothing.
     struct Consumer {
@@ -255,19 +310,31 @@ mod tests {
         }
     }
 
+    /// Never finishes, so a stop has to abort it and release its lease.
+    struct Hang;
+
+    impl JobHandler for Hang {
+        fn handle(&self, _: Job, _: CancelScope) -> HandlerFuture<'_> {
+            Box::pin(std::future::pending())
+        }
+    }
+
     fn queue() -> QueueName {
         QueueName::new("boot").unwrap()
     }
 
-    fn worker(store: Arc<MemoryJobStore>, done: Arc<Done>) -> Worker<MemoryJobStore> {
-        let config = WorkerConfig::new(queue())
+    fn config() -> WorkerConfig {
+        WorkerConfig::new(queue())
             .with_poll_interval(Duration::from_millis(10))
             .unwrap()
             .with_stop_grace(Duration::from_millis(200))
-            .unwrap();
+            .unwrap()
+    }
+
+    fn worker<S: JobStore + 'static>(store: Arc<S>, done: Arc<Done>) -> Worker<S> {
         Worker::new(
             store,
-            config,
+            config(),
             Arc::new(SystemClock::new()),
             Arc::new(OsEntropy::new()),
             &Registry::new(),
@@ -276,11 +343,67 @@ mod tests {
         .register(JobKind::new("done").unwrap(), done)
     }
 
+    /// A worker whose only handler hangs, with a handler timeout longer than any test here, so
+    /// the stop grace — not the timeout — is what ends the job.
+    fn hanging_worker<S: JobStore + 'static>(store: Arc<S>) -> Worker<S> {
+        Worker::new(
+            store,
+            config()
+                .with_handler_timeout(Duration::from_secs(60))
+                .unwrap(),
+            Arc::new(SystemClock::new()),
+            Arc::new(OsEntropy::new()),
+            &Registry::new(),
+        )
+        .unwrap()
+        .register(JobKind::new("hang").unwrap(), Arc::new(Hang))
+    }
+
     fn store() -> Arc<MemoryJobStore> {
         Arc::new(MemoryJobStore::new(
             JobBounds::new(),
             Arc::new(OsEntropy::new()),
         ))
+    }
+
+    async fn enqueue(store: &MemoryJobStore, kind: &str) -> crate::job::JobId {
+        store
+            .enqueue(
+                NewJob::new(
+                    queue(),
+                    JobKind::new(kind).unwrap(),
+                    JobPayload::within(b"x".to_vec(), &JobBounds::new()).unwrap(),
+                ),
+                std::time::SystemTime::now(),
+            )
+            .await
+            .unwrap()
+            .id()
+    }
+
+    /// Waits until the job is leased — the handler is running and holds a permit.
+    async fn until_leased(store: &MemoryJobStore, id: &crate::job::JobId) {
+        for _ in 0..200 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if store.read(id).await.unwrap().unwrap().state == JobState::Leased {
+                return;
+            }
+        }
+        panic!("the job was never leased");
+    }
+
+    /// `error` and every source under it, rendered and joined: the kernel preserves a provider's
+    /// cause under `ProviderInit`/`ProviderStop` (C-E2) rather than flattening it into the
+    /// message, so an assertion about the cause has to walk the chain.
+    fn chain(error: &dyn std::error::Error) -> String {
+        let mut rendered = error.to_string();
+        let mut next = error.source();
+        while let Some(cause) = next {
+            rendered.push_str(": ");
+            rendered.push_str(&cause.to_string());
+            next = cause.source();
+        }
+        rendered
     }
 
     #[test]
@@ -395,5 +518,179 @@ mod tests {
             .find(|verdict| verdict.name == "jobs")
             .map(|verdict| verdict.readiness);
         assert_eq!(verdict, Some(Readiness::NotReady));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_store_that_does_not_answer_fails_boot_and_never_starts_the_loop() {
+        // FR-012, SC-001: bad credentials, a missing schema, a permission failure, or an
+        // unreachable backend must fail Boot with a closed category — not boot Ready and log
+        // "claim failed; the worker will poll again" for ever.
+        let inner = store();
+        let faulty = Arc::new(
+            Faulty::new(Arc::clone(&inner)).with_depth(Fault::Fails(JobError::Unavailable)),
+        );
+        let provider = JobsWorkerProvider::new(
+            ProviderId::new("jobs-worker"),
+            worker(Arc::clone(&faulty), Arc::new(Done(AtomicU32::new(0)))),
+        );
+        let handle = provider.handle();
+        let failure = ApplicationBuilder::new()
+            .with_provider(Box::new(provider))
+            .build()
+            .expect("register succeeds")
+            .boot()
+            .await
+            .expect_err("a store that does not answer must fail Boot");
+        assert_eq!(failure.origin().category(), ErrorCategory::ProviderInit);
+        let rendered = chain(failure.origin());
+        assert!(
+            rendered.contains("jobs-worker"),
+            "the provider is not named"
+        );
+        assert!(
+            rendered.contains("store did not answer"),
+            "the probe is not named"
+        );
+        assert!(
+            rendered.contains("unavailable"),
+            "the category is not named"
+        );
+        assert_eq!(faulty.claims(), 0, "the run loop started");
+        assert!(
+            !handle.is_running(),
+            "the worker reports running after a failed Boot"
+        );
+    }
+
+    // Paused time: the probe bound costs 0 real seconds, and the elapsed check below is exact.
+    #[tokio::test(start_paused = true)]
+    async fn a_hanging_store_fails_boot_within_the_probe_bound() {
+        // The probe is bounded on its own (FR-025, C-L7): a store that accepts the connection and
+        // never answers fails Boot as `timed_out` within STORE_PROBE_TIMEOUT — under the kernel's
+        // provider deadline, so the failure names the dependency, not only the provider.
+        let inner = store();
+        let faulty = Arc::new(Faulty::new(Arc::clone(&inner)).with_depth(Fault::Hangs));
+        let provider = JobsWorkerProvider::new(
+            ProviderId::new("jobs-worker"),
+            worker(Arc::clone(&faulty), Arc::new(Done(AtomicU32::new(0)))),
+        );
+        let handle = provider.handle();
+        let started = tokio::time::Instant::now();
+        let failure = ApplicationBuilder::new()
+            .with_provider(Box::new(provider))
+            .build()
+            .expect("register succeeds")
+            .boot()
+            .await
+            .expect_err("a hanging store must fail Boot");
+        assert!(
+            started.elapsed() <= STORE_PROBE_TIMEOUT + Duration::from_secs(1),
+            "the probe was not bounded by its own timeout"
+        );
+        assert_eq!(failure.origin().category(), ErrorCategory::ProviderInit);
+        let rendered = chain(failure.origin());
+        assert!(
+            rendered.contains(JobError::TimedOut.as_str()),
+            "the timeout category is not named"
+        );
+        assert_eq!(faulty.claims(), 0, "the run loop started");
+        assert!(!handle.is_running());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_provider_reports_leases_it_could_not_release() {
+        // FR-012, C-L2: a forced close is reported, never swallowed. A release the store refused
+        // at stop reaches the kernel's stop report as this provider's failure, with the counts.
+        let inner = store();
+        let id = enqueue(&inner, "hang").await;
+        let faulty = Arc::new(
+            Faulty::new(Arc::clone(&inner)).with_release(Fault::Fails(JobError::Unavailable)),
+        );
+        let provider =
+            JobsWorkerProvider::new(ProviderId::new("jobs"), hanging_worker(Arc::clone(&faulty)));
+        let handle = provider.handle();
+        let mut application = ApplicationBuilder::new()
+            // The hanging job holds a kernel permit, so the drain runs to its budget by design;
+            // this test is about Stop, so the budget is short.
+            .with_drain_budget(Duration::from_millis(200))
+            .with_provider(Box::new(provider))
+            .build()
+            .expect("register succeeds")
+            .boot()
+            .await
+            .expect("boot reaches Ready");
+        until_leased(&inner, &id).await;
+
+        let report = application.shutdown().await;
+        assert!(
+            !report.stop().is_clean(),
+            "a failed release was swallowed by Stop"
+        );
+        let rendered = report
+            .stop()
+            .failures()
+            .iter()
+            .map(|failure| chain(failure))
+            .collect::<Vec<_>>()
+            .join("; ");
+        assert!(rendered.contains("`jobs`"), "the provider is not named");
+        assert!(
+            rendered.contains("lease release"),
+            "the stop error does not name the release"
+        );
+        assert!(
+            rendered.contains("1 lease release(s) failed and 0 timed out"),
+            "the counts are not reported"
+        );
+        let run = handle
+            .report()
+            .expect("the report is kept even when Stop fails");
+        assert_eq!(run.aborted, 1);
+        assert_eq!(run.release_failed, 1);
+        assert_eq!(run.released, 0);
+        assert_eq!(
+            inner.read(&id).await.unwrap().unwrap().state,
+            JobState::Leased,
+            "the row disagrees with the report"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_clean_stop_reports_every_aborted_lease_released() {
+        // POSITIVE CONTROL for the test above: when the store answers, a stop that had to abort a
+        // job releases its lease, counts the confirmed release, and the kernel's stop is clean.
+        let inner = store();
+        let id = enqueue(&inner, "hang").await;
+        let provider =
+            JobsWorkerProvider::new(ProviderId::new("jobs"), hanging_worker(Arc::clone(&inner)));
+        let handle = provider.handle();
+        let mut application = ApplicationBuilder::new()
+            .with_drain_budget(Duration::from_millis(200))
+            .with_provider(Box::new(provider))
+            .build()
+            .expect("register succeeds")
+            .boot()
+            .await
+            .expect("boot reaches Ready");
+        until_leased(&inner, &id).await;
+
+        let report = application.shutdown().await;
+        assert!(
+            report.stop().is_clean(),
+            "a clean stop was reported unclean"
+        );
+        let run = handle.report().expect("the finished run is reported");
+        assert_eq!(run.aborted, 1);
+        assert_eq!(
+            run.released, run.aborted,
+            "a confirmed release is not counted"
+        );
+        assert_eq!(run.release_failed, 0);
+        assert_eq!(run.release_timed_out, 0);
+        assert_eq!(
+            inner.read(&id).await.unwrap().unwrap().state,
+            JobState::Ready,
+            "the lease was not given back"
+        );
     }
 }

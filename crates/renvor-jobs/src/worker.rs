@@ -24,6 +24,18 @@
 //! count. The worker never invents a delay and never retries an [`HandlerError::Abandon`], which is
 //! the closed "terminal" class: a refusal retried is work for nothing (FR-092).
 //!
+//! # Stop gives back what it aborts, bounded, and says how that went
+//!
+//! A job still running at the stop grace is aborted and its lease released — but a release is a
+//! store call, and the store is the one dependency most likely to be failing at the moment an
+//! application is stopping. So every release runs under [`RELEASE_TIMEOUT`], the aborted jobs'
+//! releases run concurrently so the phase costs one bound rather than their sum, and the
+//! outcome of each is **counted, never discarded**: only a release the store confirmed moves the
+//! `released` counter; a refusal or a silence is a store error under its closed category, one
+//! `warn` event, and a count in [`WorkerReport`] that the provider turns into an unclean stop
+//! (FR-025, FR-033, C-L2). `MAX_STOP_GRACE + RELEASE_TIMEOUT` fits under the kernel's provider
+//! deadline, checked at compile time.
+//!
 //! # What is emitted
 //!
 //! One structured event per attempt on the `renvor.jobs` target — job id, queue, kind, attempt,
@@ -40,6 +52,7 @@ use std::time::{Duration, SystemTime};
 
 use renvor_core::cancel::CancelScope;
 use renvor_core::clock::Clock;
+use renvor_core::lifecycle::DEFAULT_PROVIDER_DEADLINE;
 use renvor_core::lifecycle::drain::{WorkGate, WorkPermit};
 use renvor_core::observe::entropy::EntropySource;
 use renvor_core::observe::metrics::{Counter, Histogram, MetricsError, Registry};
@@ -72,6 +85,35 @@ pub const POLL_INTERVAL_RANGE: (Duration, Duration) =
 pub const DEFAULT_STOP_GRACE: Duration = Duration::from_secs(5);
 /// The hard cap on the stop grace, chosen to fit under the kernel's default provider deadline.
 pub const MAX_STOP_GRACE: Duration = Duration::from_secs(25);
+/// How long one lease release may take at stop. The aborted jobs' leases are released
+/// concurrently, so this also bounds the whole release phase.
+///
+/// Sized so that the stop grace cap plus this bound fits under the kernel's default provider
+/// deadline ([`DEFAULT_PROVIDER_DEADLINE`], 30 s): 25 s + 2 s ≤ 30 s, pinned at compile time
+/// below. A release the store does not answer inside this bound is counted as timed out and
+/// reported — never awaited for ever, which is what an unbounded release would be when the store
+/// is the thing that is failing (FR-025, C-L7, FR-033).
+pub const RELEASE_TIMEOUT: Duration = Duration::from_secs(2);
+/// How long Boot waits for the store to answer the readiness probe.
+///
+/// Under the kernel's default provider deadline ([`DEFAULT_PROVIDER_DEADLINE`], 30 s), so a
+/// store that accepts a connection and never answers fails Boot as `timed_out` — a closed
+/// category that names the dependency — rather than as a kernel deadline that can only name the
+/// provider (FR-012, C-L7).
+pub const STORE_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
+
+// The two bounds above are promises about the kernel's deadline, so they are checked against it
+// where the compiler can see both: a future edit to either constant, or to the kernel's, fails
+// here rather than at a provider deadline in production.
+const _: () = assert!(
+    MAX_STOP_GRACE.as_millis() + RELEASE_TIMEOUT.as_millis()
+        <= DEFAULT_PROVIDER_DEADLINE.as_millis(),
+    "the stop grace cap plus the release bound must fit under the kernel's provider deadline"
+);
+const _: () = assert!(
+    STORE_PROBE_TIMEOUT.as_millis() < DEFAULT_PROVIDER_DEADLINE.as_millis(),
+    "the store probe must be bounded under the kernel's provider deadline"
+);
 
 /// How a handler reports failure. **Closed and fieldless**: the handler's own diagnostics belong
 /// in its own span, never in a value the worker would store or log.
@@ -273,7 +315,7 @@ impl JobMetrics {
                 &["queue", "category"],
             )?,
             duration: registry.histogram(
-                "renvor_job_duration_seconds",
+                "renvor_jobs_duration_seconds",
                 "Handler execution time.",
                 &["queue", "kind"],
                 &[0.01, 0.1, 1.0, 10.0, 60.0, 600.0],
@@ -353,7 +395,16 @@ impl AttemptOutcome {
 }
 
 /// Leases held by running tasks, so `stop` can release the ones it aborts.
-type InFlight = Arc<Mutex<HashMap<tokio::task::Id, (LeaseToken, QueueName)>>>;
+type InFlight = Arc<Mutex<HashMap<tokio::task::Id, LeaseToken>>>;
+
+/// How one lease release ended. Closed, so the report and the metric agree by construction on
+/// what "released" means: **the store confirmed it**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReleaseOutcome {
+    Released,
+    Failed,
+    TimedOut,
+}
 
 /// A worker over one queue.
 pub struct Worker<S> {
@@ -380,8 +431,28 @@ impl<S> fmt::Debug for Worker<S> {
 pub struct WorkerReport {
     /// Jobs claimed over the run.
     pub claimed: u64,
-    /// Jobs still running when the stop grace elapsed; their leases were released.
+    /// Jobs still running when the stop grace elapsed, and aborted. A release was attempted for
+    /// each; `released`, `release_failed`, and `release_timed_out` say how those ended.
     pub aborted: u64,
+    /// Leases the store **confirmed** released — at the stop grace, or because shutdown began
+    /// between a claim and its permit. Only a confirmed release counts.
+    pub released: u64,
+    /// Releases the store refused. Those jobs stay leased until the lease expires and is
+    /// reclaimed, with the attempt counted (C-J4).
+    pub release_failed: u64,
+    /// Releases that did not answer within [`RELEASE_TIMEOUT`]; the same consequence as a
+    /// refusal, counted apart because a silent store and a refusing store are different faults.
+    pub release_timed_out: u64,
+}
+
+impl WorkerReport {
+    fn record(&mut self, outcome: ReleaseOutcome) {
+        match outcome {
+            ReleaseOutcome::Released => self.released += 1,
+            ReleaseOutcome::Failed => self.release_failed += 1,
+            ReleaseOutcome::TimedOut => self.release_timed_out += 1,
+        }
+    }
 }
 
 impl<S: JobStore + 'static> Worker<S> {
@@ -426,12 +497,44 @@ impl<S: JobStore + 'static> Worker<S> {
         &self.metrics
     }
 
+    /// One bounded call against the store, for Boot: `depth` on the configured queue under
+    /// [`STORE_PROBE_TIMEOUT`]. Proves the store answers — credentials, schema, permission,
+    /// route — before the provider reports ready (FR-012), because a run loop over a store that
+    /// cannot answer would warn "claim failed" every poll interval for ever while readiness said
+    /// otherwise.
+    ///
+    /// `depth` rather than `claim`: it reads the table the worker will claim from and moves
+    /// nothing, so a probe can never lease a job that no loop is yet running to finish.
+    ///
+    /// # Errors
+    ///
+    /// The store's own closed category, or [`JobError::TimedOut`] when the bound elapsed. On
+    /// success one `info` event carries the queue and its depth — closed fields, no address.
+    pub async fn probe_store(&self) -> Result<u64, JobError> {
+        let depth =
+            match tokio::time::timeout(STORE_PROBE_TIMEOUT, self.store.depth(&self.config.queue))
+                .await
+            {
+                Ok(answer) => answer?,
+                Err(_elapsed) => return Err(JobError::TimedOut),
+            };
+        tracing::info!(
+            target: JOBS_EVENT_TARGET,
+            queue = %self.config.queue,
+            depth,
+            "the job store answered the readiness probe"
+        );
+        Ok(depth)
+    }
+
     /// Runs until `cancel` fires, then stops claiming, waits up to the stop grace for running
-    /// jobs, aborts the rest, and releases their leases.
+    /// jobs, aborts the rest, and releases their leases — each release bounded by
+    /// [`RELEASE_TIMEOUT`], run concurrently, and counted in the report by how it ended.
     ///
     /// Every claimed job holds a permit from `gate` while it runs, so the kernel's drain sees it.
     /// A claim refused by the gate (shutdown began between the claim and the permit) is released
-    /// at once, so a job is never left leased by a worker that will not run it.
+    /// at once, under the same bound and counted the same way, so a job is never left leased by
+    /// a worker that will not run it without the report saying so.
     pub async fn run(self: Arc<Self>, gate: WorkGate, cancel: CancelScope) -> WorkerReport {
         let semaphore = Arc::new(Semaphore::new(self.config.concurrency));
         let in_flight: InFlight = Arc::new(Mutex::new(HashMap::new()));
@@ -484,11 +587,9 @@ impl<S: JobStore + 'static> Worker<S> {
                 let permit = match gate.begin("job") {
                     Ok(permit) => permit,
                     Err(_shutting_down) => {
-                        // Shutdown began between the claim and the permit: give the job back.
-                        let _ = self.store.release(&claimed.lease, self.clock.now()).await;
-                        self.metrics
-                            .released
-                            .increment(&[("queue", self.config.queue.as_str())], 1);
+                        // Shutdown began between the claim and the permit: give the job back,
+                        // bounded and counted exactly as a release at the stop grace is.
+                        report.record(self.release_lease(&claimed.lease).await);
                         drop(slot);
                         break 'outer;
                     }
@@ -498,7 +599,6 @@ impl<S: JobStore + 'static> Worker<S> {
                 let scope = cancel.child(format!("job:{}", claimed.job.id));
                 let in_flight_for_task = Arc::clone(&in_flight);
                 let lease = claimed.lease;
-                let queue = claimed.job.queue.clone();
                 let handle = tasks.spawn(async move {
                     let _slot = slot;
                     let _permit: WorkPermit = permit;
@@ -511,7 +611,7 @@ impl<S: JobStore + 'static> Worker<S> {
                 in_flight
                     .lock()
                     .unwrap_or_else(PoisonError::into_inner)
-                    .insert(handle.id(), (lease, queue));
+                    .insert(handle.id(), lease);
             }
 
             if !claimed_any {
@@ -530,18 +630,31 @@ impl<S: JobStore + 'static> Worker<S> {
         if graceful.is_err() {
             tasks.abort_all();
             while tasks.join_next().await.is_some() {}
-            let leases: Vec<(LeaseToken, QueueName)> = in_flight
+            let leases: Vec<LeaseToken> = in_flight
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .drain()
-                .map(|(_, held)| held)
+                .map(|(_, lease)| lease)
                 .collect();
-            for (lease, queue) in leases {
+            // The releases run concurrently, each under RELEASE_TIMEOUT, so the whole phase is
+            // bounded by one RELEASE_TIMEOUT rather than by their sum: N leases against a store
+            // that has stopped answering must not cost N × the bound, which would be an unbounded
+            // wait in all but name (FR-025, C-L7) and would run the provider past its deadline.
+            let mut releases = tokio::task::JoinSet::new();
+            for lease in leases {
                 report.aborted += 1;
-                let _ = self.store.release(&lease, self.clock.now()).await;
-                self.metrics
-                    .released
-                    .increment(&[("queue", queue.as_str())], 1);
+                let worker = Arc::clone(&self);
+                releases.spawn(async move { worker.release_lease(&lease).await });
+            }
+            while let Some(joined) = releases.join_next().await {
+                let outcome = joined.unwrap_or_else(|_did_not_finish| {
+                    // The store's `release` panicked (or the runtime is going down under it):
+                    // contained by the task boundary and counted as the store not answering, so
+                    // the report stays whole and the stop still says what is left leased.
+                    self.release_failed(JobError::Unavailable);
+                    ReleaseOutcome::Failed
+                });
+                report.record(outcome);
             }
         }
         tracing::info!(
@@ -549,9 +662,58 @@ impl<S: JobStore + 'static> Worker<S> {
             queue = %self.config.queue,
             claimed = report.claimed,
             aborted = report.aborted,
+            released = report.released,
+            release_failed = report.release_failed,
+            release_timed_out = report.release_timed_out,
             "worker stopped"
         );
         report
+    }
+
+    /// Gives one lease back under [`RELEASE_TIMEOUT`] and says how that ended.
+    ///
+    /// Only a release the store **confirmed** moves the `released` counter. A refusal or a
+    /// silence is a store error under its closed category, one `warn` event carrying the queue
+    /// and the category (never the token), and a count in the report. The outcome is reported,
+    /// never discarded: a lease the store still holds is a job no worker will run until the
+    /// lease expires and is reclaimed (C-J4), and an operator has to learn that from somewhere
+    /// other than a queue that has gone quiet.
+    async fn release_lease(&self, lease: &LeaseToken) -> ReleaseOutcome {
+        match tokio::time::timeout(RELEASE_TIMEOUT, self.store.release(lease, self.clock.now()))
+            .await
+        {
+            Ok(Ok(())) => {
+                self.metrics
+                    .released
+                    .increment(&[("queue", self.config.queue.as_str())], 1);
+                ReleaseOutcome::Released
+            }
+            Ok(Err(error)) => {
+                self.release_failed(error);
+                ReleaseOutcome::Failed
+            }
+            Err(_elapsed) => {
+                self.release_failed(JobError::TimedOut);
+                ReleaseOutcome::TimedOut
+            }
+        }
+    }
+
+    /// Counts and reports a release that did not succeed, by its closed category.
+    fn release_failed(&self, error: JobError) {
+        self.metrics.store_errors.increment(
+            &[
+                ("queue", self.config.queue.as_str()),
+                ("category", error.as_str()),
+            ],
+            1,
+        );
+        tracing::warn!(
+            target: JOBS_EVENT_TARGET,
+            queue = %self.config.queue,
+            category = error.as_str(),
+            "a lease was not released at stop; the job stays leased until the lease expires"
+        );
     }
 
     /// Runs one claimed job to a transition.
@@ -702,11 +864,136 @@ fn unix_ms(at: SystemTime) -> u64 {
         .unwrap_or(0)
 }
 
+/// A store double shared by this module's tests and the provider's: it delegates to
+/// [`MemoryJobStore`](crate::memory::MemoryJobStore) except where one call is told to fail or
+/// hang, and counts its claims — so a test can prove the run loop never started.
+///
+/// Kept here rather than in either test module because both need it, and a second copy of a
+/// delegating `JobStore` is the kind of duplicate that drifts.
+#[cfg(test)]
+pub(crate) mod faulty {
+    use core::future::Future;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::time::{Duration, SystemTime};
+
+    use crate::job::{
+        ClaimedJob, Completion, Enqueued, FailureKind, FailureOutcome, Job, JobError, JobId,
+        LeaseToken, NewJob, QueueName,
+    };
+    use crate::memory::MemoryJobStore;
+    use crate::store::JobStore;
+
+    /// How one store call misbehaves.
+    #[derive(Clone, Copy, Debug)]
+    pub(crate) enum Fault {
+        /// The call is delegated to the memory store.
+        Answers,
+        /// The call fails with this closed category — bad credentials, a missing schema, a
+        /// refused statement.
+        Fails(JobError),
+        /// The call never returns — a lost connection or a locked table.
+        Hangs,
+    }
+
+    /// A store that delegates to memory except where a fault is set.
+    pub(crate) struct Faulty {
+        inner: Arc<MemoryJobStore>,
+        depth: Fault,
+        release: Fault,
+        claims: AtomicU32,
+    }
+
+    impl Faulty {
+        pub(crate) fn new(inner: Arc<MemoryJobStore>) -> Self {
+            Self {
+                inner,
+                depth: Fault::Answers,
+                release: Fault::Answers,
+                claims: AtomicU32::new(0),
+            }
+        }
+
+        /// Makes `depth` — the Boot probe — misbehave.
+        pub(crate) fn with_depth(mut self, fault: Fault) -> Self {
+            self.depth = fault;
+            self
+        }
+
+        /// Makes `release` — the stop path — misbehave.
+        pub(crate) fn with_release(mut self, fault: Fault) -> Self {
+            self.release = fault;
+            self
+        }
+
+        /// How many times `claim` was called: zero proves the run loop never started.
+        pub(crate) fn claims(&self) -> u32 {
+            self.claims.load(Ordering::SeqCst)
+        }
+    }
+
+    async fn apply<T>(
+        fault: Fault,
+        answer: impl Future<Output = Result<T, JobError>> + Send,
+    ) -> Result<T, JobError> {
+        match fault {
+            Fault::Answers => answer.await,
+            Fault::Fails(error) => Err(error),
+            Fault::Hangs => core::future::pending().await,
+        }
+    }
+
+    impl JobStore for Faulty {
+        async fn enqueue(&self, job: NewJob, now: SystemTime) -> Result<Enqueued, JobError> {
+            self.inner.enqueue(job, now).await
+        }
+        async fn claim(
+            &self,
+            queue: &QueueName,
+            now: SystemTime,
+            lease: Duration,
+        ) -> Result<Option<ClaimedJob>, JobError> {
+            self.claims.fetch_add(1, Ordering::SeqCst);
+            self.inner.claim(queue, now, lease).await
+        }
+        async fn complete(
+            &self,
+            lease: &LeaseToken,
+            now: SystemTime,
+        ) -> Result<Completion, JobError> {
+            self.inner.complete(lease, now).await
+        }
+        async fn fail(
+            &self,
+            lease: &LeaseToken,
+            failure: FailureKind,
+            next_run_at: SystemTime,
+            now: SystemTime,
+        ) -> Result<FailureOutcome, JobError> {
+            self.inner.fail(lease, failure, next_run_at, now).await
+        }
+        async fn release(&self, lease: &LeaseToken, now: SystemTime) -> Result<(), JobError> {
+            apply(self.release, self.inner.release(lease, now)).await
+        }
+        async fn revive(&self, id: &JobId, now: SystemTime) -> Result<bool, JobError> {
+            self.inner.revive(id, now).await
+        }
+        async fn read(&self, id: &JobId) -> Result<Option<Job>, JobError> {
+            self.inner.read(id).await
+        }
+        async fn depth(&self, queue: &QueueName) -> Result<u64, JobError> {
+            apply(self.depth, self.inner.depth(queue)).await
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::faulty::{Fault, Faulty};
     use super::{
         AttemptOutcome, DEFAULT_CONCURRENCY, HandlerError, HandlerFuture, JobHandler, JobsClient,
-        MAX_CONCURRENCY, MAX_STOP_GRACE, POLL_INTERVAL_RANGE, Worker, WorkerConfig,
+        MAX_CONCURRENCY, MAX_STOP_GRACE, POLL_INTERVAL_RANGE, RELEASE_TIMEOUT, Worker,
+        WorkerConfig, WorkerReport,
     };
     use crate::job::{
         ClaimedJob, Completion, Enqueued, FailureKind, FailureOutcome, Job, JobBounds, JobError,
@@ -732,6 +1019,22 @@ mod tests {
             .iter()
             .filter(|family| family.name == name)
             .flat_map(|family| family.series.iter())
+            .map(|series| match series.value {
+                SeriesValue::Scalar(value) => value,
+                SeriesValue::Histogram { .. } => 0.0,
+            })
+            .sum()
+    }
+
+    /// The value of the series of `name` carrying `label = value`, or zero if none does.
+    fn counter_with(registry: &Registry, name: &str, label: &str, value: &str) -> f64 {
+        registry
+            .snapshot()
+            .families
+            .iter()
+            .filter(|family| family.name == name)
+            .flat_map(|family| family.series.iter())
+            .filter(|series| series.labels.iter().any(|(k, v)| *k == label && v == value))
             .map(|series| match series.value {
                 SeriesValue::Scalar(value) => value,
                 SeriesValue::Histogram { .. } => 0.0,
@@ -1244,9 +1547,124 @@ mod tests {
         cancel.cancel();
         let report = run.await.unwrap();
         assert_eq!(report.aborted, 1);
+        assert_eq!(report.released, 1, "a confirmed release is counted");
+        assert_eq!(report.release_failed, 0);
+        assert_eq!(report.release_timed_out, 0);
         let job = store.read(&id).await.unwrap().unwrap();
         assert_eq!(job.state, JobState::Ready, "the lease was released");
         assert_eq!(gate.outstanding(), 0, "the permit was returned");
+    }
+
+    /// Leases one hanging job under a worker whose store's `release` is `fault`, cancels the
+    /// worker, and returns its report with the registry it recorded to and the row it left.
+    ///
+    /// Bounded: the run must end within the stop grace (100 ms from [`config`]) plus
+    /// [`RELEASE_TIMEOUT`] plus 500 ms, or the test **fails** — a hung release must show as an
+    /// assertion, never as a test that looks like a slow machine.
+    async fn abort_one_with_release(
+        fault: Fault,
+    ) -> (WorkerReport, Registry, Arc<MemoryJobStore>, JobId) {
+        let registry = Registry::new();
+        let clock = Arc::new(FixedClock::at_unix_seconds(1_000));
+        let entropy: Arc<dyn EntropySource> = Arc::new(FixedEntropy::new([0x88; 16]));
+        let inner = Arc::new(MemoryJobStore::new(JobBounds::new(), Arc::clone(&entropy)));
+        let id = inner.enqueue(new_job(5), clock.now()).await.unwrap().id();
+        let store = Arc::new(Faulty::new(Arc::clone(&inner)).with_release(fault));
+        let config = config()
+            .with_handler_timeout(Duration::from_secs(60))
+            .unwrap();
+        let worker = Arc::new(
+            Worker::new(store, config, clock.clone(), entropy, &registry)
+                .unwrap()
+                .register(kind(), Arc::new(Hanging)),
+        );
+        let cancel = CancelScope::root();
+        let run = tokio::spawn(Arc::clone(&worker).run(WorkGate::new(), cancel.clone()));
+        for _ in 0..100 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            if inner.read(&id).await.unwrap().unwrap().state == JobState::Leased {
+                break;
+            }
+        }
+        cancel.cancel();
+        let bound = Duration::from_millis(100) + RELEASE_TIMEOUT + Duration::from_millis(500);
+        let report = tokio::time::timeout(bound, run)
+            .await
+            .expect("the stop did not end within the grace plus the release bound")
+            .unwrap();
+        (report, registry, inner, id)
+    }
+
+    // Paused time, so the release bound costs 0 real seconds and a release that is NOT bounded
+    // fails at the outer timeout instead of hanging the suite.
+    #[tokio::test(start_paused = true)]
+    async fn a_release_that_hangs_at_stop_is_bounded_and_reported() {
+        // FR-025, C-L7, FR-033: a store that never answers `release` at stop must not hold the
+        // stop for ever, and a lease the store did not confirm released is never counted as
+        // released — in the report or in the metric.
+        let (report, registry, inner, id) = abort_one_with_release(Fault::Hangs).await;
+        assert_eq!(report.aborted, 1);
+        assert_eq!(
+            report.release_timed_out, 1,
+            "the timed-out release is not reported"
+        );
+        assert_eq!(
+            report.released, 0,
+            "an unconfirmed release was counted as released"
+        );
+        assert_eq!(report.release_failed, 0);
+        assert_eq!(
+            counter_total(&registry, "renvor_jobs_released_total"),
+            0.0,
+            "the released metric moved on a release the store never confirmed"
+        );
+        assert_eq!(
+            counter_with(
+                &registry,
+                "renvor_jobs_store_errors_total",
+                "category",
+                JobError::TimedOut.as_str()
+            ),
+            1.0,
+            "the timed-out release is not counted as a store error"
+        );
+        // The truth of the row: still leased, because the store never released it.
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Leased);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_release_that_fails_at_stop_is_counted_and_never_marked_released() {
+        // A refused release is a failure the report carries, not a discarded result.
+        let (report, registry, inner, id) =
+            abort_one_with_release(Fault::Fails(JobError::Unavailable)).await;
+        assert_eq!(report.aborted, 1);
+        assert_eq!(
+            report.release_failed, 1,
+            "the failed release is not reported"
+        );
+        assert_eq!(
+            report.released, 0,
+            "a refused release was counted as released"
+        );
+        assert_eq!(report.release_timed_out, 0);
+        assert_eq!(
+            counter_total(&registry, "renvor_jobs_released_total"),
+            0.0,
+            "the released metric moved on a release the store refused"
+        );
+        assert_eq!(
+            counter_with(
+                &registry,
+                "renvor_jobs_store_errors_total",
+                "category",
+                JobError::Unavailable.as_str()
+            ),
+            1.0,
+            "the refused release is not counted as a store error"
+        );
+        let job = inner.read(&id).await.unwrap().unwrap();
+        assert_eq!(job.state, JobState::Leased);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

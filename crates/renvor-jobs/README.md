@@ -19,3 +19,13 @@ versions are chosen not to collide with `renvor-auth`'s (`20260901…`).
 ## Licence
 
 `MIT OR Apache-2.0`.
+
+## Boot and Stop, bounded
+
+`JobsWorkerProvider` proves the configured store answers before its loop exists: one bounded read
+of the queue's depth at Boot, and a store that refuses or does not answer fails Boot with a closed
+category rather than polling for ever. At Stop, leases of jobs aborted at the grace are released
+concurrently under one bound; a release the store refuses or does not answer is counted in the
+`WorkerReport` and reported by Stop as `LeasesNotReleased`, never swallowed. The `[jobs]` section
+in `config` carries every bound with its default and hard cap and is refused at Validate by key,
+constraint, and layer.
