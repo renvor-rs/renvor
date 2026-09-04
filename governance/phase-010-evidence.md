@@ -1,10 +1,11 @@
 # Phase 010 — Evidence
 
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**State**: **implemented on `feat/phase-010-operational-capabilities`; NOT closed.** Closure is
-the maintainer's decision at the merge-authority checkpoint.
+**State**: **implemented on `feat/phase-010-operational-capabilities`, reviewed, corrected in one
+bounded round (2026-09-04); NOT closed.** Closure is the maintainer's decision at the
+merge-authority checkpoint.
 **Base**: `c57b4fb131b1c254dd89ce21fd78aae2ac2f0b37` (origin/main)
-**Reviewed head**: recorded in §3 with the gate results
+**Reviewed head**: `1328dd3` (the head Codex reviewed); **corrected source head**: `8099f017`, gate results in §3a
 **Companions**: [`phase-010-limitations.md`](phase-010-limitations.md) ·
 [`phase-010-mutation-ledger.md`](phase-010-mutation-ledger.md) ·
 [`phase-010-review-record.md`](phase-010-review-record.md) ·
@@ -60,6 +61,32 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 | capability-disabled builds exclude their dependencies | **MET.** 22 new step 7 rows with controls; the lean facade resolves no capability crate; each `capability-*` feature resolves exactly its crate |
 
 ## 3. Verification — commands, platforms, results
+
+### 3a. The correction round's head, `8099f017` (2026-09-04)
+
+Both legs ran sequentially on `8099f017` — the last source commit of the correction round, thirteen
+commits after the checkpoint — with `CARGO_INCREMENTAL=0` and stdin detached, against the same live
+PostgreSQL 17, MySQL 8.4, Valkey 9.1.1, and Mailpit 1.29.1, one gate process at a time, with the
+capability credentials in their own variables (`verification-sequence.md` 2.2.0). The commit that
+records this table differs from `8099f017` only by governance text. The workspace test suite had
+also been run in full on the same tree before the commits (2057 passed, 0 failed, 5 ignored).
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `8099f017` | `8099f017` |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2057 passed, 0 failed, 5 ignored (139 `test result` lines) | 2057 passed, 0 failed, 5 ignored (139 `test result` lines) |
+| Census | 67/67 rows reported in | 67/67 rows reported in |
+| Elapsed | 12 min 09 s (step 4: 8 min 45 s) | 12 min 45 s (step 4: 9 min 59 s) |
+
+The test total rose from 1966 to 2057: the round's discriminating tests (the sections, the origin
+resolution, the depth race in the shared contract, the worker's Boot and Stop, the storage race,
+the OTLP shutdown, the retry deadline, the trace-context grammar) and no test was removed.
+
+### 3b. The checkpoint head, `a0f837b` (2026-09-04, before the review)
 
 Both legs ran sequentially on `a0f837b` with `CARGO_INCREMENTAL=0` and stdin detached, against
 live PostgreSQL 17, MySQL 8.4, Valkey 9.1.1, and Mailpit 1.29.1 in local containers, one gate process
