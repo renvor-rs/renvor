@@ -53,10 +53,10 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 
 | Criterion (task brief) | Disposition |
 |---|---|
-| missing required capabilities fail during startup | **MET.** A consumer needing `cache`, `jobs`, `mail`, or `storage` with no provider fails at Register naming both ends (SC-001, tested per crate); an unreachable Valkey, a refused SMTP credential, an unwritable storage root, and a non-answering worker store each fail Boot with a closed category |
+| missing required capabilities fail during startup | **MET.** A consumer needing `cache`, `jobs`, `mail`, or `storage` with no provider fails at Register naming both ends (SC-001, tested per crate); an unreachable Valkey, a refused SMTP credential, an unwritable storage root, and a non-answering worker store each fail Boot with a closed category. **The worker clause was false at the reviewed head** (review finding 8: Boot never touched the store) and is true since the correction round, pinned by `a_store_that_does_not_answer_fails_boot_and_never_starts_the_loop` and `a_hanging_store_fails_boot_within_the_probe_bound`. A typed configuration section that breaks a bound, misses a key, or carries a malformed credential fails **Validate** naming key, constraint, and layer with 0 providers initialised (FR-011, C-C11; review finding 11) |
 | MySQL applications never acquire PostgreSQL dependencies implicitly | **MET.** `xtask` step 7 rows `renvor-sqlx + db-mysql,jobs` and `renvor-seaorm + db-mysql,jobs` assert `sqlx-postgres` absent with `sqlx-mysql` and `renvor-jobs` as controls |
 | retries bounded and observable | **MET.** `RetryPolicy` caps attempts (≤ 100), delays (≤ 1 h) and deadlines; the worker's exact attempt counts are asserted (3 calls for `max_attempts = 3`, then dead-letter) with the events and counters a subscriber and registry actually receive; an expired lease at the last attempt dead-letters on all five stores |
-| trace context propagates safely | **MET.** Parser fuzzed (3 × 10 000 cases, no panic, round-trip); the router records only validated fields, ignores and counts invalid input, never echoes, never derives `RequestId`; a job carries the context into its execution span |
+| trace context propagates safely | **MET.** Parser fuzzed (4 property tests × 10 000 cases, no panic; the outbound form zeroes every undefined flag bit and round-trips a defined-bits-only header byte-identically); the router records only validated fields, treats a repeated `traceparent` as invalid and counted, combines `tracestate` fields in arrival order, enforces the Level 1 key grammar and one entry per key, never echoes, never derives `RequestId`; a job carries the validated context into its execution span. Five Level 1 departures at the reviewed head (review finding 4) are corrected |
 | capability-disabled builds exclude their dependencies | **MET.** 22 new step 7 rows with controls; the lean facade resolves no capability crate; each `capability-*` feature resolves exactly its crate |
 
 ## 3. Verification — commands, platforms, results
@@ -87,9 +87,16 @@ claim was re-measured (`phase-010-review-record.md` §1).
 
 **Continuous integration on pull request #61.** The first run, on `c5bf188`, passed 8 of 14 checks (both CodeQL analyses, docs, security, both macOS platform legs, and both `verify` legs — the full nine-step sequence on Ubuntu with the Valkey and Mailpit containers) and failed 5: the dependency review's licence list, the release dry run's packaging order, CodeQL on two test literals, and both Windows platform legs on one boot category. Each is a row of `phase-010-review-record.md` §2 with its cause and fix; no check was weakened. The checks on the pull request's final head are the pull request's own record and are quoted in the checkpoint report.
 
-**Codex review.** **NOT PERFORMED** by the implementing session: the repository's `/codex:review` command is reserved for explicit invocation by the maintainer and refuses invocation from a session, so the session stopped once and handed over the exact command. An absent review is never inferred clean; its findings and dispositions are recorded here when it runs. Details: `phase-010-review-record.md` §3.
+**Codex review.** **PERFORMED by the maintainer** with `/codex:review` on the pull request head `1328dd3` (the implementing session could not invoke it and stopped once to hand over the command). **Sixteen findings**, every one verified against the tree before a change and every one confirmed; **fifteen corrected at the root in one bounded round** (2026-09-04) with a RED→GREEN test and a controlled mutation each, and nothing — no test, gate, scanner, contract, or acceptance criterion — weakened; **one (finding 5, constitution VII's generator obligation) confirmed and not correctable** without Phase 011 scope or a maintainer ruling, recorded as L-14 with ADR-0031's compliance claim withdrawn in place. The table of findings, corrections, tests, and mutations is `phase-010-review-record.md` §3.
 
 ## 5. Defects found, and by what
+
+**The Codex review** (`phase-010-review-record.md` §3) found sixteen defects and gaps after the
+checkpoint — two of them security-relevant at the transport (the host-only origin comparison) and
+the credential surfaces (secrets in URLs, plaintext to any Valkey host), one a false clause in
+this file's own acceptance table (the worker's Boot), one a contract stating a bound it did not
+enforce (`depth ≤ bound + writers − 1`), and one a specification requirement with no
+implementation (FR-011). Fifteen are corrected and pinned; one is L-14.
 
 See `phase-010-review-record.md` §2: ten defects found by the repository's own gates, real
 servers, and the pull request's platform legs after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
@@ -106,8 +113,8 @@ steps 7–9 before them, and no Windows leg had run at all.
 
 ## 6. Testing discipline
 
-- Red/green per batch with named mutations before each commit; **88 controlled mutations**
-  (`phase-010-mutation-ledger.md`).
+- Red/green per batch with named mutations before each commit; **88 controlled mutations** in
+  the phase and **40 more in the correction round**, every one killed (`phase-010-mutation-ledger.md`).
 - Every adapter against a real server: Valkey 9.1.1, PostgreSQL 17, MySQL 8.4, Mailpit 1.29.1,
   a local OTLP receiver, a real filesystem; each with a redaction canary sweep.
 - The four-row census extended to 67 rows and proved to fail on a misspelled row.
@@ -125,8 +132,8 @@ pre-release and truthful. No canonical documentation source is recreated in this
 
 ## 8. Limitations
 
-`phase-010-limitations.md`: 13 retained, each with owner and target; 2 Phase 009 rows closed with
-measurement.
+`phase-010-limitations.md`: 17 retained, each with owner and target (13 at the checkpoint; L-14
+to L-17 added by the correction round); 2 Phase 009 rows closed with measurement.
 
 ## 9. What this phase did not do
 

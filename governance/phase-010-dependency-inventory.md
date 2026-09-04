@@ -31,6 +31,8 @@ feature isolation against `cargo tree` — and the measurements are in the phase
 | `hyper`, `hyper-util`, `hyper-rustls` (`native-tokio`, `http1`, `tls12`, `ring`), `http`, `http-body-util`, `bytes`, `rustls` (`ring`, `std`, `tls12`) | 1.7.0 / 0.1.19 / 0.27.9 / 1.3.1 / 0.1.5 / 1.10.1 / 0.23.43 | `renvor-observability/otel` | the OTLP HTTP client with native roots and one provider | `with_provider_and_native_roots(ring)` |
 | `renvor-jobs` | workspace | `renvor-sqlx/jobs`, `renvor-seaorm/jobs`, `renvor-testkit/jobs` | the job port the stores implement | names no driver, so a MySQL application acquires no PostgreSQL crate |
 | `tracing` | 0.1.44 | `renvor-auth` | the one infrastructure event FR-084 requires | already in the graph through `renvor-core`; this names the edge |
+| `serde` (`derive`) | 1.0.229 | `renvor-cache`, `renvor-jobs`, `renvor-mail`, `renvor-storage`, `renvor-observability` | the typed configuration sections (FR-011, correction round 2026-09-04) | already in the graph through `renvor-config`; **+0 packages**; `renvor-config` re-exports `toml::Table` so no capability crate names the TOML crate |
+| `renvor-config` | workspace | `renvor-jobs`, `renvor-storage` | the resolver the sections are decoded by | already a dependency of `renvor-cache`, `renvor-mail`, `renvor-observability`; +0 packages |
 
 ## 2. Selected — development only
 

@@ -2,9 +2,10 @@
 
 **Companion to**: [`phase-010-evidence.md`](phase-010-evidence.md)
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**Total**: **88 controlled mutations** — **85 killed by a named test**, **1 killed by the harness
-wall clock (a hang, recorded as such)**, **2 survived as predicted and investigated to a
-conclusion**.
+**Total**: **128 controlled mutations** — **88 in the phase** (85 killed by a named test, 1
+killed by the harness wall clock — a hang, recorded as such — 2 survived as predicted and
+investigated to a conclusion) and **40 in the 2026-09-04 correction round, every one killed by a
+named test** (the table at the end).
 
 A mutation is applied to the implementation, the test that should notice is named **in advance**,
 the suite is run, and the pristine file is restored and re-run green. A mutation nothing catches is
@@ -75,3 +76,48 @@ record (`specs/010-…/evidence/batch-*.md`, gitignored) and in the session tran
 above are the mirror. Every "killed by" names the test; every real-server kill says so
 (Valkey: B-M6, B-M7, B-M8; PostgreSQL/MySQL: D-M1…D-M9, J-M1, J-M2; Mailpit: E-M6, E-M7; the local
 OTLP receiver: H-M7).
+
+## Correction round (2026-09-04) — 40 mutations, 40 killed
+
+Every mutation below was applied by hand or by a scratch driver, the test named in advance, the
+pristine file restored (byte-checked) and re-run green. Ids are per slice; the RED-phase runs that
+reintroduced a defect verbatim are listed where they served as the mutation.
+
+| Id | Where | Edit | Killed by |
+|---|---|---|---|
+| R-A-M1 / M1b / M1c | `renvor-core` retry | the `min` with the remaining budget removed / a deadline cut read as an attempt timeout / the tie given to the attempt timeout | the three new deadline tests (10 s vs 1 s; `AttemptTimedOut` vs `DeadlineExceeded`; the tie's event label) |
+| R-A-M2 / M2b | trace-context key grammar | a digit-first simple key / system-id accepted | `tracestate_grammar_is_enforced_member_by_member` |
+| R-A-M3 | trace-context | the duplicate-key check deleted | `a_tracestate_key_appears_at_most_once` |
+| R-A-M4 | `render_traceparent` | raw flags rendered | the unit flags test and the outbound-form property (`-02` vs `-00`) |
+| R-B-M1 | `CacheKey::new` | byte-wise ASCII whitespace again | `unicode_whitespace_is_refused_and_unicode_letters_are_not` |
+| R-B-M2 | `ValkeySettings::validate` | accepts everything | the two plaintext refusal tests |
+| R-B-M3 | `ValkeySettings::connection_info` | the password never handed to the driver | the live Valkey boot test (`CredentialRefused`) |
+| R-C-M1 | `SmtpSettings::validate` | accepts everything | the plaintext refusal test and the built-mailer test |
+| R-C-M2 | `AuthMailSettings::link` | the token back in the query string | both bridge link tests |
+| R-C-M3 | `SmtpMailer::connect` | credentials never handed to the transport | the live Mailpit boot test |
+| R-D1-M1 | jobs provider | the Boot probe deleted | both Boot-probe tests (booted Ready over a refusing and a hanging store) |
+| R-D1-M2 | worker `release_lease` | the release timeout removed | `a_release_that_hangs_at_stop_is_bounded_and_reported` (the test's own bound fired) |
+| R-D1-M3 | worker `release_lease` | `released` incremented on a refused release | `a_release_that_fails_at_stop_is_counted_and_never_marked_released` (1.0 vs 0.0) |
+| R-D1-M4 | jobs provider `stop` | `Ok` whatever the counts | `the_provider_reports_leases_it_could_not_release` |
+| R-D2-M1 | `renvor-sqlx` enqueue | the `FOR UPDATE` lock removed | the depth race on both engines (4 against 3) |
+| R-D2-M2 | `renvor-seaorm` enqueue | the lock removed | the depth race (PostgreSQL 4, MySQL 5) |
+| R-D2-M3 | `renvor-sqlx` enqueue | the lock moved after the key read | the depth race on **MySQL alone**, 3 of 3 runs (5, 6, 6 against 3); PostgreSQL passed — the REPEATABLE READ snapshot trap the module docs describe |
+| R-E-M1 | filesystem `write_atomically` | header and body by two renames | the two-writer barrier race (413 inconsistent of 1520) |
+| R-E-M2 | filesystem `head` | size from the whole file | `head_reads_only_the_header` and three others |
+| R-E-M3 | filesystem `read_header` | the magic check removed | `a_corrupt_object_is_reported_closed` (two bad-magic shapes with a valid length field were added *before* the run so the mutation could not slip past the length check) |
+| R-F-M1 | OTLP `shutdown` | the abort removed | the timed-out flush test (the join hung; the test's bound stopped it) |
+| R-F-M2 | OTLP `shutdown` | the count zeroed | same test (all eight spans expected) |
+| R-F-M3 | OTLP `shutdown` | `Ok` after the bound | same test |
+| R-F-M4 | OTLP drain | the queue not closed before the sweep | `a_span_ending_after_the_stop_sweep_is_refused_and_counted_rather_than_lost` |
+| R-G-M1 | `cross_site_refused` | host-only comparison again | four gate unit tests |
+| R-G-M2 / M3 | `EffectiveOrigin::parse` | the explicit port ignored / the scheme ignored | the origin unit tests, the router tests, the gate tests |
+| R-G-M4 / M5 | `parse_inbound_trace` | the first `traceparent` taken / only the first `tracestate` field | `a_repeated_traceparent_is_invalid_and_counted_once` / the two combining tests |
+| R-G-M6 | `host::normalise` | a garbage port stripped again | the host, origin, and router port tests |
+| R-G-M7 | `identity::resolve_scheme` | a trusted proxy's `proto` ignored | the identity and router proxy tests |
+| R-G-M8 / M9 | router carve-out | host-only comparison / the `Host` port ignored | `tests/effective_origin.rs` (5 and 6 failures) |
+| R-H-M0 | `SchemaSource::validate` | the validator stored but never run | `a_validator_runs_in_validate_not_load_and_names_key_constraint_and_layer` |
+| R-H-M1 / M2 / M3 | the cache / mail / storage sections | the validator not attached to the source | the sections' Validate-refusal tests (the build succeeded and 0 providers refused) |
+
+Superseding note: the phase's batch I/J row (7 mutations on trace context and fetch metadata)
+stands as a dated record; R-A-M2…M4 and R-G-M1…M9 are the mutations that pin the corrected
+behaviour.

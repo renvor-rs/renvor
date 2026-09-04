@@ -91,7 +91,16 @@ all-supported-feature builds."*
 - **A `renvor-cli` change** limited to string corrections and their pinning tests; no new flag and
   no new wizard question, because constitution principle VII binds a choice *"once its capability
   ships"* and the capability that ships here is a library — the same reading Phase 009 made for
-  `--auth`.
+  `--auth`. **Contested (2026-09-04, the Phase 010 correction round).** The maintainer's review
+  rejected this reading: principle VII says each governed choice "becomes mandatory in both
+  interfaces on the day its capability ships", and the five capabilities shipped in this phase.
+  The narrowest literal implementation — a mandatory `--capabilities` choice recorded in
+  `renvor.toml` — would solicit and record a choice the generator cannot honour (a generated
+  project declares no Renvor dependency until one is publishable), which the same principle
+  forbids; honouring it needs the Phase 011 generator scope. The obligation is therefore
+  **unmet and unresolved by this record**: it is `governance/phase-010-limitations.md` L-14, and
+  its resolution (Phase 011 scope, a ruling on what "ships" means for library-only phases, or a
+  waiver) is the maintainer's. This paragraph does not claim compliance with principle VII.
 - **What would reverse this**: a decision to consolidate the crates would be a public-API change
   under C-S1 while the window is open, and would need a superseding record.
 
@@ -101,6 +110,7 @@ all-supported-feature builds."*
   crate; every substitute is explicit.
 - **Constitution IV, VI** — fail-closed startup and bounded work: decisions 2, 3, 5.
 - **Constitution VIII** — feature isolation: decision 6, asserted with controls.
+- **Constitution VII** — **not claimed**; see the contested consequence above and L-14.
 - **PLAN §7.3, §7.4, §20 Phase 010** — the crate set and the feature vocabulary as planned.
 - **PLAN §21 items 13 and 14** — item 13 is ADR-0032; item 14 (documentation platform) is unchanged
   by this phase.

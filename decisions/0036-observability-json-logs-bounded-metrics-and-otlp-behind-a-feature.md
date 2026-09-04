@@ -72,9 +72,14 @@ Findings that shape the design (`package-decisions.md` §F, `research.md`):
    0.32.1, `opentelemetry-otlp` 0.32.0 (`http-proto`, `trace`, `hyper-client`),
    `tracing-opentelemetry` 0.33.0, `opentelemetry-semantic-conventions` 0.32.1, `hyper-rustls`
    0.27.9 (`native-tokio`, `ring`), `hyper-util`. Renvor builds the connector with
-   `with_provider_and_native_roots(ring)` and wraps the client in an `HttpClient` implementation
-   bound to the runtime handle so the batch thread can drive it. Bounded queue (2048), batch,
-   export timeout, and shutdown flush; a full queue is a counted drop and a closed-field event; a
+   `with_provider_and_native_roots(ring)`. **Corrected 2026-09-04 (the Phase 010 correction
+   round)**: the shipped design does **not** bridge the client to the SDK's batch thread; the
+   processor is Renvor's own bounded channel drained by a Tokio task on the application's
+   runtime, which is what the module documentation always said — the sentence this replaces
+   described a route that was considered and not taken. Bounded queue (2048), batch, export
+   timeout, and shutdown flush; a full queue is a counted drop and a closed-field event; a
+   shutdown flush that misses its bound aborts and joins the drain, counts the unexported spans
+   (`renvor_otel_spans_unexported_total`), and returns `OtelShutdownError::FlushTimedOut`; a
    plaintext endpoint to a non-loopback host is refused at Validate; header values are `Secret`.
 7. **Names** follow the semantic conventions where one exists; Renvor names are `renvor.*`; a test
    asserts the literals equal the crate's constants when both compile.
