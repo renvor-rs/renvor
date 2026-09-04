@@ -87,10 +87,11 @@ is recorded here after the pull request opens: head reviewed, findings, disposit
 
 ## 5. Defects found, and by what
 
-See `phase-010-review-record.md` §2: six defects found by the repository's own gates and real
+See `phase-010-review-record.md` §2: seven defects found by the repository's own gates and real
 servers after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
 credential-file diagnostics, a cache adapter with no crypto provider, a resource missing from
-the OTLP wire, a test binary aborted by a destructor — each fixed at the root and pinned.
+the OTLP wire, a test binary aborted by a destructor, and a `tracing-core` callsite-interest race
+that dropped a test's recorded event — each fixed at the root and pinned.
 
 ## 6. Testing discipline
 
@@ -113,7 +114,7 @@ pre-release and truthful. No canonical documentation source is recreated in this
 
 ## 8. Limitations
 
-`phase-010-limitations.md`: 14 retained, each with owner and target; 2 Phase 009 rows closed with
+`phase-010-limitations.md`: 13 retained, each with owner and target; 2 Phase 009 rows closed with
 measurement.
 
 ## 9. What this phase did not do

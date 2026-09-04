@@ -2,7 +2,7 @@
 
 **Companion to**: [`phase-010-evidence.md`](phase-010-evidence.md)
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**Count**: **14 retained limitations**; **2 Phase 009 limitations closed** (L-4, L-11) with
+**Count**: **13 retained limitations**; **2 Phase 009 limitations closed** (L-4, L-11) with
 measurement rather than prose.
 
 Every row states **what**, **why it was not closed**, and **who it belongs to**. The phase's
@@ -34,8 +34,11 @@ is the mirror.
 | **L-10** | **The messaging semantic-convention names are pinned by literal, not asserted against the conventions crate.** `messaging.system`, `messaging.destination.name`, `messaging.operation.type` are `semconv_experimental` in `opentelemetry-semantic-conventions` 0.32.1. | An experimental feature is not a convention; the HTTP, URL and database names are asserted against the crate. | Re-check when the crate stabilises them |
 | **L-11** | **The inbound-invalid trace-context counter needs a `Registry` published in the application's state.** Without one the invalid context is still ignored and reported as an event, but not counted. | Chosen over a new field on the server configuration, which would have been a public-API change. | `renvor-http`; documented in the contract |
 | **L-12** | **The C-M15 mutant (a non-yielding worker loop) is killed by the harness wall clock, not by a test assertion.** | A timeout is a future that needs polling; a non-yielding mutant starves it. Recorded honestly in the ledger. | `renvor-jobs` tests |
-| **L-13** | **The L-11 event test missed once on its first run** and passed on every run since (the whole abuse module, the full auth suite, and both final gates). | Not reproduced; recorded rather than explained away. | Watch in Phase 011 |
-| **L-14** | **This phase would close under a waiver.** No independent human review occurred; the proposed phase-closure waiver (`phase-010-proposed-waivers.md`) would be the tenth consecutive phase-level waiver of the same rule, and is not granted by this session. The three research agents delivered; the Codex review's disposition is in the evidence. | A staffing fact, not a process defect; the obligation to recruit a reviewer stands unchanged. | Maintainer |
+| **L-13** | **This phase would close under a waiver.** No independent human review occurred; the proposed phase-closure waiver (`phase-010-proposed-waivers.md`) would be the tenth consecutive phase-level waiver of the same rule, and is not granted by this session. The three research agents delivered; the Codex review's disposition is in the evidence. | A staffing fact, not a process defect; the obligation to recruit a reviewer stands unchanged. | Maintainer |
+
+The row drafted as L-13 at `73e4a9a` — the L-11 event test's single unexplained miss — was withdrawn
+before the gates closed: the final gate reproduced the miss, the cause was measured in `tracing-core`
+(`phase-010-review-record.md` §2, last row), and the test now records through one global subscriber.
 
 ## Closed from Phase 009, with the measurement
 

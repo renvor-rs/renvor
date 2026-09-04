@@ -28,6 +28,10 @@ C-M15 incident below left a spinning test binary alive.
 | L | census extension (a misspelled job row) | 1 | 1 | 0 |
 | | | **88** | **86** | **2** |
 
+J-M3 (the store-failure event is not emitted) was **re-run on the corrected L-11 test** after the
+final gate's diagnosis (`phase-010-review-record.md` §2, last row): KILLED by the same named test,
+restore verified green. The totals above are unchanged.
+
 ## The entries worth reading
 
 **A-M4b — a wrong prediction.** Removing only the base delay cap in `RetryPolicy::delay` was
