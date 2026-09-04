@@ -12,6 +12,12 @@
 //! - [`provider`] — [`StorageProvider`], which probes the backend at Boot.
 //! - `filesystem` (feature) — `FilesystemStore` on `cap-std` with atomic writes.
 //!
+//! # Configuration
+//!
+//! With `filesystem`, [`config::StorageSection`] is the typed `[storage]` section: decoded by
+//! `renvor-config`, defaulted, capped, and refused at **Validate** — naming the key, the
+//! constraint, and the layer — before any provider boots (FR-011).
+//!
 //! # No object-storage service adapter ships in this phase
 //!
 //! ADR-0035 records the measurements: every S3-compatible candidate failed a licence, advisory,
@@ -25,6 +31,12 @@ pub mod provider;
 
 #[cfg(feature = "filesystem")]
 pub mod filesystem;
+
+/// The typed `[storage]` configuration section (FR-011): defaults, hard caps, and a
+/// Validate-phase refusal naming key, constraint, and layer. Behind `filesystem` because the
+/// settings it produces are the adapter's.
+#[cfg(feature = "filesystem")]
+pub mod config;
 
 pub use memory::MemoryStore;
 pub use port::{

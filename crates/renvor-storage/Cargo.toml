@@ -38,6 +38,11 @@ include = [
 [dependencies]
 # The kernel: `Provider`, readiness, the metrics port.
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
+# `Secret<T>` and the layered resolver the typed configuration section is decoded by (FR-011).
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+# The `Deserialize` derive for the typed configuration section and its all-optional form
+# (FR-011). Already in the graph through `renvor-config`; this line adds no package.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
 
 thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
 

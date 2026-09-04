@@ -87,9 +87,19 @@ impl ReadinessContributor for StorageReadiness {
 pub struct StorageProvider<S> {
     id: ProviderId,
     provides: Vec<CapabilityId>,
-    store: Arc<S>,
+    store: StoreSource<S>,
+    built: std::sync::OnceLock<Arc<S>>,
     boot_timeout: Duration,
     ready: Arc<AtomicBool>,
+}
+
+/// Where the store comes from: built in code, or opened at Boot from the typed `[storage]`
+/// section the kernel validated (FR-011).
+enum StoreSource<S> {
+    Given(Arc<S>),
+    /// Opened at Boot by a closure that reads the validated section; the closure is what lets a
+    /// provider generic over `S` open the one concrete store a section describes.
+    Configured(Box<dyn Fn() -> Result<Arc<S>, BoxedCause> + Send + Sync>),
 }
 
 impl<S> core::fmt::Debug for StorageProvider<S> {
@@ -108,7 +118,8 @@ impl<S: ObjectStore + 'static> StorageProvider<S> {
         Self {
             id,
             provides: vec![storage_capability()],
-            store,
+            store: StoreSource::Given(store),
+            built: std::sync::OnceLock::new(),
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
             ready: Arc::new(AtomicBool::new(false)),
         }
@@ -121,10 +132,42 @@ impl<S: ObjectStore + 'static> StorageProvider<S> {
         self
     }
 
-    /// The store this provider publishes.
+    /// The store this provider publishes: the one it was given, or the one it opened at Boot
+    /// from its configuration section — `None` before that Boot.
     #[must_use]
-    pub fn store(&self) -> Arc<S> {
-        Arc::clone(&self.store)
+    pub fn store(&self) -> Option<Arc<S>> {
+        match &self.store {
+            StoreSource::Given(store) => Some(Arc::clone(store)),
+            StoreSource::Configured(_) => self.built.get().cloned(),
+        }
+    }
+}
+
+#[cfg(feature = "filesystem")]
+impl StorageProvider<crate::filesystem::FilesystemStore> {
+    /// Declares a provider whose store is opened at Boot from the typed `[storage]` section
+    /// behind `handle` (FR-011). The section was validated by the kernel before Boot; the root
+    /// is opened here, at Boot, and probed like any other store.
+    #[must_use]
+    pub fn from_config(
+        id: ProviderId,
+        handle: renvor_config::ConfigHandle<crate::config::StorageSection>,
+    ) -> Self {
+        let open = move || {
+            let settings = crate::config::settings_from_handle(&handle)
+                .map_err(|error| Box::new(error) as BoxedCause)?;
+            crate::filesystem::FilesystemStore::open(&settings)
+                .map(Arc::new)
+                .map_err(|error| Box::new(StorageBootError::from(error)) as BoxedCause)
+        };
+        Self {
+            id,
+            provides: vec![storage_capability()],
+            store: StoreSource::Configured(Box::new(open)),
+            built: std::sync::OnceLock::new(),
+            boot_timeout: DEFAULT_BOOT_TIMEOUT,
+            ready: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -160,7 +203,15 @@ impl<S: ObjectStore + 'static> Provider for StorageProvider<S> {
             if self.ready.load(Ordering::Acquire) {
                 return Err(Box::new(StorageBootError::AlreadyBooted) as BoxedCause);
             }
-            let probed = tokio::time::timeout(self.boot_timeout, self.store.probe()).await;
+            let store = match &self.store {
+                StoreSource::Given(store) => Arc::clone(store),
+                StoreSource::Configured(open) => {
+                    let store = open()?;
+                    let _ = self.built.set(Arc::clone(&store));
+                    store
+                }
+            };
+            let probed = tokio::time::timeout(self.boot_timeout, store.probe()).await;
             let outcome = match probed {
                 Ok(Ok(())) => Ok(()),
                 Ok(Err(error)) => Err(StorageBootError::from(error)),
@@ -176,7 +227,7 @@ impl<S: ObjectStore + 'static> Provider for StorageProvider<S> {
                 return Err(Box::new(error) as BoxedCause);
             }
             context
-                .register_state(Arc::clone(&self.store))
+                .register_state(store)
                 .map_err(|error| Box::new(error) as BoxedCause)?;
             context.register_readiness(Arc::new(StorageReadiness {
                 name: self.id.as_str().to_owned(),

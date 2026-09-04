@@ -15,13 +15,42 @@
 //! store return bytes nobody stored. Links in **intermediate** directories inside the root are
 //! resolved by the capability within the sandbox; that residual is stated here.
 //!
-//! # Writes are atomic
+//! # Writes are atomic, and one rename carries the bytes and the content type together
 //!
-//! An object is written to a temporary file in its destination directory and renamed into place
-//! (`cap_tempfile::TempFile::replace`), so a reader sees the old object or the new one and never a
-//! partial one. The content type is a small sidecar under a separate tree (`meta/`), written
-//! before the bytes; a crash between the two leaves a sidecar without an object, and `head`
-//! answers from the object tree first so an orphaned sidecar is invisible.
+//! One object is **one file** under `objects/`: a small header, then the bytes.
+//!
+//! ```text
+//! "RVO1"                 4 bytes   the magic
+//! content-type length    2 bytes   big-endian u16; 0 when there is no content type
+//! content type           n bytes   at most 255 (C-C2, `MAX_CONTENT_TYPE_BYTES`)
+//! the object's bytes     the rest of the file
+//! ```
+//!
+//! The file is written to a temporary name in its destination directory and renamed into place
+//! (`cap_tempfile::TempFile::replace`), so a reader sees the old object or the new one and never
+//! a partial one — and, because the content type travels in the same file, never one writer's
+//! bytes with another writer's content type. That is C-C5 for this port: `put` is
+//! last-writer-wins, **whole, never interleaved**. The earlier layout kept the content type in a
+//! sidecar under a second tree, written by a second rename; two concurrent writers interleaved
+//! the two renames and a reader could pair writer A's bytes with writer B's content type (Codex
+//! finding 13). Two files cannot be replaced by one rename; one file can.
+//!
+//! `head` reads only the header — at most 4 + 2 + 255 bytes, whatever the object's size — and
+//! reports the file's length minus the header's. `get` reads the header, checks the bound against
+//! the **body's** length before reading a byte of it (the bound on read stays, and the header is
+//! the adapter's, not the caller's), then reads the rest. Every read comes from the one handle
+//! opened for the operation, so a `put` that lands mid-read replaces the name, not the bytes the
+//! reader is holding.
+//!
+//! A file that does not decode — a bad magic, a header the file ends inside, a content-type
+//! length past the bound, a content type that fails the grammar — is corrupt: `head` and `get`
+//! answer [`StorageError::Unavailable`] and emit one `ERROR` event on [`STORAGE_EVENT_TARGET`]
+//! carrying a closed reason and nothing else (FR-063). `delete` removes the file whatever it
+//! holds, so a corrupt object is not a trap.
+//!
+//! **Pre-release: no compatibility with the earlier two-tree layout is promised or provided.** A
+//! root written by that layout holds unframed objects, which this adapter reports as corrupt,
+//! beside a `meta/` tree it never reads.
 //!
 //! # Blocking I/O, bounded
 //!
@@ -30,20 +59,20 @@
 //!
 //! # What reaches the log
 //!
-//! Nothing from a path or a key. Every `io::Error` is classified into the closed
+//! Nothing from a path, a key, or a file. Every `io::Error` is classified into the closed
 //! [`StorageError`] by its kind and never rendered (FR-063).
 
-use std::io::{self, Write as _};
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cap_std::ambient_authority;
-use cap_std::fs::Dir;
+use cap_std::fs::{Dir, File};
 
 use crate::port::{
-    ContentType, Deleted, Object, ObjectKey, ObjectMeta, ObjectStore, STORAGE_EVENT_TARGET,
-    StorageBounds, StorageError, StorageMetrics, StorageRefusal,
+    ContentType, Deleted, MAX_CONTENT_TYPE_BYTES, Object, ObjectKey, ObjectMeta, ObjectStore,
+    STORAGE_EVENT_TARGET, StorageBounds, StorageError, StorageMetrics, StorageRefusal,
 };
 
 /// The backend label in metrics and events.
@@ -54,10 +83,10 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const TIMEOUT_RANGE: (Duration, Duration) = (Duration::from_secs(1), Duration::from_secs(600));
 /// The subdirectory objects live under.
 const OBJECTS: &str = "objects";
-/// The subdirectory content-type sidecars live under.
-const META: &str = "meta";
-/// The most bytes a sidecar is allowed to be when read back.
-const MAX_SIDECAR_BYTES: u64 = 512;
+/// The first bytes of every object file.
+const MAGIC: [u8; 4] = *b"RVO1";
+/// The fixed part of the header: the magic and the big-endian content-type length.
+const FIXED_HEADER_BYTES: usize = MAGIC.len() + 2;
 
 /// Settings for the filesystem adapter.
 #[derive(Clone)]
@@ -112,6 +141,42 @@ fn classify(error: &io::Error) -> StorageError {
     }
 }
 
+/// Why an object file could not be decoded. **Closed**: the event carries the label and never
+/// the key, the path, or a byte of the file.
+#[derive(Clone, Copy, Debug)]
+enum Corruption {
+    /// The file does not begin with the magic.
+    BadMagic,
+    /// The file ends inside the header it declares, or inside the body it was measured to hold.
+    Truncated,
+    /// The header claims a content type longer than the bound (C-C2).
+    ContentTypeTooLong,
+    /// The header's content type fails the media-type grammar.
+    ContentTypeInvalid,
+}
+
+impl Corruption {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::BadMagic => "bad_magic",
+            Self::Truncated => "truncated",
+            Self::ContentTypeTooLong => "content_type_too_long",
+            Self::ContentTypeInvalid => "content_type_invalid",
+        }
+    }
+}
+
+/// Reports a corrupt object file: one fixed event with closed fields, then `Unavailable`.
+fn corrupt(reason: Corruption) -> StorageError {
+    tracing::error!(
+        target: STORAGE_EVENT_TARGET,
+        backend = BACKEND,
+        reason = reason.as_str(),
+        "an object file does not decode; the object is unreadable"
+    );
+    StorageError::Unavailable
+}
+
 /// The relative path a key maps to under a tree: the segments joined by `/`, which `cap-std`
 /// resolves on every platform.
 fn relative(tree: &str, key: &ObjectKey) -> PathBuf {
@@ -132,8 +197,28 @@ fn present_not_link(dir: &Dir, path: &Path) -> Result<bool, StorageError> {
     }
 }
 
-/// Writes `bytes` atomically at `path` under `dir`: temporary file beside it, then rename.
-fn write_atomically(dir: &Dir, path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+/// The header for `content_type`: the magic, the big-endian length, the media type.
+fn header(content_type: Option<&ContentType>) -> Result<Vec<u8>, StorageError> {
+    let text = content_type.map_or("", ContentType::as_str).as_bytes();
+    // `ContentType::new` bounds the text at `MAX_CONTENT_TYPE_BYTES` (C-C2), so the length fits
+    // the field; a value that did not would be a defect in the port, refused rather than written.
+    let length = u16::try_from(text.len())
+        .map_err(|_| StorageError::Refused(StorageRefusal::ContentTypeInvalid))?;
+    let mut header = Vec::with_capacity(FIXED_HEADER_BYTES + text.len());
+    header.extend_from_slice(&MAGIC);
+    header.extend_from_slice(&length.to_be_bytes());
+    header.extend_from_slice(text);
+    Ok(header)
+}
+
+/// Writes one object file at `path` under `dir` — the header, then `bytes` — to a temporary name
+/// beside it and renames it into place, so one rename carries the content type and the bytes.
+fn write_atomically(
+    dir: &Dir,
+    path: &Path,
+    content_type: Option<&ContentType>,
+    bytes: &[u8],
+) -> Result<(), StorageError> {
     let (parent, name) = match (path.parent(), path.file_name()) {
         (Some(parent), Some(name)) => (parent, name),
         _ => return Err(StorageError::Refused(StorageRefusal::KeyInvalid)),
@@ -147,12 +232,75 @@ fn write_atomically(dir: &Dir, path: &Path, bytes: &[u8]) -> Result<(), StorageE
     } else {
         dir.open_dir(parent).map_err(|error| classify(&error))?
     };
+    let header = header(content_type)?;
     let mut temporary = cap_tempfile::TempFile::new(&target).map_err(|error| classify(&error))?;
     temporary
-        .write_all(bytes)
+        .write_all(&header)
+        .and_then(|()| temporary.write_all(bytes))
         .and_then(|()| temporary.flush())
         .map_err(|error| classify(&error))?;
     temporary.replace(name).map_err(|error| classify(&error))
+}
+
+/// Opens the object at `path` for reading and measures it through the handle, so the length and
+/// every read that follows describe one version of the file even while a `put` replaces the
+/// name. `Ok(None)` when absent; `Denied` when a symbolic link.
+fn open_object(dir: &Dir, path: &Path) -> Result<Option<(File, u64)>, StorageError> {
+    if !present_not_link(dir, path)? {
+        return Ok(None);
+    }
+    let file = match dir.open(path) {
+        Ok(file) => file,
+        // Removed between the check and the open: absent, not a failure.
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(classify(&error)),
+    };
+    let length = file.metadata().map_err(|error| classify(&error))?.len();
+    Ok(Some((file, length)))
+}
+
+/// Fills `buffer` from `file`; a file that ends first is truncated.
+fn read_fully(file: &mut File, buffer: &mut [u8]) -> Result<(), StorageError> {
+    file.read_exact(buffer).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            corrupt(Corruption::Truncated)
+        } else {
+            classify(&error)
+        }
+    })
+}
+
+/// Reads the header from the front of an open object file — at most `FIXED_HEADER_BYTES +
+/// MAX_CONTENT_TYPE_BYTES` bytes, whatever the file's length — and returns its length in bytes
+/// with the content type it carries.
+fn read_header(file: &mut File) -> Result<(u64, Option<ContentType>), StorageError> {
+    let mut fixed = [0u8; FIXED_HEADER_BYTES];
+    read_fully(file, &mut fixed)?;
+    if fixed[..MAGIC.len()] != MAGIC {
+        return Err(corrupt(Corruption::BadMagic));
+    }
+    let length = usize::from(u16::from_be_bytes([fixed[4], fixed[5]]));
+    if length > MAX_CONTENT_TYPE_BYTES {
+        return Err(corrupt(Corruption::ContentTypeTooLong));
+    }
+    let content_type = if length == 0 {
+        None
+    } else {
+        let mut raw = [0u8; MAX_CONTENT_TYPE_BYTES];
+        read_fully(file, &mut raw[..length])?;
+        let text = core::str::from_utf8(&raw[..length])
+            .map_err(|_| corrupt(Corruption::ContentTypeInvalid))?;
+        Some(ContentType::new(text).map_err(|_| corrupt(Corruption::ContentTypeInvalid))?)
+    };
+    Ok(((FIXED_HEADER_BYTES + length) as u64, content_type))
+}
+
+/// The body's length: the file's length less the header's. A file measured shorter than the
+/// header it was just read from was truncated under the reader.
+fn body_length(file_length: u64, header_length: u64) -> Result<u64, StorageError> {
+    file_length
+        .checked_sub(header_length)
+        .ok_or_else(|| corrupt(Corruption::Truncated))
 }
 
 /// An object store rooted in one directory.
@@ -253,40 +401,34 @@ impl ObjectStore for FilesystemStore {
     ) -> Result<(), StorageError> {
         self.bounds.check(bytes.len() as u64)?;
         let object = relative(OBJECTS, key);
-        let meta = relative(META, key);
         self.run("put", move |dir| {
             present_not_link(dir, &object)?;
-            match content_type {
-                Some(content_type) => {
-                    write_atomically(dir, &meta, content_type.as_str().as_bytes())?
-                }
-                None => match dir.remove_file(&meta) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(classify(&error)),
-                },
-            }
-            write_atomically(dir, &object, &bytes)
+            write_atomically(dir, &object, content_type.as_ref(), &bytes)
         })
         .await
     }
 
     async fn get(&self, key: &ObjectKey) -> Result<Option<Object>, StorageError> {
         let object = relative(OBJECTS, key);
-        let meta = relative(META, key);
         let bounds = self.bounds;
         self.run("get", move |dir| {
-            if !present_not_link(dir, &object)? {
+            let Some((mut file, length)) = open_object(dir, &object)? else {
                 return Ok(None);
-            }
-            let size = dir
-                .metadata(&object)
-                .map_err(|error| classify(&error))?
-                .len();
-            // The bound on read: a file grown past the ceiling by something else is refused.
+            };
+            let (header, content_type) = read_header(&mut file)?;
+            let size = body_length(length, header)?;
+            // The bound on read, against the body: a file grown past the ceiling by something
+            // else is refused before a byte of the body is read.
             bounds.check(size)?;
-            let bytes = dir.read(&object).map_err(|error| classify(&error))?;
-            let content_type = read_sidecar(dir, &meta)?;
+            // A capacity hint only; the bound has already held the size to at most 1 GiB.
+            let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+            io::Read::by_ref(&mut file)
+                .take(size)
+                .read_to_end(&mut bytes)
+                .map_err(|error| classify(&error))?;
+            if bytes.len() as u64 != size {
+                return Err(corrupt(Corruption::Truncated));
+            }
             Ok(Some(Object {
                 bytes,
                 content_type,
@@ -297,16 +439,12 @@ impl ObjectStore for FilesystemStore {
 
     async fn head(&self, key: &ObjectKey) -> Result<Option<ObjectMeta>, StorageError> {
         let object = relative(OBJECTS, key);
-        let meta = relative(META, key);
         self.run("head", move |dir| {
-            if !present_not_link(dir, &object)? {
+            let Some((mut file, length)) = open_object(dir, &object)? else {
                 return Ok(None);
-            }
-            let size = dir
-                .metadata(&object)
-                .map_err(|error| classify(&error))?
-                .len();
-            let content_type = read_sidecar(dir, &meta)?;
+            };
+            let (header, content_type) = read_header(&mut file)?;
+            let size = body_length(length, header)?;
             Ok(Some(ObjectMeta { size, content_type }))
         })
         .await
@@ -314,16 +452,16 @@ impl ObjectStore for FilesystemStore {
 
     async fn delete(&self, key: &ObjectKey) -> Result<Deleted, StorageError> {
         let object = relative(OBJECTS, key);
-        let meta = relative(META, key);
         self.run("delete", move |dir| {
             if !present_not_link(dir, &object)? {
                 return Ok(Deleted::Absent);
             }
-            dir.remove_file(&object).map_err(|error| classify(&error))?;
-            match dir.remove_file(&meta) {
-                Ok(()) | Err(_) => {}
+            match dir.remove_file(&object) {
+                Ok(()) => Ok(Deleted::Deleted),
+                // Removed between the check and the removal: absent, not a failure.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Deleted::Absent),
+                Err(error) => Err(classify(&error)),
             }
-            Ok(Deleted::Deleted)
         })
         .await
     }
@@ -333,7 +471,6 @@ impl ObjectStore for FilesystemStore {
         // directory this process may write in, and has room for one small file (FR-060).
         self.run("probe", |dir| {
             dir.create_dir_all(OBJECTS)
-                .and_then(|()| dir.create_dir_all(META))
                 .map_err(|error| classify(&error))?;
             let mut temporary =
                 cap_tempfile::TempFile::new(dir).map_err(|error| classify(&error))?;
@@ -346,20 +483,4 @@ impl ObjectStore for FilesystemStore {
         })
         .await
     }
-}
-
-/// The content type recorded beside an object, if the sidecar is present and still valid.
-fn read_sidecar(dir: &Dir, meta: &Path) -> Result<Option<ContentType>, StorageError> {
-    match dir.symlink_metadata(meta) {
-        Ok(found) if found.is_symlink() => return Err(StorageError::Denied),
-        Ok(found) if found.len() > MAX_SIDECAR_BYTES => return Ok(None),
-        Ok(_) => {}
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(classify(&error)),
-    }
-    let bytes = dir.read(meta).map_err(|error| classify(&error))?;
-    // A sidecar that no longer parses is treated as absent: the object is still the object.
-    Ok(core::str::from_utf8(&bytes)
-        .ok()
-        .and_then(|text| ContentType::new(text).ok()))
 }
