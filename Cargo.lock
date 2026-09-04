@@ -3103,6 +3103,7 @@ dependencies = [
  "renvor-config",
  "renvor-core",
  "rustls",
+ "serde",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3205,7 +3206,9 @@ dependencies = [
 name = "renvor-jobs"
 version = "0.0.0"
 dependencies = [
+ "renvor-config",
  "renvor-core",
+ "serde",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
@@ -3219,6 +3222,7 @@ dependencies = [
  "renvor-auth",
  "renvor-config",
  "renvor-core",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -3245,6 +3249,7 @@ dependencies = [
  "renvor-core",
  "renvor-http",
  "rustls",
+ "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -3305,7 +3310,9 @@ version = "0.0.0"
 dependencies = [
  "cap-std",
  "cap-tempfile",
+ "renvor-config",
  "renvor-core",
+ "serde",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",

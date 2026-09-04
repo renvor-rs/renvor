@@ -1,12 +1,29 @@
 //! The Valkey adapter: RESP over `redis` 1.6.0 with native roots, bounded reconnection, and no
 //! fallback (ADR-0033).
 //!
-//! # The credential travels once, into the client, and nowhere else
+//! # The credential is a field, never part of an address
 //!
-//! The URL in `ValkeySettings` is a `renvor_config::Secret`; it is exposed exactly once, to build the client, and
-//! no `Debug`, `Display`, error, or event in this module renders it. The redis crate's own error
-//! type can carry the server's reply text and the address it tried, so every `RedisError` is
-//! mapped to a closed [`CacheError`] or [`CacheBootError`] **by category** and dropped.
+//! [`ValkeySettings`](crate::valkey::ValkeySettings) takes a
+//! [`ValkeyEndpoint`](crate::valkey::ValkeyEndpoint) (host, port, database, TLS or not) and,
+//! apart from it, an optional [`ValkeyCredentials`](crate::valkey::ValkeyCredentials) whose
+//! password is a `renvor_config::Secret`. There is no URL form: constitution VI says a secret
+//! enters no URL, and a `redis://:password@host` string is a URL with a secret in it whatever
+//! type wraps it. The password is exposed exactly once, into the driver's connection settings,
+//! and no `Debug`, `Display`, error, or event in this module renders it. The redis crate's own
+//! error type can carry the server's reply text and the address it tried, so every `RedisError`
+//! is mapped to a closed [`CacheError`] or [`CacheBootError`] **by category** and dropped.
+//!
+//! # TLS by default; plaintext is a double opt-in (C-C7)
+//!
+//! [`ValkeyEndpoint::tls`](crate::valkey::ValkeyEndpoint::tls) is the constructor an
+//! application reaches for. A [`ValkeyEndpoint::plaintext`](crate::valkey::ValkeyEndpoint::plaintext)
+//! endpoint is accepted only when the host is loopback **and**
+//! [`ValkeySettings::with_allow_insecure_loopback`](crate::valkey::ValkeySettings::with_allow_insecure_loopback)
+//! was set — both, so a development server on `127.0.0.1` works and a plaintext session to
+//! anything else is refused at the settings boundary, before a socket exists, as
+//! [`CacheBootError::PlaintextRefused`]. The same rule the SMTP adapter applies (FR-047),
+//! applied here because the threat model names a plaintext RESP session to a non-loopback host
+//! as the failure (TB-5).
 //!
 //! # Reconnection is bounded and configured, and an operation during it fails loudly
 //!
@@ -28,6 +45,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+use redis::IntoConnectionInfo as _;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use renvor_config::Secret;
 use renvor_core::error::BoxedCause;
@@ -59,20 +77,20 @@ pub struct ReconnectBounds {
 
 impl Default for ReconnectBounds {
     fn default() -> Self {
-        Self {
-            attempts: 6,
-            min_delay: Duration::from_millis(100),
-            max_delay: Duration::from_secs(5),
-            connect_timeout: Duration::from_secs(5),
-        }
+        Self::new()
     }
 }
 
 impl ReconnectBounds {
     /// The documented defaults: 6 attempts, 100 ms → 5 s, 5 s connect timeout.
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub const fn new() -> Self {
+        Self {
+            attempts: 6,
+            min_delay: Duration::from_millis(100),
+            max_delay: Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(5),
+        }
     }
 
     /// Replaces every bound, refusing any outside its cap.
@@ -110,25 +128,210 @@ impl ReconnectBounds {
     }
 }
 
-/// Everything the adapter needs. The URL is the only secret and is wrapped.
+/// The most bytes a host may carry: a DNS name's limit.
+pub const MAX_HOST_BYTES: usize = 253;
+/// The most bytes a username may carry.
+pub const MAX_USERNAME_BYTES: usize = 256;
+
+/// `[a-z0-9.-]{1,253}` with no leading or trailing dot, or an IP literal.
+fn valid_host(host: &str) -> bool {
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return true;
+    }
+    let bytes = host.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= MAX_HOST_BYTES
+        && !host.starts_with('.')
+        && !host.ends_with('.')
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'-')
+        })
+}
+
+/// True for `localhost`, `127.0.0.0/8`, and `::1`.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// Where the server is and whether the session is encrypted. **No credential lives here.**
+#[derive(Clone, PartialEq, Eq)]
+pub struct ValkeyEndpoint {
+    host: String,
+    port: u16,
+    database: u8,
+    tls: bool,
+}
+
+impl core::fmt::Debug for ValkeyEndpoint {
+    /// Encryption and database only. The host and port are an operator's address.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ValkeyEndpoint")
+            .field("tls", &self.tls)
+            .field("database", &self.database)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ValkeyEndpoint {
+    fn new(host: &str, port: u16, tls: bool) -> Result<Self, CacheError> {
+        if !valid_host(host) || port == 0 {
+            return Err(CacheError::Refused(Refusal::EndpointInvalid));
+        }
+        Ok(Self {
+            host: host.to_owned(),
+            port,
+            database: 0,
+            tls,
+        })
+    }
+
+    /// A TLS session to `host:port`, verified against the native root store. The default.
+    ///
+    /// # Errors
+    ///
+    /// [`CacheError::Refused`] with [`Refusal::EndpointInvalid`] for a host that is not a
+    /// lowercase DNS name or an IP literal, or a port of zero.
+    pub fn tls(host: &str, port: u16) -> Result<Self, CacheError> {
+        Self::new(host, port, true)
+    }
+
+    /// A plaintext session to `host:port`. Accepted at Boot **only** when the host is loopback
+    /// and the settings say [`ValkeySettings::with_allow_insecure_loopback`] (C-C7).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::tls`].
+    pub fn plaintext(host: &str, port: u16) -> Result<Self, CacheError> {
+        Self::new(host, port, false)
+    }
+
+    /// Selects a logical database (`SELECT`); `0` by default.
+    #[must_use]
+    pub const fn with_database(mut self, database: u8) -> Self {
+        self.database = database;
+        self
+    }
+
+    /// The host.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// The port.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The logical database.
+    #[must_use]
+    pub const fn database(&self) -> u8 {
+        self.database
+    }
+
+    /// Whether the session is TLS.
+    #[must_use]
+    pub const fn is_tls(&self) -> bool {
+        self.tls
+    }
+
+    /// Whether the host is a loopback address or `localhost`.
+    #[must_use]
+    pub fn is_loopback(&self) -> bool {
+        is_loopback(&self.host)
+    }
+
+    fn address(&self) -> redis::ConnectionAddr {
+        if self.tls {
+            redis::ConnectionAddr::TcpTls {
+                host: self.host.clone(),
+                port: self.port,
+                insecure: false,
+                tls_params: None,
+            }
+        } else {
+            redis::ConnectionAddr::Tcp(self.host.clone(), self.port)
+        }
+    }
+}
+
+/// What the client authenticates with: an optional ACL username and a password.
+pub struct ValkeyCredentials {
+    username: Option<String>,
+    password: Secret<String>,
+}
+
+impl core::fmt::Debug for ValkeyCredentials {
+    /// Whether a username is set. Never the username, never the password.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ValkeyCredentials")
+            .field("username", &self.username.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ValkeyCredentials {
+    /// A password for the default user (`AUTH <password>`).
+    #[must_use]
+    pub const fn password(password: Secret<String>) -> Self {
+        Self {
+            username: None,
+            password,
+        }
+    }
+
+    /// An ACL username to authenticate as (`AUTH <username> <password>`).
+    ///
+    /// # Errors
+    ///
+    /// [`CacheError::Refused`] with [`Refusal::CredentialInvalid`] for an empty username, one over
+    /// [`MAX_USERNAME_BYTES`], or one holding a control character or whitespace.
+    pub fn with_username(mut self, username: &str) -> Result<Self, CacheError> {
+        let valid = !username.is_empty()
+            && username.len() <= MAX_USERNAME_BYTES
+            && !username
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace());
+        if !valid {
+            return Err(CacheError::Refused(Refusal::CredentialInvalid));
+        }
+        self.username = Some(username.to_owned());
+        Ok(self)
+    }
+}
+
+/// Everything the adapter needs. The password inside the credentials is the only secret.
 #[derive(Debug)]
 pub struct ValkeySettings {
-    url: Secret<String>,
+    endpoint: ValkeyEndpoint,
+    credentials: Option<ValkeyCredentials>,
     namespace: Namespace,
     bounds: CacheBounds,
     reconnect: ReconnectBounds,
+    allow_insecure_loopback: bool,
 }
 
 impl ValkeySettings {
-    /// Builds settings. `url` is a `redis://` or `rediss://` URL carrying the credential; it is
-    /// a [`Secret`] so that it can be neither printed nor serialised.
+    /// Builds settings. Nothing is connected and nothing is checked against the network here;
+    /// [`Self::validate`] is the settings rule, and `connect` applies it first.
     #[must_use]
-    pub fn new(url: Secret<String>, namespace: Namespace, bounds: CacheBounds) -> Self {
+    pub const fn new(
+        endpoint: ValkeyEndpoint,
+        credentials: Option<ValkeyCredentials>,
+        namespace: Namespace,
+        bounds: CacheBounds,
+    ) -> Self {
         Self {
-            url,
+            endpoint,
+            credentials,
             namespace,
             bounds,
-            reconnect: ReconnectBounds::default(),
+            reconnect: ReconnectBounds::new(),
+            allow_insecure_loopback: false,
         }
     }
 
@@ -139,10 +342,55 @@ impl ValkeySettings {
         self
     }
 
+    /// Permits a plaintext session **to a loopback host only**. Off by default (C-C7).
+    #[must_use]
+    pub const fn with_allow_insecure_loopback(mut self, allow: bool) -> Self {
+        self.allow_insecure_loopback = allow;
+        self
+    }
+
+    /// The settings rule, applied before any socket: a plaintext endpoint is accepted only when
+    /// its host is loopback **and** the opt-in was given.
+    ///
+    /// # Errors
+    ///
+    /// [`CacheBootError::PlaintextRefused`].
+    pub fn validate(&self) -> Result<(), CacheBootError> {
+        let plaintext_permitted = self.allow_insecure_loopback && self.endpoint.is_loopback();
+        if !self.endpoint.tls && !plaintext_permitted {
+            return Err(CacheBootError::PlaintextRefused);
+        }
+        Ok(())
+    }
+
+    /// The endpoint.
+    #[must_use]
+    pub const fn endpoint(&self) -> &ValkeyEndpoint {
+        &self.endpoint
+    }
+
     /// The operation bounds.
     #[must_use]
     pub const fn bounds(&self) -> &CacheBounds {
         &self.bounds
+    }
+
+    /// The driver's connection settings: the address, the database, and the credential exposed
+    /// **once**, here.
+    fn connection_info(&self) -> Result<redis::ConnectionInfo, CacheBootError> {
+        let mut redis_settings =
+            redis::RedisConnectionInfo::default().set_db(i64::from(self.endpoint.database));
+        if let Some(credentials) = &self.credentials {
+            if let Some(username) = &credentials.username {
+                redis_settings = redis_settings.set_username(username);
+            }
+            redis_settings = redis_settings.set_password(credentials.password.expose());
+        }
+        self.endpoint
+            .address()
+            .into_connection_info()
+            .map(|info| info.set_redis_settings(redis_settings))
+            .map_err(|_| CacheBootError::InvalidAddress)
     }
 }
 
@@ -186,7 +434,10 @@ impl ValkeyCache {
     /// A [`CacheBootError`] naming the phase and the category — never the address or the
     /// credential.
     pub async fn connect(settings: &ValkeySettings) -> Result<Self, CacheBootError> {
-        let client = redis::Client::open(settings.url.expose().as_str())
+        // The settings rule first, before any socket: a plaintext session that the rule refuses
+        // never reaches the transport probe below (C-C7).
+        settings.validate()?;
+        let client = redis::Client::open(settings.connection_info()?)
             .map_err(|_| CacheBootError::InvalidAddress)?;
 
         // The transport probe first: a bounded plain TCP connect to the address. The driver
@@ -445,9 +696,16 @@ impl Cache for ValkeyCache {
 pub struct ValkeyProvider {
     id: ProviderId,
     provides: Vec<CapabilityId>,
-    settings: ValkeySettings,
+    settings: SettingsSource,
     cache: OnceLock<Arc<ValkeyCache>>,
     ready: Arc<AtomicBool>,
+}
+
+/// Where the provider's settings come from: built in code, or read at Boot from the typed
+/// section the kernel validated.
+enum SettingsSource {
+    Given(Box<ValkeySettings>),
+    Configured(renvor_config::ConfigHandle<crate::config::CacheSection>),
 }
 
 impl core::fmt::Debug for ValkeyProvider {
@@ -468,7 +726,24 @@ impl ValkeyProvider {
         Self {
             id,
             provides: vec![cache_capability()],
-            settings,
+            settings: SettingsSource::Given(Box::new(settings)),
+            cache: OnceLock::new(),
+            ready: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Declares a provider whose settings are the typed `[cache]` section behind `handle`
+    /// (FR-011). The section was validated by the kernel before Boot; the handle is read here at
+    /// Boot, which is the first moment the resolved value exists.
+    #[must_use]
+    pub fn from_config(
+        id: ProviderId,
+        handle: renvor_config::ConfigHandle<crate::config::CacheSection>,
+    ) -> Self {
+        Self {
+            id,
+            provides: vec![cache_capability()],
+            settings: SettingsSource::Configured(handle),
             cache: OnceLock::new(),
             ready: Arc::new(AtomicBool::new(false)),
         }
@@ -492,7 +767,16 @@ impl Provider for ValkeyProvider {
 
     fn initialise<'a>(&'a self, context: &'a mut InitContext<'_>) -> ProviderFuture<'a> {
         Box::pin(async move {
-            let cache = ValkeyCache::connect(&self.settings)
+            let configured;
+            let settings = match &self.settings {
+                SettingsSource::Given(settings) => settings.as_ref(),
+                SettingsSource::Configured(handle) => {
+                    configured = crate::config::settings_from_handle(handle)
+                        .map_err(|error| Box::new(error) as BoxedCause)?;
+                    &configured
+                }
+            };
+            let cache = ValkeyCache::connect(settings)
                 .await
                 .map(Arc::new)
                 .map_err(|error| Box::new(error) as BoxedCause)?;
@@ -552,9 +836,10 @@ impl ReadinessContributor for ValkeyProvider {
 mod tests {
     use super::{
         MAX_CONNECT_TIMEOUT, MAX_RECONNECT_ATTEMPTS, MAX_RECONNECT_DELAY, ReconnectBounds,
-        ValkeySettings,
+        ValkeyCredentials, ValkeyEndpoint, ValkeySettings,
     };
     use crate::port::{CacheBounds, CacheError, Namespace, Refusal};
+    use crate::provider::CacheBootError;
     use renvor_config::Secret;
     use std::time::Duration;
 
@@ -618,26 +903,140 @@ mod tests {
         }
     }
 
-    #[test]
-    fn settings_debug_never_renders_the_url() {
-        let settings = ValkeySettings::new(
-            Secret::new(
-                "cache.url",
-                "redis://:hunter2CanaryDoNotLeak@127.0.0.1:6379/0".to_owned(),
-            ),
+    fn settings(endpoint: ValkeyEndpoint) -> ValkeySettings {
+        ValkeySettings::new(
+            endpoint,
+            Some(ValkeyCredentials::password(Secret::new(
+                "cache.password",
+                "hunter2CanaryDoNotLeak".to_owned(),
+            ))),
             Namespace::new("app").unwrap(),
             CacheBounds::new(),
+        )
+    }
+
+    #[test]
+    fn a_plaintext_endpoint_to_a_non_loopback_host_is_refused_even_with_the_opt_in() {
+        // C-C7: plaintext is a DOUBLE opt-in. The flag alone does not open a plaintext session to
+        // a host that is not loopback — that would make one configuration line the difference
+        // between an encrypted and a cleartext credential on the wire.
+        let refused = settings(ValkeyEndpoint::plaintext("cache.internal", 6379).unwrap())
+            .with_allow_insecure_loopback(true);
+        assert_eq!(
+            refused.validate().unwrap_err(),
+            CacheBootError::PlaintextRefused
         );
+        let refused = settings(ValkeyEndpoint::plaintext("192.0.2.10", 6379).unwrap())
+            .with_allow_insecure_loopback(true);
+        assert_eq!(
+            refused.validate().unwrap_err(),
+            CacheBootError::PlaintextRefused
+        );
+    }
+
+    #[test]
+    fn a_plaintext_endpoint_to_loopback_needs_the_opt_in() {
+        for (index, host) in ["127.0.0.1", "localhost", "::1", "127.1.2.3"]
+            .into_iter()
+            .enumerate()
+        {
+            let without = settings(ValkeyEndpoint::plaintext(host, 6379).unwrap());
+            assert_eq!(
+                without.validate().unwrap_err(),
+                CacheBootError::PlaintextRefused,
+                "loopback case {index} was accepted without the opt-in"
+            );
+            // POSITIVE CONTROL: loopback AND the opt-in is the one accepted plaintext shape.
+            let with = settings(ValkeyEndpoint::plaintext(host, 6379).unwrap())
+                .with_allow_insecure_loopback(true);
+            assert!(
+                with.validate().is_ok(),
+                "loopback case {index} was refused with the opt-in"
+            );
+        }
+    }
+
+    #[test]
+    fn a_tls_endpoint_needs_no_opt_in_anywhere() {
+        assert!(
+            settings(ValkeyEndpoint::tls("cache.internal", 6379).unwrap())
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            settings(ValkeyEndpoint::tls("127.0.0.1", 6379).unwrap())
+                .validate()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn endpoints_and_credentials_are_validated_at_construction() {
+        for (index, bad) in [
+            ("", 6379),
+            ("Cache.Internal", 6379),
+            ("cache.internal", 0),
+            ("cache internal", 6379),
+            (".cache", 6379),
+            ("cache\u{1}", 6379),
+            ("user@cache.internal", 6379),
+            (&"h".repeat(254), 6379),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                ValkeyEndpoint::tls(bad.0, bad.1).unwrap_err(),
+                CacheError::Refused(Refusal::EndpointInvalid),
+                "endpoint case {index} was accepted"
+            );
+        }
+        assert!(ValkeyEndpoint::tls("cache-1.internal", 6379).is_ok());
+        assert!(ValkeyEndpoint::tls("::1", 6379).is_ok());
+        assert_eq!(
+            ValkeyEndpoint::tls("h", 1)
+                .unwrap()
+                .with_database(3)
+                .database(),
+            3
+        );
+        let password = || Secret::new("cache.password", "x".to_owned());
+        for (index, bad) in ["", "a b", "a\u{1}", &"u".repeat(257)]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                ValkeyCredentials::password(password())
+                    .with_username(bad)
+                    .unwrap_err(),
+                CacheError::Refused(Refusal::CredentialInvalid),
+                "username case {index} was accepted"
+            );
+        }
+        assert!(
+            ValkeyCredentials::password(password())
+                .with_username("app-user")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn settings_debug_never_renders_the_credential_or_the_address() {
+        let settings = settings(ValkeyEndpoint::tls("127.0.0.1", 6379).unwrap());
         let rendered = format!("{settings:?}");
         assert!(
             !rendered.contains("hunter2"),
             "the credential leaked through Debug"
         );
         assert!(
-            !rendered.contains("127.0.0.1"),
+            !rendered.contains("127.0.0.1") && !rendered.contains("6379"),
             "the address leaked through Debug"
         );
-        // POSITIVE CONTROL: the namespace is shown.
+        // POSITIVE CONTROL: the namespace and the encryption are shown.
         assert!(rendered.contains("app"), "Debug did not show the namespace");
+        assert!(
+            rendered.contains("tls: true"),
+            "Debug did not show the encryption"
+        );
     }
 }

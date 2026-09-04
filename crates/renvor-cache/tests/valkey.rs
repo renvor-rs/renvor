@@ -2,11 +2,14 @@
 //!
 //! # A skipped test is never reported as a gate
 //!
-//! These tests need a running Valkey. Without `RENVOR_TEST_VALKEY_URL` they skip with a printed
-//! line — unless `RENVOR_TEST_REQUIRE_CAPABILITIES` is set, in which case a missing URL is a
-//! **failure**, for the reason the four-row database suites give: a run that silently skipped
-//! every real-server test would report the same `ok` as one that passed them. CI sets it; `xtask`
-//! step 1 refuses to run without it.
+//! These tests need a running Valkey, named by `RENVOR_TEST_VALKEY_URL` — `redis://host:port/db`
+//! or `rediss://…`, **without** a credential in it (a URL that carries one is refused by this
+//! suite, because constitution VI says a secret enters no URL) — and, when the server
+//! authenticates, `RENVOR_TEST_VALKEY_PASSWORD` (and optionally `RENVOR_TEST_VALKEY_USERNAME`).
+//! Without the URL they skip with a printed line — unless `RENVOR_TEST_REQUIRE_CAPABILITIES` is
+//! set, in which case a missing URL is a **failure**, for the reason the four-row database suites
+//! give: a run that silently skipped every real-server test would report the same `ok` as one
+//! that passed them. CI sets it; `xtask` step 1 refuses to run without it.
 //!
 //! # No sleep is used as synchronisation
 //!
@@ -19,7 +22,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use renvor_cache::valkey::{ReconnectBounds, ValkeyCache, ValkeyProvider, ValkeySettings};
+use renvor_cache::valkey::{
+    ReconnectBounds, ValkeyCache, ValkeyCredentials, ValkeyEndpoint, ValkeyProvider, ValkeySettings,
+};
 use renvor_cache::{
     Cache, CacheBootError, CacheBounds, CacheError, CacheKey, CacheValue, Deleted, Namespace,
     Refusal, Stored, Ttl,
@@ -29,13 +34,112 @@ use renvor_core::provider::ProviderId;
 use renvor_core::{ApplicationBuilder, Readiness};
 
 const URL: &str = "RENVOR_TEST_VALKEY_URL";
+const PASSWORD: &str = "RENVOR_TEST_VALKEY_PASSWORD";
+const USERNAME: &str = "RENVOR_TEST_VALKEY_USERNAME";
 const REQUIRE: &str = "RENVOR_TEST_REQUIRE_CAPABILITIES";
 
-/// The server URL, or `None` after printing why the test is skipped — or a panic when a server
-/// was required.
-fn url() -> Option<String> {
+/// Where the test server is: the endpoint from the URL and the credential from its own variable.
+struct Server {
+    endpoint: ValkeyEndpoint,
+    password: Option<String>,
+    username: Option<String>,
+}
+
+impl Server {
+    fn credentials(&self) -> Option<ValkeyCredentials> {
+        let password = self.password.as_ref()?;
+        let credentials =
+            ValkeyCredentials::password(Secret::new("cache.password", password.clone()));
+        Some(match &self.username {
+            Some(username) => credentials
+                .with_username(username)
+                .expect("a valid username"),
+            None => credentials,
+        })
+    }
+
+    /// A raw driver client with the same endpoint and credential, for looking at what the
+    /// adapter stored. Built from parts, never from a URL with a credential.
+    fn raw_client(&self) -> redis::Client {
+        use redis::IntoConnectionInfo as _;
+        let address = if self.endpoint.is_tls() {
+            redis::ConnectionAddr::TcpTls {
+                host: self.endpoint.host().to_owned(),
+                port: self.endpoint.port(),
+                insecure: false,
+                tls_params: None,
+            }
+        } else {
+            redis::ConnectionAddr::Tcp(self.endpoint.host().to_owned(), self.endpoint.port())
+        };
+        let mut redis_settings =
+            redis::RedisConnectionInfo::default().set_db(i64::from(self.endpoint.database()));
+        if let Some(username) = &self.username {
+            redis_settings = redis_settings.set_username(username);
+        }
+        if let Some(password) = &self.password {
+            redis_settings = redis_settings.set_password(password);
+        }
+        redis::Client::open(
+            address
+                .into_connection_info()
+                .expect("a valid address")
+                .set_redis_settings(redis_settings),
+        )
+        .expect("a valid client")
+    }
+}
+
+/// Parses `redis://host:port/db` or `rediss://host:port/db`. A credential in the URL is refused.
+fn parse_endpoint(url: &str) -> ValkeyEndpoint {
+    let (scheme, rest) = url.split_once("://").expect("a scheme in the test url");
+    let tls = match scheme {
+        "redis" => false,
+        "rediss" => true,
+        other => panic!("unsupported scheme in the test url: {other}"),
+    };
+    assert!(
+        !rest.contains('@'),
+        "{URL} must not carry a credential; set {PASSWORD} instead"
+    );
+    let (authority, database) = match rest.split_once('/') {
+        Some((authority, database)) => (authority, database),
+        None => (rest, "0"),
+    };
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(bracketed) => {
+            let (literal, after) = bracketed.split_once(']').expect("a closing bracket");
+            (literal, after.strip_prefix(':').unwrap_or("6379"))
+        }
+        None => authority.split_once(':').unwrap_or((authority, "6379")),
+    };
+    let port: u16 = port.parse().expect("a port in the test url");
+    let database: u8 = if database.is_empty() {
+        0
+    } else {
+        database.parse().expect("a database index in the test url")
+    };
+    let endpoint = if tls {
+        ValkeyEndpoint::tls(host, port)
+    } else {
+        ValkeyEndpoint::plaintext(host, port)
+    };
+    endpoint.expect("a valid endpoint").with_database(database)
+}
+
+/// The server, or `None` after printing why the test is skipped — or a panic when a server was
+/// required.
+fn server() -> Option<Server> {
     match std::env::var(URL) {
-        Ok(value) if !value.is_empty() => Some(value),
+        Ok(value) if !value.is_empty() => Some(Server {
+            endpoint: parse_endpoint(&value),
+            password: std::env::var(PASSWORD)
+                .ok()
+                .filter(|value| !value.is_empty()),
+            username: std::env::var(USERNAME)
+                .ok()
+                .filter(|value| !value.is_empty()),
+        }),
         _ => {
             assert!(
                 std::env::var(REQUIRE).is_err(),
@@ -60,12 +164,16 @@ fn namespace(test: &str) -> Namespace {
     .expect("a valid namespace")
 }
 
-fn settings(url: &str, test: &str, bounds: CacheBounds) -> ValkeySettings {
+/// Settings for the test server. The test server is a loopback plaintext sink, so the opt-in
+/// is given here — explicitly, the way an application would have to.
+fn settings(server: &Server, test: &str, bounds: CacheBounds) -> ValkeySettings {
     ValkeySettings::new(
-        Secret::new("cache.url", url.to_owned()),
+        server.endpoint.clone(),
+        server.credentials(),
         namespace(test),
         bounds,
     )
+    .with_allow_insecure_loopback(true)
 }
 
 fn key(text: &str) -> CacheKey {
@@ -82,10 +190,10 @@ fn ttl(secs: u64) -> Ttl {
 
 #[tokio::test]
 async fn the_provider_boots_against_the_real_server_and_reports_ready() {
-    let Some(url) = url() else { return };
+    let Some(server) = server() else { return };
     let provider = ValkeyProvider::new(
         ProviderId::new("cache"),
-        settings(&url, "boot", CacheBounds::new()),
+        settings(&server, "boot", CacheBounds::new()),
     );
     let application = ApplicationBuilder::new()
         .with_provider(Box::new(provider))
@@ -105,8 +213,8 @@ async fn the_provider_boots_against_the_real_server_and_reports_ready() {
 
 #[tokio::test]
 async fn set_get_delete_round_trip_and_the_namespace_is_applied() {
-    let Some(url) = url() else { return };
-    let cache = ValkeyCache::connect(&settings(&url, "rt", CacheBounds::new()))
+    let Some(server) = server() else { return };
+    let cache = ValkeyCache::connect(&settings(&server, "rt", CacheBounds::new()))
         .await
         .expect("connects");
     assert_eq!(cache.get(&key("a")).await.unwrap(), None);
@@ -122,8 +230,8 @@ async fn set_get_delete_round_trip_and_the_namespace_is_applied() {
     );
 
     // The stored key carries the namespace: proven with a raw client, not through the port.
-    let client = redis::Client::open(url.as_str()).expect("a valid url");
-    let mut raw = client
+    let mut raw = server
+        .raw_client()
         .get_multiplexed_async_connection()
         .await
         .expect("raw connection");
@@ -146,13 +254,13 @@ async fn set_get_delete_round_trip_and_the_namespace_is_applied() {
 
 #[tokio::test]
 async fn the_server_receives_the_ttl_read_back_without_waiting() {
-    let Some(url) = url() else { return };
-    let cache = ValkeyCache::connect(&settings(&url, "ttl", CacheBounds::new()))
+    let Some(server) = server() else { return };
+    let cache = ValkeyCache::connect(&settings(&server, "ttl", CacheBounds::new()))
         .await
         .expect("connects");
     cache.set(&key("t"), value("v"), ttl(30)).await.unwrap();
-    let client = redis::Client::open(url.as_str()).expect("a valid url");
-    let mut raw = client
+    let mut raw = server
+        .raw_client()
         .get_multiplexed_async_connection()
         .await
         .expect("raw connection");
@@ -172,9 +280,9 @@ async fn the_server_receives_the_ttl_read_back_without_waiting() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_set_if_absent_admits_exactly_one_writer_on_the_real_server() {
     // FR-094, FR-095: the single-writer primitive at the real boundary, with a barrier.
-    let Some(url) = url() else { return };
+    let Some(server) = server() else { return };
     let cache = Arc::new(
-        ValkeyCache::connect(&settings(&url, "race", CacheBounds::new()))
+        ValkeyCache::connect(&settings(&server, "race", CacheBounds::new()))
             .await
             .expect("connects"),
     );
@@ -213,13 +321,13 @@ async fn concurrent_set_if_absent_admits_exactly_one_writer_on_the_real_server()
 
 #[tokio::test]
 async fn a_foreign_value_over_this_process_bound_is_refused_not_handed_over() {
-    let Some(url) = url() else { return };
+    let Some(server) = server() else { return };
     let bounds = CacheBounds::new().with_max_value_bytes(8).unwrap();
-    let cache = ValkeyCache::connect(&settings(&url, "bound", bounds))
+    let cache = ValkeyCache::connect(&settings(&server, "bound", bounds))
         .await
         .expect("connects");
-    let client = redis::Client::open(url.as_str()).expect("a valid url");
-    let mut raw = client
+    let mut raw = server
+        .raw_client()
         .get_multiplexed_async_connection()
         .await
         .expect("raw connection");
@@ -262,12 +370,21 @@ fn wrong_credential() -> String {
 
 #[tokio::test]
 async fn a_refused_credential_fails_boot_by_category_and_never_prints_it() {
-    let Some(url) = url() else { return };
+    let Some(server) = server() else { return };
     // Replace the password with a wrong one, keeping host and port. The canary is the value that
     // must not appear in the error.
     let canary = wrong_credential();
-    let wrong = rewrite_password(&url, &canary);
-    let error = ValkeyCache::connect(&settings(&wrong, "auth", CacheBounds::new()))
+    let wrong = ValkeySettings::new(
+        server.endpoint.clone(),
+        Some(ValkeyCredentials::password(Secret::new(
+            "cache.password",
+            canary.clone(),
+        ))),
+        namespace("auth"),
+        CacheBounds::new(),
+    )
+    .with_allow_insecure_loopback(true);
+    let error = ValkeyCache::connect(&wrong)
         .await
         .expect_err("a wrong password must not connect");
     assert_eq!(error, CacheBootError::CredentialRefused);
@@ -281,10 +398,12 @@ async fn an_unreachable_server_fails_boot_within_the_connect_timeout() {
     // Needs no running server: port 1 on loopback refuses. Bounded by a short real timeout,
     // which is a bound rather than a sleep.
     let settings = ValkeySettings::new(
-        Secret::new("cache.url", "redis://127.0.0.1:1/0".to_owned()),
+        ValkeyEndpoint::plaintext("127.0.0.1", 1).unwrap(),
+        None,
         Namespace::new("unreachable").unwrap(),
         CacheBounds::new(),
     )
+    .with_allow_insecure_loopback(true)
     .with_reconnect(
         ReconnectBounds::with(
             1,
@@ -318,10 +437,12 @@ async fn a_server_that_accepts_and_never_answers_fails_boot_within_the_bound() {
         drop(socket);
     });
     let settings = ValkeySettings::new(
-        Secret::new("cache.url", format!("redis://{address}/0")),
+        ValkeyEndpoint::plaintext("127.0.0.1", address.port()).unwrap(),
+        None,
         Namespace::new("stall").unwrap(),
         CacheBounds::new(),
     )
+    .with_allow_insecure_loopback(true)
     .with_reconnect(
         ReconnectBounds::with(
             1,
@@ -349,10 +470,86 @@ async fn a_server_that_accepts_and_never_answers_fails_boot_within_the_bound() {
     stall.abort();
 }
 
-/// Replaces the password in a `redis://[user]:password@host` URL.
-fn rewrite_password(url: &str, password: &str) -> String {
-    let (scheme, rest) = url.split_once("://").expect("a scheme");
-    let (credentials, host) = rest.rsplit_once('@').expect("credentials in the test url");
-    let user = credentials.split_once(':').map_or("", |(user, _)| user);
-    format!("{scheme}://{user}:{password}@{host}")
+#[tokio::test]
+async fn a_plaintext_endpoint_to_a_non_loopback_host_fails_boot_before_any_socket() {
+    // Needs no running server, and proves the refusal happens BEFORE the transport probe:
+    // 192.0.2.10 (TEST-NET-1) is unroutable, so a connect attempt would take the whole 500 ms
+    // bound; the refusal must come back in a small fraction of that, and as the settings
+    // category, not the transport's.
+    let settings = ValkeySettings::new(
+        ValkeyEndpoint::plaintext("192.0.2.10", 6379).unwrap(),
+        None,
+        Namespace::new("plaintext").unwrap(),
+        CacheBounds::new(),
+    )
+    .with_allow_insecure_loopback(true)
+    .with_reconnect(
+        ReconnectBounds::with(
+            1,
+            Duration::from_millis(1),
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+        )
+        .unwrap(),
+    );
+    let started = std::time::Instant::now();
+    let error = ValkeyCache::connect(&settings)
+        .await
+        .expect_err("plaintext to a non-loopback host must not connect");
+    assert_eq!(error, CacheBootError::PlaintextRefused);
+    assert!(
+        started.elapsed() < Duration::from_millis(100),
+        "the refusal took as long as a connect attempt would: {:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
+async fn the_provider_boots_from_a_typed_configuration_section() {
+    // FR-011 end to end: the section is decoded and validated by the kernel, the password
+    // travels from the environment layer into a `Secret` and into the driver, and the
+    // provider reads the settings at Boot. The endpoint comes from the test server's URL, the
+    // credential from its own variable — never a URL with a secret in it.
+    use std::collections::BTreeMap;
+
+    use renvor_cache::config::CacheSection;
+    use renvor_config::LayeredResolverBuilder;
+
+    let Some(server) = server() else { return };
+    let mut environment: BTreeMap<String, String> = BTreeMap::new();
+    let mut set = |key: &str, value: String| {
+        environment.insert(format!("RENVOR_CACHE_{key}"), value);
+    };
+    set("HOST", server.endpoint.host().to_owned());
+    set("PORT", server.endpoint.port().to_string());
+    set("DATABASE", server.endpoint.database().to_string());
+    set("TLS", server.endpoint.is_tls().to_string());
+    set("ALLOW_INSECURE_LOOPBACK", "true".to_owned());
+    set("NAMESPACE", namespace("section").as_str().to_owned());
+    if let Some(password) = &server.password {
+        set("PASSWORD", password.clone());
+    }
+    if let Some(username) = &server.username {
+        set("USERNAME", username.clone());
+    }
+    let source = CacheSection::source(
+        "cache",
+        LayeredResolverBuilder::new().with_environment_map("RENVOR_CACHE_", environment),
+    );
+    let provider = ValkeyProvider::from_config(ProviderId::new("cache"), source.handle());
+    let application = ApplicationBuilder::new()
+        .with_config_source(Arc::new(source))
+        .with_provider(Box::new(provider))
+        .build()
+        .expect("the section validates")
+        .boot()
+        .await
+        .expect("boot reaches Ready from the validated section");
+    let report = application.health().readiness();
+    let cache = report
+        .contributors
+        .iter()
+        .find(|verdict| verdict.name == "cache")
+        .expect("the cache contributor is registered");
+    assert_eq!(cache.readiness, Readiness::Ready);
 }

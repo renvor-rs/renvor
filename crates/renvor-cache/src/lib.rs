@@ -20,6 +20,12 @@
 //! Register; a Valkey provider whose server does not answer an authenticated `PING` fails at Boot
 //! with a diagnostic that names the phase and the category and never the address or credential.
 //!
+//! # Configuration
+//!
+//! With `valkey`, [`config::CacheSection`] is the typed `[cache]` section: decoded by
+//! `renvor-config`, defaulted, capped, and refused at **Validate** — naming the key, the
+//! constraint, and the layer — before any provider boots (FR-011).
+//!
 //! # Stability
 //!
 //! **This surface is explicitly unstable.** See the `renvor` facade documentation.
@@ -32,6 +38,12 @@ pub mod provider;
 /// and no TLS crate through this package, which `xtask` proves from the dependency graph.
 #[cfg(feature = "valkey")]
 pub mod valkey;
+
+/// The typed `[cache]` configuration section (FR-011): defaults, hard caps, and a Validate-phase
+/// refusal naming key, constraint, and layer. Behind `valkey` because the settings it produces
+/// are the adapter's.
+#[cfg(feature = "valkey")]
+pub mod config;
 
 pub use memory::{DEFAULT_CAPACITY, MemoryCache};
 pub use port::{

@@ -195,12 +195,19 @@ impl BootPhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, thiserror::Error)]
 #[non_exhaustive]
 pub enum CacheBootError {
-    /// The configured address could not be parsed.
+    /// The endpoint could not be turned into a connection by the driver.
     #[error(
-        "cache boot failed at configure: the cache address is not a valid URL. Check the \
-         configured `cache.url`; it must be `redis://` or `rediss://` with a host and port"
+        "cache boot failed at configure: the cache endpoint could not be used to build a \
+         connection. Check the configured host and port; the values themselves are never printed"
     )]
     InvalidAddress,
+    /// A plaintext session was requested to a host that is not loopback, or without the opt-in.
+    #[error(
+        "cache boot failed at configure: a plaintext session was refused. Plaintext is accepted \
+         only to a loopback host and only with `allow_insecure_loopback = true`; use TLS for \
+         anything else"
+    )]
+    PlaintextRefused,
     /// The server could not be reached within the connection timeout.
     #[error(
         "cache boot failed at connect: the cache server did not accept a connection within the \
@@ -233,7 +240,7 @@ impl CacheBootError {
     #[must_use]
     pub const fn phase(self) -> BootPhase {
         match self {
-            Self::InvalidAddress => BootPhase::Configure,
+            Self::InvalidAddress | Self::PlaintextRefused => BootPhase::Configure,
             Self::Unreachable | Self::CredentialRefused | Self::AlreadyBooted => BootPhase::Connect,
             Self::Unanswered => BootPhase::Readiness,
         }
@@ -350,6 +357,7 @@ mod tests {
     fn every_boot_error_names_its_phase_and_never_an_address() {
         for error in [
             CacheBootError::InvalidAddress,
+            CacheBootError::PlaintextRefused,
             CacheBootError::Unreachable,
             CacheBootError::CredentialRefused,
             CacheBootError::Unanswered,

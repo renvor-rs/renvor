@@ -66,9 +66,11 @@ pub enum Refusal {
     KeyEmpty,
     /// The key, with its namespace, exceeded [`MAX_KEY_BYTES`].
     KeyTooLong,
-    /// The key contained a control character (`0x00`–`0x1F`, `0x7F`).
+    /// The key contained a control character (the C0 range `0x00`–`0x1F`, `0x7F`, or the C1
+    /// range `U+0080`–`U+009F`).
     KeyHasControlCharacter,
-    /// The key contained whitespace.
+    /// The key contained whitespace — any character with the Unicode White_Space property,
+    /// `U+00A0` and `U+3000` included, not only the ASCII blanks.
     KeyHasWhitespace,
     /// The value exceeded the configured ceiling.
     ValueTooLarge,
@@ -80,6 +82,11 @@ pub enum Refusal {
     NamespaceInvalid,
     /// A configured bound exceeded its hard cap or fell below its floor.
     BoundOutOfRange,
+    /// An endpoint's host was not a lowercase DNS name or an IP literal, or its port was zero.
+    EndpointInvalid,
+    /// A credential had the wrong shape: an empty username, or one holding a control character
+    /// or whitespace. The value itself is never named.
+    CredentialInvalid,
 }
 
 impl Refusal {
@@ -96,6 +103,8 @@ impl Refusal {
             Self::TtlTooLong => "ttl_too_long",
             Self::NamespaceInvalid => "namespace_invalid",
             Self::BoundOutOfRange => "bound_out_of_range",
+            Self::EndpointInvalid => "endpoint_invalid",
+            Self::CredentialInvalid => "credential_invalid",
         }
     }
 }
@@ -273,7 +282,8 @@ impl fmt::Debug for Namespace {
     }
 }
 
-/// A validated key: non-empty, at most [`MAX_KEY_BYTES`], no control characters, no whitespace.
+/// A validated key: non-empty, at most [`MAX_KEY_BYTES`], no control character, no whitespace —
+/// both as Unicode properties, so a no-break space is whitespace and a C1 control is a control.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey(String);
 
@@ -290,11 +300,14 @@ impl CacheKey {
         if key.len() > MAX_KEY_BYTES {
             return Err(CacheError::Refused(Refusal::KeyTooLong));
         }
-        for byte in key.bytes() {
-            if byte < 0x20 || byte == 0x7f {
+        // Checked per character, not per byte: the rules are Unicode properties. A byte-wise
+        // `is_ascii_whitespace` accepted a no-break space (U+00A0) and every other non-ASCII
+        // blank, which is the same formatting hazard as `a b` with a different encoding.
+        for character in key.chars() {
+            if character.is_control() {
                 return Err(CacheError::Refused(Refusal::KeyHasControlCharacter));
             }
-            if byte.is_ascii_whitespace() {
+            if character.is_whitespace() {
                 return Err(CacheError::Refused(Refusal::KeyHasWhitespace));
             }
         }
@@ -580,6 +593,40 @@ mod tests {
         assert!(CacheKey::new("user:42/profile.v1").is_ok());
         // Unicode is fine: the rules are about control characters and whitespace, not ASCII.
         assert!(CacheKey::new("clé").is_ok());
+    }
+
+    #[test]
+    fn unicode_whitespace_is_refused_and_unicode_letters_are_not() {
+        // The whitespace rule is about whitespace, not about ASCII: a key holding a no-break
+        // space (U+00A0) or an ideographic space (U+3000) is as much a formatting hazard in a
+        // log line or a key list as `a b` is, and a byte-wise `is_ascii_whitespace` never sees
+        // either. `char::is_whitespace` is the Unicode White_Space property.
+        let cases: [(&str, Refusal); 5] = [
+            ("a\u{a0}b", Refusal::KeyHasWhitespace),
+            ("a\u{2003}b", Refusal::KeyHasWhitespace),
+            ("a\u{3000}b", Refusal::KeyHasWhitespace),
+            ("a\u{2028}b", Refusal::KeyHasWhitespace),
+            // C1 controls are controls: U+0085 (NEL) is both, and the control rule is checked
+            // first, as it is for the C0 range.
+            ("a\u{85}b", Refusal::KeyHasControlCharacter),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(
+                CacheKey::new(input).unwrap_err(),
+                CacheError::Refused(expected),
+                "case {expected:?}"
+            );
+        }
+        // POSITIVE CONTROL: non-ASCII letters and symbols are keys.
+        for (index, accepted) in ["clé", "日本語", "ключ:1", "emoji-🔑"]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(
+                CacheKey::new(accepted).is_ok(),
+                "accepted-key case {index} was refused"
+            );
+        }
     }
 
     #[test]
