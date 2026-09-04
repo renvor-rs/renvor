@@ -61,46 +61,48 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 
 ## 3. Verification — commands, platforms, results
 
-Both legs ran sequentially on `ff84cd8` with `CARGO_INCREMENTAL=0` and stdin detached, against
+Both legs ran sequentially on `a0f837b` with `CARGO_INCREMENTAL=0` and stdin detached, against
 live PostgreSQL 17, MySQL 8.4, Valkey 9.1.1, and Mailpit 1.29.1 in local containers, one gate process
 at a time, with `cargo clean` between the legs for disk space. The commit that records this table
-differs from `ff84cd8` only by governance text. Two earlier runs failed and are not reused: on
-`73e4a9a` leg A stopped at step 4 (the L-11 event test); on `3bfb552` leg A passed steps 1–6
-and stopped at step 7 (the per-driver compile). Both failures, their diagnoses, and the fixes
-are the last rows of `phase-010-review-record.md` §2.
+differs from `a0f837b` only by governance text. Four earlier runs are not reused: on `73e4a9a` leg A stopped at step 4 (the L-11 event test); on `3bfb552` at step 7 (the per-driver compile); `ff84cd8` passed both legs before the pull request's checks found four more defects; on `bc3a166` leg A stopped at step 6 (a versionless dev-dependency is a wildcard `deny.toml` bans). Each failure, its diagnosis, and its fix are rows of `phase-010-review-record.md` §2.
 
 | | leg A | leg B |
 |---|---|---|
 | Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
 | Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
-| Head | `ff84cd8` | `ff84cd8` |
+| Head | `a0f837b` | `a0f837b` |
 | Steps | 9/9 ok (12 step lines: step 4 reports three, step 8 two) | 9/9 ok (12 step lines) |
 | Exit | 0 | 0 |
-| Tests | 1966 passed, 0 failed, 5 ignored (the sum of all 138 `test result` lines) | 1966 passed, 0 failed, 5 ignored (138 lines) |
+| Tests | 1966 passed, 0 failed, 5 ignored (138 `test result` lines) | 1966 passed, 0 failed, 5 ignored (138 `test result` lines) |
 | Census | 67/67 rows reported in | 67/67 rows reported in |
-| Elapsed | 10 min 28 s | 10 min 46 s (cold build after `cargo clean`) |
+| Elapsed | 10 min 38 s | 10 min 49 s (cold build after `cargo clean`) |
 
 **Platforms.** Local is macOS/aarch64. Ubuntu, macOS and Windows on both toolchains are exercised
-by CI on the pull request.
+by CI on the pull request (§4).
 
 ## 4. Reviews
 
 The three commissioned research agents delivered on the first commission and every decisive
-claim was re-measured (`phase-010-review-record.md` §1). The Codex review of the whole branch diff
-is recorded here after the pull request opens: head reviewed, findings, dispositions.
-*(pending)*
+claim was re-measured (`phase-010-review-record.md` §1).
+
+**Continuous integration on pull request #61.** The first run, on `c5bf188`, passed 8 of 14 checks (both CodeQL analyses, docs, security, both macOS platform legs, and both `verify` legs — the full nine-step sequence on Ubuntu with the Valkey and Mailpit containers) and failed 5: the dependency review's licence list, the release dry run's packaging order, CodeQL on two test literals, and both Windows platform legs on one boot category. Each is a row of `phase-010-review-record.md` §2 with its cause and fix; no check was weakened. The checks on the pull request's final head are the pull request's own record and are quoted in the checkpoint report.
+
+**Codex review.** **NOT PERFORMED** by the implementing session: the repository's `/codex:review` command is reserved for explicit invocation by the maintainer and refuses invocation from a session, so the session stopped once and handed over the exact command. An absent review is never inferred clean; its findings and dispositions are recorded here when it runs. Details: `phase-010-review-record.md` §3.
 
 ## 5. Defects found, and by what
 
-See `phase-010-review-record.md` §2: eight defects found by the repository's own gates and real
-servers after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
+See `phase-010-review-record.md` §2: ten defects found by the repository's own gates, real
+servers, and the pull request's platform legs after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
 credential-file diagnostics, a cache adapter with no crypto provider, a resource missing from
 the OTLP wire, a test binary aborted by a destructor, a `tracing-core` callsite-interest race
-that dropped a test's recorded event, and two job-store suites compiled into a database-only
-build — each fixed at the root and pinned — plus one secret-scanner false positive on the
-redaction canary, recorded as FP-004 with the injection proof the scanner's policy demands.
-The last three were found by the closing runs themselves: no full run on this branch had
-reached steps 7–9 before them.
+that dropped a test's recorded event, two job-store suites compiled into a database-only
+build, a platform-dependent boot category in the Valkey adapter (Windows), and a versioned
+dev-dependency that cycled the release packaging order — each fixed at the root and pinned —
+plus one secret-scanner false positive on the redaction canary (FP-004, with the injection proof
+the scanner's policy demands), one licence allow-list found out of step with `deny.toml`, and two
+test fixtures that CodeQL read as hard-coded passwords, now built at run time. Five of these were
+found by the closing runs and the pull request itself: no full run on this branch had reached
+steps 7–9 before them, and no Windows leg had run at all.
 
 ## 6. Testing discipline
 
