@@ -64,7 +64,7 @@ jobs:
       # Widening the licence policy to obtain a build cache would weaken a control to buy
       # convenience, so the cache was dropped instead.
 
-      - uses: taiki-e/install-action@37f7c5781271959fb65b6b35224e28652ff2b63d # v2.87.0
+      - uses: taiki-e/install-action@0758d235715de2f3551eacc980d9ae8fce9342c3 # v2.87.3
         with:
           tool: cargo-deny
 
