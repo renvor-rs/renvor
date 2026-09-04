@@ -63,7 +63,9 @@ mod tests {
     use renvor_core::cancel::CancelScope;
     use renvor_core::health::{Liveness, Readiness, ReadinessContributor};
     use renvor_core::observe::{OsEntropy, RunIdentifier};
-    use renvor_http::{ClientIdentity, Request, RequestContext, RequestId, RouteRegistry};
+    use renvor_http::{
+        ClientIdentity, EffectiveOrigin, Request, RequestContext, RequestId, RouteRegistry, Scheme,
+    };
 
     use super::{HEALTHZ, READYZ, health_routes};
 
@@ -84,7 +86,7 @@ mod tests {
             RunIdentifier::generate(&OsEntropy::new()).unwrap(),
             RequestId::from_entropy([1; 8]),
             ClientIdentity::DirectPeer(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
-            "localhost",
+            EffectiveOrigin::new(Scheme::Http, "localhost", 80),
             CancelScope::root(),
         );
         Request::new(context, Vec::new(), String::new(), BTreeMap::new())

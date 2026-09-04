@@ -200,9 +200,9 @@ pub use renvor_http as transport;
 // example against the facade alone.
 #[cfg(feature = "transport-rest")]
 pub use renvor_http::{
-    Admission, ClientIdentity, CorsPolicy, HostPolicy, HttpServerConfig, HttpServerProvider,
-    Limits, Method, Request, RequestContext, Response, Route, RouteGroup, RouteRegistry,
-    TrustedProxies,
+    Admission, ClientIdentity, CorsPolicy, EffectiveOrigin, HostPolicy, HttpServerConfig,
+    HttpServerProvider, Limits, Method, Request, RequestContext, Response, Route, RouteGroup,
+    RouteRegistry, Scheme, TrustedProxies,
 };
 
 /// The public API error registry and RFC 9457 Problem Details.

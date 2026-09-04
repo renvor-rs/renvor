@@ -27,6 +27,8 @@
 
 use std::net::IpAddr;
 
+use crate::origin::Scheme;
+
 /// Extracts a client address from a single `X-Forwarded-For` header value.
 ///
 /// Returns `None` — fail closed — when the value is empty, carries a control character, or its
@@ -52,6 +54,83 @@ pub fn from_x_forwarded_for(value: &str) -> Option<IpAddr> {
 /// they are legal syntax that carries no address, and treating them as one would be an invention.
 #[must_use]
 pub fn from_forwarded(value: &str) -> Option<IpAddr> {
+    let last_element = last_element(value)?;
+
+    for parameter in split_outside_quotes(last_element, ';') {
+        // A parameter with no `=` is not RFC 7239 syntax. Refusing the whole header rather than
+        // skipping the parameter is deliberate: a value we cannot fully parse is a value we do not
+        // understand, and guessing at the rest of it is how a parser disagrees with its upstream.
+        let (name, raw) = parameter.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("for") {
+            continue;
+        }
+
+        let raw = raw.trim().trim_matches('"');
+
+        // RFC 7239 §6.3: an obfuscated identifier begins with `_`. `unknown` is also legal. Both
+        // are valid syntax carrying no address.
+        if raw.is_empty() || raw.starts_with('_') || raw.eq_ignore_ascii_case("unknown") {
+            return None;
+        }
+
+        return parse_address(raw);
+    }
+
+    None
+}
+
+/// Extracts the `proto` parameter from a single `Forwarded` header value (RFC 7239 §5.4).
+///
+/// Reads the **last** forwarded-element's `proto=`, for the reason [`from_forwarded`] reads the
+/// last element's `for=`: it is the hop the trusted peer vouched for. A chain whose inner hop
+/// spoke plaintext therefore resolves to `http` even if the browser spoke TLS to the outer hop,
+/// which is the truthful answer for the only element this server can trust.
+///
+/// Returns `None` — fail closed — when the value is empty, carries a control character, has
+/// unbalanced quoting or a parameter without `=`, names no `proto`, or names a scheme other than
+/// `http`/`https` (§5.4 gives the value as a URI scheme, so it is compared case-insensitively). The
+/// caller falls back to the **configured** scheme on `None`, never to a guess.
+#[must_use]
+pub fn proto_from_forwarded(value: &str) -> Option<Scheme> {
+    let last_element = last_element(value)?;
+
+    // EVERY parameter of the element is read, not just the ones before `proto`: a parameter
+    // without `=` anywhere in the element refuses the whole header, and a `proto` that occurs
+    // twice is refused rather than chosen between (RFC 7239 §4 permits each parameter once per
+    // element). A value we cannot fully parse is a value we do not understand.
+    let mut proto = None;
+    for parameter in split_outside_quotes(last_element, ';') {
+        let (name, raw) = parameter.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("proto") {
+            continue;
+        }
+        if proto.is_some() {
+            return None;
+        }
+        proto = Some(Scheme::parse(raw.trim().trim_matches('"'))?);
+    }
+
+    proto
+}
+
+/// Extracts the scheme from a single `X-Forwarded-Proto` header value.
+///
+/// Reads the **rightmost** entry of a comma-separated value, exactly as [`from_x_forwarded_for`]
+/// does and for the same reason: it is the entry the nearest hop appended. Returns `None` — fail
+/// closed — when the value is empty, carries a control character, or its rightmost entry is not
+/// `http`/`https`.
+#[must_use]
+pub fn proto_from_x_forwarded_proto(value: &str) -> Option<Scheme> {
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return None;
+    }
+    let last = value.rsplit(',').next()?.trim();
+    Scheme::parse(last)
+}
+
+/// The last forwarded-element of a `Forwarded` value, after the checks every parameter reader
+/// needs: not empty, no control character, balanced quoting.
+fn last_element(value: &str) -> Option<&str> {
     if value.is_empty() || value.chars().any(char::is_control) {
         return None;
     }
@@ -77,30 +156,7 @@ pub fn from_forwarded(value: &str) -> Option<IpAddr> {
     // defect rather than a spoofing route. It is fixed rather than documented, because "only a
     // trusted proxy can trigger it" is an argument that stops being true the moment somebody adds
     // a proxy.
-    let elements = split_outside_quotes(value, ',');
-    let last_element = elements.last()?;
-
-    for parameter in split_outside_quotes(last_element, ';') {
-        // A parameter with no `=` is not RFC 7239 syntax. Refusing the whole header rather than
-        // skipping the parameter is deliberate: a value we cannot fully parse is a value we do not
-        // understand, and guessing at the rest of it is how a parser disagrees with its upstream.
-        let (name, raw) = parameter.split_once('=')?;
-        if !name.trim().eq_ignore_ascii_case("for") {
-            continue;
-        }
-
-        let raw = raw.trim().trim_matches('"');
-
-        // RFC 7239 §6.3: an obfuscated identifier begins with `_`. `unknown` is also legal. Both
-        // are valid syntax carrying no address.
-        if raw.is_empty() || raw.starts_with('_') || raw.eq_ignore_ascii_case("unknown") {
-            return None;
-        }
-
-        return parse_address(raw);
-    }
-
-    None
+    split_outside_quotes(value, ',').last().copied()
 }
 
 /// Splits on `delimiter`, ignoring delimiters inside a double-quoted run.
@@ -185,7 +241,11 @@ pub fn single_value<'a>(values: &[&'a str]) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{from_forwarded, from_x_forwarded_for, single_value};
+    use super::{
+        from_forwarded, from_x_forwarded_for, proto_from_forwarded, proto_from_x_forwarded_proto,
+        single_value,
+    };
+    use crate::origin::Scheme;
     use std::net::{IpAddr, Ipv4Addr};
 
     fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
@@ -340,6 +400,83 @@ mod tests {
     fn a_control_character_anywhere_fails_closed() {
         assert_eq!(from_forwarded("for=1.2.3.4\r\nX: y"), None);
         assert_eq!(from_x_forwarded_for("1.2.3.4\n"), None);
+    }
+
+    #[test]
+    fn the_proto_parameter_is_read_from_the_last_element_in_any_case_and_quoting() {
+        assert_eq!(
+            proto_from_forwarded("for=198.51.100.7;proto=https"),
+            Some(Scheme::Https)
+        );
+        assert_eq!(
+            proto_from_forwarded(r#"for=198.51.100.7;Proto="HTTPS""#),
+            Some(Scheme::Https)
+        );
+        assert_eq!(
+            proto_from_forwarded("proto=http;for=198.51.100.7"),
+            Some(Scheme::Http)
+        );
+        // The LAST element's proto, matching the last element's `for`.
+        assert_eq!(
+            proto_from_forwarded("for=1.2.3.4;proto=https, for=198.51.100.7;proto=http"),
+            Some(Scheme::Http)
+        );
+        // A quoted value containing `;` does not end the parameter early.
+        assert_eq!(
+            proto_from_forwarded(r#"for="[2001:db8::1]:4711";proto=https"#),
+            Some(Scheme::Https)
+        );
+    }
+
+    #[test]
+    fn a_proto_that_is_missing_or_not_a_scheme_this_server_speaks_fails_closed() {
+        for hostile in [
+            "for=198.51.100.7",        // no proto
+            "for=198.51.100.7;proto=", // empty
+            "for=198.51.100.7;proto=ftp",
+            "for=198.51.100.7;proto=wss",
+            "for=198.51.100.7;proto=https;secure", // a parameter without `=`, after proto
+            "secure;for=198.51.100.7;proto=https", // and before it
+            "for=198.51.100.7;proto=https;proto=http", // repeated within one element
+            "for=198.51.100.7;proto=\"https",      // unbalanced quoting
+            "for=198.51.100.7;proto=https\r\n",    // a control character
+            "",
+            // The LAST element has no proto, whatever an earlier one said.
+            "for=1.2.3.4;proto=https, for=198.51.100.7",
+        ] {
+            assert_eq!(
+                proto_from_forwarded(hostile),
+                None,
+                "`{hostile}` produced a scheme"
+            );
+        }
+
+        // POSITIVE CONTROL.
+        assert_eq!(
+            proto_from_forwarded("for=198.51.100.7;proto=https"),
+            Some(Scheme::Https)
+        );
+    }
+
+    #[test]
+    fn x_forwarded_proto_reads_the_rightmost_entry_and_fails_closed_on_the_rest() {
+        assert_eq!(proto_from_x_forwarded_proto("https"), Some(Scheme::Https));
+        assert_eq!(proto_from_x_forwarded_proto(" HTTP "), Some(Scheme::Http));
+        assert_eq!(
+            proto_from_x_forwarded_proto("http, https"),
+            Some(Scheme::Https)
+        );
+        assert_eq!(
+            proto_from_x_forwarded_proto("https, http"),
+            Some(Scheme::Http)
+        );
+        for hostile in ["", "   ", "ftp", "https, ", "https\n", "https://", "http s"] {
+            assert_eq!(
+                proto_from_x_forwarded_proto(hostile),
+                None,
+                "`{hostile}` produced a scheme"
+            );
+        }
     }
 
     #[test]

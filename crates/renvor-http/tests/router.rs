@@ -18,6 +18,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{Request as HttpRequest, StatusCode, header};
 use http_body_util::BodyExt;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, WorkGate};
+use renvor_http::Scheme;
 use renvor_http::route::build::{RouterConfig, router};
 use renvor_http::{
     CorsPolicy, HostPolicy, Request, Response, RouteGroup, RouteRegistry, TrustedProxies,
@@ -31,6 +32,7 @@ fn config() -> RouterConfig {
         hosts: HostPolicy::deny_all().allow(HOST).expect("a valid host"),
         trusted_proxies: TrustedProxies::none(),
         cors: CorsPolicy::deny_all(),
+        public_scheme: Scheme::Http,
         limits: renvor_http::Limits::new(),
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel: CancelScope::root(),
@@ -572,6 +574,11 @@ async fn a_repeated_host_header_with_one_unreadable_value_is_still_refused() {
 async fn a_same_origin_write_is_not_refused_by_the_default_cors_policy() {
     // The defect this guards: browsers send `Origin` on same-origin POST/PUT/PATCH/DELETE, so a
     // default-configured application answered 400 to a form post from its own page.
+    //
+    // The Origin is `http://`, the scheme this server is reached under. This test used to send
+    // `https://` and pass, because the carve-out compared the host alone; RFC 6454 §5 makes that
+    // another origin, and `tests/effective_origin.rs` asserts it is refused. Phase 010 correction
+    // round, finding 1.
     let mut registry = registry();
     registry
         .route(renvor_http::Method::Post, "/submit", created)
@@ -581,7 +588,7 @@ async fn a_same_origin_write_is_not_refused_by_the_default_cors_policy() {
 
     let response = app
         .oneshot(with_peer(
-            request("POST", "/submit").header(header::ORIGIN, format!("https://{HOST}")),
+            request("POST", "/submit").header(header::ORIGIN, format!("http://{HOST}")),
             localhost(),
         ))
         .await

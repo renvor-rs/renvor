@@ -55,6 +55,7 @@ use crate::cors::CorsPolicy;
 use crate::host::HostPolicy;
 use crate::identity::TrustedProxies;
 use crate::limits::Limits;
+use crate::origin::Scheme;
 use crate::route::RouteRegistry;
 use crate::route::build::{RouterConfig, router};
 use crate::server::Server;
@@ -77,6 +78,15 @@ pub struct HttpServerConfig {
     pub limits: Limits,
     /// The state handlers read. See this module's *named limitation*.
     pub state: Arc<TypedStateMap>,
+    /// The scheme this server is reached under when no trusted proxy says otherwise.
+    ///
+    /// **`http` by default, because the listener speaks HTTP.** It is the scheme field of every
+    /// request's effective origin (RFC 6454 §4) unless a peer in `trusted_proxies` reports a
+    /// `proto` — so an operator who terminates TLS in front of this server either trusts that
+    /// terminator or sets `https` here. Left at `http` behind a TLS terminator that is not trusted,
+    /// an `https://` `Origin` fails to match and the request is refused: loud, and the fail-closed
+    /// direction.
+    pub public_scheme: Scheme,
 }
 
 impl HttpServerConfig {
@@ -90,7 +100,15 @@ impl HttpServerConfig {
             cors: CorsPolicy::deny_all(),
             limits: Limits::new(),
             state: Arc::new(TypedStateMap::new()),
+            public_scheme: Scheme::Http,
         }
+    }
+
+    /// Sets the scheme this server is reached under. See [`Self::public_scheme`].
+    #[must_use]
+    pub const fn with_public_scheme(mut self, scheme: Scheme) -> Self {
+        self.public_scheme = scheme;
+        self
     }
 }
 
@@ -262,6 +280,7 @@ impl Provider for HttpServerProvider {
                 cancel: cancel.clone(),
                 gate: gate.clone(),
                 state: config.state,
+                public_scheme: config.public_scheme,
             };
 
             // Built BEFORE the bind. An unsafe CORS configuration must fail without a socket ever

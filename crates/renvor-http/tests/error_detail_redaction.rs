@@ -30,6 +30,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use axum::http::{StatusCode, header};
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate};
+use renvor_http::Scheme;
 use renvor_http::route::build::{RouterConfig, router};
 use renvor_http::route::{Request, Response, RouteRegistry};
 use renvor_http::{CorsPolicy, HostPolicy, HttpErrorDetail, Limits, TrustedProxies};
@@ -114,6 +115,7 @@ fn config() -> RouterConfig {
         hosts: HostPolicy::deny_all().allow(HOST).expect("a valid host"),
         trusted_proxies: TrustedProxies::none(),
         cors: CorsPolicy::deny_all(),
+        public_scheme: Scheme::Http,
         limits: Limits::new(),
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel: CancelScope::root(),

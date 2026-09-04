@@ -14,6 +14,8 @@ use core::fmt;
 
 use renvor_core::{CancelScope, RunIdentifier};
 
+use crate::origin::EffectiveOrigin;
+
 /// Who Renvor believes is asking.
 ///
 /// **Re-exported from [`renvor_core::identity`].** The type moved down to the kernel in Phase 009
@@ -86,25 +88,29 @@ pub struct RequestContext {
     run: RunIdentifier,
     request: RequestId,
     client: ClientIdentity,
-    host: String,
+    origin: EffectiveOrigin,
     cancel: CancelScope,
 }
 
 impl RequestContext {
     /// Assembles a context. Built by the transport layers, and by tests.
+    ///
+    /// Takes the request's **effective origin** rather than a bare host: the scheme and port are
+    /// resolved facts exactly as the host is (see [`crate::origin`]), and a context that carried
+    /// only the host is what let two gates compare origins by host alone.
     #[must_use]
     pub fn new(
         run: RunIdentifier,
         request: RequestId,
         client: ClientIdentity,
-        host: impl Into<String>,
+        origin: EffectiveOrigin,
         cancel: CancelScope,
     ) -> Self {
         Self {
             run,
             request,
             client,
-            host: host.into(),
+            origin,
             cancel,
         }
     }
@@ -127,10 +133,21 @@ impl RequestContext {
         self.client
     }
 
-    /// The validated host this request was addressed to.
+    /// The origin this request was addressed to: scheme, validated host, and port, all resolved by
+    /// the layer that knows the trust configuration.
+    ///
+    /// This is the value an origin comparison reads — **all three fields** (RFC 6454 §5). A
+    /// handler never re-derives it from `Host`, `Forwarded`, or `X-Forwarded-Proto`, because it
+    /// never sees them.
+    #[must_use]
+    pub const fn origin(&self) -> &EffectiveOrigin {
+        &self.origin
+    }
+
+    /// The validated host this request was addressed to — the host field of [`Self::origin`].
     #[must_use]
     pub fn host(&self) -> &str {
-        &self.host
+        self.origin.host()
     }
 
     /// This request's cancellation scope.
@@ -161,7 +178,7 @@ impl fmt::Debug for RequestContext {
             .field("run", &self.run)
             .field("request", &self.request)
             .field("client", &self.client)
-            .field("host", &self.host)
+            .field("origin", &self.origin)
             .finish_non_exhaustive()
     }
 }
@@ -169,6 +186,7 @@ impl fmt::Debug for RequestContext {
 #[cfg(test)]
 mod tests {
     use super::{ClientIdentity, RequestContext, RequestId};
+    use crate::origin::{EffectiveOrigin, Scheme};
     use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -177,9 +195,21 @@ mod tests {
             RunIdentifier::generate(&OsEntropy).expect("entropy"),
             RequestId::from_entropy([1, 2, 3, 4, 5, 6, 7, 8]),
             ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            "example.test",
+            EffectiveOrigin::new(Scheme::Http, "example.test", 80),
             CancelScope::root().child("request"),
         )
+    }
+
+    #[test]
+    fn the_host_is_the_origins_host_and_the_origin_carries_all_three_fields() {
+        let context = context();
+        assert_eq!(context.host(), "example.test");
+        assert_eq!(context.origin().scheme(), Scheme::Http);
+        assert_eq!(context.origin().port(), 80);
+        assert_eq!(
+            context.origin(),
+            &EffectiveOrigin::new(Scheme::Http, "example.test", 80)
+        );
     }
 
     #[test]

@@ -41,7 +41,7 @@ use renvor_core::identity::ClientIdentity;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
 use renvor_database::{ConnectionString, Database as _, MigrationSettings, PoolSettings};
 use renvor_http::route::{Method, PresentedCredentials, Request, RouteRegistry};
-use renvor_http::{FetchMetadata, RequestContext, RequestId};
+use renvor_http::{EffectiveOrigin, FetchMetadata, RequestContext, RequestId, Scheme};
 use renvor_sqlx::Migrations;
 use renvor_sqlx::auth::TokenTable;
 use renvor_sqlx::auth::postgres::{
@@ -76,6 +76,12 @@ fn csrf_of(body: &str) -> String {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_owned()
+}
+
+/// The origin a request reaching an `http` listener directly resolves to: the configured scheme,
+/// the validated host, and the scheme's default port.
+fn http_listener() -> EffectiveOrigin {
+    EffectiveOrigin::new(Scheme::Http, "example.test", 80)
 }
 
 fn at() -> DateTime<Utc> {
@@ -118,7 +124,8 @@ impl Application {
             .await
     }
 
-    /// `send`, with what the user agent said about the request's origin (FR-085).
+    /// `send`, with what the user agent said about the request's origin (FR-085), addressed to
+    /// the `http` origin a request reaching the listener directly resolves to.
     async fn send_with_metadata(
         &self,
         method: Method,
@@ -126,6 +133,21 @@ impl Application {
         body: &str,
         cookie: &str,
         metadata: FetchMetadata,
+    ) -> (u16, String) {
+        self.send_addressed(method, route, body, cookie, metadata, http_listener())
+            .await
+    }
+
+    /// `send_with_metadata`, with the origin the transport resolved for the request — what the
+    /// router builds from the configured scheme, a trusted proxy's `proto`, and the `Host`.
+    async fn send_addressed(
+        &self,
+        method: Method,
+        route: &str,
+        body: &str,
+        cookie: &str,
+        metadata: FetchMetadata,
+        addressed: EffectiveOrigin,
     ) -> (u16, String) {
         // THE METHOD IS MATCHED, not discarded.
         //
@@ -143,7 +165,7 @@ impl Application {
             RunIdentifier::generate(&OsEntropy).expect("entropy"),
             RequestId::from_entropy([9, 8, 7, 6, 5, 4, 3, 2]),
             ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            "example.test",
+            addressed,
             CancelScope::root().child("request"),
         );
         let request = Request::new(
@@ -181,7 +203,7 @@ impl Application {
             RunIdentifier::generate(&OsEntropy).expect("entropy"),
             RequestId::from_entropy([1, 1, 1, 1, 2, 2, 2, 2]),
             ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            "example.test",
+            http_listener(),
             CancelScope::root().child("request"),
         );
         let body = format!(r#"{{"email":"{address}","password":"{password}"}}"#);
@@ -474,10 +496,22 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
         )
         .await;
     assert_eq!(status, 403, "an opaque `null` Origin was accepted");
-    let (status, _body) = app.send(Method::Get, "/auth/me", "", &presented).await;
+
+    // THE COMPLETE ORIGIN (Phase 010 correction round, finding 1; RFC 6454 §5). The request is
+    // addressed to `http://example.test:80`, so an Origin naming the same host on another SCHEME
+    // or another PORT is a different origin and is refused — with a valid token.
+    let (status, _body) = app
+        .send_with_metadata(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("https://example.test"), Some("same-origin")),
+        )
+        .await;
     assert_eq!(
-        status, 200,
-        "a refused cross-site logout ended the session anyway"
+        status, 403,
+        "an https Origin was accepted by a request addressed to the http origin"
     );
     let (status, _body) = app
         .send_with_metadata(
@@ -485,7 +519,101 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
             "/auth/logout",
             &valid,
             &presented,
-            FetchMetadata::new(Some("https://example.test:8443"), Some("same-origin")),
+            FetchMetadata::new(Some("http://example.test:8443"), Some("same-origin")),
+        )
+        .await;
+    assert_eq!(status, 403, "an Origin on another port was accepted");
+    // And the same Origin from an untrusted peer behind a TLS terminator the operator did not
+    // trust: the transport leaves the request on the listener's own `http`, so it is refused.
+    let (status, _body) = app
+        .send_addressed(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("https://example.test"), None),
+            http_listener(),
+        )
+        .await;
+    assert_eq!(
+        status, 403,
+        "an https Origin was accepted when no trusted proxy vouched for https"
+    );
+    let (status, _body) = app.send(Method::Get, "/auth/me", "", &presented).await;
+    assert_eq!(
+        status, 200,
+        "a refused cross-site logout ended the session anyway"
+    );
+
+    // THE ALLOWED CASES END A SESSION, which is the only observation that distinguishes "the
+    // origin gate admitted it" from "the gate refused it": both refusals are the same 403. So
+    // each runs against a FRESH session with its own valid token, and asserts the logout landed.
+    //
+    // (i) A trusted proxy that terminated TLS makes the request's origin
+    // `https://example.test:443`, and an `https` Origin then matches — the explicit default port
+    // and the absent one are the same origin (RFC 6454 §4 step 5).
+    let (status, fresh_body, fresh_cookie) = app.login(KNOWN_ADDRESS, PASSWORD_CANARY).await;
+    assert_eq!(status, 200);
+    let fresh_presented = fresh_cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let fresh_valid = format!(r#"{{"csrf_token":"{}"}}"#, csrf_of(&fresh_body));
+    let (status, _body) = app
+        .send_addressed(
+            Method::Post,
+            "/auth/logout",
+            &fresh_valid,
+            &fresh_presented,
+            FetchMetadata::new(Some("https://example.test"), Some("same-origin")),
+            EffectiveOrigin::new(Scheme::Https, "example.test", 443),
+        )
+        .await;
+    assert_eq!(
+        status, 200,
+        "an https Origin was refused behind a trusted TLS terminator"
+    );
+    let (status, _body) = app
+        .send(Method::Get, "/auth/me", "", &fresh_presented)
+        .await;
+    assert_eq!(status, 401, "the admitted logout did not end its session");
+
+    // (ii) An IPv6 origin compares with its brackets and its port.
+    let (status, fresh_body, fresh_cookie) = app.login(KNOWN_ADDRESS, PASSWORD_CANARY).await;
+    assert_eq!(status, 200);
+    let fresh_presented = fresh_cookie
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let fresh_valid = format!(r#"{{"csrf_token":"{}"}}"#, csrf_of(&fresh_body));
+    let (status, _body) = app
+        .send_addressed(
+            Method::Post,
+            "/auth/logout",
+            &fresh_valid,
+            &fresh_presented,
+            FetchMetadata::new(Some("http://[::1]:8080"), None),
+            EffectiveOrigin::new(Scheme::Http, "[::1]", 8080),
+        )
+        .await;
+    assert_eq!(status, 200, "a same-origin IPv6 logout was refused");
+    let (status, _body) = app
+        .send(Method::Get, "/auth/me", "", &fresh_presented)
+        .await;
+    assert_eq!(status, 401, "the admitted logout did not end its session");
+
+    // (iii) Host `example.test:80` written explicitly and an Origin without a port: the same
+    // origin. This one uses the session under test, and is the logout that ends it.
+    let (status, _body) = app
+        .send_addressed(
+            Method::Post,
+            "/auth/logout",
+            &valid,
+            &presented,
+            FetchMetadata::new(Some("http://example.test"), Some("same-origin")),
+            EffectiveOrigin::new(Scheme::Http, "example.test", 80),
         )
         .await;
     assert_eq!(

@@ -20,6 +20,7 @@ use axum::http::{Request as HttpRequest, StatusCode, header};
 use http_body_util::BodyExt;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, WorkGate};
 use renvor_error::{Location, PROBLEM_MEDIA_TYPE};
+use renvor_http::Scheme;
 use renvor_http::route::OperationSpec;
 use renvor_http::route::build::{RouterConfig, router};
 use renvor_http::{CorsPolicy, HostPolicy, Request, Response, RouteRegistry, TrustedProxies};
@@ -37,6 +38,7 @@ fn config() -> RouterConfig {
         hosts: HostPolicy::deny_all().allow(HOST).expect("a valid host"),
         trusted_proxies: TrustedProxies::none(),
         cors: CorsPolicy::deny_all(),
+        public_scheme: Scheme::Http,
         limits: renvor_http::Limits::new(),
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel: CancelScope::root(),

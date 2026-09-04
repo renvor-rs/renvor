@@ -17,6 +17,7 @@ use std::net::IpAddr;
 pub use trusted::TrustedProxies;
 
 use crate::context::ClientIdentity;
+use crate::origin::Scheme;
 
 /// What a request carried that could bear on identity.
 ///
@@ -83,11 +84,173 @@ pub fn resolve(
     }
 }
 
+/// What a request carried that could bear on the scheme it was made under.
+///
+/// A slice per header, for the reason [`ForwardingHeaders`] is: a repeated header is visible and
+/// can be refused rather than collapsed before this code sees it.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProtoHeaders<'a> {
+    /// Every `Forwarded` header value, in order — the same values [`resolve`] read.
+    pub forwarded: &'a [&'a str],
+    /// Every `X-Forwarded-Proto` header value, in order.
+    pub x_forwarded_proto: &'a [&'a str],
+}
+
+/// Resolves the scheme a request was made under: the scheme field of its effective origin.
+///
+/// # The same two questions, in the same order
+///
+/// 1. **Was the identity resolved through a trusted proxy?** — already decided by [`resolve`],
+///    from the socket. For anything else the answer is `configured`, and no header is read.
+/// 2. Only then: **what does that proxy's `proto` say?** — the `Forwarded` header's `proto`
+///    parameter when the standard header is present, else `X-Forwarded-Proto`. Presence decides
+///    which is consulted; parsing decides the answer, exactly as for `for`.
+///
+/// # Fail-closed means the configured scheme
+///
+/// `configured` is the listener's own truth (`http` unless the operator said otherwise). A trusted
+/// proxy that sent no `proto`, a repeated one, or one naming a scheme this server is never reached
+/// under falls back to it rather than to a guess. That is the direction in which a mistake is
+/// **loud**: an `https://` `Origin` then fails to match the request's origin and the request is
+/// refused, rather than being admitted on a scheme nothing vouched for.
+#[must_use]
+pub fn resolve_scheme(
+    client: ClientIdentity,
+    configured: Scheme,
+    headers: ProtoHeaders<'_>,
+) -> Scheme {
+    match client {
+        // QUESTION 1. The identity did not come through a trusted proxy — either the peer is
+        // untrusted, or it is trusted and sent nothing parseable — so nothing it says about the
+        // scheme is read. Unreachable for an untrusted peer, which is the property that matters.
+        ClientIdentity::DirectPeer(_) => configured,
+        ClientIdentity::ViaTrustedProxy { .. } => {
+            // QUESTION 2. Presence decides which header; parsing decides the answer.
+            let claimed = match forwarded::single_value(headers.forwarded) {
+                Some(value) => forwarded::proto_from_forwarded(value),
+                None => forwarded::single_value(headers.x_forwarded_proto)
+                    .and_then(forwarded::proto_from_x_forwarded_proto),
+            };
+            claimed.unwrap_or(configured)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ForwardingHeaders, TrustedProxies, resolve};
+    use super::{ForwardingHeaders, ProtoHeaders, TrustedProxies, resolve, resolve_scheme};
     use crate::context::ClientIdentity;
+    use crate::origin::Scheme;
     use std::net::{IpAddr, Ipv4Addr};
+
+    fn via_proxy() -> ClientIdentity {
+        ClientIdentity::ViaTrustedProxy {
+            client: v4(198, 51, 100, 7),
+            proxy: v4(10, 0, 0, 1),
+        }
+    }
+
+    #[test]
+    fn an_identity_that_did_not_come_through_a_trusted_proxy_keeps_the_configured_scheme() {
+        // Whatever the headers say. This is the whole property: the socket decides whether a
+        // header is read at all.
+        let forwarded = ["for=198.51.100.7;proto=https"];
+        let xfp = ["https"];
+        let headers = ProtoHeaders {
+            forwarded: &forwarded,
+            x_forwarded_proto: &xfp,
+        };
+        assert_eq!(
+            resolve_scheme(
+                ClientIdentity::DirectPeer(v4(203, 0, 113, 9)),
+                Scheme::Http,
+                headers
+            ),
+            Scheme::Http
+        );
+        assert_eq!(
+            resolve_scheme(
+                ClientIdentity::DirectPeer(v4(10, 0, 0, 1)),
+                Scheme::Https,
+                headers
+            ),
+            Scheme::Https
+        );
+    }
+
+    #[test]
+    fn a_trusted_proxys_proto_is_honoured_and_forwarded_wins_when_present() {
+        // POSITIVE CONTROL for the test above.
+        let forwarded = ["for=198.51.100.7;proto=https"];
+        assert_eq!(
+            resolve_scheme(
+                via_proxy(),
+                Scheme::Http,
+                ProtoHeaders {
+                    forwarded: &forwarded,
+                    x_forwarded_proto: &[],
+                }
+            ),
+            Scheme::Https
+        );
+        let xfp = ["https"];
+        assert_eq!(
+            resolve_scheme(
+                via_proxy(),
+                Scheme::Http,
+                ProtoHeaders {
+                    forwarded: &[],
+                    x_forwarded_proto: &xfp,
+                }
+            ),
+            Scheme::Https
+        );
+        // The standard header is PRESENT without a proto: the legacy header gets no say.
+        let without_proto = ["for=198.51.100.7"];
+        assert_eq!(
+            resolve_scheme(
+                via_proxy(),
+                Scheme::Http,
+                ProtoHeaders {
+                    forwarded: &without_proto,
+                    x_forwarded_proto: &xfp,
+                }
+            ),
+            Scheme::Http
+        );
+    }
+
+    #[test]
+    fn a_missing_repeated_or_unparseable_proto_falls_back_to_the_configured_scheme() {
+        let unparseable = ["for=198.51.100.7;proto=ftp"];
+        assert_eq!(
+            resolve_scheme(
+                via_proxy(),
+                Scheme::Http,
+                ProtoHeaders {
+                    forwarded: &unparseable,
+                    x_forwarded_proto: &[],
+                }
+            ),
+            Scheme::Http
+        );
+        let repeated = ["https", "https"];
+        assert_eq!(
+            resolve_scheme(
+                via_proxy(),
+                Scheme::Http,
+                ProtoHeaders {
+                    forwarded: &[],
+                    x_forwarded_proto: &repeated,
+                }
+            ),
+            Scheme::Http
+        );
+        assert_eq!(
+            resolve_scheme(via_proxy(), Scheme::Https, ProtoHeaders::default()),
+            Scheme::Https
+        );
+    }
 
     fn v4(a: u8, b: u8, c: u8, d: u8) -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(a, b, c, d))

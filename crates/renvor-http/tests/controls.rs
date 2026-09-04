@@ -19,6 +19,7 @@ use axum::extract::ConnectInfo;
 use axum::http::{Request as HttpRequest, StatusCode, header};
 use http_body_util::BodyExt;
 use renvor_core::{CancelScope, OsEntropy, RunIdentifier, TypedStateMap, WorkGate};
+use renvor_http::Scheme;
 use renvor_http::route::build::{RouterConfig, router};
 use renvor_http::{
     CorsPolicy, HostPolicy, Limits, Request, Response, RouteRegistry, TrustedProxies,
@@ -33,6 +34,7 @@ fn config() -> RouterConfig {
         hosts: HostPolicy::deny_all().allow(HOST).expect("a valid host"),
         trusted_proxies: TrustedProxies::none(),
         cors: CorsPolicy::deny_all(),
+        public_scheme: Scheme::Http,
         limits: Limits::new(),
         run_id: RunIdentifier::generate(&OsEntropy).expect("entropy"),
         cancel: CancelScope::root(),
@@ -649,13 +651,18 @@ async fn a_wildcard_policy_never_reflects_credentials() {
 async fn a_same_origin_write_succeeds_under_the_default_deny_all_policy() {
     // Browsers send `Origin` on same-origin POST. A deny-by-default policy that refused them would
     // break every application's own frontend on the day it was generated.
+    //
+    // THE ORIGIN IS `http://`, THE SCHEME THIS SERVER IS REACHED UNDER. This test used to send
+    // `https://example.test` and pass, because the carve-out compared the host alone. RFC 6454 §5:
+    // an origin on another scheme is another origin, and `tests/effective_origin.rs` asserts that
+    // `https://` IS refused here. Phase 010 correction round, finding 1.
     let app = build(config());
 
     let response = app
         .oneshot(served(
             request("POST", "/declared")
                 .header(header::HOST, HOST)
-                .header(header::ORIGIN, format!("https://{HOST}")),
+                .header(header::ORIGIN, format!("http://{HOST}")),
         ))
         .await
         .expect("responds");

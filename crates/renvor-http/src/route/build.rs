@@ -69,8 +69,9 @@ use crate::context::{RequestContext, RequestId};
 use crate::cors::{CorsPolicy, CorsPolicyError};
 use crate::error::{HttpError, HttpErrorDetail, HttpErrorKind};
 use crate::host::{self, HostPolicy};
-use crate::identity::{ForwardingHeaders, TrustedProxies, resolve};
+use crate::identity::{ForwardingHeaders, ProtoHeaders, TrustedProxies, resolve, resolve_scheme};
 use crate::limits::Limits;
+use crate::origin::{EffectiveOrigin, Scheme};
 use crate::problem;
 use crate::request_id;
 use renvor_core::observe::semconv;
@@ -100,6 +101,9 @@ pub struct RouterConfig {
     /// Shared rather than owned: this is the **same** map the kernel's providers registered into,
     /// so a handler reads what a provider wrote rather than a copy that could diverge from it.
     pub state: Arc<TypedStateMap>,
+    /// The scheme requests arrive under when no trusted proxy reports one. `http` by default,
+    /// because the listener speaks HTTP. See [`crate::provider::HttpServerConfig::public_scheme`].
+    pub public_scheme: Scheme,
 }
 
 impl RouterConfig {
@@ -123,6 +127,7 @@ impl RouterConfig {
             // which is FR-013's requirement; an `Option` here would put a "was state configured
             // at all?" branch in front of every handler that reads it.
             state: Arc::new(TypedStateMap::new()),
+            public_scheme: Scheme::Http,
         })
     }
 
@@ -418,7 +423,7 @@ async fn resolve_and_run(
             run_id,
         );
     };
-    let Some(validated_host) = shared.config.hosts.validate(Some(single)) else {
+    let Some((validated_host, host_port)) = shared.config.hosts.validate(Some(single)) else {
         return refuse(
             &HttpError::new(
                 HttpErrorKind::HostRejected,
@@ -457,6 +462,26 @@ async fn resolve_and_run(
         },
     );
 
+    // THE REQUEST'S OWN ORIGIN — scheme, validated host, port — resolved here, once, as a fact
+    // (RFC 6454 §4). The scheme is the configured one unless the identity came through a trusted
+    // proxy whose `proto` says otherwise; the port is the `Host` header's, else the scheme's
+    // default. See `crate::origin` for why each field comes from where it does.
+    let xfp = header_values(request.headers(), "x-forwarded-proto");
+    let xfp_refs: Vec<&str> = xfp.iter().map(String::as_str).collect();
+    let scheme = resolve_scheme(
+        client,
+        shared.config.public_scheme,
+        ProtoHeaders {
+            forwarded: &forwarded_refs,
+            x_forwarded_proto: &xfp_refs,
+        },
+    );
+    let effective = EffectiveOrigin::new(
+        scheme,
+        validated_host.as_str(),
+        host_port.unwrap_or_else(|| scheme.default_port()),
+    );
+
     // ORIGIN REFUSAL — an Origin that is present, CROSS-origin, and not permitted is refused.
     //
     // THIS IS STRICTER THAN CORS, AND DELIBERATELY SO.
@@ -474,11 +499,18 @@ async fn resolve_and_run(
     // to a form post from its own page — the CORS policy denies by default, and every same-origin
     // write carried an Origin it had not been told to allow.
     //
-    // A request whose Origin matches the host it was addressed to is by definition not
-    // cross-origin, and CORS governs cross-origin access only. Comparing against `validated_host`
-    // — the value host validation already accepted — rather than against the raw header is what
-    // keeps this from becoming a bypass: an attacker cannot satisfy it without also satisfying
-    // host validation.
+    // A request whose Origin IS the origin it was addressed to — scheme, host, AND port, RFC 6454
+    // §5 — is by definition not cross-origin, and CORS governs cross-origin access only. Comparing
+    // against the effective origin built from `validated_host` — the value host validation already
+    // accepted — rather than against the raw header is what keeps this from becoming a bypass: an
+    // attacker cannot satisfy it without also satisfying host validation.
+    //
+    // ALL THREE FIELDS. This used to compare the host alone ("scheme and port are deliberately
+    // ignored"), so `https://app.example` was same-origin for an `http` request and `:8443` for
+    // port 80 — a page on the plaintext origin, or on another port, is a different security
+    // principal. An `Origin` that is not a serialised origin at all parses to nothing and falls
+    // through to the CORS policy exactly as an unmatched one does. Phase 010 correction round,
+    // finding 1.
     // An `Origin` that is PRESENT but undecodable is refused rather than skipped. The earlier form
     // used `.and_then(|value| value.to_str().ok())`, so a value carrying non-ASCII bytes made the
     // binding fail and the whole check was passed over — a fail-OPEN, in a table (C-11) that says
@@ -501,7 +533,7 @@ async fn resolve_and_run(
     };
 
     if let Some(origin) = origin
-        && !is_same_origin(origin, &validated_host)
+        && EffectiveOrigin::parse(origin).as_ref() != Some(&effective)
         && !shared.config.cors.allows(origin)
     {
         return refuse(
@@ -515,7 +547,7 @@ async fn resolve_and_run(
     }
 
     let scope = shared.config.cancel.child(format!("request:{request_id}"));
-    let context = RequestContext::new(run_id, request_id, client, validated_host, scope.clone());
+    let context = RequestContext::new(run_id, request_id, client, effective, scope.clone());
 
     // CLIENT DISCONNECT CANCELS THE REQUEST SCOPE.
     //
@@ -714,11 +746,6 @@ async fn dispatch(
     // identifier is untouched either way (FR-075).
     let inbound_trace = parse_inbound_trace(&parts.headers, &shared.config.state);
 
-    let renvor_request = Request::new(context, collected, query, path_params)
-        .with_state(Arc::clone(&shared.config.state))
-        .with_credentials(credentials)
-        .with_fetch_metadata(fetch_metadata);
-
     // 9. TRACE — nearest the handler, so the span covers handler execution. Structured fields
     // only, never an interpolated sentence, and every field is one Renvor generated.
     let span = tracing::info_span!(
@@ -735,6 +762,17 @@ async fn dispatch(
         span.record(semconv::renvor::PARENT_SPAN_ID, trace.parent_id().encode());
         span.record(semconv::renvor::TRACE_FLAGS, trace.flags().encode());
     }
+
+    let renvor_request = Request::new(context, collected, query, path_params)
+        .with_state(Arc::clone(&shared.config.state))
+        .with_credentials(credentials)
+        .with_fetch_metadata(fetch_metadata);
+    // The VALIDATED context, handed to the handler so it can propagate it (W3C §4.1, C-J8). The
+    // header itself never crosses; an invalid one is `None` here as it is on the span.
+    let renvor_request = match inbound_trace {
+        Some(trace) => renvor_request.with_trace_context(trace),
+        None => renvor_request,
+    };
 
     // THE PANIC BOUNDARY. Contract C-10: *"a handler panic is caught, contained, and reported as a
     // failure. It is never a hang, and its payload never reaches a response."*
@@ -886,26 +924,6 @@ fn into_axum(response: Response, request_id: RequestId, run_id: RunIdentifier) -
     }
 }
 
-/// Whether `origin` addresses the same host the request was addressed to.
-///
-/// Compared against the **validated** host, so this cannot be satisfied without first satisfying
-/// host validation. Scheme and port are part of an origin and are deliberately ignored here: a
-/// request that reached this application on this host is same-origin for the purpose of deciding
-/// whether CORS governs it at all.
-fn is_same_origin(origin: &str, validated_host: &str) -> bool {
-    origin
-        .split_once("://")
-        .map(|(_, authority)| authority)
-        .and_then(|authority| {
-            // Strip a port, leaving a bracketed IPv6 literal intact.
-            authority.strip_prefix('[').map_or_else(
-                || authority.split(':').next(),
-                |rest| rest.find(']').map(|close| &authority[..=close + 1]),
-            )
-        })
-        .is_some_and(|host| host.eq_ignore_ascii_case(validated_host))
-}
-
 /// The name of the counter of ignored inbound trace contexts (FR-083).
 pub const TRACE_CONTEXT_INVALID_METRIC: &str = "renvor_trace_context_inbound_invalid_total";
 
@@ -914,18 +932,35 @@ pub const TRACE_CONTEXT_INVALID_METRIC: &str = "renvor_trace_context_inbound_inv
 /// Absent is `None` with no count; present and invalid is `None`, counted in the application's
 /// metrics registry when one is published in state, and reported as a closed-field event; valid
 /// is the parsed context. Nothing from the header is rendered anywhere.
+///
+/// # A repeated `traceparent` is invalid
+///
+/// W3C Trace Context §3.2 defines `traceparent` as one field, and RFC 7230 §3.2.2 forbids a sender
+/// repeating a field whose value is not a list — and gives a recipient no rule for combining one.
+/// `HeaderMap::get` used to take the first, which is choosing between two values the way the
+/// repeated-`Host` and repeated-`Forwarded` rules in this crate refuse to: the hop in front of
+/// Renvor may choose the other. Counted and reported like any other invalid context. Phase 010
+/// correction round, finding 4.
+///
+/// # Every `tracestate` field is combined
+///
+/// §3.3.1.1 requires multiple `tracestate` fields to be combined per RFC 7230 §3.2.2 — joined with
+/// `,` in arrival order — before parsing. Only the first was read, so a vendor whose entry arrived
+/// in a second field was silently dropped. See [`combined_tracestate`].
 fn parse_inbound_trace(
     headers: &HeaderMap,
     state: &TypedStateMap,
 ) -> Option<renvor_core::observe::TraceContext> {
-    let traceparent = headers.get("traceparent")?;
-    let tracestate = headers
-        .get("tracestate")
-        .and_then(|value| value.to_str().ok());
-    let parsed = traceparent
-        .to_str()
-        .ok()
-        .and_then(|value| renvor_core::observe::TraceContext::parse(value, tracestate).ok());
+    let mut traceparents = headers.get_all("traceparent").iter();
+    let traceparent = traceparents.next()?;
+    let parsed = if traceparents.next().is_some() {
+        None
+    } else {
+        let tracestate = combined_tracestate(headers);
+        traceparent.to_str().ok().and_then(|value| {
+            renvor_core::observe::TraceContext::parse(value, tracestate.as_deref()).ok()
+        })
+    };
     if parsed.is_none() {
         if let Ok(registry) = state.get::<renvor_core::observe::metrics::Registry>()
             && let Ok(counter) = registry.counter(
@@ -942,6 +977,30 @@ fn parse_inbound_trace(
         );
     }
     parsed
+}
+
+/// Combines every `tracestate` field in arrival order with `,` (W3C §3.3.1.1, RFC 7230 §3.2.2).
+///
+/// `None` when no field was sent, and `None` — the whole `tracestate` dropped, the `traceparent`
+/// untouched, nothing counted, which §3.3 permits — when any field is not visible ASCII or the
+/// combined value already exceeds the kernel's bound. Combining the readable fields and skipping
+/// the other would hand a handler a `tracestate` the caller never sent; and the bound is checked
+/// while combining so that a run of oversized fields is never assembled only to be refused.
+fn combined_tracestate(headers: &HeaderMap) -> Option<String> {
+    let mut combined = String::new();
+    let mut any = false;
+    for value in headers.get_all("tracestate") {
+        let text = value.to_str().ok()?;
+        if any {
+            combined.push(',');
+        }
+        combined.push_str(text);
+        any = true;
+        if combined.len() > renvor_core::observe::MAX_TRACESTATE_BYTES {
+            return None;
+        }
+    }
+    any.then_some(combined)
 }
 
 /// A `500` with no body, for a failure that must not describe itself.
