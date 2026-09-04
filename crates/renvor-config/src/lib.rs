@@ -23,6 +23,7 @@ pub mod layer;
 pub mod resolver;
 pub mod schema;
 pub mod secret;
+pub mod section;
 pub mod source;
 
 // `MAX_KEY_DEPTH` joins the other two ceilings at the root because it is now reachable through
@@ -34,4 +35,8 @@ pub use layer::merge::{DecodedLayer, Merged};
 pub use resolver::{LayeredResolver, LayeredResolverBuilder};
 pub use schema::ConfigSchema;
 pub use secret::{REDACTED, Secret};
-pub use source::{ConfigHandle, SchemaSource};
+pub use section::SectionKeys;
+pub use source::{ConfigHandle, SchemaSource, Validator, layer_of};
+// The defaults table type `LayeredResolverBuilder::with_defaults` takes. Re-exported so a crate
+// that declares a configuration section can write its defaults without naming the TOML crate.
+pub use toml::Table;
