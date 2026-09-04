@@ -3,6 +3,11 @@
 //!
 //! Every assertion lives in the testkit; this file supplies the fixture and nothing else, so the
 //! memory substitute and all four rows are held to one text.
+//!
+//! Gated on `jobs` as a whole: a build that selects only a database feature compiles every test
+//! target of this crate (`xtask` step 7 checks each row with `--all-targets`), and this file must
+//! then be empty rather than reach the adapter and crates that only `jobs` enables.
+#![cfg(feature = "jobs")]
 
 mod support;
 
