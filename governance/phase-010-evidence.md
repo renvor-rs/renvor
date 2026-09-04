@@ -87,11 +87,15 @@ is recorded here after the pull request opens: head reviewed, findings, disposit
 
 ## 5. Defects found, and by what
 
-See `phase-010-review-record.md` §2: seven defects found by the repository's own gates and real
+See `phase-010-review-record.md` §2: eight defects found by the repository's own gates and real
 servers after batches were green — an InnoDB gap-lock deadlock, an unbounded re-claim, fourteen
 credential-file diagnostics, a cache adapter with no crypto provider, a resource missing from
-the OTLP wire, a test binary aborted by a destructor, and a `tracing-core` callsite-interest race
-that dropped a test's recorded event — each fixed at the root and pinned.
+the OTLP wire, a test binary aborted by a destructor, a `tracing-core` callsite-interest race
+that dropped a test's recorded event, and two job-store suites compiled into a database-only
+build — each fixed at the root and pinned — plus one secret-scanner false positive on the
+redaction canary, recorded as FP-004 with the injection proof the scanner's policy demands.
+The last three were found by the closing runs themselves: no full run on this branch had
+reached steps 7–9 before them.
 
 ## 6. Testing discipline
 
