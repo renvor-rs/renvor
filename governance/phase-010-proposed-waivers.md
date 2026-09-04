@@ -1,8 +1,14 @@
-# Phase 010 — Proposed Waivers (not granted)
+# Phase 010 — Proposed Waivers (consumed 2026-09-04: granted as W-021 and W-022)
 
 **Companion to**: [`phase-010-evidence.md`](phase-010-evidence.md) · [`waivers.md`](waivers.md)
 **Drafted**: 2026-09-04, by the implementing session
-**Status**: **PROPOSED. Neither row is granted, and neither carries any authority.**
+**Status**: **CONSUMED 2026-09-04.** The maintainer granted the substance of both rows as **W-021** and
+**W-022** in [`waivers.md`](waivers.md), with every count re-derived from the closed records at the
+grant — the figures below ("128 controlled mutations", "ten defects") had been superseded by 136 and
+by thirteen review-record rows before the grant, and the granted text carries the derived figures. This
+draft is retained unedited below this line as the dated record of what was proposed; it carries no
+authority and is not the text of the grant. *(Read "PROPOSED. Neither row is granted, and neither
+carries any authority." until then.)*
 
 This file exists because the waiver ledger's own rule — enforced by an `xtask` test that re-derives
 the headline from the table and refuses any waiver number the table has not granted — counts only

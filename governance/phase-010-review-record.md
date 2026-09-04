@@ -4,8 +4,12 @@
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
 
 **No independent human review of this phase has occurred, and none is claimed.** Closure rests on
-the **proposed** Phase 010 phase-closure waiver (`phase-010-proposed-waivers.md`), which would be
-the **tenth consecutive** phase-level waiver of the same rule for the same reason if granted. Everything below is maintainer-commissioned and **advisory**, not independent.
+[W-022](waivers.md), granted 2026-09-04, the **tenth consecutive** phase-level waiver of the same
+rule for the same reason; ADR-0031 … ADR-0037 are `accepted` under [W-021](waivers.md), a separate
+exception on a separate axis; constitution principle VII's generator obligation (L-14) is deferred
+under [W-023](waivers.md) and [W-024](waivers.md), not closed. Everything below is
+maintainer-commissioned and **advisory**, not independent. *(Until the grant this paragraph read
+"rests on the **proposed** … waiver … if granted"; the draft is kept, marked consumed.)*
 
 ## 1. What was commissioned, and what came back
 
@@ -114,7 +118,28 @@ before any gate run was cited. One provider text pin changed because the stop me
 carries a third count ("… failed, 0 timed out, and 0 withheld"); it still requires the exact
 counts.
 
-## 4. What this record does not claim
+## 4. The closure decisions (2026-09-04)
+
+Taken by the maintainer at the merge-authority checkpoint, in writing, and applied by the implementing
+session: **L-16** accepted as proven and closed (§3b); principle VII's meaning of "ships" **not**
+reinterpreted or weakened; **W-021** and **W-022** granted with every count re-derived from these
+records at the grant — 136 mutations (88 + 40 + 8), thirteen §2 rows, sixteen §3 findings, one §3b
+correction, 16 retained limitations — and the draft's stale "128 mutations" wording not carried;
+**W-023** (Phase 009's auth starter) and **W-024** (this phase's capabilities) created as separate
+waivers of principle VII's timing, each the third exception of its phase and recorded as such,
+W-023 not retroactive; **L-14** deferred under them, **L-15** and **L-17** left open with their Phase
+011 ownership; **ADR-0031 … ADR-0037** marked `accepted` under W-021 with the non-independent
+disclosure, bound to head `5f26334b394f20ae86b3037ccb77a23705c40ed9` and tree
+`47aeb8d8fda9e07bd5a4520406cef4eada44273c` (`phase-010-evidence.md` §10). The validation pass — the
+`validation` agent, read-only, against the phase task's requirements — returned `needs_fixes` on
+the mirror before this commit: four stale figures (the evidence's §7 contract versions, one line
+behind each bump; the consumed draft's "128 mutations"; a `capabilities-contract.md`
+cross-reference to observability-contract 2.0.0; "each with owner and target" where L-4 carries
+none), each corrected or marked here, and one cosmetic duplicate `include` glob in
+`renvor-jobs/Cargo.toml`, recorded and left (§10). This record was not independently reviewed
+either.
+
+## 5. What this record does not claim
 
 - That any reviewer other than the maintainer read the code.
 - That the research reports were verified beyond the claims this record lists as re-measured.

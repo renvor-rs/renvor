@@ -1,20 +1,34 @@
 # Phase 010 — Evidence
 
 **Phase**: 010 — Cache, jobs, mail, storage, and observability capabilities
-**State**: **implemented on `feat/phase-010-operational-capabilities`, reviewed, corrected in one
-bounded round and then in one maintainer-directed L-16 correction (both 2026-09-04); NOT
-closed.** Closure is the maintainer's decision at the merge-authority checkpoint.
+**State**: **`complete` under [W-022](waivers.md), closed 2026-09-04** — implemented on
+`feat/phase-010-operational-capabilities`, reviewed, corrected in one bounded round and then in one
+maintainer-directed L-16 correction (both 2026-09-04), and closed by the maintainer's decision of
+2026-09-04 at the merge-authority checkpoint.
+**Closed**: 2026-09-04
 **Base**: `c57b4fb131b1c254dd89ce21fd78aae2ac2f0b37` (origin/main)
-**Reviewed head**: `1328dd3` (the head Codex reviewed); **correction-round source head**: `8099f017`, gate results in §3a; **L-16 correction source head**: `8b275803`, gate results in §3a′
+**Codex-reviewed head**: `1328dd3`; **correction-round source head**: `8099f017` (§3a); **L-16
+correction source head**: `8b275803` (§3a′); **closure source head**: `5f26334b394f20ae86b3037ccb77a23705c40ed9`
+(§3a″) — the implementation is unchanged since `8b275803`; the closure source head adds one test-table
+extension in `xtask`
+**Reviewed tree**: `47aeb8d8fda9e07bd5a4520406cef4eada44273c` (the closure source head's tree; §10)
 **Companions**: [`phase-010-limitations.md`](phase-010-limitations.md) ·
 [`phase-010-mutation-ledger.md`](phase-010-mutation-ledger.md) ·
 [`phase-010-review-record.md`](phase-010-review-record.md) ·
 [`phase-010-dependency-inventory.md`](phase-010-dependency-inventory.md) ·
-[`phase-010-proposed-waivers.md`](phase-010-proposed-waivers.md)
+[`phase-010-proposed-waivers.md`](phase-010-proposed-waivers.md) *(consumed 2026-09-04 by W-021 and
+W-022)* · [`waivers.md`](waivers.md)
 
-> **No independent human review of this phase has occurred, and none is claimed.** The seven
-> decision records ADR-0031 … ADR-0037 are **`proposed`** and carry no authority. Two waivers are
-> drafted and **not granted**. Automated and maintainer reviews are **advisory**.
+> **This phase is `complete` under [W-022](waivers.md). No independent human review occurred, and
+> none is claimed.** W-022 is the **tenth consecutive** phase-level waiver of the same rule for the
+> same reason. The seven decision records ADR-0031 … ADR-0037 are `accepted` under
+> [W-021](waivers.md), a separate exception on a separate axis. Constitution principle VII's
+> generator obligation is **unmet** and deferred under [W-023](waivers.md) (Phase 009's auth starter)
+> and [W-024](waivers.md) (this phase's capabilities), each expiring 2026-10-04 or earlier when Phase
+> 011 proves the support; L-14 records it. Automated and maintainer reviews are **advisory**.
+>
+> *(Until 2026-09-04 this note read: the records are `proposed` and carry no authority; two waivers
+> are drafted and not granted. That was true when written.)*
 
 ---
 
@@ -61,6 +75,29 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 | capability-disabled builds exclude their dependencies | **MET.** 22 new step 7 rows with controls; the lean facade resolves no capability crate; each `capability-*` feature resolves exactly its crate |
 
 ## 3. Verification — commands, platforms, results
+
+### 3a″. The closure source head, `5f26334b` (2026-09-04, after the L-16 correction)
+
+Both legs ran sequentially on `5f26334b` — `8b275803` plus the L-16 governance record and one
+test-table extension in `xtask` (the waiver-count test could not spell twenty-three and now derives
+the review-gap set from each row's violated rule; no implementation file changed) — with
+`CARGO_INCREMENTAL=0` and stdin detached, against the same live PostgreSQL 17, MySQL 8.4, Valkey
+9.1.1, and Mailpit 1.29.1, one gate process at a time, in a driver detached from the session's
+tooling so that its ten-minute cap could not kill the run. The commit that records this table
+differs from `5f26334b` only by governance text (§10).
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `5f26334b` | `5f26334b` |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2065 passed, 0 failed, 5 ignored (139 `test result` lines) | 2065 passed, 0 failed, 5 ignored (139 `test result` lines) |
+| Census | 67/67 rows reported in | 67/67 rows reported in |
+| Elapsed | 8 min 54 s (step 4: 7m 35s) | 7 min 55 s (step 4: 6m 45s) |
+
+The test total is unchanged from §3a′: the closure added no test and removed none.
 
 ### 3a′. The L-16 correction's head, `8b275803` (2026-09-04, after the round)
 
@@ -139,6 +176,11 @@ claim was re-measured (`phase-010-review-record.md` §1).
 
 **Continuous integration on pull request #61.** The first run, on `c5bf188`, passed 8 of 14 checks (both CodeQL analyses, docs, security, both macOS platform legs, and both `verify` legs — the full nine-step sequence on Ubuntu with the Valkey and Mailpit containers) and failed 5: the dependency review's licence list, the release dry run's packaging order, CodeQL on two test literals, and both Windows platform legs on one boot category. Each is a row of `phase-010-review-record.md` §2 with its cause and fix; no check was weakened. The checks on the pull request's final head are the pull request's own record and are quoted in the checkpoint report.
 
+**Continuous integration on the closure head.** The checks on the pull request's final head — the
+closure commit — are the pull request's own record and are quoted in the closure report; branch
+protection requires `verify (1.94.0)`, `verify (stable)`, `security`, and `docs`, and the merge is
+refused without them. This file cannot quote a run on a commit it is part of (§10).
+
 **Codex review.** **PERFORMED by the maintainer** with `/codex:review` on the pull request head `1328dd3` (the implementing session could not invoke it and stopped once to hand over the command). **Sixteen findings**, every one verified against the tree before a change and every one confirmed; **fifteen corrected at the root in one bounded round** (2026-09-04) with a RED→GREEN test and a controlled mutation each, and nothing — no test, gate, scanner, contract, or acceptance criterion — weakened; **one (finding 5, constitution VII's generator obligation) confirmed and not correctable** without Phase 011 scope or a maintainer ruling, recorded as L-14 with ADR-0031's compliance claim withdrawn in place. The table of findings, corrections, tests, and mutations is `phase-010-review-record.md` §3.
 
 ## 5. Defects found, and by what
@@ -186,18 +228,66 @@ steps 7–9 before them, and no Windows leg had run at all.
 
 ## 7. Documentation
 
-Contracts: `capabilities-contract.md` 1.0.0 and `jobs-contract.md` 1.0.0 (new),
-`observability-contract.md` 2.0.0, `verification-sequence.md` 2.1.0. Crate READMEs are
-pre-release and truthful. No canonical documentation source is recreated in this repository.
+Contracts at closure: `capabilities-contract.md` 1.1.0 and `jobs-contract.md` 1.2.0 (both new this
+phase), `observability-contract.md` 2.1.0, `verification-sequence.md` 2.2.0. *(This line read
+1.0.0 / 1.0.0 / 2.0.0 / 2.1.0 — the checkpoint versions — until 2026-09-04: the correction round and
+the L-16 correction bumped each contract and did not update this line, and the validation pass found
+it; corrected at closure — the stale-copy trap this repository records for every duplicated
+figure.)* Crate READMEs are pre-release and truthful. No canonical documentation source is recreated in this repository.
 
 ## 8. Limitations
 
-`phase-010-limitations.md`: 16 retained, each with owner and target (13 at the checkpoint; L-14
+`phase-010-limitations.md`: 16 retained, each with an owner and target except L-4 (no browser is
+driven), which is out of scope for a framework gate and carries none (13 at the checkpoint; L-14
 to L-17 added by the correction round, of which L-16 was closed the same day with measurement);
-2 Phase 009 rows closed with measurement.
+2 Phase 009 rows closed with measurement. **L-14 is deferred under W-023 and W-024 as of
+2026-09-04 — unmet, not fixed, not closed — with an absolute expiry of 2026-10-04; L-15 and L-17
+stay open with their Phase 011 ownership.**
+
+## 8a. Task ledger at closure, stated as it actually is
+
+The phase-local ledger (`specs/010-…/tasks.md`, gitignored — `git ls-files specs` = 0 is a required
+closing state) carries **57 tasks**: T001–T056 and T057, this closure. Its state at the closure
+commit:
+
+| Status | Count | Notes |
+|---|---|---|
+| `validated` | 53 | T001–T056 less the rows below, moved from `coding_done` on the verdict of a separate validation pass on 2026-09-04 — the `validation` agent, read-only, against the phase task's requirements and expected results, named the rows eligible and the session applied the move — not on the author's own say-so |
+| `coding_done` (not validated) | 3 | T052, T053, T054 — the governance mirror, the final gates, and the pull request rows — held by the validation pass until this commit records the closure source head's gate results and is pushed so that the pull request head equals the local head; re-validated after the push, in the gitignored ledger, not in this tracked mirror |
+| `coding_done` | 1 | **T057** — this closure, moved from `todo` when the waivers, the ADR states, and these records were written |
+| `complete` | **0** | conferred only after the merge and the post-merge checks succeed, by the maintainer's written approval of 2026-09-04, and recorded in the gitignored ledger — a state this tracked mirror cannot show, because it is written before the merge |
+
+Phase 009 recorded 0 `validated` because its validation pass never happened. This phase's pass
+happened and is named above; it is still not independent review, and W-022 exists because it is
+not.
+
 
 ## 9. What this phase did not do
 
 No S3-compatible adapter (gated out, recorded). No real TLS handshake in CI. No public release,
 tag, crate publication, website deployment, repository-setting change, or environment change. No
 Phase 011 work started.
+
+## 10. Closure binding
+
+- **Reviewed source head**: `8b2758034a9f5b5d85559430c0ea0c2254e30278` — the last commit that
+  changed an implementation file; both gate legs green on it (§3a′).
+- **Closure source head**: `5f26334b394f20ae86b3037ccb77a23705c40ed9`, tree
+  `47aeb8d8fda9e07bd5a4520406cef4eada44273c` — `8b275803` plus the L-16 governance record and the `xtask`
+  test-table extension; both gate legs green on it (§3a″). W-021, W-022, W-023, W-024 and the seven
+  ADR acceptances are bound to this head and tree (`waivers.md`, "The head and tree these waivers
+  are bound to").
+- **The final closure commit contains governance and record changes only**: `governance/waivers.md`,
+  `GOVERNANCE.md`, one sentence of `README.md`, the `governance/phase-010-*.md` records, a dated
+  cross-reference note in `governance/phase-009-evidence.md` §6, the seven decision records' state
+  fields and authority notes, and one stale version cross-reference in
+  `contracts/capabilities-contract.md` (observability-contract 2.0.0 → 2.1.0, found by the validation
+  pass) — no implementation, test, or manifest — verifiable by
+  `git diff 5f26334..<final head> --name-only`. No commit can name its own hash, so this file
+  binds to the head above; the final head is identified by the pull request's merge record, and its
+  checks are the pull request's own.
+- **Found by the validation pass and left**: `crates/renvor-jobs/Cargo.toml` lists
+  `migrations/**/*.sql` twice in `include` — harmless (the packaged file set is the same) and a
+  manifest change after the gate legs had run; recorded for Phase 011 rather than folded in.
+- **What closure did not do**: no tag, release, deployment, crate publication, or Phase 011 work;
+  W-023 and W-024 block release while active.

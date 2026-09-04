@@ -8,7 +8,7 @@ status: "unstable — the surface it describes is explicitly unstable (pre-relea
 
 **Feature**: Phase 010 — cache, jobs, mail, storage, and observability | **Satisfies**: FR-001…FR-021,
 FR-043…FR-066, FR-093, FR-094, FR-102 | **Jobs**: see `jobs-contract.md` | **Observability**: see
-`observability-contract.md` 2.0.0
+`observability-contract.md` 2.1.0
 
 Every capability is a **narrow port** — a trait plus its value types — in its own crate, with a
 **deterministic substitute** usable outside `cfg(test)` and an adapter behind an off-by-default

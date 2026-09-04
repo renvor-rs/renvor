@@ -66,9 +66,9 @@
 > decision record that supersedes ADR-0002, and none exists. **The window is open.**
 > **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework. **Phase 009** of its development programme has closed; **Phase 010**
-(cache, jobs, mail, storage, and observability capabilities) is implemented on a branch and awaits
-the maintainer's closing decision — its records are `governance/phase-010-*.md`.
+Renvor is a Rust framework. **Phase 010** of its development programme (cache, jobs, mail,
+storage, and observability capabilities) closed on 2026-09-04 under waiver W-022 — no independent
+review occurred — and its records are `governance/phase-010-*.md`. Phase 011 has not started.
 
 ## The command is `renvor`
 

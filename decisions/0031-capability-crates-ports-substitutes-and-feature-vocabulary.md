@@ -3,16 +3,30 @@
 | Field | Value |
 |---|---|
 | **ID** | 0031 |
-| **State** | `proposed` |
-| **Reviewer** | *(required to enter `accepted`)* |
-| **Review date** | *(required to enter `accepted`)* |
+| **State** | `accepted` |
+| **Reviewer** | Ahmed Anbar — self-review under W-021. **Not independent** |
+| **Review date** | 2026-09-04 |
 | **Superseded by** | *(not superseded)* |
 
-> **A record MUST NOT be marked `accepted` without a recorded independent review** (spec FR-013).
-> Who qualifies as an independent reviewer is established in `GOVERNANCE.md`. Where no independent
-> reviewer exists, acceptance requires a waiver recorded in `governance/waivers.md` with an absolute
-> expiry date — the gap is never left unrecorded. **This record carries no authority while
-> `proposed`.**
+> **`accepted` under [W-021](../governance/waivers.md), and the review behind it was NOT
+> independent.** No independent human review of this record has occurred, and none is claimed.
+> The maintainer authored it and took every measurement it rests on; automated and maintainer
+> reviews are **advisory**, never independent.
+>
+> W-021 covers **ADR-0031 through ADR-0037 as one coupled cluster** — each depends on a boundary
+> another draws, so reviewing one alone would review a fragment — and it authorises nothing else.
+> It does **not** close Phase 010; [W-022](../governance/waivers.md) is a separate exception on a
+> separate axis.
+>
+> Acceptance accepts the decisions this record makes and **not the reading it withdrew**: its claim
+> of compliance with constitution principle VII is withdrawn below, and that obligation is
+> **deferred** under [W-024](../governance/waivers.md) (and, for Phase 009's auth starter, W-023),
+> not met.
+>
+> Accepted **2026-09-04** against head `5f26334b394f20ae86b3037ccb77a23705c40ed9`,
+> tree `47aeb8d8fda9e07bd5a4520406cef4eada44273c`. W-021 expires **2027-02-11**, or
+> immediately when a qualified independent human reviewer becomes available — whichever
+> is first.
 
 ## Context
 
@@ -101,6 +115,10 @@ all-supported-feature builds."*
   **unmet and unresolved by this record**: it is `governance/phase-010-limitations.md` L-14, and
   its resolution (Phase 011 scope, a ruling on what "ships" means for library-only phases, or a
   waiver) is the maintainer's. This paragraph does not claim compliance with principle VII.
+  **Deferred 2026-09-04 under W-023 (Phase 009's `--auth`) and W-024 (this phase's
+  capabilities)** (`governance/waivers.md`): the maintainer ruled that "ships" is not
+  reinterpreted; the obligation stays unmet and visible as L-14, with an absolute expiry of
+  **2026-10-04** or earlier when Phase 011 implements and proves the generator support.
 - **What would reverse this**: a decision to consolidate the crates would be a public-API change
   under C-S1 while the window is open, and would need a superseding record.
 
@@ -110,7 +128,8 @@ all-supported-feature builds."*
   crate; every substitute is explicit.
 - **Constitution IV, VI** — fail-closed startup and bounded work: decisions 2, 3, 5.
 - **Constitution VIII** — feature isolation: decision 6, asserted with controls.
-- **Constitution VII** — **not claimed**; see the contested consequence above and L-14.
+- **Constitution VII** — **not claimed**; see the contested consequence above and L-14, deferred
+  under W-024 (and W-023 for Phase 009's auth starter), unmet until Phase 011 proves the support.
 - **PLAN §7.3, §7.4, §20 Phase 010** — the crate set and the feature vocabulary as planned.
 - **PLAN §21 items 13 and 14** — item 13 is ADR-0032; item 14 (documentation platform) is unchanged
   by this phase.

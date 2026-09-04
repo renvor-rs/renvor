@@ -3,14 +3,25 @@
 | Field | Value |
 |---|---|
 | **ID** | 0034 |
-| **State** | `proposed` |
-| **Reviewer** | *(required to enter `accepted`)* |
-| **Review date** | *(required to enter `accepted`)* |
+| **State** | `accepted` |
+| **Reviewer** | Ahmed Anbar — self-review under W-021. **Not independent** |
+| **Review date** | 2026-09-04 |
 | **Superseded by** | *(not superseded)* |
 
-> **A record MUST NOT be marked `accepted` without a recorded independent review** (spec FR-013).
-> Where no independent reviewer exists, acceptance requires a waiver in `governance/waivers.md`
-> with an absolute expiry date. **This record carries no authority while `proposed`.**
+> **`accepted` under [W-021](../governance/waivers.md), and the review behind it was NOT
+> independent.** No independent human review of this record has occurred, and none is claimed.
+> The maintainer authored it and took every measurement it rests on; automated and maintainer
+> reviews are **advisory**, never independent.
+>
+> W-021 covers **ADR-0031 through ADR-0037 as one coupled cluster** — each depends on a boundary
+> another draws, so reviewing one alone would review a fragment — and it authorises nothing else.
+> It does **not** close Phase 010; [W-022](../governance/waivers.md) is a separate exception on a
+> separate axis.
+>
+> Accepted **2026-09-04** against head `5f26334b394f20ae86b3037ccb77a23705c40ed9`,
+> tree `47aeb8d8fda9e07bd5a4520406cef4eada44273c`. W-021 expires **2027-02-11**, or
+> immediately when a qualified independent human reviewer becomes available — whichever
+> is first.
 
 ## Context
 
