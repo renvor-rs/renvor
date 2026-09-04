@@ -601,6 +601,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !adapters_compile_per_driver(root) {
         return false;
     }
+    if !port_crates_are_warning_free_without_features(root) {
+        return false;
+    }
 
     if !lean_facade_compiles(root) {
         return false;
@@ -624,9 +627,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
         7,
         "architecture invariants",
         "crate DAG, transport, persistence and capability isolation, per-driver adapter \
-         compiles, facade isolation, lean compile, one rustls crypto provider, \
-         publishable dependencies, required package metadata, instability wording, and the \
-         executable name all hold, each with a control",
+         compiles, warning-free feature-off port crates, facade isolation, lean compile, one \
+         rustls crypto provider, publishable dependencies, required package metadata, \
+         instability wording, and the executable name all hold, each with a control",
     );
     true
 }
@@ -1385,6 +1388,105 @@ fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
         started.elapsed(),
     );
     succeeded
+}
+
+/// Step 7: every capability port crate builds with **no feature enabled** and reports **zero
+/// warnings**.
+///
+/// # The defect this exists for
+///
+/// `renvor-mail` without `smtp` and `renvor-storage` without `filesystem` each emitted
+/// `variant \`Configured\` is never constructed`: the variant is built only by `from_config`, which
+/// those features gate, so the feature-off build carried a variant nothing could reach. Step 3
+/// runs clippy with `--all-features`, where the variant IS constructed, so the gate never saw the
+/// warning; a consumer enabling only the capability feature did — first noticed while building the
+/// facade examples for the Phase 010 cheat sheet (2026-09-05).
+///
+/// A warning is not an error, and that is exactly why it needs its own row: `-D warnings` runs
+/// only under the feature set step 3 chooses, and every other feature set is a build somebody
+/// else sees first.
+///
+/// # Why `--message-format=short` rather than `-D warnings`
+///
+/// `RUSTFLAGS=-D warnings` changes every dependency's fingerprint and rebuilds the graph twice —
+/// once here and once for the next ordinary build. Reading the diagnostics back does not. Cargo
+/// replays a fresh crate's cached warnings, so the answer is the same whether or not anything
+/// recompiles.
+fn port_crates_are_warning_free_without_features(root: &std::path::Path) -> bool {
+    const PORT_CRATES: [&str; 5] = [
+        "renvor-cache",
+        "renvor-jobs",
+        "renvor-mail",
+        "renvor-storage",
+        "renvor-observability",
+    ];
+
+    for package in PORT_CRATES {
+        match warnings_without_features(root, package) {
+            Ok(warnings) if warnings.is_empty() => {}
+            Ok(warnings) => {
+                step_fail(
+                    7,
+                    "architecture invariants",
+                    &format!(
+                        "`cargo check -p {package} --no-default-features --lib` reports {} \
+                         warning(s). A capability crate built with only the feature a consumer \
+                         asked for must build clean; clippy under `--all-features` cannot see \
+                         this because the feature that constructs the offending item is on \
+                         there:\n{}",
+                        warnings.len(),
+                        warnings.join("\n")
+                    ),
+                );
+                return false;
+            }
+            Err(reason) => {
+                step_fail(7, "architecture invariants", &reason);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The warning lines `cargo check --message-format=short` reports for `package` built as a
+/// library with no feature, or why the check could not run.
+///
+/// Every line of the form `path:line:col: warning: …` is one warning. The `generated N warning(s)`
+/// summary line carries no colon-warning-colon and is not counted, so a package with one warning
+/// reports one line rather than two.
+fn warnings_without_features(root: &std::path::Path, package: &str) -> Result<Vec<String>, String> {
+    let started = Instant::now();
+    let output = std::process::Command::new("cargo")
+        .args([
+            "check",
+            "--locked",
+            "-p",
+            package,
+            "--no-default-features",
+            "--lib",
+            "--message-format=short",
+        ])
+        .current_dir(root)
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .map_err(|error| format!("`cargo check -p {package}` could not be run: {error}"))?;
+    timing(
+        &format!("step 7 probe `cargo check -p {package} --no-default-features --lib`"),
+        started.elapsed(),
+    );
+    let stderr = without_ansi(&String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        return Err(format!(
+            "`cargo check --locked -p {package} --no-default-features --lib` FAILED; a \
+             capability crate must build with no feature at all:\n{stderr}"
+        ));
+    }
+    Ok(stderr
+        .lines()
+        .filter(|line| line.contains(": warning:"))
+        .map(str::to_owned)
+        .collect())
 }
 
 /// T111: the facade **compiles** without default features, for every target.
@@ -4218,6 +4320,71 @@ mod tests {
             facade.lines().any(|line| line.starts_with("renvor-core v")),
             "the facade does not resolve renvor-core, so the ordering assertions above prove \
              nothing"
+        );
+    }
+
+    /// A planted warning in a feature-off library is reported, so the step-7 row can fail.
+    ///
+    /// CONTROL for `port_crates_are_warning_free_without_features`. A reader of `cargo check`'s
+    /// output that matched nothing would report every crate clean, which is the vacuous pass the
+    /// Phase 010 warnings hid behind for a day. The scratch crate below carries exactly the shape
+    /// that was missed — a variant nothing constructs — and the reader must count it.
+    #[test]
+    fn a_planted_feature_off_warning_is_counted() {
+        let scratch = std::env::temp_dir().join(format!(
+            "renvor-xtask-warning-control-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).expect("the scratch crate is created");
+        std::fs::write(
+            scratch.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\nadapter = []\n\n[dependencies]\n",
+        )
+        .expect("manifest written");
+        std::fs::write(
+            scratch.join("src/lib.rs"),
+            // The SAME shape as the real defect: a PRIVATE enum behind a public type, whose second
+            // variant only a feature-gated constructor builds. A public enum would not do — an
+            // unused public variant is reachable API and never dead.
+            "//! Scratch.\n\n/// A holder.\npub struct Holder {\n    source: Source,\n}\n\nenum Source {\n    Given(u8),\n    Configured(u8),\n}\n\nimpl Holder {\n    /// Given.\n    #[must_use]\n    pub fn given() -> Self {\n        Self { source: Source::Given(0) }\n    }\n\n    /// Configured; constructed only under `adapter`.\n    #[cfg(feature = \"adapter\")]\n    #[must_use]\n    pub fn configured() -> Self {\n        Self { source: Source::Configured(1) }\n    }\n\n    /// The value.\n    #[must_use]\n    pub fn value(&self) -> u8 {\n        match &self.source {\n            Source::Given(value) | Source::Configured(value) => *value,\n        }\n    }\n}\n",
+        )
+        .expect("source written");
+        // `--locked` needs a lockfile; a dependency-free crate's is generated offline.
+        let generated = std::process::Command::new("cargo")
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(&scratch)
+            .output()
+            .expect("cargo runs");
+        assert!(
+            generated.status.success(),
+            "lockfile: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+
+        let warnings = super::warnings_without_features(&scratch, "scratch")
+            .expect("the scratch crate builds");
+        let _ = std::fs::remove_dir_all(&scratch);
+
+        assert_eq!(
+            warnings.len(),
+            1,
+            "expected exactly the planted `Configured` warning, got {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("Configured") && warnings[0].contains("never constructed"),
+            "the counted line is not the planted warning: {}",
+            warnings[0]
+        );
+    }
+
+    /// Every capability port crate is warning-free with no feature — the step-7 row, reachable
+    /// from `cargo test` as well as from `verify`.
+    #[test]
+    fn port_crates_are_warning_free_without_features_with_their_control() {
+        assert!(
+            super::port_crates_are_warning_free_without_features(&super::workspace_root()),
+            "a port crate emits a warning when built with no feature — see the step-7 detail above"
         );
     }
 

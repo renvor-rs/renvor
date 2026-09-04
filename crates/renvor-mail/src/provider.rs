@@ -94,6 +94,8 @@ pub struct MailProvider<M> {
     id: ProviderId,
     provides: Vec<CapabilityId>,
     mailer: MailerSource<M>,
+    /// The value a `Configured` source produced at Boot. Only that source writes it.
+    #[cfg(feature = "smtp")]
     built: std::sync::OnceLock<Arc<M>>,
     verify_on_boot: bool,
     boot_timeout: Duration,
@@ -106,6 +108,11 @@ enum MailerSource<M> {
     Given(Arc<M>),
     /// Built at Boot by a closure that reads the validated section; the closure is what lets a
     /// provider generic over `M` build the one concrete transport a section describes.
+    ///
+    /// Gated on the feature that constructs it. Without `smtp` nothing can build this
+    /// variant, and a variant nothing constructs is a `dead_code` warning in every consumer's
+    /// feature-off build — which is what happened until 2026-09-05 (`xtask` step 7 now checks).
+    #[cfg(feature = "smtp")]
     Configured(Box<dyn Fn() -> Result<Arc<M>, BoxedCause> + Send + Sync>),
 }
 
@@ -127,6 +134,7 @@ impl<M: Mailer + 'static> MailProvider<M> {
             id,
             provides: vec![mail_capability()],
             mailer: MailerSource::Given(mailer),
+            #[cfg(feature = "smtp")]
             built: std::sync::OnceLock::new(),
             verify_on_boot: true,
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
@@ -154,6 +162,7 @@ impl<M: Mailer + 'static> MailProvider<M> {
     pub fn mailer(&self) -> Option<Arc<M>> {
         match &self.mailer {
             MailerSource::Given(mailer) => Some(Arc::clone(mailer)),
+            #[cfg(feature = "smtp")]
             MailerSource::Configured(_) => self.built.get().cloned(),
         }
     }
@@ -181,6 +190,7 @@ impl MailProvider<crate::smtp::SmtpMailer> {
             id,
             provides: vec![mail_capability()],
             mailer: MailerSource::Configured(Box::new(build)),
+            #[cfg(feature = "smtp")]
             built: std::sync::OnceLock::new(),
             verify_on_boot: true,
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
@@ -223,6 +233,7 @@ impl<M: Mailer + 'static> Provider for MailProvider<M> {
             }
             let mailer = match &self.mailer {
                 MailerSource::Given(mailer) => Arc::clone(mailer),
+                #[cfg(feature = "smtp")]
                 MailerSource::Configured(build) => {
                     let mailer = build()?;
                     let _ = self.built.set(Arc::clone(&mailer));
