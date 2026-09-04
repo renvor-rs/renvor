@@ -4328,6 +4328,16 @@ mod tests {
             "Eighteen",
             "Nineteen",
             "Twenty",
+            "Twenty-one",
+            "Twenty-two",
+            "Twenty-three",
+            "Twenty-four",
+            "Twenty-five",
+            "Twenty-six",
+            "Twenty-seven",
+            "Twenty-eight",
+            "Twenty-nine",
+            "Thirty",
         ];
         let spelled = words
             .get(granted.len())
@@ -4353,19 +4363,64 @@ mod tests {
         //
         // The exception set is every granted waiver except W-001, which is the approval gap and is
         // counted separately by this ledger's own rules — the same exclusion the loop above makes.
-        let exceptions = granted.iter().filter(|id| *id != "W-001").count();
-        let spelled_exceptions = words
-            .get(exceptions)
-            .unwrap_or_else(|| panic!("no spelling for {exceptions}"));
+        //
+        // Not every exception has that reason. On 2026-09-04 the ledger gained two waivers of a
+        // rule that has nothing to do with who reviews — constitution principle VII's generator
+        // obligation, left unmet by two library-only phases — and a sentence that said "All
+        // twenty-two exist for the same underlying reason: the project has one person" would have
+        // been false the moment it was written. So the sentence is bound to the set it may claim:
+        // the waivers whose VIOLATED RULE is an independent-review rule, read from the table's own
+        // rule cell rather than from a list this test would have to maintain by hand. The rest are
+        // counted too, and the ledger must say they exist for a different reason.
+        fn review_gap(text: &str) -> Vec<String> {
+            let mut found: Vec<String> = text
+                .lines()
+                .filter_map(|line| {
+                    let mut cells = line.trim_start().strip_prefix('|')?.split('|');
+                    let identifier = cells.next()?.trim().trim_matches('*');
+                    let rule = cells.next()?;
+                    (identifier.starts_with("W-") && rule.contains("independent"))
+                        .then(|| identifier.chars().take(5).collect::<String>())
+                })
+                .collect();
+            found.sort();
+            found.dedup();
+            found
+        }
+        let exceptions: Vec<&String> = granted.iter().filter(|id| *id != "W-001").collect();
+        let review_gap = review_gap(&ledger);
+        // A POSITIVE CONTROL for the rule-cell parser, in the same shape as the one above: a parser
+        // that read the wrong cell would find no rule mentioning independence and count zero.
+        assert!(
+            review_gap.len() >= 11 && review_gap.iter().all(|id| exceptions.contains(&id)),
+            "the review-gap parser found {} rows, so it is not reading the rule cell",
+            review_gap.len()
+        );
+        let spelled_review_gap = words
+            .get(review_gap.len())
+            .unwrap_or_else(|| panic!("no spelling for {}", review_gap.len()));
         assert!(
             ledger.contains(&format!(
                 "**All {} exist for the same underlying reason",
-                spelled_exceptions.to_lowercase()
+                spelled_review_gap.to_lowercase()
             )),
             "the ledger does not say `All {} exist for the same underlying reason`, which is what \
-             its own exception set holds",
-            spelled_exceptions.to_lowercase()
+             its own review-gap exception set holds",
+            spelled_review_gap.to_lowercase()
         );
+        let other = exceptions.len() - review_gap.len();
+        if other > 0 {
+            let spelled_other = words
+                .get(other)
+                .unwrap_or_else(|| panic!("no spelling for {other}"));
+            assert!(
+                ledger.contains(&format!("**The other {}, ", spelled_other.to_lowercase())),
+                "the ledger holds {other} exception(s) whose violated rule is not an \
+                 independent-review rule, and does not say `The other {} ...` exist for a different \
+                 reason",
+                spelled_other.to_lowercase()
+            );
+        }
 
         // ── nothing is described as granted before it is granted ───────────────────────────
         //
