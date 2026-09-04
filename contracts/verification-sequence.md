@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "2.1.0"
-status: "normative — enforced executably by `xtask`. 2.1.0 (2026-09-04) adds the Phase 010 capability endpoints to step 1 (Valkey, Mailpit, and the require flag), raises the persistence census to 67 (row, test) pairs with the four job-store rows, and adds the capability-isolation rows and the single-rustls-provider check to step 7. 2.0.0 (2026-09-03) transfers the Docusaurus build and rendered-site link check to the now-live `renvor-rs/renvor-docs` repository, removes those two checks and their Node/npm/lychee prerequisites from this framework sequence, renumbers working-tree cleanliness to step 9, and makes rustdoc cover all features. This is a BEHAVIOUR change: the framework gate now owns only framework verification, while the independently required `docs` context keeps warning-denied all-feature rustdoc visible in branch protection. 1.2.1 (2026-08-26) corrected the exit-code table and fail-closed sample output. 1.2.0 (2026-08-26) made the four-row database environment mandatory. This version identifies the contract text, not a stability promise"
+version: "2.2.0"
+status: "normative — enforced executably by `xtask`. 2.2.0 (2026-09-04) splits the capability credentials out of the step 1 URLs into their own variables (`RENVOR_TEST_VALKEY_PASSWORD`, `RENVOR_TEST_SMTP_USERNAME`, `RENVOR_TEST_SMTP_PASSWORD`), because constitution VI says a secret enters no URL and the suites now refuse one that carries a credential. 2.1.0 (2026-09-04) adds the Phase 010 capability endpoints to step 1 (Valkey, Mailpit, and the require flag), raises the persistence census to 67 (row, test) pairs with the four job-store rows, and adds the capability-isolation rows and the single-rustls-provider check to step 7. 2.0.0 (2026-09-03) transfers the Docusaurus build and rendered-site link check to the now-live `renvor-rs/renvor-docs` repository, removes those two checks and their Node/npm/lychee prerequisites from this framework sequence, renumbers working-tree cleanliness to step 9, and makes rustdoc cover all features. This is a BEHAVIOUR change: the framework gate now owns only framework verification, while the independently required `docs` context keeps warning-denied all-feature rustdoc visible in branch protection. 1.2.1 (2026-08-26) corrected the exit-code table and fail-closed sample output. 1.2.0 (2026-08-26) made the four-row database environment mandatory. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -25,7 +25,7 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Prerequisite probe | — | Rust (pinned), **a PostgreSQL and MySQL the census can reach, and a Valkey and Mailpit the capability suites can reach** (`RENVOR_TEST_VALKEY_URL`, `RENVOR_TEST_SMTP_URL`, `RENVOR_TEST_SMTP_API_URL`, `RENVOR_TEST_REQUIRE_CAPABILITIES=1`) |
+| 1 | Prerequisite probe | — | Rust (pinned), **a PostgreSQL and MySQL the census can reach, and a Valkey and Mailpit the capability suites can reach** (`RENVOR_TEST_VALKEY_URL` and `RENVOR_TEST_VALKEY_PASSWORD`, `RENVOR_TEST_SMTP_URL` with `RENVOR_TEST_SMTP_USERNAME` and `RENVOR_TEST_SMTP_PASSWORD`, `RENVOR_TEST_SMTP_API_URL`, `RENVOR_TEST_REQUIRE_CAPABILITIES=1`; a URL never carries the credential) |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
 | 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 67 required (row, test) pairs must report in | Rust, both databases |

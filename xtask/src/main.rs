@@ -101,17 +101,37 @@ const DATABASE_REQUIRED: &[Prerequisite] = &[
     // THE CAPABILITY ENDPOINTS (Phase 010, FR-104). The cache and mail adapters have real-server
     // suites that skip quietly without their URL — and print `ok`. The require flag ends that
     // the same way the database one does.
+    //
+    // A CREDENTIAL IS ITS OWN VARIABLE, never part of a URL: constitution VI says a secret enters
+    // no URL, and the suites refuse a `…_URL` that carries one. The gate requires the credential
+    // variables so that the authenticated path — the one production uses — is what it exercises.
     Prerequisite {
         variable: "RENVOR_TEST_VALKEY_URL",
         purpose: "the cache adapter's real-server suite, step 4",
         setup: "start a Valkey (or Redis) the suite may write to and set this to its \
-                `redis://` URL — see CONTRIBUTING.md, `Databases you need`",
+                `redis://host:port/db` URL WITHOUT a credential — see CONTRIBUTING.md, \
+                `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_VALKEY_PASSWORD",
+        purpose: "the cache adapter's real-server suite authenticates with it, step 4",
+        setup: "set this to the Valkey password (`requirepass`); the URL must not carry it",
     },
     Prerequisite {
         variable: "RENVOR_TEST_SMTP_URL",
         purpose: "the mail adapter's real-sink suite, step 4",
-        setup: "start a Mailpit and set this to its `smtp://user:password@127.0.0.1:port` URL \
-                — see CONTRIBUTING.md, `Databases you need`",
+        setup: "start a Mailpit and set this to its `smtp://127.0.0.1:port` URL WITHOUT a \
+                credential — see CONTRIBUTING.md, `Databases you need`",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_SMTP_USERNAME",
+        purpose: "the mail adapter's real-sink suite authenticates with it, step 4",
+        setup: "set this to the Mailpit SMTP username (`MP_SMTP_AUTH`'s user half)",
+    },
+    Prerequisite {
+        variable: "RENVOR_TEST_SMTP_PASSWORD",
+        purpose: "the mail adapter's real-sink suite authenticates with it, step 4",
+        setup: "set this to the Mailpit SMTP password; the URL must not carry it",
     },
     Prerequisite {
         variable: "RENVOR_TEST_SMTP_API_URL",

@@ -301,8 +301,13 @@ jobs:
             echo "RENVOR_TEST_POSTGRES_URL=postgres://postgres:$password@127.0.0.1:5432/renvor_test"
             echo "RENVOR_TEST_MYSQL_URL=mysql://root:$password@127.0.0.1:3306/renvor_test"
             echo "RENVOR_TEST_REQUIRE_DATABASE=1"
-            echo "RENVOR_TEST_VALKEY_URL=redis://:$password@127.0.0.1:6379/0"
-            echo "RENVOR_TEST_SMTP_URL=smtp://renvor:$password@127.0.0.1:1025"
+            # A credential is its own variable, never part of a URL (constitution VI); the
+            # suites refuse a URL that carries one.
+            echo "RENVOR_TEST_VALKEY_URL=redis://127.0.0.1:6379/0"
+            echo "RENVOR_TEST_VALKEY_PASSWORD=$password"
+            echo "RENVOR_TEST_SMTP_URL=smtp://127.0.0.1:1025"
+            echo "RENVOR_TEST_SMTP_USERNAME=renvor"
+            echo "RENVOR_TEST_SMTP_PASSWORD=$password"
             echo "RENVOR_TEST_SMTP_API_URL=http://127.0.0.1:8025"
             echo "RENVOR_TEST_REQUIRE_CAPABILITIES=1"
           } >> "$GITHUB_ENV"
