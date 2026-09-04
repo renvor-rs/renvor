@@ -250,18 +250,29 @@ async fn a_foreign_value_over_this_process_bound_is_refused_not_handed_over() {
     cache.delete(&key("big")).await.unwrap();
 }
 
+/// A wrong credential built at run time: the test proves a refused credential fails closed and
+/// is never rendered, and nothing in this file may itself be a hard-coded password.
+fn wrong_credential() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_nanos();
+    format!("wrong-{nanos:x}-DoNotLeak")
+}
+
 #[tokio::test]
 async fn a_refused_credential_fails_boot_by_category_and_never_prints_it() {
     let Some(url) = url() else { return };
     // Replace the password with a wrong one, keeping host and port. The canary is the value that
     // must not appear in the error.
-    let wrong = rewrite_password(&url, "hunter2CanaryDoNotLeak");
+    let canary = wrong_credential();
+    let wrong = rewrite_password(&url, &canary);
     let error = ValkeyCache::connect(&settings(&wrong, "auth", CacheBounds::new()))
         .await
         .expect_err("a wrong password must not connect");
     assert_eq!(error, CacheBootError::CredentialRefused);
     let rendered = error.to_string();
-    assert!(!rendered.contains("hunter2"), "the credential was rendered");
+    assert!(!rendered.contains(&canary), "the credential was rendered");
     assert!(!rendered.contains("127.0.0.1"), "the address was rendered");
 }
 

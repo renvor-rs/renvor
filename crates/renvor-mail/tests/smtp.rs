@@ -201,13 +201,24 @@ async fn the_provider_boots_and_a_message_arrives_with_exactly_one_to_and_subjec
     clear(&api).await;
 }
 
+/// A wrong credential built at run time: the test proves a refused credential fails closed and
+/// is never rendered, and nothing in this file may itself be a hard-coded password.
+fn wrong_credential() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is after the epoch")
+        .as_nanos();
+    format!("wrong-{nanos:x}-DoNotLeak")
+}
+
 #[tokio::test]
 async fn a_wrong_password_fails_boot_as_credential_refused_without_rendering_it() {
     let Some((url, _api)) = urls() else {
         return;
     };
     let _sink = SINK.lock().await;
-    let wrong = with_password(&url, "hunter2CanaryDoNotLeak");
+    let canary = wrong_credential();
+    let wrong = with_password(&url, &canary);
     let mailer =
         Arc::new(SmtpMailer::connect(&settings(&wrong), Arc::new(OsEntropy::new())).unwrap());
     // The category, at the port: the server's refusal is `Rejected`, which Boot maps to
@@ -224,7 +235,7 @@ async fn a_wrong_password_fails_boot_as_credential_refused_without_rendering_it(
         category.to_string(),
         format!("{mailer:?}"),
     ] {
-        assert!(!rendered.contains("hunter2"), "the password was rendered");
+        assert!(!rendered.contains(&canary), "the password was rendered");
         assert!(
             !rendered.contains('@'),
             "an address or the URL was rendered"
