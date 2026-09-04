@@ -18,7 +18,8 @@
 //! - [`prometheus`] — text exposition over `renvor_core::observe::metrics::Snapshot`.
 //! - [`health`] — liveness and readiness documents over a cloned `HealthState`.
 //! - `http` (feature) — `/healthz` and `/readyz` as a `RouteGroup`.
-//! - `otel` (feature) — a bounded OTLP/HTTP exporter and a `tracing` layer.
+//! - `otel` (feature) — a bounded OTLP/HTTP exporter and a `tracing` layer, and
+//!   [`config::OtlpSection`], the typed `[otlp]` section with defaults and hard caps (FR-011).
 
 #![forbid(unsafe_code)]
 
@@ -33,6 +34,12 @@ pub mod text;
 pub mod http;
 #[cfg(feature = "otel")]
 pub mod otel;
+
+/// The typed `[otlp]` configuration section (FR-011): defaults, hard caps, and a refusal
+/// naming key, constraint, and layer. Behind `otel` because the settings it produces are the
+/// exporter's.
+#[cfg(feature = "otel")]
+pub mod config;
 
 pub use redaction::{MAX_VALUE_BYTES, REDACTED, Redaction};
 pub use subscriber::{

@@ -11,6 +11,42 @@
 //! foreign thread — the SDK's own batch processor drives its exporter from a thread it owns,
 //! which is the shape this module exists to avoid.
 //!
+//! # Shutdown is bounded, and a forced close is reported
+//!
+//! [`OtelHandle::shutdown`] closes the queue, exports what is queued, and **joins** the drain
+//! task within the shutdown bound. When the bound passes first the drain is **aborted and
+//! joined** — no detached task keeps an exporter alive after `shutdown` returns — the spans it
+//! never exported are counted in `renvor_otel_spans_unexported_total`, one warn event carries
+//! the count, and the call returns [`OtelShutdownError::FlushTimedOut`] with the same number.
+//! The whole call takes at most the shutdown bound, plus the drain's next yield if it had to be
+//! aborted (an export future yields on every I/O wait, so the join is prompt), plus the SDK
+//! provider's own shutdown, whose only processor here answers immediately. FR-012 and C-L2
+//! (`Drain`): the drain ends at its deadline and reports outstanding work; shutdown continues
+//! rather than hanging; a forced close is reported, never swallowed. The trap avoided is the
+//! one the first version of this module set: a timeout that only warned, left the task running,
+//! counted nothing, and returned the provider's `Ok`.
+//!
+//! ## What `unexported` counts
+//!
+//! A span is **accepted** when `try_send` takes it into the queue, and its export **concludes**
+//! when the export request carrying it returns — `ok`, `failed`, or `timed_out`, each counted
+//! in `renvor_otel_exports_total`. The unexported number is the spans accepted whose export
+//! had not concluded when the drain stopped: the spans still in the channel, the batch being
+//! assembled, and the chunk whose export was cut off. A chunk whose export had already failed
+//! or timed out is **not** in it — that loss was reported when it happened, and counting it
+//! again at shutdown would report it twice. A span that ends after the drain has closed the
+//! queue is refused at `try_send` and counted as a **drop**, so nothing is accepted into a
+//! channel nobody will read again. The number is exact for every span that ended before
+//! `shutdown` was called; a span ending in the same instant as the count is at most one
+//! transient over-count, undone as soon as its refused send is unwound.
+//!
+//! Dropping an [`OtelHandle`] without calling `shutdown` is a forced close too: the drain is
+//! aborted from `Drop` (`JoinHandle::abort` needs no runtime, so this cannot panic outside
+//! one), its queued spans are counted the same way, and a warn event says the handle was
+//! dropped. `Drop` cannot wait for the abort to land, so a chunk whose export completes in that
+//! same instant may be counted although it was exported: the figure at a drop is an upper
+//! bound, the figure at `shutdown` is exact. Prefer `shutdown`.
+//!
 //! # Redaction reaches the exported attributes
 //!
 //! [`RedactingExporter`] rewrites span and event attributes under the same [`Redaction`] rule as
@@ -96,6 +132,36 @@ pub enum OtelError {
     /// A metrics family of the same name is registered with another shape.
     #[error("the OTLP metrics could not be registered")]
     Metrics(#[from] MetricsError),
+}
+
+/// Why [`OtelHandle::shutdown`] did not flush cleanly. **Closed**; carries counts, never text.
+///
+/// FR-012 and C-L2 (`Drain`): a forced close is reported, never swallowed. A flush that misses
+/// its bound is not a warning line — it is this error, carrying the number of spans it lost.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum OtelShutdownError {
+    /// The drain did not finish within the shutdown bound. It was aborted and joined, and
+    /// `unexported` spans were lost — see [the module documentation](self#what-unexported-counts)
+    /// for exactly which spans that number holds.
+    #[error(
+        "the OTLP shutdown flush did not finish within its bound; {unexported} spans were not exported"
+    )]
+    FlushTimedOut {
+        /// Spans accepted for export whose export had not concluded when the drain was aborted.
+        unexported: u64,
+    },
+    /// The drain task ended abnormally — a panic inside the exporter — before the bound, leaving
+    /// `unexported` spans behind.
+    #[error("the OTLP drain task failed; {unexported} spans were not exported")]
+    DrainFailed {
+        /// Spans accepted for export whose export had not concluded when the drain ended.
+        unexported: u64,
+    },
+    /// The SDK provider did not shut down cleanly after a clean flush. The SDK's text stays in
+    /// the source; this `Display` renders none of it.
+    #[error("the OTLP provider did not shut down cleanly")]
+    Provider(#[source] OTelSdkError),
 }
 
 /// True for `localhost`, `127.0.0.0/8`, and `::1`, with or without brackets.
@@ -310,15 +376,17 @@ impl OtlpSettings {
     }
 }
 
-/// The export counters: spans dropped at a full queue, exports by outcome.
+/// The export counters: spans dropped at a full queue, spans unexported at a forced close, and
+/// exports by outcome.
 #[derive(Clone, Debug)]
 pub struct OtelMetrics {
     dropped: Counter,
+    unexported: Counter,
     exports: Counter,
 }
 
 impl OtelMetrics {
-    /// Registers the two families, or returns the existing ones.
+    /// Registers the three families, or returns the existing ones.
     ///
     /// # Errors
     ///
@@ -328,6 +396,11 @@ impl OtelMetrics {
             dropped: registry.counter(
                 "renvor_otel_spans_dropped_total",
                 "Spans dropped because the export queue was full.",
+                &[],
+            )?,
+            unexported: registry.counter(
+                "renvor_otel_spans_unexported_total",
+                "Spans accepted for export that had not been exported when the drain was stopped.",
                 &[],
             )?,
             exports: registry.counter(
@@ -399,10 +472,14 @@ impl<E: SpanExporter> SpanExporter for RedactingExporter<E> {
 /// What the drain task shares with the processor.
 struct Shared {
     dropped: AtomicU64,
+    /// Spans accepted into the queue whose export has not concluded: the module documentation's
+    /// "unexported" number, read at a forced close.
+    queued: AtomicU64,
     metrics: OtelMetrics,
 }
 
-/// Renvor's bounded span processor: `try_send` into a bounded channel, a Tokio drain task.
+/// Renvor's bounded span processor: `try_send` into a bounded channel, a Tokio drain task, and
+/// the count of accepted spans whose export has not concluded (the module's `unexported`).
 pub struct BoundedProcessor {
     sender: tokio::sync::mpsc::Sender<SpanData>,
     shared: Arc<Shared>,
@@ -416,7 +493,8 @@ impl core::fmt::Debug for BoundedProcessor {
     }
 }
 
-/// The drain task's handle, for a bounded shutdown flush.
+/// The drain task's handle, for a bounded shutdown flush; `None` once the task has been taken
+/// for joining, so `Drop` finds nothing to abort after `shutdown`.
 struct Drain {
     stop: Arc<tokio::sync::Notify>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -440,11 +518,12 @@ impl BoundedProcessor {
         let (sender, mut receiver) = tokio::sync::mpsc::channel::<SpanData>(queue);
         let shared = Arc::new(Shared {
             dropped: AtomicU64::new(0),
+            queued: AtomicU64::new(0),
             metrics,
         });
         let stop = Arc::new(tokio::sync::Notify::new());
         let stop_for_task = Arc::clone(&stop);
-        let metrics_for_task = shared.metrics.clone();
+        let shared_for_task = Arc::clone(&shared);
         let task = tokio::spawn(async move {
             let mut pending: Vec<SpanData> = Vec::with_capacity(batch);
             let mut stopping = false;
@@ -468,7 +547,11 @@ impl BoundedProcessor {
                     }
                 }
                 if stopping {
-                    // Take everything still queued, bounded by the channel's own capacity.
+                    // Close the queue FIRST: a span ending from here on is refused at `try_send`
+                    // and counted as a drop, instead of being accepted into a channel this task
+                    // will never read again. Everything sent before the close is still received
+                    // by the sweep, which is bounded by the channel's own capacity.
+                    receiver.close();
                     while let Ok(span) = receiver.try_recv() {
                         pending.push(span);
                     }
@@ -478,12 +561,21 @@ impl BoundedProcessor {
                         let outcome =
                             tokio::time::timeout(export_timeout, exporter.export(chunk.to_vec()))
                                 .await;
+                        // The export concluded, whatever its outcome: these spans leave the
+                        // unexported count. A failure or a timeout is counted in
+                        // `exports{outcome}` and reported below, once — not again at shutdown.
+                        shared_for_task
+                            .queued
+                            .fetch_sub(chunk.len() as u64, Ordering::AcqRel);
                         let label = match &outcome {
                             Ok(Ok(())) => "ok",
                             Ok(Err(_)) => "failed",
                             Err(_) => "timed_out",
                         };
-                        metrics_for_task.exports.increment(&[("outcome", label)], 1);
+                        shared_for_task
+                            .metrics
+                            .exports
+                            .increment(&[("outcome", label)], 1);
                         if label != "ok" {
                             tracing::warn!(
                                 target: OTEL_EVENT_TARGET,
@@ -520,14 +612,26 @@ impl SpanProcessor for BoundedProcessor {
     fn on_start(&self, _span: &mut opentelemetry_sdk::trace::Span, _cx: &opentelemetry::Context) {}
 
     fn on_end(&self, span: SpanData) {
-        if self.sender.try_send(span).is_err() {
+        // Counted BEFORE it is offered, so the count never runs below the truth: an accepted
+        // span is in the count before it is in the channel, and a refused one is taken back out.
+        // Counting after `try_send` would let the drain conclude the span's export before its
+        // increment landed, and a `u64` that dips below zero wraps.
+        self.shared.queued.fetch_add(1, Ordering::AcqRel);
+        if let Err(refused) = self.sender.try_send(span) {
+            self.shared.queued.fetch_sub(1, Ordering::AcqRel);
+            // `closed` is the queue after the drain stopped — or a drain that is gone.
+            let reason = match refused {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => "full",
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => "closed",
+            };
             let dropped = self.shared.dropped.fetch_add(1, Ordering::Relaxed) + 1;
             self.shared.metrics.dropped.increment(&[], 1);
             if dropped == 1 || dropped.is_multiple_of(DROP_REPORT_INTERVAL) {
                 tracing::warn!(
                     target: OTEL_EVENT_TARGET,
                     dropped_total = dropped,
-                    "the OTLP export queue is full; spans are being dropped"
+                    reason,
+                    "the OTLP export queue refused a span; spans are being dropped"
                 );
             }
         }
@@ -546,12 +650,38 @@ impl SpanProcessor for BoundedProcessor {
     }
 }
 
-/// The running exporter: shut it down to flush what is queued within a bound.
+/// How a drain was force-closed: the closed label on the one event, and the error returned.
+#[derive(Clone, Copy, Debug)]
+enum ForcedClose {
+    /// The shutdown bound passed; the drain was aborted and joined.
+    TimedOut,
+    /// The drain task ended abnormally within the bound.
+    DrainFailed,
+}
+
+impl ForcedClose {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::TimedOut => "timed_out",
+            Self::DrainFailed => "drain_failed",
+        }
+    }
+
+    const fn into_error(self, unexported: u64) -> OtelShutdownError {
+        match self {
+            Self::TimedOut => OtelShutdownError::FlushTimedOut { unexported },
+            Self::DrainFailed => OtelShutdownError::DrainFailed { unexported },
+        }
+    }
+}
+
+/// The running exporter: shut it down to flush what is queued within a bound. Dropping it
+/// without `shutdown` aborts the drain and counts what it strands (module documentation).
 pub struct OtelHandle {
     provider: SdkTracerProvider,
     drain: Drain,
     shutdown_timeout: Duration,
-    dropped: Arc<Shared>,
+    shared: Arc<Shared>,
 }
 
 impl core::fmt::Debug for OtelHandle {
@@ -566,31 +696,106 @@ impl OtelHandle {
     /// Spans dropped at a full queue since start.
     #[must_use]
     pub fn dropped(&self) -> u64 {
-        self.dropped.dropped.load(Ordering::Relaxed)
+        self.shared.dropped.load(Ordering::Relaxed)
     }
 
-    /// Stops accepting spans, exports what is queued within the shutdown bound, and shuts the
-    /// provider down. Spans still queued at the bound are lost and reported.
-    pub async fn shutdown(self) -> Result<(), OTelSdkError> {
+    /// Closes the queue, exports what is queued within the shutdown bound, joins the drain, and
+    /// shuts the provider down.
+    ///
+    /// Bounded: at most the shutdown bound, plus the drain's next yield if it had to be aborted,
+    /// plus the provider's own shutdown (its only processor answers immediately). When the bound
+    /// passes first the drain is aborted **and joined**, the spans it never exported are counted
+    /// in `renvor_otel_spans_unexported_total` and one warn event, and
+    /// [`OtelShutdownError::FlushTimedOut`] carries the same count — FR-012 and C-L2: a forced
+    /// close is reported, never swallowed. A clean flush returns `Ok` with nothing unexported.
+    /// The drain task never outlives this call, on either path.
+    ///
+    /// # Errors
+    ///
+    /// [`OtelShutdownError`]: the flush missed its bound, the drain task failed, or the provider
+    /// did not shut down cleanly after a clean flush.
+    pub async fn shutdown(self) -> Result<(), OtelShutdownError> {
         self.drain.stop.notify_one();
+        // Taken out of the handle, so the `Drop` that runs when `self` goes out of scope below
+        // finds nothing to abort a second time.
         let task = self
             .drain
             .task
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        if let Some(task) = task
-            && tokio::time::timeout(self.shutdown_timeout, task)
-                .await
-                .is_err()
-        {
+        let forced = match task {
+            None => None,
+            Some(mut task) => match tokio::time::timeout(self.shutdown_timeout, &mut task).await {
+                Ok(Ok(())) => None,
+                Ok(Err(_ended_abnormally)) => Some(ForcedClose::DrainFailed),
+                Err(_elapsed) => {
+                    // Abort, THEN join: the aborted task resolves at its next yield and nothing
+                    // of it survives this call. The join's own result is the cancellation just
+                    // requested — or, in the same instant, a finish or a panic — and changes
+                    // nothing reported here: the bound passed, the task is finished, and the
+                    // count is read after it.
+                    task.abort();
+                    let _cancelled = (&mut task).await;
+                    Some(ForcedClose::TimedOut)
+                }
+            },
+        };
+        let unexported = self.shared.queued.load(Ordering::SeqCst);
+        if let Some(forced) = forced {
+            self.shared.metrics.unexported.increment(&[], unexported);
             tracing::warn!(
                 target: OTEL_EVENT_TARGET,
-                "the OTLP shutdown flush did not finish within its bound"
+                spans_unexported = unexported,
+                bound_ms = self.shutdown_timeout.as_millis(),
+                cause = forced.label(),
+                "the OTLP drain was force-closed; spans accepted for export were not exported"
             );
         }
-        // The processor's own shutdown is a no-op (flushed above); this releases the provider.
-        self.provider.shutdown()
+        // The processor's own shutdown is a no-op (flushed or aborted above); this releases the
+        // provider. Bounded: nothing here waits on the drain.
+        let provider = self.provider.shutdown();
+        match (forced, provider) {
+            (None, Ok(())) => Ok(()),
+            (None, Err(error)) => Err(OtelShutdownError::Provider(error)),
+            (Some(forced), provider) => {
+                if provider.is_err() {
+                    // Reported here because the forced close is the error returned; the SDK's
+                    // text is not rendered (C-O16).
+                    tracing::warn!(
+                        target: OTEL_EVENT_TARGET,
+                        "the OTLP provider did not shut down cleanly after a forced close"
+                    );
+                }
+                Err(forced.into_error(unexported))
+            }
+        }
+    }
+}
+
+impl Drop for OtelHandle {
+    /// A dropped handle is a forced close: the drain is aborted so no detached task survives
+    /// the handle, and the spans it strands are counted — an upper bound, because `Drop` cannot
+    /// wait for the abort to land (module documentation). `JoinHandle::abort` needs no runtime,
+    /// so this cannot panic outside one.
+    fn drop(&mut self) {
+        let task = self
+            .drain
+            .task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(task) = task {
+            task.abort();
+            let unexported = self.shared.queued.load(Ordering::SeqCst);
+            self.shared.metrics.unexported.increment(&[], unexported);
+            tracing::warn!(
+                target: OTEL_EVENT_TARGET,
+                spans_unexported = unexported,
+                cause = "dropped",
+                "the OTLP handle was dropped without shutdown; the drain was aborted"
+            );
+        }
     }
 }
 
@@ -660,7 +865,7 @@ where
         settings.scheduled_delay,
         metrics,
     );
-    let dropped = Arc::clone(&processor.shared);
+    let shared = Arc::clone(&processor.shared);
     let provider = SdkTracerProvider::builder()
         .with_resource(resource)
         .with_span_processor(processor)
@@ -673,13 +878,14 @@ where
             provider,
             drain,
             shutdown_timeout: settings.shutdown_timeout,
-            dropped,
+            shared,
         },
     ))
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::Ordering;
     use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
@@ -689,14 +895,14 @@ mod tests {
     };
     use opentelemetry_sdk::error::OTelSdkResult;
     use opentelemetry_sdk::trace::{
-        SpanData, SpanEvents, SpanExporter, SpanLinks, SpanProcessor as _,
+        SdkTracerProvider, SpanData, SpanEvents, SpanExporter, SpanLinks, SpanProcessor as _,
     };
     use renvor_config::Secret;
     use renvor_core::observe::metrics::{Registry, SeriesValue};
 
     use super::{
-        BoundedProcessor, OtelError, OtelMetrics, OtlpSettings, RedactingExporter,
-        validate_endpoint,
+        BoundedProcessor, Drain, OtelError, OtelHandle, OtelMetrics, OtelShutdownError,
+        OtlpSettings, RedactingExporter, validate_endpoint,
     };
     use crate::redaction::{MAX_VALUE_BYTES, REDACTED, Redaction};
 
@@ -754,6 +960,75 @@ mod tests {
                 .push(batch);
             Ok(())
         }
+    }
+
+    /// An exporter whose export never completes: the detached-drain scenario of finding 14.
+    #[derive(Debug)]
+    struct Pending;
+
+    impl SpanExporter for Pending {
+        async fn export(&self, _batch: Vec<SpanData>) -> OTelSdkResult {
+            std::future::pending().await
+        }
+    }
+
+    /// An exporter that panics, so the drain task ends abnormally.
+    #[derive(Debug)]
+    struct Panicking;
+
+    impl SpanExporter for Panicking {
+        async fn export(&self, _batch: Vec<SpanData>) -> OTelSdkResult {
+            panic!("this exporter panics on purpose")
+        }
+    }
+
+    /// An exporter that holds its export open until released, and says when it is inside one.
+    #[derive(Debug, Clone, Default)]
+    struct Gated {
+        inside: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+        batches: Arc<Mutex<Vec<Vec<SpanData>>>>,
+    }
+
+    impl SpanExporter for Gated {
+        async fn export(&self, batch: Vec<SpanData>) -> OTelSdkResult {
+            self.inside.notify_one();
+            self.release.notified().await;
+            self.batches
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(batch);
+            Ok(())
+        }
+    }
+
+    /// The handle over a started processor, assembled as `layer` assembles it, with a probe on
+    /// the drain task so a test can prove the task is finished rather than assume it.
+    fn handle_over(
+        processor: BoundedProcessor,
+        drain: Drain,
+        shutdown_timeout: Duration,
+    ) -> (OtelHandle, tokio::task::AbortHandle) {
+        let probe = drain
+            .task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(tokio::task::JoinHandle::abort_handle)
+            .unwrap();
+        let shared = Arc::clone(&processor.shared);
+        let provider = SdkTracerProvider::builder()
+            .with_span_processor(processor)
+            .build();
+        (
+            OtelHandle {
+                provider,
+                drain,
+                shutdown_timeout,
+                shared,
+            },
+            probe,
+        )
     }
 
     fn total(registry: &Registry, name: &str) -> f64 {
@@ -1039,6 +1314,200 @@ mod tests {
         assert!(
             timed_out >= 1.0,
             "the slow export was not counted as timed out"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_timed_out_flush_aborts_the_drain_and_reports_every_unexported_span() {
+        // Finding 14. Eight spans, batch four, an export that never completes: four spans are in
+        // the cut-off export and four are still in the channel. All eight are unexported, the
+        // drain must be aborted AND joined, and the bound must hold.
+        let registry = Registry::new();
+        let metrics = OtelMetrics::register(&registry).unwrap();
+        let (processor, drain) = BoundedProcessor::start(
+            Pending,
+            16,
+            4,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+            metrics,
+        );
+        for index in 0..8 {
+            processor.on_end(span("s", vec![KeyValue::new("index", index)]));
+        }
+        let bound = Duration::from_millis(200);
+        let (handle, probe) = handle_over(processor, drain, bound);
+        let outcome = tokio::time::timeout(bound + Duration::from_millis(300), handle.shutdown())
+            .await
+            .expect("shutdown did not return within its bound plus slack");
+        assert!(
+            matches!(
+                outcome,
+                Err(OtelShutdownError::FlushTimedOut { unexported: 8 })
+            ),
+            "a flush past its bound must return FlushTimedOut carrying all eight spans"
+        );
+        assert!(probe.is_finished(), "the drain task outlived shutdown");
+        assert_eq!(
+            total(&registry, "renvor_otel_spans_unexported_total"),
+            8.0,
+            "the unexported counter must carry all eight spans"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_clean_flush_returns_ok_with_nothing_unexported() {
+        // The positive control for finding 14: an exporter that answers, three queued spans,
+        // shutdown flushes them, joins the drain, and the unexported counter stays at zero.
+        let registry = Registry::new();
+        let metrics = OtelMetrics::register(&registry).unwrap();
+        let fast = Recording::default();
+        let (processor, drain) = BoundedProcessor::start(
+            fast.clone(),
+            16,
+            8,
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            metrics,
+        );
+        for index in 0..3 {
+            processor.on_end(span("s", vec![KeyValue::new("index", index)]));
+        }
+        let (handle, probe) = handle_over(processor, drain, Duration::from_secs(5));
+        let outcome = tokio::time::timeout(Duration::from_secs(10), handle.shutdown())
+            .await
+            .expect("shutdown did not return within its bound plus slack");
+        assert!(outcome.is_ok(), "a clean flush must return Ok");
+        assert!(probe.is_finished(), "the drain task outlived shutdown");
+        assert_eq!(fast.spans().len(), 3, "the clean flush lost spans");
+        assert_eq!(
+            total(&registry, "renvor_otel_spans_unexported_total"),
+            0.0,
+            "a clean flush must leave the unexported counter at zero"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_drain_that_panics_is_reported_with_every_span_it_left_behind() {
+        // A drain that ends abnormally within the bound is not a clean flush either: the spans
+        // it never exported are counted and the error names the cause.
+        let registry = Registry::new();
+        let metrics = OtelMetrics::register(&registry).unwrap();
+        let (processor, drain) = BoundedProcessor::start(
+            Panicking,
+            16,
+            8,
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            metrics,
+        );
+        for index in 0..3 {
+            processor.on_end(span("s", vec![KeyValue::new("index", index)]));
+        }
+        let (handle, probe) = handle_over(processor, drain, Duration::from_secs(5));
+        let outcome = tokio::time::timeout(Duration::from_secs(10), handle.shutdown())
+            .await
+            .expect("shutdown did not return within its bound plus slack");
+        assert!(
+            matches!(
+                outcome,
+                Err(OtelShutdownError::DrainFailed { unexported: 3 })
+            ),
+            "a panicked drain must return DrainFailed carrying the three spans it left behind"
+        );
+        assert!(probe.is_finished(), "the drain task outlived shutdown");
+        assert_eq!(
+            total(&registry, "renvor_otel_spans_unexported_total"),
+            3.0,
+            "the unexported counter must carry the three spans"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dropping_the_handle_without_shutdown_aborts_the_drain_and_counts_its_spans() {
+        // A dropped handle is a forced close too: no detached task may survive it, and the spans
+        // it strands are counted.
+        let registry = Registry::new();
+        let metrics = OtelMetrics::register(&registry).unwrap();
+        let (processor, drain) = BoundedProcessor::start(
+            Pending,
+            16,
+            4,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+            metrics,
+        );
+        for index in 0..2 {
+            processor.on_end(span("s", vec![KeyValue::new("index", index)]));
+        }
+        let (handle, probe) = handle_over(processor, drain, Duration::from_secs(5));
+        drop(handle);
+        // The abort takes effect at the task's next poll; wait for that, bounded.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !probe.is_finished() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            probe.is_finished(),
+            "the drain task survived a dropped handle"
+        );
+        assert_eq!(
+            total(&registry, "renvor_otel_spans_unexported_total"),
+            2.0,
+            "the spans stranded by the drop were not counted"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_span_ending_after_the_stop_sweep_is_refused_and_counted_rather_than_lost() {
+        // Between the drain's final sweep and its exit the final export is in flight. A span
+        // ending then must be refused at a closed queue and counted as dropped — not accepted
+        // into a channel nobody will read again and lost uncounted.
+        let registry = Registry::new();
+        let metrics = OtelMetrics::register(&registry).unwrap();
+        let gated = Gated::default();
+        let (processor, drain) = BoundedProcessor::start(
+            gated.clone(),
+            16,
+            8,
+            Duration::from_secs(5),
+            Duration::from_secs(30),
+            metrics,
+        );
+        processor.on_end(span("first", Vec::new()));
+        drain.stop.notify_one();
+        tokio::time::timeout(Duration::from_secs(5), gated.inside.notified())
+            .await
+            .expect("the final export did not start");
+        processor.on_end(span("late", Vec::new()));
+        assert_eq!(
+            processor.dropped(),
+            1,
+            "a span ending after the stop sweep must be refused and counted as dropped"
+        );
+        gated.release.notify_one();
+        let task = drain
+            .task
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .unwrap()
+            .unwrap();
+        let exported: usize = gated
+            .batches
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(Vec::len)
+            .sum();
+        assert_eq!(exported, 1, "the swept span was not exported");
+        assert_eq!(
+            processor.shared.queued.load(Ordering::SeqCst),
+            0,
+            "a refused span must not linger in the unexported count"
         );
     }
 
