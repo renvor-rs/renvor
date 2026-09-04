@@ -61,19 +61,24 @@ an off-by-default feature, plus the operational adapters Phase 009 declined to s
 
 ## 3. Verification — commands, platforms, results
 
-*Filled after the two gates run on the final head; see the pull-request description and the
-final report. Both legs run sequentially with `CARGO_INCREMENTAL=0` and stdin detached, against
-live PostgreSQL, MySQL, Valkey, and Mailpit, one gate process at a time.*
+Both legs ran sequentially on `ff84cd8` with `CARGO_INCREMENTAL=0` and stdin detached, against
+live PostgreSQL 17, MySQL 8.4, Valkey 9.1.1, and Mailpit 1.29.1 in local containers, one gate process
+at a time, with `cargo clean` between the legs for disk space. The commit that records this table
+differs from `ff84cd8` only by governance text. Two earlier runs failed and are not reused: on
+`73e4a9a` leg A stopped at step 4 (the L-11 event test); on `3bfb552` leg A passed steps 1–6
+and stopped at step 7 (the per-driver compile). Both failures, their diagnoses, and the fixes
+are the last rows of `phase-010-review-record.md` §2.
 
 | | leg A | leg B |
 |---|---|---|
 | Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
-| Head | *(pending)* | *(pending)* |
-| Steps | *(pending)* | *(pending)* |
-| Exit | *(pending)* | *(pending)* |
-| Tests | *(pending)* | *(pending)* |
-| Census | *(pending; 67 rows required)* | *(pending)* |
-| Elapsed | *(pending)* | *(pending)* |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `ff84cd8` | `ff84cd8` |
+| Steps | 9/9 ok (12 step lines: step 4 reports three, step 8 two) | 9/9 ok (12 step lines) |
+| Exit | 0 | 0 |
+| Tests | 1966 passed, 0 failed, 5 ignored (the sum of all 138 `test result` lines) | 1966 passed, 0 failed, 5 ignored (138 lines) |
+| Census | 67/67 rows reported in | 67/67 rows reported in |
+| Elapsed | 10 min 28 s | 10 min 46 s (cold build after `cargo clean`) |
 
 **Platforms.** Local is macOS/aarch64. Ubuntu, macOS and Windows on both toolchains are exercised
 by CI on the pull request.
