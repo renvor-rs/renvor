@@ -12,6 +12,12 @@
 //! - `smtp` (feature) — `SmtpMailer` over `lettre`, TLS by default.
 //! - `auth` (feature) — `AuthMailBridge`, `renvor_auth::MailPort` for any mailer.
 //!
+//! # Configuration
+//!
+//! With `smtp`, [`config::MailSection`] is the typed `[mail]` section: decoded by
+//! `renvor-config`, defaulted, capped, and refused at **Validate** — naming the key, the
+//! constraint, and the layer — before any provider boots (FR-011).
+//!
 //! # Sending is not idempotent
 //!
 //! The port makes no retry. An application that needs at-least-once delivery enqueues a durable
@@ -27,6 +33,12 @@ pub mod recording;
 pub mod auth;
 #[cfg(feature = "smtp")]
 pub mod smtp;
+
+/// The typed `[mail]` configuration section (FR-011): defaults, hard caps, and a Validate-phase
+/// refusal naming key, constraint, and layer. Behind `smtp` because the settings it produces
+/// are the adapter's.
+#[cfg(feature = "smtp")]
+pub mod config;
 
 pub use port::{
     Address, MAX_ADDRESS_OCTETS, MAX_BODY_BYTES, MAX_RECIPIENTS, MAX_SUBJECT_BYTES, MailError,

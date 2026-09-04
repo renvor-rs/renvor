@@ -64,9 +64,12 @@ pub enum MailRefusal {
     BodyTooLarge,
     /// A configured bound exceeded its cap or fell below its floor.
     BoundOutOfRange,
-    /// A transport setting that cannot be used: an unparseable URL, a non-loopback plaintext
-    /// host, an invalid EHLO name or sender domain.
+    /// A transport setting that cannot be used: an invalid host, port, username, EHLO name, or
+    /// sender domain. The value itself is never named.
     SettingsInvalid,
+    /// A plaintext session was requested to a host that is not loopback, or without the opt-in
+    /// (C-C7, FR-047).
+    PlaintextNotPermitted,
 }
 
 impl MailRefusal {
@@ -82,6 +85,7 @@ impl MailRefusal {
             Self::BodyTooLarge => "body_too_large",
             Self::BoundOutOfRange => "bound_out_of_range",
             Self::SettingsInvalid => "settings_invalid",
+            Self::PlaintextNotPermitted => "plaintext_not_permitted",
         }
     }
 }

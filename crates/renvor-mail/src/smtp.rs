@@ -2,18 +2,21 @@
 //!
 //! # TLS is the default and plaintext is a double opt-in
 //!
-//! `smtps://` is implicit TLS (port 465 unless given); `smtp://` is STARTTLS **required** (port
-//! 587 unless given). A plaintext session is built only when the host is loopback **and**
-//! [`SmtpSettings::with_allow_insecure_loopback`] was set — both, so a development sink on
-//! `127.0.0.1` works and a production relay without TLS is not something anyone falls into
-//! (FR-047). A non-loopback host with the flag still gets STARTTLS. Certificates are verified
-//! against the native root store with the `ring` provider — the one provider this workspace
-//! installs (ADR-0033 decision 6).
+//! An [`SmtpEndpoint`] names the host, the port, and the [`Security`] the session gets:
+//! implicit TLS (port 465 unless given), STARTTLS **required** (port 587 unless given), or
+//! plaintext (port 25 unless given). A plaintext endpoint is accepted only when the host is
+//! loopback **and** [`SmtpSettings::with_allow_insecure_loopback`] was set — both, so a
+//! development sink on `127.0.0.1` works and a production relay without TLS is not something
+//! anyone falls into (FR-047). Anything else that asks for plaintext is refused at the settings
+//! boundary, before a socket exists. Certificates are verified against the native root store
+//! with the `ring` provider — the one provider this workspace installs (ADR-0033 decision 6).
 //!
-//! # The URL is a `Secret`, exposed once
+//! # The credential is a field, never part of an address
 //!
-//! [`SmtpSettings`] holds the URL as a [`Secret`]; `connect` reads it exactly once to build the
-//! transport, and no error, event, or `Debug` carries it or any part of it.
+//! [`SmtpCredentials`] carries the username and a [`Secret`] password beside the endpoint, not
+//! inside a URL: constitution VI says a secret enters no URL, and `smtp://user:password@host`
+//! is one whatever type wraps it. `connect` exposes the password exactly once, into the
+//! transport's credentials, and no error, event, or `Debug` carries it or the address.
 //!
 //! # Bounded, and no retry
 //!
@@ -57,22 +60,159 @@ pub const MAX_POOL_SIZE: u32 = 64;
 pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 /// The most bytes a hostname, EHLO name, or sender domain may carry.
 pub const MAX_NAME_BYTES: usize = 253;
+/// The most bytes a username may carry.
+pub const MAX_USERNAME_BYTES: usize = 256;
 
-/// The transport security a URL selects.
+/// The transport security an endpoint selects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Security {
-    /// `smtps://`: TLS from the first byte.
+    /// TLS from the first byte (submissions, port 465).
     ImplicitTls,
-    /// `smtp://` to a non-loopback host, or to loopback without the flag: STARTTLS, required.
+    /// STARTTLS, required (submission, port 587).
     StartTls,
-    /// `smtp://` to a loopback host with `allow_insecure_loopback`: no TLS.
+    /// No TLS. Accepted only to a loopback host with `allow_insecure_loopback` (C-C7).
     PlaintextLoopback,
+}
+
+impl Security {
+    /// The port the security uses when none is given.
+    #[must_use]
+    pub const fn default_port(self) -> u16 {
+        match self {
+            Self::ImplicitTls => lettre::transport::smtp::SUBMISSIONS_PORT,
+            Self::StartTls => lettre::transport::smtp::SUBMISSION_PORT,
+            Self::PlaintextLoopback => 25,
+        }
+    }
+}
+
+/// True for `localhost`, `127.0.0.0/8`, and `::1`.
+fn is_loopback(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// `[a-z0-9.-]{1,253}` with no leading or trailing dot, or an IP literal.
+fn valid_host(host: &str) -> bool {
+    host.parse::<std::net::IpAddr>().is_ok() || valid_name(host)
+}
+
+/// Where the server is and how the session is secured. **No credential lives here.**
+#[derive(Clone, PartialEq, Eq)]
+pub struct SmtpEndpoint {
+    host: String,
+    port: u16,
+    security: Security,
+}
+
+impl core::fmt::Debug for SmtpEndpoint {
+    /// The security only. The host and port are an operator's address.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SmtpEndpoint")
+            .field("security", &self.security)
+            .finish_non_exhaustive()
+    }
+}
+
+impl SmtpEndpoint {
+    /// `host` with `security`, on the security's default port until [`Self::with_port`].
+    ///
+    /// # Errors
+    ///
+    /// [`MailError::Refused`] with [`MailRefusal::SettingsInvalid`] for a host that is not a
+    /// lowercase DNS name or an IP literal.
+    pub fn new(host: &str, security: Security) -> Result<Self, MailError> {
+        if !valid_host(host) {
+            return Err(MailError::Refused(MailRefusal::SettingsInvalid));
+        }
+        Ok(Self {
+            host: host.to_owned(),
+            port: security.default_port(),
+            security,
+        })
+    }
+
+    /// Replaces the port. Zero is refused.
+    ///
+    /// # Errors
+    ///
+    /// [`MailError::Refused`] with [`MailRefusal::SettingsInvalid`].
+    pub fn with_port(mut self, port: u16) -> Result<Self, MailError> {
+        if port == 0 {
+            return Err(MailError::Refused(MailRefusal::SettingsInvalid));
+        }
+        self.port = port;
+        Ok(self)
+    }
+
+    /// The host.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// The port.
+    #[must_use]
+    pub const fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The security.
+    #[must_use]
+    pub const fn security(&self) -> Security {
+        self.security
+    }
+
+    /// Whether the host is a loopback address or `localhost`.
+    #[must_use]
+    pub fn is_loopback(&self) -> bool {
+        is_loopback(&self.host)
+    }
+}
+
+/// What the client authenticates with.
+pub struct SmtpCredentials {
+    username: String,
+    password: Secret<String>,
+}
+
+impl core::fmt::Debug for SmtpCredentials {
+    /// Nothing but the type: the username identifies an account and the password is a secret.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SmtpCredentials").finish_non_exhaustive()
+    }
+}
+
+impl SmtpCredentials {
+    /// A username and its password.
+    ///
+    /// # Errors
+    ///
+    /// [`MailError::Refused`] with [`MailRefusal::SettingsInvalid`] for an empty username, one
+    /// over [`MAX_USERNAME_BYTES`], or one holding a control character or whitespace.
+    pub fn new(username: &str, password: Secret<String>) -> Result<Self, MailError> {
+        let valid = !username.is_empty()
+            && username.len() <= MAX_USERNAME_BYTES
+            && !username
+                .chars()
+                .any(|character| character.is_control() || character.is_whitespace());
+        if !valid {
+            return Err(MailError::Refused(MailRefusal::SettingsInvalid));
+        }
+        Ok(Self {
+            username: username.to_owned(),
+            password,
+        })
+    }
 }
 
 /// Settings for the SMTP transport.
 pub struct SmtpSettings {
-    url: Secret<String>,
+    endpoint: SmtpEndpoint,
+    credentials: Option<SmtpCredentials>,
     hello_name: String,
     sender_domain: String,
     allow_insecure_loopback: bool,
@@ -84,6 +224,8 @@ pub struct SmtpSettings {
 impl core::fmt::Debug for SmtpSettings {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SmtpSettings")
+            .field("endpoint", &self.endpoint)
+            .field("authenticated", &self.credentials.is_some())
             .field("hello_name", &self.hello_name)
             .field("sender_domain", &self.sender_domain)
             .field("allow_insecure_loopback", &self.allow_insecure_loopback)
@@ -94,7 +236,7 @@ impl core::fmt::Debug for SmtpSettings {
 }
 
 /// `[a-z0-9.-]{1,253}`, no leading or trailing dot: a hostname or domain literal.
-fn valid_name(text: &str) -> bool {
+pub(crate) fn valid_name(text: &str) -> bool {
     let bytes = text.as_bytes();
     !bytes.is_empty()
         && bytes.len() <= MAX_NAME_BYTES
@@ -106,15 +248,17 @@ fn valid_name(text: &str) -> bool {
 }
 
 impl SmtpSettings {
-    /// Settings from a URL (`smtp://user:password@host[:port]` or `smtps://…`), the name this
-    /// client announces in `EHLO`, and the domain message identifiers are generated over.
+    /// Settings for `endpoint`, authenticating with `credentials` when given, announcing
+    /// `hello_name` in `EHLO`, and generating message identifiers over `sender_domain`.
     ///
     /// # Errors
     ///
     /// [`MailError::Refused`] with [`MailRefusal::SettingsInvalid`] when a name is not a hostname.
-    /// The URL itself is parsed at `connect`, where a refusal names the same category.
+    /// Whether the endpoint's security is permitted is [`Self::validate`]'s question, which
+    /// `connect` asks first.
     pub fn new(
-        url: Secret<String>,
+        endpoint: SmtpEndpoint,
+        credentials: Option<SmtpCredentials>,
         hello_name: &str,
         sender_domain: &str,
     ) -> Result<Self, MailError> {
@@ -122,7 +266,8 @@ impl SmtpSettings {
             return Err(MailError::Refused(MailRefusal::SettingsInvalid));
         }
         Ok(Self {
-            url,
+            endpoint,
+            credentials,
             hello_name: hello_name.to_owned(),
             sender_domain: sender_domain.to_owned(),
             allow_insecure_loopback: false,
@@ -183,124 +328,25 @@ impl SmtpSettings {
     pub const fn timeout(&self) -> Duration {
         self.timeout
     }
-}
 
-/// The parts of a transport URL, held only for the length of `connect`.
-struct ParsedUrl {
-    implicit_tls: bool,
-    user: Option<String>,
-    password: Option<String>,
-    host: String,
-    port: Option<u16>,
-}
+    /// The endpoint.
+    #[must_use]
+    pub const fn endpoint(&self) -> &SmtpEndpoint {
+        &self.endpoint
+    }
 
-/// Decodes `%XX` escapes; refuses a malformed escape or a control character in the result.
-fn percent_decode(text: &str) -> Option<String> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] == b'%' {
-            let hex = bytes.get(index + 1..index + 3)?;
-            let value = u8::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?;
-            out.push(value);
-            index += 3;
-        } else {
-            out.push(bytes[index]);
-            index += 1;
+    /// The settings rule, applied before any socket: a plaintext endpoint is accepted only when
+    /// its host is loopback **and** the opt-in was given (C-C7, FR-047).
+    ///
+    /// # Errors
+    ///
+    /// [`MailError::Refused`] with [`MailRefusal::PlaintextNotPermitted`].
+    pub fn validate(&self) -> Result<(), MailError> {
+        let plaintext_permitted = self.allow_insecure_loopback && self.endpoint.is_loopback();
+        if self.endpoint.security == Security::PlaintextLoopback && !plaintext_permitted {
+            return Err(MailError::Refused(MailRefusal::PlaintextNotPermitted));
         }
-    }
-    let decoded = String::from_utf8(out).ok()?;
-    if decoded.bytes().any(|byte| byte < 0x20 || byte == 0x7f) {
-        return None;
-    }
-    Some(decoded)
-}
-
-/// Parses `scheme://[user[:password]@]host[:port][/]`. Anything else is refused.
-fn parse_url(raw: &str) -> Result<ParsedUrl, MailError> {
-    let refused = || MailError::Refused(MailRefusal::SettingsInvalid);
-    if raw.bytes().any(|byte| byte <= 0x20 || byte == 0x7f) {
-        return Err(refused());
-    }
-    let (scheme, rest) = raw.split_once("://").ok_or_else(refused)?;
-    let implicit_tls = match scheme {
-        "smtp" => false,
-        "smtps" => true,
-        _ => return Err(refused()),
-    };
-    let rest = rest.strip_suffix('/').unwrap_or(rest);
-    if rest.contains('/') || rest.contains('?') || rest.contains('#') {
-        return Err(refused());
-    }
-    let (userinfo, hostport) = match rest.rsplit_once('@') {
-        Some((userinfo, hostport)) => (Some(userinfo), hostport),
-        None => (None, rest),
-    };
-    let (user, password) = match userinfo {
-        None => (None, None),
-        Some(userinfo) => {
-            let (user, password) = match userinfo.split_once(':') {
-                Some((user, password)) => (user, Some(password)),
-                None => (userinfo, None),
-            };
-            let user = percent_decode(user).ok_or_else(refused)?;
-            if user.is_empty() {
-                return Err(refused());
-            }
-            let password = match password {
-                Some(password) => Some(percent_decode(password).ok_or_else(refused)?),
-                None => None,
-            };
-            (Some(user), password)
-        }
-    };
-    let (host, port) = if let Some(rest) = hostport.strip_prefix('[') {
-        // A bracketed IPv6 literal.
-        let (literal, after) = rest.split_once(']').ok_or_else(refused)?;
-        let port = match after.strip_prefix(':') {
-            Some(port) => Some(port.parse::<u16>().map_err(|_| refused())?),
-            None if after.is_empty() => None,
-            None => return Err(refused()),
-        };
-        (literal.to_owned(), port)
-    } else {
-        match hostport.rsplit_once(':') {
-            Some((host, port)) => (
-                host.to_owned(),
-                Some(port.parse::<u16>().map_err(|_| refused())?),
-            ),
-            None => (hostport.to_owned(), None),
-        }
-    };
-    if host.is_empty() || host.len() > MAX_NAME_BYTES || port == Some(0) {
-        return Err(refused());
-    }
-    Ok(ParsedUrl {
-        implicit_tls,
-        user,
-        password,
-        host,
-        port,
-    })
-}
-
-/// True for `localhost`, `127.0.0.0/8`, and `::1`.
-fn is_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|address| address.is_loopback())
-}
-
-/// Decides the security a URL gets under the settings (FR-047).
-fn security(implicit_tls: bool, host: &str, allow_insecure_loopback: bool) -> Security {
-    if implicit_tls {
-        Security::ImplicitTls
-    } else if allow_insecure_loopback && is_loopback(host) {
-        Security::PlaintextLoopback
-    } else {
-        Security::StartTls
+        Ok(())
     }
 }
 
@@ -340,42 +386,44 @@ impl SmtpMailer {
     ///
     /// # Errors
     ///
-    /// [`MailError::Refused`] with [`MailRefusal::SettingsInvalid`] when the URL cannot be used.
+    /// [`MailError::Refused`] with [`MailRefusal::PlaintextNotPermitted`] when the settings rule
+    /// refuses the endpoint, or [`MailRefusal::SettingsInvalid`] when the TLS parameters cannot
+    /// be built for the host.
     pub fn connect(
         settings: &SmtpSettings,
         entropy: Arc<dyn EntropySource>,
     ) -> Result<Self, MailError> {
-        let parsed = parse_url(settings.url.expose())?;
-        let security = security(
-            parsed.implicit_tls,
-            &parsed.host,
-            settings.allow_insecure_loopback,
-        );
+        // The settings rule first, before any transport exists (C-C7).
+        settings.validate()?;
+        let endpoint = &settings.endpoint;
+        let security = endpoint.security;
         let refused = |_| MailError::Refused(MailRefusal::SettingsInvalid);
-        let (tls, default_port) = match security {
-            Security::ImplicitTls => (
-                Tls::Wrapper(TlsParameters::new(parsed.host.clone()).map_err(refused)?),
-                lettre::transport::smtp::SUBMISSIONS_PORT,
-            ),
-            Security::StartTls => (
-                Tls::Required(TlsParameters::new(parsed.host.clone()).map_err(refused)?),
-                lettre::transport::smtp::SUBMISSION_PORT,
-            ),
-            Security::PlaintextLoopback => (Tls::None, 25),
+        let tls = match security {
+            Security::ImplicitTls => {
+                Tls::Wrapper(TlsParameters::new(endpoint.host.clone()).map_err(refused)?)
+            }
+            Security::StartTls => {
+                Tls::Required(TlsParameters::new(endpoint.host.clone()).map_err(refused)?)
+            }
+            Security::PlaintextLoopback => Tls::None,
         };
-        let mut builder = AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(parsed.host)
-            .port(parsed.port.unwrap_or(default_port))
-            .tls(tls)
-            .timeout(Some(settings.timeout))
-            .hello_name(ClientId::Domain(settings.hello_name.clone()))
-            .pool_config(
-                PoolConfig::new()
-                    .max_size(settings.pool_size)
-                    .idle_timeout(settings.idle_timeout),
-            );
-        if let Some(user) = parsed.user {
-            builder =
-                builder.credentials(Credentials::new(user, parsed.password.unwrap_or_default()));
+        let mut builder =
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(endpoint.host.clone())
+                .port(endpoint.port)
+                .tls(tls)
+                .timeout(Some(settings.timeout))
+                .hello_name(ClientId::Domain(settings.hello_name.clone()))
+                .pool_config(
+                    PoolConfig::new()
+                        .max_size(settings.pool_size)
+                        .idle_timeout(settings.idle_timeout),
+                );
+        if let Some(credentials) = &settings.credentials {
+            // The one exposure of the password: into the transport that will send it.
+            builder = builder.credentials(Credentials::new(
+                credentials.username.clone(),
+                credentials.password.expose().clone(),
+            ));
         }
         Ok(Self {
             transport: builder.build(),
@@ -394,7 +442,7 @@ impl SmtpMailer {
         self
     }
 
-    /// The security the URL and settings selected.
+    /// The security the endpoint selected.
     #[must_use]
     pub const fn security(&self) -> Security {
         self.security
@@ -489,14 +537,27 @@ mod tests {
     use renvor_core::observe::FixedEntropy;
 
     use super::{
-        DEFAULT_TIMEOUT, MAX_POOL_SIZE, Security, SmtpMailer, SmtpSettings, TIMEOUT_RANGE,
-        parse_url, security,
+        DEFAULT_TIMEOUT, MAX_POOL_SIZE, Security, SmtpCredentials, SmtpEndpoint, SmtpMailer,
+        SmtpSettings, TIMEOUT_RANGE,
     };
     use crate::port::{MailError, MailRefusal};
 
-    fn settings(url: &str) -> SmtpSettings {
+    fn endpoint(host: &str, security: Security) -> SmtpEndpoint {
+        SmtpEndpoint::new(host, security).unwrap()
+    }
+
+    fn credentials() -> SmtpCredentials {
+        SmtpCredentials::new(
+            "user",
+            Secret::new("mail.password", "hunter2CanaryDoNotLeak".to_owned()),
+        )
+        .unwrap()
+    }
+
+    fn settings(endpoint: SmtpEndpoint) -> SmtpSettings {
         SmtpSettings::new(
-            Secret::new("mail.url", url.to_owned()),
+            endpoint,
+            Some(credentials()),
             "app.example.test",
             "mail.example.test",
         )
@@ -504,78 +565,106 @@ mod tests {
     }
 
     #[test]
-    fn urls_are_parsed_strictly_and_credentials_are_decoded() {
-        let parsed = parse_url("smtp://user:p%40ss%3Aword@relay.example.test:2525/").unwrap();
-        assert!(!parsed.implicit_tls);
-        assert_eq!(parsed.user.as_deref(), Some("user"));
-        assert_eq!(parsed.password.as_deref(), Some("p@ss:word"));
-        assert_eq!(parsed.host, "relay.example.test");
-        assert_eq!(parsed.port, Some(2525));
-        let six = parse_url("smtps://[::1]:465").unwrap();
-        assert!(six.implicit_tls);
-        assert_eq!(six.host, "::1");
-        assert_eq!(six.port, Some(465));
-        assert!(
-            parse_url("smtp://relay.example.test")
-                .unwrap()
-                .port
-                .is_none()
+    fn endpoints_default_their_port_by_security_and_refuse_bad_hosts_and_ports() {
+        assert_eq!(
+            endpoint("relay.example.test", Security::ImplicitTls).port(),
+            465
         );
-        let refused = [
-            "http://relay.example.test",
-            "smtp://",
-            "smtp://relay.example.test/path",
-            "smtp://relay.example.test?x=1",
-            "smtp://relay.example.test:0",
-            "smtp://relay.example.test:99999",
-            "smtp://:secret@relay.example.test",
-            "smtp://user:p%zz@relay.example.test",
-            "smtp://user:p%0aass@relay.example.test",
-            "smtp://relay.example .test",
-            "smtp://[::1",
-        ];
-        for (index, bad) in refused.into_iter().enumerate() {
-            assert!(
-                parse_url(bad).is_err(),
-                "rejected url case {index} was accepted"
+        assert_eq!(
+            endpoint("relay.example.test", Security::StartTls).port(),
+            587
+        );
+        assert_eq!(
+            endpoint("127.0.0.1", Security::PlaintextLoopback).port(),
+            25
+        );
+        assert_eq!(
+            endpoint("::1", Security::PlaintextLoopback)
+                .with_port(1025)
+                .unwrap()
+                .port(),
+            1025
+        );
+        assert_eq!(
+            endpoint("h", Security::StartTls).with_port(0).unwrap_err(),
+            MailError::Refused(MailRefusal::SettingsInvalid)
+        );
+        for (index, bad) in [
+            "",
+            "Relay.Example.Test",
+            "relay.example .test",
+            ".relay",
+            "relay\u{1}",
+            "user@relay.example.test",
+            &"h".repeat(254),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert_eq!(
+                SmtpEndpoint::new(bad, Security::StartTls).unwrap_err(),
+                MailError::Refused(MailRefusal::SettingsInvalid),
+                "host case {index} was accepted"
+            );
+        }
+        for (index, bad) in ["", "a b", "a\u{1}", &"u".repeat(257)]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(
+                SmtpCredentials::new(bad, Secret::new("k", "p".to_owned())).unwrap_err(),
+                MailError::Refused(MailRefusal::SettingsInvalid),
+                "username case {index} was accepted"
             );
         }
     }
 
     #[test]
     fn plaintext_needs_loopback_and_the_flag_together() {
-        assert_eq!(
-            security(true, "relay.example.test", true),
-            Security::ImplicitTls
+        // C-C7, FR-047: a double opt-in. The flag alone does not open a plaintext session to a
+        // host that is not loopback, and loopback alone does not open one without the flag.
+        let refused = MailError::Refused(MailRefusal::PlaintextNotPermitted);
+        for (index, host) in ["relay.example.test", "10.0.0.1", "192.0.2.10"]
+            .into_iter()
+            .enumerate()
+        {
+            let with_flag = settings(endpoint(host, Security::PlaintextLoopback))
+                .with_allow_insecure_loopback(true);
+            assert_eq!(
+                with_flag.validate().unwrap_err(),
+                refused,
+                "the flag applied off loopback for case {index}"
+            );
+        }
+        for (index, host) in ["127.0.0.1", "localhost", "::1", "127.8.8.8"]
+            .into_iter()
+            .enumerate()
+        {
+            let without_flag = settings(endpoint(host, Security::PlaintextLoopback));
+            assert_eq!(
+                without_flag.validate().unwrap_err(),
+                refused,
+                "loopback case {index} was accepted without the flag"
+            );
+            // POSITIVE CONTROL: loopback AND the flag.
+            let both = settings(endpoint(host, Security::PlaintextLoopback))
+                .with_allow_insecure_loopback(true);
+            assert!(
+                both.validate().is_ok(),
+                "loopback case {index} with the flag was refused"
+            );
+        }
+        // TLS needs no opt-in anywhere.
+        assert!(
+            settings(endpoint("relay.example.test", Security::StartTls))
+                .validate()
+                .is_ok()
         );
-        assert_eq!(
-            security(false, "relay.example.test", false),
-            Security::StartTls
+        assert!(
+            settings(endpoint("relay.example.test", Security::ImplicitTls))
+                .validate()
+                .is_ok()
         );
-        assert_eq!(
-            security(false, "relay.example.test", true),
-            Security::StartTls,
-            "the flag never applies off loopback"
-        );
-        assert_eq!(
-            security(false, "127.0.0.1", false),
-            Security::StartTls,
-            "loopback without the flag is still TLS"
-        );
-        assert_eq!(
-            security(false, "127.0.0.1", true),
-            Security::PlaintextLoopback
-        );
-        assert_eq!(
-            security(false, "localhost", true),
-            Security::PlaintextLoopback
-        );
-        assert_eq!(security(false, "::1", true), Security::PlaintextLoopback);
-        assert_eq!(
-            security(false, "127.8.8.8", true),
-            Security::PlaintextLoopback
-        );
-        assert_eq!(security(false, "10.0.0.1", true), Security::StartTls);
     }
 
     // A pooled transport needs a runtime to be built and dropped on: lettre spawns its idle
@@ -584,62 +673,77 @@ mod tests {
     async fn a_built_mailer_reports_its_security_and_bounds_are_capped() {
         let entropy = Arc::new(FixedEntropy::new([0x33; 16]));
         let plain = SmtpMailer::connect(
-            &settings("smtp://u:p@127.0.0.1:1025").with_allow_insecure_loopback(true),
+            &settings(
+                endpoint("127.0.0.1", Security::PlaintextLoopback)
+                    .with_port(1025)
+                    .unwrap(),
+            )
+            .with_allow_insecure_loopback(true),
             entropy.clone(),
         )
         .unwrap();
         assert_eq!(plain.security(), Security::PlaintextLoopback);
-        let starttls =
-            SmtpMailer::connect(&settings("smtp://u:p@relay.example.test"), entropy.clone())
-                .unwrap();
+        let starttls = SmtpMailer::connect(
+            &settings(endpoint("relay.example.test", Security::StartTls)),
+            entropy.clone(),
+        )
+        .unwrap();
         assert_eq!(starttls.security(), Security::StartTls);
-        let implicit =
-            SmtpMailer::connect(&settings("smtps://u:p@relay.example.test"), entropy.clone())
-                .unwrap();
+        let implicit = SmtpMailer::connect(
+            &settings(endpoint("relay.example.test", Security::ImplicitTls)),
+            entropy.clone(),
+        )
+        .unwrap();
         assert_eq!(implicit.security(), Security::ImplicitTls);
+        // A refused plaintext endpoint never reaches the transport builder.
         assert_eq!(
-            SmtpMailer::connect(&settings("ftp://relay.example.test"), entropy).unwrap_err(),
-            MailError::Refused(MailRefusal::SettingsInvalid)
+            SmtpMailer::connect(
+                &settings(endpoint("relay.example.test", Security::PlaintextLoopback))
+                    .with_allow_insecure_loopback(true),
+                entropy
+            )
+            .unwrap_err(),
+            MailError::Refused(MailRefusal::PlaintextNotPermitted)
         );
 
-        assert_eq!(settings("smtp://h").timeout(), DEFAULT_TIMEOUT);
-        assert!(settings("smtp://h").with_timeout(TIMEOUT_RANGE.1).is_ok());
+        let plain_settings = || settings(endpoint("h", Security::StartTls));
+        assert_eq!(plain_settings().timeout(), DEFAULT_TIMEOUT);
+        assert!(plain_settings().with_timeout(TIMEOUT_RANGE.1).is_ok());
         assert!(
-            settings("smtp://h")
+            plain_settings()
                 .with_timeout(TIMEOUT_RANGE.1 + Duration::from_secs(1))
                 .is_err()
         );
         assert!(
-            settings("smtp://h")
+            plain_settings()
                 .with_timeout(Duration::from_millis(999))
                 .is_err()
         );
-        assert!(settings("smtp://h").with_pool_size(MAX_POOL_SIZE).is_ok());
+        assert!(plain_settings().with_pool_size(MAX_POOL_SIZE).is_ok());
+        assert!(plain_settings().with_pool_size(MAX_POOL_SIZE + 1).is_err());
+        assert!(plain_settings().with_pool_size(0).is_err());
         assert!(
-            settings("smtp://h")
-                .with_pool_size(MAX_POOL_SIZE + 1)
-                .is_err()
-        );
-        assert!(settings("smtp://h").with_pool_size(0).is_err());
-        assert!(
-            SmtpSettings::new(Secret::new("k", "smtp://h".to_owned()), "Bad Name", "d").is_err()
+            SmtpSettings::new(endpoint("h", Security::StartTls), None, "Bad Name", "d").is_err()
         );
         assert!(
-            SmtpSettings::new(Secret::new("k", "smtp://h".to_owned()), "ok.name", ".bad").is_err()
+            SmtpSettings::new(endpoint("h", Security::StartTls), None, "ok.name", ".bad").is_err()
         );
     }
 
     // A pooled transport needs a runtime to be built and dropped on: lettre spawns its idle
     // reaper there.
     #[tokio::test]
-    async fn debug_never_carries_the_url() {
-        let built = settings("smtp://user:hunter2CanaryDoNotLeak@relay.example.test");
+    async fn debug_never_carries_the_credential_or_the_host() {
+        let built = settings(endpoint("relay.example.test", Security::StartTls));
         let rendered = format!("{built:?}");
-        assert!(!rendered.contains("hunter2"), "the credential was rendered");
+        assert!(!rendered.contains("hunter2"), "the password was rendered");
+        assert!(!rendered.contains("user"), "the username was rendered");
         assert!(
             !rendered.contains("relay.example.test"),
             "the host was rendered"
         );
+        // POSITIVE CONTROL: the security and whether a credential is set are shown.
+        assert!(rendered.contains("StartTls") && rendered.contains("authenticated: true"));
         let mailer = SmtpMailer::connect(&built, Arc::new(FixedEntropy::new([0x33; 16]))).unwrap();
         let rendered = format!("{mailer:?}");
         assert!(!rendered.contains("hunter2") && !rendered.contains("relay.example.test"));

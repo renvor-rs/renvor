@@ -93,10 +93,20 @@ impl ReadinessContributor for MailReadiness {
 pub struct MailProvider<M> {
     id: ProviderId,
     provides: Vec<CapabilityId>,
-    mailer: Arc<M>,
+    mailer: MailerSource<M>,
+    built: std::sync::OnceLock<Arc<M>>,
     verify_on_boot: bool,
     boot_timeout: Duration,
     ready: Arc<AtomicBool>,
+}
+
+/// Where the mailer comes from: built in code, or built at Boot from the typed `[mail]` section
+/// the kernel validated (FR-011).
+enum MailerSource<M> {
+    Given(Arc<M>),
+    /// Built at Boot by a closure that reads the validated section; the closure is what lets a
+    /// provider generic over `M` build the one concrete transport a section describes.
+    Configured(Box<dyn Fn() -> Result<Arc<M>, BoxedCause> + Send + Sync>),
 }
 
 impl<M> core::fmt::Debug for MailProvider<M> {
@@ -116,7 +126,8 @@ impl<M: Mailer + 'static> MailProvider<M> {
         Self {
             id,
             provides: vec![mail_capability()],
-            mailer,
+            mailer: MailerSource::Given(mailer),
+            built: std::sync::OnceLock::new(),
             verify_on_boot: true,
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
             ready: Arc::new(AtomicBool::new(false)),
@@ -137,10 +148,44 @@ impl<M: Mailer + 'static> MailProvider<M> {
         self
     }
 
-    /// The mailer this provider publishes.
+    /// The mailer this provider publishes: the one it was given, or the one it built at Boot
+    /// from its configuration section — `None` before that Boot.
     #[must_use]
-    pub fn mailer(&self) -> Arc<M> {
-        Arc::clone(&self.mailer)
+    pub fn mailer(&self) -> Option<Arc<M>> {
+        match &self.mailer {
+            MailerSource::Given(mailer) => Some(Arc::clone(mailer)),
+            MailerSource::Configured(_) => self.built.get().cloned(),
+        }
+    }
+}
+
+#[cfg(feature = "smtp")]
+impl MailProvider<crate::smtp::SmtpMailer> {
+    /// Declares a provider whose transport is built at Boot from the typed `[mail]` section
+    /// behind `handle` (FR-011). The section was validated by the kernel before Boot; the
+    /// handle is read here at Boot, which is the first moment the resolved value exists.
+    #[must_use]
+    pub fn from_config(
+        id: ProviderId,
+        handle: renvor_config::ConfigHandle<crate::config::MailSection>,
+        entropy: Arc<dyn renvor_core::observe::entropy::EntropySource>,
+    ) -> Self {
+        let build = move || {
+            let settings = crate::config::settings_from_handle(&handle)
+                .map_err(|error| Box::new(error) as BoxedCause)?;
+            crate::smtp::SmtpMailer::connect(&settings, Arc::clone(&entropy))
+                .map(Arc::new)
+                .map_err(|error| Box::new(MailBootError::from(error)) as BoxedCause)
+        };
+        Self {
+            id,
+            provides: vec![mail_capability()],
+            mailer: MailerSource::Configured(Box::new(build)),
+            built: std::sync::OnceLock::new(),
+            verify_on_boot: true,
+            boot_timeout: DEFAULT_BOOT_TIMEOUT,
+            ready: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -176,8 +221,16 @@ impl<M: Mailer + 'static> Provider for MailProvider<M> {
             if self.ready.load(Ordering::Acquire) {
                 return Err(Box::new(MailBootError::AlreadyBooted) as BoxedCause);
             }
+            let mailer = match &self.mailer {
+                MailerSource::Given(mailer) => Arc::clone(mailer),
+                MailerSource::Configured(build) => {
+                    let mailer = build()?;
+                    let _ = self.built.set(Arc::clone(&mailer));
+                    mailer
+                }
+            };
             if self.verify_on_boot {
-                let verified = tokio::time::timeout(self.boot_timeout, self.mailer.verify()).await;
+                let verified = tokio::time::timeout(self.boot_timeout, mailer.verify()).await;
                 let outcome = match verified {
                     Ok(Ok(())) => Ok(()),
                     Ok(Err(error)) => Err(MailBootError::from(error)),
@@ -194,7 +247,7 @@ impl<M: Mailer + 'static> Provider for MailProvider<M> {
                 }
             }
             context
-                .register_state(Arc::clone(&self.mailer))
+                .register_state(mailer)
                 .map_err(|error| Box::new(error) as BoxedCause)?;
             context.register_readiness(Arc::new(MailReadiness {
                 name: self.id.as_str().to_owned(),

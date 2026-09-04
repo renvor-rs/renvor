@@ -1,10 +1,13 @@
 //! The SMTP adapter against a real sink (Mailpit), read back through its HTTP API.
 //!
-//! These tests need `RENVOR_TEST_SMTP_URL` (an `smtp://user:password@127.0.0.1:port` URL to a
-//! loopback sink that accepts plaintext authentication) and `RENVOR_TEST_SMTP_API_URL` (the
-//! sink's HTTP API). Without them they skip with a printed message; with
-//! `RENVOR_TEST_REQUIRE_CAPABILITIES=1` set as well, a missing URL is a **failure**, because a
-//! run that silently skipped every real-server test reports the same `ok` as one that passed.
+//! These tests need `RENVOR_TEST_SMTP_URL` (an `smtp://127.0.0.1:port` URL to a loopback sink
+//! that accepts plaintext authentication — **without** a credential in it; a URL that carries
+//! one is refused by this suite, because constitution VI says a secret enters no URL),
+//! `RENVOR_TEST_SMTP_USERNAME` and `RENVOR_TEST_SMTP_PASSWORD` (the sink's credential, each in
+//! its own variable), and `RENVOR_TEST_SMTP_API_URL` (the sink's HTTP API). Without the URLs
+//! they skip with a printed message; with `RENVOR_TEST_REQUIRE_CAPABILITIES=1` set as well, a
+//! missing URL is a **failure**, because a run that silently skipped every real-server test
+//! reports the same `ok` as one that passed.
 //!
 //! The API is read with a hand-written HTTP/1.0 client over `tokio::net`: an HTTP crate would be
 //! a dev-dependency with a root store of its own, for two `GET`s and a `DELETE`.
@@ -20,10 +23,12 @@ use renvor_core::provider::ProviderId;
 use renvor_core::{ApplicationBuilder, Readiness};
 use renvor_mail::port::{Address, Mailbox, Mailer as _, Message};
 use renvor_mail::provider::MailProvider;
-use renvor_mail::smtp::{SmtpMailer, SmtpSettings};
+use renvor_mail::smtp::{Security, SmtpCredentials, SmtpEndpoint, SmtpMailer, SmtpSettings};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const URL: &str = "RENVOR_TEST_SMTP_URL";
+const USERNAME: &str = "RENVOR_TEST_SMTP_USERNAME";
+const PASSWORD: &str = "RENVOR_TEST_SMTP_PASSWORD";
 const API: &str = "RENVOR_TEST_SMTP_API_URL";
 const REQUIRE: &str = "RENVOR_TEST_REQUIRE_CAPABILITIES";
 const BOUND: Duration = Duration::from_secs(10);
@@ -31,10 +36,59 @@ const BOUND: Duration = Duration::from_secs(10);
 /// The sink is one mailbox; tests that send or read must not interleave.
 static SINK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// The two URLs, or `None` after printing why — unless the run requires them.
-fn urls() -> Option<(String, String)> {
+/// The test sink: its endpoint from the URL, its credential from the two variables, its API.
+struct Sink {
+    host: String,
+    port: u16,
+    username: Option<String>,
+    password: Option<String>,
+    api: String,
+}
+
+impl Sink {
+    fn endpoint(&self) -> SmtpEndpoint {
+        SmtpEndpoint::new(&self.host, Security::PlaintextLoopback)
+            .expect("a valid host")
+            .with_port(self.port)
+            .expect("a valid port")
+    }
+
+    fn credentials(&self) -> Option<SmtpCredentials> {
+        let (username, password) = (self.username.as_ref()?, self.password.as_ref()?);
+        Some(
+            SmtpCredentials::new(username, Secret::new("mail.password", password.clone()))
+                .expect("a valid username"),
+        )
+    }
+}
+
+/// Parses `smtp://host:port`. A credential in the URL is refused.
+fn parse_sink_url(url: &str) -> (String, u16) {
+    let rest = url
+        .strip_prefix("smtp://")
+        .expect("the test sink is a plaintext loopback `smtp://` URL");
+    assert!(
+        !rest.contains('@'),
+        "{URL} must not carry a credential; set {USERNAME} and {PASSWORD} instead"
+    );
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    let (host, port) = rest.rsplit_once(':').expect("a port in the test url");
+    (host.to_owned(), port.parse().expect("a numeric port"))
+}
+
+/// The sink, or `None` after printing why — unless the run requires it.
+fn sink() -> Option<Sink> {
     match (std::env::var(URL), std::env::var(API)) {
-        (Ok(url), Ok(api)) if !url.is_empty() && !api.is_empty() => Some((url, api)),
+        (Ok(url), Ok(api)) if !url.is_empty() && !api.is_empty() => {
+            let (host, port) = parse_sink_url(&url);
+            Some(Sink {
+                host,
+                port,
+                username: std::env::var(USERNAME).ok().filter(|v| !v.is_empty()),
+                password: std::env::var(PASSWORD).ok().filter(|v| !v.is_empty()),
+                api,
+            })
+        }
         _ => {
             assert!(
                 std::env::var(REQUIRE).is_err(),
@@ -95,9 +149,12 @@ async fn detail(api: &str, id: &str) -> serde_json::Value {
     serde_json::from_str(&body).expect("the sink answered JSON")
 }
 
-fn settings(url: &str) -> SmtpSettings {
+/// Settings for the sink: a loopback plaintext endpoint, so the opt-in is given here —
+/// explicitly, the way an application would have to.
+fn settings_for(endpoint: SmtpEndpoint, credentials: Option<SmtpCredentials>) -> SmtpSettings {
     SmtpSettings::new(
-        Secret::new("mail.url", url.to_owned()),
+        endpoint,
+        credentials,
         "test.renvor.invalid",
         "mail.renvor.invalid",
     )
@@ -107,26 +164,24 @@ fn settings(url: &str) -> SmtpSettings {
     .unwrap()
 }
 
+fn settings(sink: &Sink) -> SmtpSettings {
+    settings_for(sink.endpoint(), sink.credentials())
+}
+
 fn mailbox(address: &str) -> Mailbox {
     Mailbox::new(Address::new(address).unwrap())
 }
 
-fn with_password(url: &str, password: &str) -> String {
-    let (scheme, rest) = url.split_once("://").unwrap();
-    let (userinfo, host) = rest.rsplit_once('@').unwrap();
-    let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
-    format!("{scheme}://{user}:{password}@{host}")
-}
-
 #[tokio::test]
 async fn the_provider_boots_and_a_message_arrives_with_exactly_one_to_and_subject() {
-    let Some((url, api)) = urls() else {
+    let Some(sink) = sink() else {
         return;
     };
+    let api = sink.api.clone();
     let _sink = SINK.lock().await;
     clear(&api).await;
     let mailer =
-        Arc::new(SmtpMailer::connect(&settings(&url), Arc::new(OsEntropy::new())).unwrap());
+        Arc::new(SmtpMailer::connect(&settings(&sink), Arc::new(OsEntropy::new())).unwrap());
     let provider = MailProvider::new(ProviderId::new("mail"), Arc::clone(&mailer));
     let mut application = ApplicationBuilder::new()
         .with_provider(Box::new(provider))
@@ -213,14 +268,19 @@ fn wrong_credential() -> String {
 
 #[tokio::test]
 async fn a_wrong_password_fails_boot_as_credential_refused_without_rendering_it() {
-    let Some((url, _api)) = urls() else {
+    let Some(sink) = sink() else {
         return;
     };
     let _sink = SINK.lock().await;
     let canary = wrong_credential();
-    let wrong = with_password(&url, &canary);
-    let mailer =
-        Arc::new(SmtpMailer::connect(&settings(&wrong), Arc::new(OsEntropy::new())).unwrap());
+    let username = sink.username.clone().unwrap_or_else(|| "renvor".to_owned());
+    let wrong = settings_for(
+        sink.endpoint(),
+        Some(
+            SmtpCredentials::new(&username, Secret::new("mail.password", canary.clone())).unwrap(),
+        ),
+    );
+    let mailer = Arc::new(SmtpMailer::connect(&wrong, Arc::new(OsEntropy::new())).unwrap());
     // The category, at the port: the server's refusal is `Rejected`, which Boot maps to
     // `CredentialRefused`. No rendering carries the password or the address.
     let error = mailer
@@ -257,12 +317,11 @@ async fn a_wrong_password_fails_boot_as_credential_refused_without_rendering_it(
 
 #[tokio::test]
 async fn an_unreachable_port_fails_within_the_bound() {
-    let Some((url, _api)) = urls() else {
+    let Some(sink) = sink() else {
         return;
     };
-    let (prefix, _) = url.rsplit_once(':').expect("a port");
-    let unreachable = format!("{prefix}:1");
-    let mailer = SmtpMailer::connect(&settings(&unreachable), Arc::new(OsEntropy::new())).unwrap();
+    let unreachable = settings_for(sink.endpoint().with_port(1).unwrap(), sink.credentials());
+    let mailer = SmtpMailer::connect(&unreachable, Arc::new(OsEntropy::new())).unwrap();
     let started = std::time::Instant::now();
     let error = mailer
         .verify()
@@ -277,7 +336,7 @@ async fn an_unreachable_port_fails_within_the_bound() {
 
 #[tokio::test]
 async fn a_listener_that_never_answers_fails_within_the_bound() {
-    let Some((url, _api)) = urls() else {
+    let Some(sink) = sink() else {
         return;
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -289,11 +348,15 @@ async fn a_listener_that_never_answers_fails_within_the_bound() {
             held.push(socket);
         }
     });
-    let (prefix, _) = url.rsplit_once(':').expect("a port");
-    let silent = format!("{prefix}:{port}");
-    let settings = settings(&silent)
-        .with_timeout(Duration::from_secs(1))
-        .unwrap();
+    let settings = settings_for(
+        SmtpEndpoint::new("127.0.0.1", Security::PlaintextLoopback)
+            .unwrap()
+            .with_port(port)
+            .unwrap(),
+        sink.credentials(),
+    )
+    .with_timeout(Duration::from_secs(1))
+    .unwrap();
     let mailer = SmtpMailer::connect(&settings, Arc::new(OsEntropy::new())).unwrap();
     let started = std::time::Instant::now();
     let error = mailer
@@ -315,13 +378,14 @@ async fn the_auth_bridge_delivers_through_the_real_sink_with_the_token_only_in_t
     use renvor_auth::opaque::{Opaque, OpaqueKind};
     use renvor_mail::auth::{AuthMailBridge, AuthMailSettings};
 
-    let Some((url, api)) = urls() else {
+    let Some(sink) = sink() else {
         return;
     };
+    let api = sink.api.clone();
     let _sink = SINK.lock().await;
     clear(&api).await;
     let mailer =
-        Arc::new(SmtpMailer::connect(&settings(&url), Arc::new(OsEntropy::new())).unwrap());
+        Arc::new(SmtpMailer::connect(&settings(&sink), Arc::new(OsEntropy::new())).unwrap());
     let bridge = AuthMailBridge::new(
         mailer,
         AuthMailSettings::new(
@@ -347,8 +411,75 @@ async fn the_auth_bridge_delivers_through_the_real_sink_with_the_token_only_in_t
     assert!(!items[0]["Subject"].as_str().unwrap().contains(&exposed));
     assert_eq!(items[0]["To"].as_array().unwrap().len(), 1);
     let full = detail(&api, items[0]["ID"].as_str().unwrap()).await;
-    let link = format!("https://app.renvor.invalid/auth/reset?token={exposed}");
-    assert!(full["Text"].as_str().unwrap().contains(&link));
-    assert!(full["HTML"].as_str().unwrap().contains(&link));
+    // The link carries no token; the token is a code in the body (constitution VI: a secret
+    // enters no URL).
+    let link = "https://app.renvor.invalid/auth/reset";
+    for body in [
+        full["Text"].as_str().unwrap(),
+        full["HTML"].as_str().unwrap(),
+    ] {
+        assert!(body.contains(link), "the body lacks the link");
+        assert!(body.contains(&exposed), "the body lacks the code");
+        assert!(
+            !body.contains(&format!("?token={exposed}")) && !body.contains(&format!("/{exposed}")),
+            "the token is inside a URL"
+        );
+    }
     clear(&api).await;
+}
+
+#[tokio::test]
+async fn the_provider_boots_from_a_typed_configuration_section() {
+    // FR-011 end to end: the section is decoded and validated by the kernel, the credential
+    // travels from the environment layer into a `Secret` and into the transport, and the
+    // provider builds and verifies the transport at Boot.
+    use std::collections::BTreeMap;
+
+    use renvor_config::LayeredResolverBuilder;
+    use renvor_mail::config::MailSection;
+
+    let Some(sink) = sink() else {
+        return;
+    };
+    let _sink = SINK.lock().await;
+    let mut environment: BTreeMap<String, String> = BTreeMap::new();
+    let mut set = |key: &str, value: String| {
+        environment.insert(format!("RENVOR_MAIL_{key}"), value);
+    };
+    set("HOST", sink.host.clone());
+    set("PORT", sink.port.to_string());
+    set("SECURITY", "plaintext".to_owned());
+    set("ALLOW_INSECURE_LOOPBACK", "true".to_owned());
+    set("HELLO_NAME", "test.renvor.invalid".to_owned());
+    set("SENDER_DOMAIN", "mail.renvor.invalid".to_owned());
+    if let (Some(username), Some(password)) = (&sink.username, &sink.password) {
+        set("USERNAME", username.clone());
+        set("PASSWORD", password.clone());
+    }
+    let source = MailSection::source(
+        "mail",
+        LayeredResolverBuilder::new().with_environment_map("RENVOR_MAIL_", environment),
+    );
+    let provider = MailProvider::from_config(
+        ProviderId::new("mail"),
+        source.handle(),
+        Arc::new(OsEntropy::new()),
+    );
+    assert!(provider.mailer().is_none(), "nothing is built before Boot");
+    let application = ApplicationBuilder::new()
+        .with_config_source(Arc::new(source))
+        .with_provider(Box::new(provider))
+        .build()
+        .expect("the section validates")
+        .boot()
+        .await
+        .expect("boot builds and verifies the transport from the validated section");
+    let verdict = application
+        .health()
+        .readiness()
+        .contributors
+        .iter()
+        .find(|verdict| verdict.name == "mail")
+        .map(|verdict| verdict.readiness);
+    assert_eq!(verdict, Some(Readiness::Ready));
 }

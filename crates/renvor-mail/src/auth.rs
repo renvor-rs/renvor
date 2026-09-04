@@ -5,8 +5,10 @@
 //! Phase 009's port hands over a kind, a recipient, and a token, and nothing about the request
 //! that caused it. This bridge renders the verification and password-reset messages from a
 //! **configured** base URL and sender (OWASP Forgot Password: a link built from a request `Host`
-//! is a link an attacker chooses). The token appears in the body only — never in the subject,
-//! which mail clients show in lists and notifications.
+//! is a link an attacker chooses). The token is a **code in the body** — never in the subject,
+//! which mail clients show in lists and notifications, and never in the link: constitution VI
+//! says a secret enters no URL, and a query-string token reaches proxy logs, browser history,
+//! and `Referer`. The page the link opens takes the code from the request body.
 //!
 //! # One failure category
 //!
@@ -109,13 +111,18 @@ impl AuthMailSettings {
         &self.base_url
     }
 
-    fn link(&self, kind: MailKind, token: &str) -> String {
+    /// The page the message points at. **Carries no token**: constitution VI says a secret
+    /// enters no URL, and a query-string token is written to proxy and server logs, kept in the
+    /// browser's history, and leaked through `Referer` by anything the page loads. The token is
+    /// a code in the body (FR-051), entered into the form this page shows; the auth routes read
+    /// it from the request body.
+    fn link(&self, kind: MailKind) -> String {
         let path = match kind {
             MailKind::Verification => &self.verify_path,
             MailKind::PasswordReset => &self.reset_path,
             _ => &self.verify_path,
         };
-        format!("{}{path}?token={token}", self.base_url)
+        format!("{}{path}", self.base_url)
     }
 
     fn subject(&self, kind: MailKind) -> String {
@@ -125,44 +132,46 @@ impl AuthMailSettings {
         }
     }
 
-    fn text(&self, kind: MailKind, link: &str) -> String {
+    fn text(&self, kind: MailKind, link: &str, token: &str) -> String {
         match kind {
             MailKind::PasswordReset => format!(
                 "Hello,\n\nA password reset was requested for your {product} account. Open this \
-                 link to choose a new password:\n\n{link}\n\nIf you did not request this, you can \
-                 ignore this message; your password is unchanged.\n",
+                 page to choose a new password:\n\n{link}\n\nand enter this code:\n\n{token}\n\n\
+                 If you did not request this, you can ignore this message; your password is \
+                 unchanged.\n",
                 product = self.product
             ),
             _ => format!(
-                "Hello,\n\nConfirm your email address for {product} by opening this link:\n\n\
-                 {link}\n\nIf you did not create an account, you can ignore this message.\n",
+                "Hello,\n\nConfirm your email address for {product} by opening this page:\n\n\
+                 {link}\n\nand entering this code:\n\n{token}\n\nIf you did not create an \
+                 account, you can ignore this message.\n",
                 product = self.product
             ),
         }
     }
 
-    fn html(&self, kind: MailKind, link: &str) -> String {
+    fn html(&self, kind: MailKind, link: &str, token: &str) -> String {
         // `product` and `link` were validated to hold no `<`, `>`, `&`, `"`, or `'`; the token
         // is hexadecimal. Nothing here needs escaping, and nothing here is escaped, so a future
         // field that could need it must be validated the same way or this must change.
         let (lead, tail) = match kind {
             MailKind::PasswordReset => (
                 format!(
-                    "A password reset was requested for your {} account. Open this link to choose a new password:",
+                    "A password reset was requested for your {} account. Open this page to choose a new password, and enter the code below:",
                     self.product
                 ),
                 "If you did not request this, you can ignore this message; your password is unchanged.",
             ),
             _ => (
                 format!(
-                    "Confirm your email address for {} by opening this link:",
+                    "Confirm your email address for {} by opening this page and entering the code below:",
                     self.product
                 ),
                 "If you did not create an account, you can ignore this message.",
             ),
         };
         format!(
-            "<!doctype html><html><body><p>Hello,</p><p>{lead}</p><p><a href=\"{link}\">{link}</a></p><p>{tail}</p></body></html>"
+            "<!doctype html><html><body><p>Hello,</p><p>{lead}</p><p><a href=\"{link}\">{link}</a></p><p>Your code: <code>{token}</code></p><p>{tail}</p></body></html>"
         )
     }
 }
@@ -188,12 +197,13 @@ impl<M: Mailer> AuthMailBridge<M> {
     /// [`MailError::Refused`] when the recipient is not an address the port accepts.
     pub fn render(&self, mail: &OutgoingMail) -> Result<Message, MailError> {
         let recipient = Mailbox::new(Address::new(mail.recipient())?);
-        let link = self.settings.link(mail.kind(), &mail.token().expose());
+        let link = self.settings.link(mail.kind());
+        let token = mail.token().expose();
         Message::builder(self.settings.sender.clone())
             .to(recipient)
             .subject(&self.settings.subject(mail.kind()))
-            .text(self.settings.text(mail.kind(), &link))
-            .html(self.settings.html(mail.kind(), &link))
+            .text(self.settings.text(mail.kind(), &link, &token))
+            .html(self.settings.html(mail.kind(), &link, &token))
             .build()
     }
 }
@@ -272,9 +282,13 @@ mod tests {
             !message.subject().contains(&exposed),
             "the token is in the subject"
         );
-        let link = format!("https://app.example.test/auth/verify?token={exposed}");
+        // The link carries NO token: constitution VI says a secret enters no URL, and a
+        // verification or reset secret in a query string is logged by proxies, kept in browser
+        // history, and sent in `Referer`. The token is a code in the body, entered into the form
+        // the link opens (the auth routes take it from the request body).
+        let link = "https://app.example.test/auth/verify";
         assert!(
-            message.text().contains(&link),
+            message.text().contains(link),
             "the text body lacks the configured link"
         );
         assert!(
@@ -283,6 +297,25 @@ mod tests {
                 .is_some_and(|html| html.contains(&format!("href=\"{link}\""))),
             "the HTML body lacks the configured link"
         );
+        for body in [
+            message.text().to_owned(),
+            message.html().unwrap().to_owned(),
+        ] {
+            assert!(body.contains(&exposed), "the body lacks the code");
+            assert!(
+                !body.contains(&format!("?token={exposed}"))
+                    && !body.contains(&format!("/{exposed}"))
+                    && !body.contains(&format!("#{exposed}")),
+                "the token is inside a URL"
+            );
+            // Every URL in the body is the bare link: no query, no fragment.
+            for word in body.split(|c: char| c.is_whitespace() || c == '"' || c == '>' || c == '<')
+            {
+                if word.starts_with("https://") {
+                    assert_eq!(word, link, "a URL other than the bare link was rendered");
+                }
+            }
+        }
         assert!(message.subject().contains("Verify"));
         // The trailing slash on the base URL did not double up.
         assert!(!message.text().contains("test//auth"));
@@ -304,8 +337,9 @@ mod tests {
         assert!(
             message
                 .text()
-                .contains("https://app.example.test/auth/reset?token=")
+                .contains("https://app.example.test/auth/reset\n")
         );
+        assert!(!message.text().contains("?token="));
     }
 
     #[tokio::test]
