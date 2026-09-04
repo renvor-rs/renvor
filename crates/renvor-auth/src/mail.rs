@@ -1,12 +1,12 @@
 //! The mail **port**, and the deterministic sink that stands in for a transport.
 //!
-//! # Phase 009 ships a port; Phase 010 ships the adapter
+//! # Phase 009 shipped the port; Phase 010 shipped the adapter, elsewhere
 //!
-//! PLAN.md §20 gives operational mail/cache/jobs/observability adapters to **Phase 010**. This
-//! module defines the narrow boundary and a recording sink for tests. Shipping an SMTP client here
-//! would take Phase 010's decision without Phase 010's review — and, structurally, it could not
-//! live here anyway: every candidate pulls an SMTP client and a TLS stack, and `xtask` step 7
-//! asserts `renvor-auth` resolves no transport.
+//! This module defines the narrow boundary and a recording sink for tests. The operational
+//! adapter is `renvor-mail`'s `AuthMailBridge` (behind that crate's `auth` feature), which
+//! renders the verification and reset messages from configured base URL and sender and sends
+//! them over SMTP. It lives there and not here for a structural reason: an SMTP client pulls a
+//! TLS stack, and `xtask` step 7 asserts `renvor-auth` resolves no transport.
 //!
 //! # The message carries a token, and that is the whole difficulty
 //!

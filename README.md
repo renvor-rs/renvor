@@ -41,7 +41,11 @@
 > `__Host-` cookie sessions with rotation and CSRF binding, optional signed JWT access tokens with
 > one algorithm per key, opaque refresh tokens whose replay revokes the whole family, abuse
 > counters with a provable finite bound, a closed audit vocabulary, and one migration set per
-> engine.
+> engine. Phase 010 adds the **operational capabilities** as narrow ports with deterministic
+> substitutes and off-by-default adapters: a cache (Valkey), durable jobs on the application's
+> own database (all four persistence rows), mail (SMTP), object storage (a `cap-std` filesystem
+> root), and observability (redacting JSON logs, Prometheus text, health routes, OTLP export) —
+> each with a typed configuration section that fails Validate by key, constraint, and layer.
 >
 > **The honest limits, which are several.** The database adapters and authentication now exist
 > and are tested against real engines — but the `renvor` facade exposes **neither**. It depends on
@@ -62,8 +66,9 @@
 > decision record that supersedes ADR-0002, and none exists. **The window is open.**
 > **Do not adopt Renvor for anything yet.**
 
-Renvor is a Rust framework. **Phase 009** of its development programme has closed; Phase 010
-has not started.
+Renvor is a Rust framework. **Phase 010** of its development programme (cache, jobs, mail,
+storage, and observability capabilities) closed on 2026-09-04 under waiver W-022 — no independent
+review occurred — and its records are `governance/phase-010-*.md`. Phase 011 has not started.
 
 ## The command is `renvor`
 

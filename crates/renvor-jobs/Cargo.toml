@@ -1,0 +1,72 @@
+# The durable-jobs capability (Phase 010): the port, the value types, the substitute, and the
+# worker. The DURABLE stores live in `renvor-sqlx` and `renvor-seaorm` (ADR-0032).
+#
+# # This crate names no driver, no broker, and no transport
+#
+# `JobStore` is a port; `MemoryJobStore` is the deterministic substitute; `Worker` is generic over
+# any store. A MySQL application on either persistence model resolves no PostgreSQL crate by
+# choosing jobs, because the store it selects lives in the adapter it already chose — `xtask`
+# step 7 asserts that row.
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-jobs"
+description = "Durable background jobs for the Renvor framework: a narrow job-store port with leases, bounded payloads, idempotency keys, and dead-lettering; an in-memory substitute; and a bounded worker with bounded, observable retries. The durable stores live in the persistence adapters. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-jobs"
+readme = "README.md"
+keywords = ["renvor", "framework", "jobs", "queue"]
+categories = ["asynchronous"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "migrations/**/*.sql",
+    "migrations/**/*.sql",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel: the clock port, the retry policy, `WorkGate`, cancellation, the entropy port, the
+# metrics port, and trace context.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+# `Secret<T>` and the layered resolver the typed configuration section is decoded by (FR-011).
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+# The `Deserialize` derive for the typed configuration section and its all-optional form
+# (FR-011). Already in the graph through `renvor-config`; this line adds no package.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# The worker's concurrency bound, timers, and cancellation.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+# Instrumentation only. This crate never installs a subscriber (contract C-O7).
+tracing = { version = "0.1.44", default-features = false, features = ["std", "attributes"] }
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }
+
+# The SHARED job-store contract, run here against the memory substitute so it cannot drift from
+# what the four persistence rows promise (FR-040). A dev-dependency cycle — `renvor-testkit`
+# depends on this crate — which cargo permits because dev-dependencies are outside the
+# publication graph; the same shape `renvor-sqlx` has with the testkit.
+# Deliberately NO dev-dependency on `renvor-testkit`: the testkit depends on this crate under
+# `jobs`, and a dev-dependency back onto it closed a cycle that `cargo package --workspace`
+# resolved by packaging the testkit first (pull request #61). The shared contract runs against
+# `MemoryJobStore` from the testkit's own test directory instead.
+
+[lints]
+workspace = true

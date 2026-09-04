@@ -29,9 +29,11 @@ use core::pin::Pin;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use renvor_core::observe::TraceContext;
 use renvor_core::{KernelError, TypedStateMap};
 
 use crate::context::RequestContext;
+use crate::origin::EffectiveOrigin;
 
 pub use registry::{RouteError, RouteRegistry};
 pub use spec::{BodySpec, OperationSpec, ParameterSpec, RequestRejection, ResponseSpec};
@@ -191,6 +193,111 @@ impl PresentedCredentials {
 ///
 /// The one exception is [`PresentedCredentials`], and its documentation explains why a credential
 /// the application must validate is not the same thing as an identity the transport resolved.
+/// The most bytes of an `Origin` value that are kept.
+pub const MAX_ORIGIN_BYTES: usize = 1024;
+
+/// The `Sec-Fetch-Site` header, as the Fetch Metadata specification enumerates it.
+///
+/// Sent by browsers on every request; a value outside the closed set is kept as
+/// [`SecFetchSite::Unrecognised`] rather than mapped to a neighbour, so a guard that refuses
+/// `cross-site` refuses exactly that and a new token is a visible unknown, not a silent allow.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SecFetchSite {
+    /// `same-origin`.
+    SameOrigin,
+    /// `same-site`.
+    SameSite,
+    /// `cross-site`.
+    CrossSite,
+    /// `none`: a user-initiated navigation, not a page.
+    None,
+    /// A token the specification does not define.
+    Unrecognised,
+}
+
+impl SecFetchSite {
+    /// Parses one header value, trimmed and case-insensitively.
+    #[must_use]
+    pub fn parse(value: &str) -> Self {
+        let value = value.trim();
+        if value.eq_ignore_ascii_case("same-origin") {
+            Self::SameOrigin
+        } else if value.eq_ignore_ascii_case("same-site") {
+            Self::SameSite
+        } else if value.eq_ignore_ascii_case("cross-site") {
+            Self::CrossSite
+        } else if value.eq_ignore_ascii_case("none") {
+            Self::None
+        } else {
+            Self::Unrecognised
+        }
+    }
+}
+
+/// What the user agent said about where a request came from: the `Origin` header, bounded, and
+/// the `Sec-Fetch-Site` header, closed. Both absent when not sent.
+///
+/// Untrusted bounded input (FR-085): a value over the bound or holding a control character is
+/// treated as absent, never truncated into something that could match.
+///
+/// The `Origin` is also parsed **once, here**, into an [`EffectiveOrigin`] — the resolved
+/// scheme/host/port triple RFC 6454 §4 defines — so that the gate comparing it against the
+/// request's own origin compares all three fields and cannot parse the header a second way.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FetchMetadata {
+    origin: Option<String>,
+    effective_origin: Option<EffectiveOrigin>,
+    sec_fetch_site: Option<SecFetchSite>,
+}
+
+impl FetchMetadata {
+    /// From the two header values as presented, or `None` for each that was absent.
+    #[must_use]
+    pub fn new(origin: Option<&str>, sec_fetch_site: Option<&str>) -> Self {
+        let origin = origin.and_then(|value| {
+            let value = value.trim();
+            let acceptable = !value.is_empty()
+                && value.len() <= MAX_ORIGIN_BYTES
+                && !value.bytes().any(|byte| byte < 0x20 || byte == 0x7f);
+            acceptable.then(|| value.to_owned())
+        });
+        let effective_origin = origin.as_deref().and_then(EffectiveOrigin::parse);
+        Self {
+            origin,
+            effective_origin,
+            sec_fetch_site: sec_fetch_site.map(SecFetchSite::parse),
+        }
+    }
+
+    /// The `Origin` header, when present and acceptable.
+    #[must_use]
+    pub fn origin(&self) -> Option<&str> {
+        self.origin.as_deref()
+    }
+
+    /// The `Sec-Fetch-Site` header, when present.
+    #[must_use]
+    pub const fn sec_fetch_site(&self) -> Option<SecFetchSite> {
+        self.sec_fetch_site
+    }
+
+    /// The `Origin`, resolved to its scheme, host, and port (RFC 6454 §4), or `None` when the
+    /// origin is absent, opaque (`null`), or not a serialised origin.
+    ///
+    /// **This replaces a host-only accessor.** `origin_host` returned the authority without its
+    /// scheme and port, and the gate that compared it therefore accepted `https://app.example`
+    /// against an `http` request and `app.example:8443` against port 443. A comparison of this
+    /// value against [`RequestContext::origin`] compares all three fields (§5).
+    #[must_use]
+    pub const fn effective_origin(&self) -> Option<&EffectiveOrigin> {
+        self.effective_origin.as_ref()
+    }
+}
+
+/// One request as a handler sees it: the validated context, the body, the query, the captured
+/// path parameters, the application state, the presented credentials, and what the user agent
+/// said about where it came from.
 pub struct Request {
     context: RequestContext,
     body: Vec<u8>,
@@ -198,6 +305,8 @@ pub struct Request {
     path_params: BTreeMap<String, String>,
     state: Arc<TypedStateMap>,
     credentials: PresentedCredentials,
+    fetch_metadata: FetchMetadata,
+    trace: Option<TraceContext>,
 }
 
 impl Request {
@@ -227,6 +336,8 @@ impl Request {
             // credentials presents none, so an authenticated route refuses rather than admitting
             // whatever happened to be in memory.
             credentials: PresentedCredentials::default(),
+            fetch_metadata: FetchMetadata::default(),
+            trace: None,
         }
     }
 
@@ -244,6 +355,45 @@ impl Request {
     #[must_use]
     pub const fn credentials(&self) -> &PresentedCredentials {
         &self.credentials
+    }
+
+    /// Attaches what the user agent said about the request's origin (FR-085).
+    #[must_use]
+    pub fn with_fetch_metadata(mut self, fetch_metadata: FetchMetadata) -> Self {
+        self.fetch_metadata = fetch_metadata;
+        self
+    }
+
+    /// What the user agent said about the request's origin: absent headers are `None`.
+    #[must_use]
+    pub const fn fetch_metadata(&self) -> &FetchMetadata {
+        &self.fetch_metadata
+    }
+
+    /// Attaches the inbound trace context the router validated (FR-074, C-O13).
+    #[must_use]
+    pub fn with_trace_context(mut self, trace: TraceContext) -> Self {
+        self.trace = Some(trace);
+        self
+    }
+
+    /// The inbound W3C trace context, when the request carried a valid one.
+    ///
+    /// # Why a handler can read this at all
+    ///
+    /// W3C Trace Context §4.1 requires a participant to **propagate** the context it received —
+    /// `traceparent` and the combined `tracestate` — on every outbound request, and contract C-J8
+    /// says an enqueued job carries the current trace context. Both need the validated value in the
+    /// handler's hands; a router that recorded it on a span and dropped it left a handler no way to
+    /// propagate anything but a freshly invented trace. What crosses is the kernel's validated type,
+    /// never the header: an invalid `traceparent` is `None` here exactly as it is on the span.
+    ///
+    /// The `tracestate` inside it is opaque vendor text a caller chose. The kernel's type renders
+    /// only its member count under `Debug`; a handler that writes the members to a log is doing
+    /// what this crate refuses to.
+    #[must_use]
+    pub const fn trace_context(&self) -> Option<&TraceContext> {
+        self.trace.as_ref()
     }
 
     /// Attaches the application's typed state.
@@ -319,6 +469,8 @@ impl fmt::Debug for Request {
             // Type NAMES only, never values — `TypedStateMap`'s own `Debug` enforces that, and
             // this reuses it rather than reaching past it.
             .field("state", &self.state)
+            // The kernel's `Debug`: validated identifiers and the tracestate's member COUNT.
+            .field("trace", &self.trace)
             .finish_non_exhaustive()
     }
 }

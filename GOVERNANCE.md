@@ -36,8 +36,9 @@ section. It is not amended by practice, precedent, or convenience.
 | Registry bootstrap owner | **Ahmed Anbar** | Accountable for the first manual registry publication and the least-scope token lifecycle |
 
 **Renvor currently has one maintainer.** Every role above is held by the same person.
-This concentration is the root cause of **every** active waiver, and it is stated plainly
-rather than distributed across four rows to look larger than it is.
+This concentration is the root cause of every active waiver **but two** — W-023 and W-024
+waive the timing of a generator obligation, not a review — and it is stated plainly rather
+than distributed across four rows to look larger than it is.
 
 ## Decision records
 
@@ -160,9 +161,10 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Nineteen** waivers are currently active, all traceable to the same single-maintainer gap. Each
-covers one rule, at one level, in one phase — and none is extended to another by
-reinterpretation:
+**Twenty-three** waivers are currently active: twenty-one traceable to the same
+single-maintainer gap, and two (W-023, W-024) to constitution principle VII's generator
+obligation, which two library-only phases left unmet. Each covers one rule, at one level, in
+one phase — and none is extended to another by reinterpretation:
 
 | ID | Gap | Level | Phase | Expiry |
 |---|---|---|---|---|
@@ -185,9 +187,15 @@ reinterpretation:
 | **W-018** | no independent requirements-and-security review | phase level | Phase 008 | **2027-02-11** |
 | **W-019** | no independent reviewer for **ADR-0024 … ADR-0030** (one coupled cluster) | decision record | Phase 009 | **2027-02-11** |
 | **W-020** | no independent requirements-and-security review | phase level | Phase 009 | **2027-02-11** |
+| **W-021** | no independent reviewer for **ADR-0031 … ADR-0037** (one coupled cluster) | decision record | Phase 010 | **2027-02-11** |
+| **W-022** | no independent requirements-and-security review | phase level | Phase 010 | **2027-02-11** |
+| **W-023** | principle VII's **auth-starter** choice is not yet mandatory in `renvor new` — timing only, **not a review gap** | generator obligation | Phase 009 | **2026-10-04** |
+| **W-024** | principle VII's **capabilities** choice is not yet mandatory in `renvor new` — timing only, **not a review gap** | generator obligation | Phase 010 | **2026-10-04** |
 
-Each expires on the date shown **or** immediately when a qualified second person becomes
-available — whichever comes first. Full text, compensating controls, and scope limits are in
+Each review-gap waiver expires on the date shown **or** immediately when a qualified second
+person becomes available — whichever comes first; W-023 and W-024 expire on the date shown
+**or** earlier when Phase 011 implements and proves the generator support — whichever comes
+first. Full text, compensating controls, and scope limits are in
 [`governance/waivers.md`](governance/waivers.md).
 
 **W-006 is the third explicit reviewed exception in Phase 002**, which exceeds the waiver
@@ -212,6 +220,36 @@ four phase-level waivers instead of three. **W-009** accepts **ADR-0012**, separ
 phase-level waiver does not authorise accepting a decision record and this ledger does not collapse
 those two axes. Phase 004 therefore holds exactly two explicit reviewed exceptions — at the expected
 maximum, not over it. Both inherit **2027-02-11**, so the horizon has still not moved.
+
+**W-022 closes Phase 010 and makes it the tenth consecutive phase.** The guard was tripped at three;
+a tenth deepens it. **RO-001 has not moved** — sixteen days after it was created no candidate has
+been approached, its 2026-11-19 review date has not arrived, and its failure condition now governs
+ten phase-level waivers. **W-021** accepts **ADR-0031 through ADR-0037** as one coupled cluster,
+separately, because a phase-level waiver does not authorise accepting a decision record. Both
+inherit **2027-02-11**, so the horizon has still not moved.
+
+**W-023 and W-024 are different in kind, and are the first waivers here that are.** Constitution
+principle VII makes each governed choice mandatory in `renvor new` on the day its capability ships.
+Phase 009 shipped authentication and Phase 010 shipped five capabilities, both as libraries, and
+neither changed the generator — each read "ships" more narrowly than the principle says. The
+maintainer rejected that reading on 2026-09-04 and did not weaken it: the obligation is unmet, and
+each phase carries its own waiver of the *timing* — **W-023** for Phase 009's auth starter,
+**W-024** for Phase 010's capabilities — with an absolute expiry of **2026-10-04** or earlier when
+Phase 011 implements and proves the support, controls that keep an unsupported `--auth` or
+capabilities input failing explicitly rather than being recorded as an inert choice, and a release
+block while either is active. They make Phase 009 and Phase 010 the second and third phases to hold
+**three** explicit reviewed exceptions, recorded in the ledger as acknowledged departures rather
+than hidden by extending another waiver. **W-023 is not retroactive** and does not make Phase 009's
+closure compliant. The limitation that records the gap, Phase 010's L-14, stays *deferred* — not
+fixed, not closed.
+
+**Ahmed Anbar's acceptance of Phase 010 is a human maintainer decision, and it is not independent
+review.** No independent human requirements-and-security review of Phase 010 has occurred. The
+research agents, the Codex review the maintainer ran, and the validation pass were all
+**non-independent**; the Codex review's sixteen findings were corrected in one bounded round and
+the correction round's own retained L-16 was then ruled a correctness blocker and corrected the same
+day. **The independent human review requirement was not satisfied.** Windows coverage came from CI,
+which is automated platform evidence rather than human review.
 
 **There is no W-007, and its absence is deliberate.** A maintainer ruling forbade creating it, and
 that ruling is part of the rationale for constitution amendment 3.0.0; reusing the number would

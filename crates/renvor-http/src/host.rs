@@ -90,7 +90,11 @@ impl HostPolicy {
             }
         }
 
-        let normalised = normalise(host).ok_or_else(|| InvalidHost {
+        // THE POLICY IS HOST-ONLY. A port written in a configured entry (`example.com:8080`) is
+        // validated — a garbage one is an error, see `normalise` — and then dropped: which port a
+        // request arrived on is a fact about the request, carried on its effective origin, and not
+        // a thing the allow-list decides.
+        let (normalised, _port) = normalise(host).ok_or_else(|| InvalidHost {
             host: host.to_owned(),
         })?;
         self.allowed.insert(normalised);
@@ -103,27 +107,35 @@ impl HostPolicy {
         self.allowed.is_empty()
     }
 
-    /// Validates a raw header value, returning the normalised host when it is permitted.
+    /// Validates a raw header value, returning the normalised host and the **explicit** port when
+    /// the value is permitted.
     ///
     /// **Fails closed.** Returns `None` when the value is absent, empty, malformed, carries a
-    /// control character, or is not configured.
+    /// control character, names a port that is not a valid non-zero `u16`, or is not configured.
+    ///
+    /// The port is `Some` only when the header wrote one. Applying the scheme's default is the
+    /// router's job, because a host policy does not know which scheme the request arrived under —
+    /// and the port is returned at all because it is one third of the request's origin
+    /// (RFC 6454 §4), which the CORS carve-out and the CSRF gate compare in full.
     #[must_use]
-    pub fn validate(&self, raw: Option<&str>) -> Option<String> {
+    pub fn validate(&self, raw: Option<&str>) -> Option<(String, Option<u16>)> {
         let raw = raw?;
-        let normalised = normalise(raw)?;
-        if self.allowed.contains(&normalised) {
-            Some(normalised)
-        } else {
-            None
-        }
+        let (normalised, port) = normalise(raw)?;
+        self.allowed
+            .contains(&normalised)
+            .then_some((normalised, port))
     }
 }
 
-/// Normalises a host value, or refuses it.
+/// Normalises an authority (`host[:port]`) into the host and the explicit port, or refuses it.
 ///
 /// Each rule below closes a specific bypass. They are listed rather than merged into one regular
 /// expression so that a reader can see which attack each one answers.
-fn normalise(raw: &str) -> Option<String> {
+///
+/// `pub(crate)` because [`crate::origin::EffectiveOrigin::parse`] runs the **same** function over
+/// an `Origin` header's authority. One normaliser on both sides of an origin comparison is what
+/// makes case, a trailing dot, and an IPv6 literal's brackets agree by construction.
+pub(crate) fn normalise(raw: &str) -> Option<(String, Option<u16>)> {
     let trimmed = raw.trim();
 
     // Empty and whitespace-only. An empty `Host` matched an empty configured entry once, in a
@@ -145,28 +157,33 @@ fn normalise(raw: &str) -> Option<String> {
         return None;
     }
 
-    // A bracketed IPv6 literal keeps its brackets; the port after it is dropped. Splitting on the
+    // A bracketed IPv6 literal keeps its brackets; the port after it is returned. Splitting on the
     // first `:` without this would truncate every IPv6 host at its first group.
-    let without_port = if let Some(end) = trimmed.strip_prefix('[') {
+    let (without_port, port) = if let Some(end) = trimmed.strip_prefix('[') {
         let close = end.find(']')?;
         let (literal, rest) = end.split_at(close);
         // Only an empty remainder or a port may follow the closing bracket.
         let rest = &rest[1..];
-        if !rest.is_empty() && !rest.starts_with(':') {
-            return None;
-        }
-        format!("[{literal}]")
+        let port = match rest.strip_prefix(':') {
+            None if rest.is_empty() => None,
+            None => return None,
+            // A PORT THAT IS NOT ONE REFUSES THE VALUE. It used to be dropped, so
+            // `[2001:db8::1]:junk` validated as `[2001:db8::1]`.
+            Some(port) => Some(parse_port(port)?),
+        };
+        (format!("[{literal}]"), port)
     } else {
-        // More than one colon in a non-bracketed value is an unbracketed IPv6 literal, which is
-        // ambiguous with host:port. Refuse rather than guess.
-        match trimmed.split(':').count() {
-            1 => trimmed.to_owned(),
-            2 => trimmed
-                .split(':')
-                .next()
-                .expect("split always yields one part")
-                .to_owned(),
-            _ => return None,
+        match trimmed.split_once(':') {
+            None => (trimmed.to_owned(), None),
+            // A second colon is an unbracketed IPv6 literal, which is ambiguous with host:port.
+            // Refuse rather than guess.
+            Some((_, port)) if port.contains(':') => return None,
+            // A PORT THAT IS NOT ONE REFUSES THE VALUE. `example.com:notaport` and
+            // `example.com:0` used to validate as `example.com` with the junk thrown away, so a
+            // value that was not a valid authority was accepted as if it were one. The port is
+            // one third of the request's origin now (RFC 6454 §4), and a value we cannot fully
+            // parse is a value we do not understand.
+            Some((host, port)) => (host.to_owned(), Some(parse_port(port)?)),
         }
     };
 
@@ -182,7 +199,24 @@ fn normalise(raw: &str) -> Option<String> {
         host.pop();
     }
 
-    if host.is_empty() { None } else { Some(host) }
+    if host.is_empty() {
+        None
+    } else {
+        Some((host, port))
+    }
+}
+
+/// Parses the text after the colon as a port, or refuses it.
+///
+/// A port is one or more ASCII digits naming a non-zero `u16` (RFC 3986 §3.2.3's `*DIGIT`, with
+/// the value bounded by what a socket can carry). Checked digit by digit **before** `u16::from_str`
+/// runs, because that parser accepts a leading `+` that no authority grammar does.
+fn parse_port(raw: &str) -> Option<u16> {
+    if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    let port: u16 = raw.parse().ok()?;
+    (port != 0).then_some(port)
 }
 
 /// Selects the single host value from what a request carried, refusing ambiguity.
@@ -216,7 +250,7 @@ mod tests {
             .expect("a valid host");
         assert_eq!(
             policy.validate(Some("example.com")),
-            Some("example.com".to_owned())
+            Some(("example.com".to_owned(), None))
         );
         assert_eq!(policy.validate(Some("evil.example")), None);
     }
@@ -269,10 +303,75 @@ mod tests {
             .expect("a valid host");
         assert!(policy.validate(Some("[2001:db8::1]")).is_some());
         assert!(policy.validate(Some("[2001:db8::1]:8443")).is_some());
-        // The literal is not truncated at its first colon.
+        // The literal is not truncated at its first colon, and the port after the bracket is the
+        // port — not part of the literal.
         assert_eq!(
-            normalise("[2001:db8::1]:8443").as_deref(),
-            Some("[2001:db8::1]")
+            normalise("[2001:db8::1]:8443"),
+            Some(("[2001:db8::1]".to_owned(), Some(8443)))
+        );
+    }
+
+    #[test]
+    fn the_port_is_returned_and_a_port_that_is_not_one_refuses_the_whole_value() {
+        // THE STRENGTHENING (Phase 010 correction round, finding 1). `example.com:notaport` and
+        // `example.com:0` used to VALIDATE: the text after the colon was thrown away, so a value
+        // that was not a valid authority was accepted as if it were one. Now that the port is one
+        // third of the request's origin (RFC 6454 §4), a port that cannot be one refuses the value
+        // — a value we cannot fully parse is a value we do not understand.
+        let policy = HostPolicy::deny_all()
+            .allow("example.com")
+            .expect("a valid host");
+
+        assert_eq!(
+            policy.validate(Some("example.com")),
+            Some(("example.com".to_owned(), None)),
+            "an absent port must be reported as absent, not defaulted here"
+        );
+        assert_eq!(
+            policy.validate(Some("example.com:8080")),
+            Some(("example.com".to_owned(), Some(8080)))
+        );
+        assert_eq!(
+            policy.validate(Some("EXAMPLE.com.:443")),
+            Some(("example.com".to_owned(), Some(443)))
+        );
+        // RFC 3986 `port = *DIGIT`: leading zeros are digits, and browsers normalise them away.
+        assert_eq!(
+            policy.validate(Some("example.com:00080")),
+            Some(("example.com".to_owned(), Some(80)))
+        );
+
+        for junk in [
+            "example.com:notaport",
+            "example.com:0",
+            "example.com:",
+            "example.com:65536",
+            "example.com:+80",
+            "example.com:-80",
+            "example.com:80x",
+            "example.com:8 0",
+            "[2001:db8::1]:",
+            "[2001:db8::1]:0",
+            "[2001:db8::1]:junk",
+        ] {
+            assert_eq!(policy.validate(Some(junk)), None, "`{junk}` was accepted");
+        }
+
+        // And a configured entry carrying a garbage port is an error rather than a silent host.
+        assert!(
+            HostPolicy::deny_all()
+                .allow("example.com:notaport")
+                .is_err()
+        );
+        assert!(HostPolicy::deny_all().allow("example.com:0").is_err());
+        // POSITIVE CONTROL: a configured entry with a VALID port is accepted (and the port dropped:
+        // the policy is host-only), so the errors above are about the ports.
+        assert!(
+            HostPolicy::deny_all()
+                .allow("example.com:8080")
+                .expect("a valid host with a valid port")
+                .validate(Some("example.com"))
+                .is_some()
         );
     }
 

@@ -41,6 +41,9 @@ include = [
 # the SAME set of ports `renvor-sqlx` implements: that is what makes "all four rows pass the same
 # auth contract" a fact about the build rather than two suites that agree by inspection.
 renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
+# The job port, present only under `jobs`: a consumer who has not asked for durable jobs resolves
+# none of the port (ADR-0031, FR-002).
+renvor-jobs = { path = "../renvor-jobs", version = "0.0.0", optional = true }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-validation = { path = "../renvor-validation", version = "0.0.0" }
@@ -127,6 +130,9 @@ db-mysql = ["sea-orm/sqlx-mysql", "sea-query-sqlx/sqlx-mysql", "sqlx/mysql"]
 # the JWT backend lives — so a build of this adapter WITHOUT it resolves neither `jsonwebtoken` nor
 # `aws-lc-rs`, and the refresh repositories do not exist. Naming a database stays a separate choice.
 tokens = ["renvor-auth/tokens", "renvor-testkit/tokens"]
+# The durable job store over this adapter (ADR-0032). Pulls the shared job-store contract into the
+# testkit for the four-row suite, exactly as `tokens` does for the refresh contract.
+jobs = ["dep:renvor-jobs", "renvor-testkit/jobs"]
 
 [lints]
 workspace = true

@@ -6,8 +6,8 @@
 //! statement that the services it names are wired into application code. The database service is
 //! Phase 006 functionality — a generated project with persistence has migrations, a repository, and
 //! now something to run them against. The optional cache service is **local infrastructure only**:
-//! Renvor's cache capability and its adapter arrive in Phase 010, and nothing here pretends
-//! otherwise.
+//! Renvor's cache capability exists (`renvor-cache`, behind the facade's `capability-cache`
+//! feature), the generated project does not wire it, and nothing here pretends otherwise.
 //!
 //! # No password can reach any of this
 //!

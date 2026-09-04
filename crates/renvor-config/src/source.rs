@@ -8,7 +8,7 @@
 //! | Phase | Step | What fails here |
 //! |---|---|---|
 //! | `Load` | read every source and decode each against the schema | an unreadable file, a value that does not fit its declared type |
-//! | `Validate` | merge by precedence and assemble | a structural conflict, a required key nobody supplied |
+//! | `Validate` | merge by precedence and assemble; run the section's validator | a structural conflict, a required key nobody supplied, a bound over its cap, a credential of the wrong shape |
 //!
 //! Splitting it this way is not cosmetic. C-L2 says a `Load` failure names *the source that could
 //! not be read* and a `Validate` failure names *the key, the violated constraint, and the source
@@ -42,6 +42,25 @@ pub struct SchemaSource<T: ConfigSchema + Send + 'static> {
     name: String,
     resolver: LayeredResolver<T>,
     resolved: Arc<Mutex<Option<ResolvedConfig<T>>>>,
+    validator: Option<Validator<T>>,
+}
+
+/// A rule checked in `Validate` against the resolved configuration: bounds against their caps,
+/// credentials against their shape, anything a decoded value can still get wrong (FR-011).
+///
+/// Returns [`KernelError::Configuration`] naming the key, the constraint, and the layer — built
+/// through [`renvor_core::error::context::configuration`], with [`layer_of`] supplying the layer.
+pub type Validator<T> =
+    Box<dyn Fn(&ResolvedConfig<T>) -> Result<(), KernelError> + Send + Sync + 'static>;
+
+/// The label of the layer that supplied `key`, or `defaults` when no layer is attributed — the
+/// only way a resolved value can exist without an attribution is the schema's own default.
+#[must_use]
+pub fn layer_of<T>(resolved: &ResolvedConfig<T>, key: &str) -> String {
+    resolved.attribution(key).map_or_else(
+        || "defaults".to_owned(),
+        |found| found.layer.bounded_label(),
+    )
 }
 
 impl<T: ConfigSchema + Send + 'static> SchemaSource<T> {
@@ -52,7 +71,20 @@ impl<T: ConfigSchema + Send + 'static> SchemaSource<T> {
             name: name.into(),
             resolver,
             resolved: Arc::new(Mutex::new(None)),
+            validator: None,
         }
+    }
+
+    /// Adds a rule that `Validate` runs against the resolved configuration, after `Load` has
+    /// decoded and merged it. One validator per source; a capability crate's `config` module
+    /// supplies the one that checks its section's bounds and credentials.
+    #[must_use]
+    pub fn with_validator(
+        mut self,
+        validator: impl Fn(&ResolvedConfig<T>) -> Result<(), KernelError> + Send + Sync + 'static,
+    ) -> Self {
+        self.validator = Some(Box::new(validator));
+        self
     }
 
     /// A handle for reading the resolved configuration **after** the build succeeds.
@@ -102,15 +134,21 @@ impl<T: ConfigSchema + Send + 'static> ConfigSource for SchemaSource<T> {
         // Reported rather than assumed, because an ordering bug that silently validated nothing
         // would let an application boot on configuration that was never read.
         let guard = self.resolved.lock().unwrap_or_else(PoisonError::into_inner);
-        if guard.is_some() {
-            return Ok(());
+        let Some(resolved) = guard.as_ref() else {
+            return Err(configuration(
+                self.name.clone(),
+                self.name.clone(),
+                "a resolved configuration",
+                &Constraint::Rule("validate ran before load, so nothing was resolved"),
+            ));
+        };
+        // The section's own rule, if one was given: bounds against caps, credentials against
+        // their shape. Runs here and not in `load`, because C-L2 names this phase for "the key,
+        // the violated constraint, and the layer", and because nothing has started yet.
+        match &self.validator {
+            Some(validator) => validator(resolved),
+            None => Ok(()),
         }
-        Err(configuration(
-            self.name.clone(),
-            self.name.clone(),
-            "a resolved configuration",
-            &Constraint::Rule("validate ran before load, so nothing was resolved"),
-        ))
     }
 }
 
@@ -254,6 +292,77 @@ mod tests {
             "a failed resolution must not leave a half-resolved value behind"
         );
         assert!(handle.with(|_| ()).is_err());
+    }
+
+    #[test]
+    fn a_validator_runs_in_validate_not_load_and_names_key_constraint_and_layer() {
+        // FR-011 / C-C8: a value that decodes but breaks a rule — a bound over its cap, a
+        // credential of the wrong shape — fails at VALIDATE naming the key, the constraint, and
+        // the layer that supplied it. Load already accepted the value, so this is the phase that
+        // has to say so, and it must say so before any provider exists.
+        let refusing = source(&[("RENVOR_PORT", "80")]).with_validator(|resolved| {
+            if resolved.value().port < 1024 {
+                let layer = super::layer_of(resolved, "port");
+                return Err(renvor_core::error::context::configuration(
+                    "port",
+                    layer,
+                    "u16",
+                    &renvor_core::error::context::Constraint::OutOfRange {
+                        minimum: 1024,
+                        maximum: 65_535,
+                    },
+                ));
+            }
+            Ok(())
+        });
+        refusing
+            .load()
+            .expect("80 decodes as a u16; Load accepts it");
+        let error = refusing
+            .validate()
+            .expect_err("the validator refuses a privileged port");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("`port`"),
+            "the key is not named: {rendered}"
+        );
+        assert!(
+            rendered.contains("environment"),
+            "the layer is not named: {rendered}"
+        );
+        assert!(
+            rendered.contains("between 1024 and 65535"),
+            "the constraint is not named: {rendered}"
+        );
+
+        // POSITIVE CONTROL: a value the validator accepts passes Validate.
+        let accepting = source(&[("RENVOR_PORT", "8080")]).with_validator(|resolved| {
+            assert_eq!(resolved.value().port, 8080);
+            Ok(())
+        });
+        accepting.load().expect("resolves");
+        accepting.validate().expect("the validator accepts 8080");
+    }
+
+    #[test]
+    fn layer_of_reports_the_winning_layer_or_defaults() {
+        let from_env = source(&[("RENVOR_PORT", "8080")]);
+        from_env.load().expect("resolves");
+        from_env
+            .handle()
+            .with(|resolved| {
+                assert_eq!(super::layer_of(resolved, "port"), "environment");
+                // A key no layer mentions is attributed nowhere; the defaults label is the
+                // honest answer for a value that can only have come from the schema's defaults.
+                assert_eq!(super::layer_of(resolved, "nope"), "defaults");
+            })
+            .expect("resolved");
+        let from_defaults = source(&[]);
+        from_defaults.load().expect("resolves");
+        from_defaults
+            .handle()
+            .with(|resolved| assert_eq!(super::layer_of(resolved, "port"), "defaults"))
+            .expect("resolved");
     }
 
     #[test]

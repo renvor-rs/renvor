@@ -86,9 +86,10 @@ services:
 
 {% endif %}{% if container_cache %}  # LOCAL INFRASTRUCTURE ONLY.
   #
-  # The cache container is optional local infrastructure. Renvor's runtime cache capability and
-  # adapter arrive in Phase 010. Nothing in the generated source reads or writes this service; it
-  # is here so that the container you will need later exists and is configured now.
+  # The cache container is optional local infrastructure. Renvor's cache capability exists
+  # (`renvor-cache`, behind the facade's `capability-cache` feature); this generated project does
+  # not wire it. Nothing in the generated source reads or writes this service; it is here so that
+  # the container you will need when you do exists and is configured now.
   #
   # {{ container_cache_engine }} {{ container_cache_version }}, {{ container_cache_licence }}.
   cache:

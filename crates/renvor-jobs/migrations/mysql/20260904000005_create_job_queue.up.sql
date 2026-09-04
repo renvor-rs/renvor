@@ -1,0 +1,1 @@
+CREATE TABLE rv_job_queue (queue VARCHAR(64) PRIMARY KEY);

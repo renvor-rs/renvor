@@ -9,10 +9,21 @@
 
 pub mod bootstrap;
 pub mod entropy;
+pub mod metrics;
 pub mod run_id;
+pub mod semconv;
 pub mod spans;
+pub mod trace_context;
 
 pub use bootstrap::{AlreadyInstalled, try_init_global};
 pub use entropy::{EntropySource, EntropyUnavailable, FixedEntropy, OsEntropy};
+pub use metrics::{
+    Counter, FamilySnapshot, Gauge, Histogram, InstrumentKind, MetricsError, Registry, Series,
+    SeriesValue, Snapshot,
+};
 pub use run_id::{RUN_IDENTIFIER_BYTES, RUN_IDENTIFIER_LEN, RunIdentifier};
 pub use spans::{PHASE_SPAN_NAME, phase_span};
+pub use trace_context::{
+    MAX_TRACESTATE_BYTES, MAX_TRACESTATE_MEMBERS, SpanId, TRACEPARENT_LEN, TraceContext,
+    TraceContextRejection, TraceFlags, TraceId, TraceState, parse_traceparent,
+};

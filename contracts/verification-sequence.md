@@ -1,7 +1,7 @@
 ---
 description: "Contract — the ordered verification sequence `cargo xtask verify` runs"
-version: "2.0.0"
-status: "normative — enforced executably by `xtask`. 2.0.0 (2026-09-03) transfers the Docusaurus build and rendered-site link check to the now-live `renvor-rs/renvor-docs` repository, removes those two checks and their Node/npm/lychee prerequisites from this framework sequence, renumbers working-tree cleanliness to step 9, and makes rustdoc cover all features. This is a BEHAVIOUR change: the framework gate now owns only framework verification, while the independently required `docs` context keeps warning-denied all-feature rustdoc visible in branch protection. 1.2.1 (2026-08-26) corrected the exit-code table and fail-closed sample output. 1.2.0 (2026-08-26) made the four-row database environment mandatory. This version identifies the contract text, not a stability promise"
+version: "2.2.0"
+status: "normative — enforced executably by `xtask`. 2.2.0 (2026-09-04) splits the capability credentials out of the step 1 URLs into their own variables (`RENVOR_TEST_VALKEY_PASSWORD`, `RENVOR_TEST_SMTP_USERNAME`, `RENVOR_TEST_SMTP_PASSWORD`), because constitution VI says a secret enters no URL and the suites now refuse one that carries a credential. 2.1.0 (2026-09-04) adds the Phase 010 capability endpoints to step 1 (Valkey, Mailpit, and the require flag), raises the persistence census to 67 (row, test) pairs with the four job-store rows, and adds the capability-isolation rows and the single-rustls-provider check to step 7. 2.0.0 (2026-09-03) transfers the Docusaurus build and rendered-site link check to the now-live `renvor-rs/renvor-docs` repository, removes those two checks and their Node/npm/lychee prerequisites from this framework sequence, renumbers working-tree cleanliness to step 9, and makes rustdoc cover all features. This is a BEHAVIOUR change: the framework gate now owns only framework verification, while the independently required `docs` context keeps warning-denied all-feature rustdoc visible in branch protection. 1.2.1 (2026-08-26) corrected the exit-code table and fail-closed sample output. 1.2.0 (2026-08-26) made the four-row database environment mandatory. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Verification Sequence
@@ -25,13 +25,13 @@ Executed in order. None is conditional. None is skipped.
 
 | # | Step | Command | Toolchain required |
 |---|---|---|---|
-| 1 | Prerequisite probe | — | Rust (pinned), **and a PostgreSQL and MySQL the census can reach** |
+| 1 | Prerequisite probe | — | Rust (pinned), **a PostgreSQL and MySQL the census can reach, and a Valkey and Mailpit the capability suites can reach** (`RENVOR_TEST_VALKEY_URL` and `RENVOR_TEST_VALKEY_PASSWORD`, `RENVOR_TEST_SMTP_URL` with `RENVOR_TEST_SMTP_USERNAME` and `RENVOR_TEST_SMTP_PASSWORD`, `RENVOR_TEST_SMTP_API_URL`, `RENVOR_TEST_REQUIRE_CAPABILITIES=1`; a URL never carries the credential) |
 | 2 | Formatting | `cargo fmt --all --check` | Rust |
 | 3 | Lint | `cargo clippy --all-targets --all-features -- -D warnings` | Rust |
-| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 63 required (row, test) pairs must report in | Rust, both databases |
+| 4 | Tests | `cargo test --workspace --all-features`, then the end-to-end route relay, then the four-row persistence census — every one of the 67 required (row, test) pairs must report in | Rust, both databases |
 | 5 | API documentation | `cargo doc --workspace --all-features --no-deps` with warnings denied | Rust |
 | 6 | Dependency and licence policy | `cargo deny check` | `cargo-deny` |
-| 7 | Architecture invariants | crate DAG, transport and persistence isolation, per-driver adapter compiles, facade isolation, lean compile, publishable dependencies, required package metadata, instability wording, executable name — each with a control | Rust |
+| 7 | Architecture invariants | crate DAG, transport, persistence and **capability isolation** (each port crate resolves no adapter without its feature; each adapter feature resolves its adapter and nothing banned; the kernel and `renvor-auth` resolve no adapter; `renvor-sqlx`/`renvor-seaorm` with `db-mysql,jobs` resolve no PostgreSQL driver; the facade resolves exactly the capability it asked for), per-driver adapter compiles, facade isolation, lean compile, **one rustls crypto provider** (`ring` present, `aws-lc-rs`/`fips` absent as feature edges under `--all-features`), publishable dependencies, required package metadata, instability wording, executable name — each with a control | Rust |
 | 8 | Secret scan | `gitleaks git . --no-banner` (history) **and** `gitleaks dir . --no-banner` (working tree) | `gitleaks` |
 | 9 | Working-tree cleanliness | assert no untracked or modified files remain | Rust |
 

@@ -222,16 +222,17 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
             }
         }
 
-        // DEFAULT NO. A cache container is infrastructure this project does not yet use — the
-        // runtime cache capability and its adapter arrive in Phase 010 — so it is opt-in.
+        // DEFAULT NO. A cache container is infrastructure the GENERATED project does not use:
+        // Renvor's cache capability exists (`renvor-cache`, behind the facade's `capability-cache`
+        // feature) but the scaffold does not wire it — so the container is opt-in.
         //
         // ONE ENGINE, so this is a yes/no rather than a menu. A prompt offering one real option
         // and one worse option is a prompt pretending to be a decision; which engine gets used is
         // recorded in `renvor.toml`, not asked.
         if answers.container_cache.is_none()
             && prompt::confirm(
-                "Generate a local cache container? (local infrastructure only; Renvor's cache \
-                 capability arrives in Phase 010)",
+                "Generate a local cache container? (local infrastructure only; the generated \
+                 project does not wire Renvor's cache capability)",
                 false,
             )?
         {

@@ -128,6 +128,13 @@ required row, plus the cheat-sheet execution recorded separately.
 
 Stated as a **gap against §6.2**, not ticked off.
 
+*Cross-reference, added 2026-09-04.* The Phase 010 review read this gap as an unmet obligation under
+constitution principle VII — the auth-starter choice became mandatory in `renvor new` on the day the
+capability shipped, and the reading above was rejected rather than the rule weakened. It is deferred
+under [W-023](waivers.md), granted 2026-09-04, expiring 2026-10-04 or earlier when Phase 011 proves the
+generator support. **W-023 is not retroactive**: this phase closed on 2026-08-31 with the obligation
+unmet, and the paragraph above is left as written.
+
 ## 7. Documentation and migration notes
 
 - `contracts/problem-details.md` moved to registry version 1.2.0, adding three codes; the table

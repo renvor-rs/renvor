@@ -64,6 +64,10 @@ tracing = { version = "0.1.44", default-features = false, features = ["std", "at
 getrandom = { version = "0.4.3", default-features = false }
 
 [dev-dependencies]
+# Property-based fuzzing of the W3C trace-context parser (Phase 010 FR-086). Already in the
+# workspace lockfile through `renvor-validation`, so this adds an edge and no new package.
+proptest = { version = "1.11.0", default-features = false, features = ["std"] }
+
 # Deterministic time for deadline and drain tests (Phase 002 research §D10, FR-031). Dev-only: `test-util`
 # must never reach a consumer's production graph.
 tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util"] }

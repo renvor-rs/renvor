@@ -1,0 +1,96 @@
+# The mail capability (Phase 010): a narrow port with bounded, injection-free messages, a
+# recording substitute, an SMTP adapter, and a bridge to the authentication domain's mail port.
+#
+# # This crate names no transport of its own and no driver
+#
+# The SMTP client is behind the OFF-BY-DEFAULT `smtp` feature; the bridge to `renvor-auth` is
+# behind `auth`. A build without `smtp` resolves no SMTP client and no TLS crate through this
+# package — asserted by `xtask` step 7 in both directions (ADR-0031, ADR-0034).
+#
+# `edition` and `rust-version` are INHERITED and must never be restated (ADR-0002).
+
+[package]
+name = "renvor-mail"
+description = "Mail capability for the Renvor framework: a narrow mailer port whose messages are bounded and header-injection-free by construction, a recording substitute, an SMTP submission adapter over rustls with native roots behind an off-by-default feature, and a bridge to the authentication mail port. Pre-release, unpublished, and explicitly unstable."
+documentation = "https://docs.rs/renvor-mail"
+readme = "README.md"
+keywords = ["renvor", "framework", "mail", "smtp"]
+categories = ["email"]
+publish = true
+
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+# The shipped file set is STATED, never inferred (Phase 001 FR-039).
+include = [
+    "src/**/*.rs",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+[dependencies]
+# The kernel: `Provider`, readiness, the entropy port (message identifiers), the metrics port.
+renvor-core = { path = "../renvor-core", version = "0.0.0" }
+
+# `Secret<T>`, for the submission credential.
+renvor-config = { path = "../renvor-config", version = "0.0.0" }
+# The `Deserialize` derive for the typed configuration section and its all-optional form
+# (FR-011). Already in the graph through `renvor-config`; this line adds no package.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+
+thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+
+# Timeouts. `net` is NOT here: the SMTP client owns its socket, behind the feature.
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+# Instrumentation only. This crate never installs a subscriber (contract C-O7).
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+
+# ---- SMTP adapter (ADR-0034). OFF BY DEFAULT. ----
+#
+# `lettre` 0.11.23 (MIT, MSRV 1.85). Every advisory filed against it is patched below this
+# version, re-verified on 2026-09-03; the 2026 one concerns `boring-tls`, which is never enabled.
+#
+# THE FEATURE LIST IS THE SECURITY PROPERTY. `rustls-tls` is `webpki-roots + rustls + ring` and
+# is never taken; `rustls-native-certs` (an implicit feature of the optional dependency) is what
+# makes the adapter load the platform store — verified in `lettre`'s `tls.rs`, which prefers the
+# platform verifier, then native certs, then webpki, in that order. `ring` names the one crypto
+# provider this workspace enables (ADR-0033 decision 6). `dkim` resolves `rsa` and is never
+# enabled; `hostname` is not taken because the EHLO name comes from configuration.
+#
+# Measured against this workspace's resolved graph on 2026-09-03: +6 packages, of which
+# `quoted_printable` is 0BSD — allowed in `deny.toml` for this crate, by name.
+lettre = { version = "0.11.23", default-features = false, features = [
+    "tokio1-rustls",
+    "ring",
+    "rustls-native-certs",
+    "smtp-transport",
+    "pool",
+    "builder",
+], optional = true }
+
+# ---- Bridge to the authentication domain (FR-051). ----
+renvor-auth = { path = "../renvor-auth", version = "0.0.0", optional = true }
+
+[features]
+# The adapter. A build without it resolves none of the SMTP or TLS crates above (SC-005).
+smtp = ["dep:lettre"]
+
+# `impl renvor_auth::MailPort for` any `Mailer`, rendering the verification and reset templates
+# from configured base URL and sender — never a request `Host`.
+auth = ["dep:renvor-auth"]
+
+[dev-dependencies]
+tokio = { version = "1.53.1", default-features = false, features = ["rt", "rt-multi-thread", "time", "sync", "macros", "test-util", "net", "io-util"] }
+# Reads the sink's HTTP API answers in the SMTP suite. Dev-only: no consumer resolves it.
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

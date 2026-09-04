@@ -476,8 +476,8 @@ fn the_cache_is_absent_unless_it_is_asked_for() {
 /// The cache is stated to be uninvolved, in the two places somebody would look.
 ///
 /// FR: the README and the manifest must both say so. A generated tree that shipped a cache service
-/// without saying it is unwired would be read as "this project caches", and the adapter that would
-/// make that true does not exist until Phase 010.
+/// without saying it is unwired would be read as "this project caches". The adapter exists since
+/// Phase 010 (`renvor-cache`); the scaffold still does not wire it, and says which feature would.
 #[test]
 fn the_cache_says_it_is_not_wired_into_the_application() {
     let generated = generate_ok(&[
@@ -489,7 +489,9 @@ fn the_cache_says_it_is_not_wired_into_the_application() {
     ]);
     let readme = generated.read("README.md");
     assert!(
-        readme.contains("optional local infrastructure") && readme.contains("Phase 010"),
+        readme.contains("optional local infrastructure")
+            && readme.contains("does not\nwire it")
+            && readme.contains("capability-cache"),
         "the README does not state the cache limitation"
     );
     assert!(
@@ -499,7 +501,7 @@ fn the_cache_says_it_is_not_wired_into_the_application() {
         "the manifest does not record the cache limitation"
     );
     assert!(
-        generated.read("compose.yaml").contains("Phase 010"),
+        generated.read("compose.yaml").contains("capability-cache"),
         "the profile itself does not state the limitation"
     );
 }

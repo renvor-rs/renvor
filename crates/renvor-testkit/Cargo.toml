@@ -48,6 +48,10 @@ chrono = { version = "0.4.45", default-features = false, features = [
     "clock",
 ], optional = true }
 
+# The JOBS port and value types, for the shared job-store contract. Optional and behind `jobs`,
+# so a consumer measuring only the persistence contract resolves neither.
+renvor-jobs = { path = "../renvor-jobs", version = "0.0.0", optional = true }
+
 # The persistence PORTS, so `persistence.rs` can host the contract every adapter is measured
 # against. Ports only — this crate names no driver, and depends on neither adapter, so hosting the
 # shared suite does not put SQLx or SeaORM into anyone's graph.
@@ -78,6 +82,9 @@ auth = ["dep:renvor-auth", "dep:chrono"]
 # The refresh-rotation contract. Names `renvor-auth`'s `tokens` half, which is where the JWT
 # dependency lives — so a build without this feature resolves no `jsonwebtoken` through this crate.
 tokens = ["auth", "renvor-auth/tokens"]
+
+# The shared job-store contract (Phase 010). Names `renvor-jobs`, which names no driver.
+jobs = ["dep:renvor-jobs"]
 
 [lints]
 workspace = true

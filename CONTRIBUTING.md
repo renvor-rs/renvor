@@ -2,10 +2,13 @@
 
 Thank you for considering a contribution.
 
-**Renvor is pre-release and unpublished.** Phase 002 delivered a working
-transport-independent kernel — lifecycle, provider resolution, layered configuration, health,
-and failure injection. It has no transport yet, so it cannot serve a request. Every API is
-explicitly unstable and expected to change once the first transport adapter exercises it.
+**Renvor is pre-release and unpublished.** The repository holds a transport-independent kernel
+(lifecycle, provider resolution, layered configuration, health, failure injection), an HTTP
+transport over `axum` with host validation, CORS, and identity resolution, a persistence layer on
+SQLx and SeaORM for PostgreSQL and MySQL, an authentication core with its HTTP adapter, and —
+since Phase 010 — cache, durable-job, mail, storage, and observability capabilities with a Valkey
+adapter, an SMTP adapter, a filesystem adapter, and an OTLP exporter. Every API is explicitly
+unstable and expected to change before the first release.
 
 ## Before you start
 
@@ -69,12 +72,27 @@ without them:
 | `RENVOR_TEST_POSTGRES_URL` | connection string for a PostgreSQL the suite may create and drop tables in |
 | `RENVOR_TEST_MYSQL_URL` | connection string for a MySQL, on the same terms |
 | `RENVOR_TEST_REQUIRE_DATABASE` | set to `1`. Turns a *skipped* real-database test into a failing one |
+| `RENVOR_TEST_VALKEY_URL` | `redis://127.0.0.1:6379/0` of a Valkey (or Redis) the cache suite may write to (Phase 010). **No credential in the URL**: the suite refuses one |
+| `RENVOR_TEST_VALKEY_PASSWORD` | the Valkey password, in its own variable (`RENVOR_TEST_VALKEY_USERNAME` for an ACL user, if any) |
+| `RENVOR_TEST_SMTP_URL` | `smtp://127.0.0.1:1025` of a Mailpit the mail suite may send through (Phase 010). **No credential in the URL** |
+| `RENVOR_TEST_SMTP_USERNAME` / `RENVOR_TEST_SMTP_PASSWORD` | the Mailpit SMTP credential, each in its own variable |
+| `RENVOR_TEST_SMTP_API_URL` | Mailpit's HTTP API, `http://127.0.0.1:8025`, which the mail suite reads delivered messages from |
+| `RENVOR_TEST_REQUIRE_CAPABILITIES` | set to `1`. Turns a *skipped* real-server cache or mail test into a failing one |
 
-Any container runtime will do. CI pins `postgres:17.11-trixie` and `mysql:8.4.11`; matching those
-locally means a portability difference fails on your machine rather than in review.
+Any container runtime will do. CI pins `postgres:17.11-trixie` and `mysql:8.4.11`, and for the
+capability endpoints `valkey/valkey:9.1.1-alpine` and `axllent/mailpit:v1.29.1` (started with
+`MP_SMTP_AUTH="renvor:<password>"` and `MP_SMTP_AUTH_ALLOW_INSECURE=1`, because the loopback
+plaintext path is the one the suite exercises); matching those locally means a portability
+difference fails on your machine rather than in review.
 
 Use a throwaway database. The suite creates and drops its own tables, and the upgrade suite
 deliberately migrates a schema from a previous release.
+
+**Why the capability credentials are separate variables.** Constitution VI says a secret enters
+no URL, and the Phase 010 adapters take an endpoint and a credential as separate settings rather
+than a `redis://:password@host` or `smtp://user:password@host` string; the test suites hold the
+same line and refuse a URL that carries a `@`. The database URLs below still carry theirs — that
+is a Phase 006 shape this correction did not reach, recorded in `governance/phase-010-limitations.md`.
 
 **Two properties of these URLs are not obvious, and each one costs a full gate run to discover.**
 

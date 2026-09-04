@@ -70,7 +70,8 @@ pub struct AuthEndpoints<U, C, B, S, T, M, R, A> {
     pub verifications: T,
     /// The **password-reset** token store. A different table; see [`Self::verifications`].
     pub resets: T,
-    /// Where mail goes. Phase 010 owns the operational adapter (FR-075).
+    /// Where mail goes. `renvor_mail::auth::AuthMailBridge` is the operational adapter over SMTP;
+    /// the recording sink stands in for tests (FR-075).
     pub mail: M,
     /// The abuse controls. **Every flow passes through this.**
     pub abuse: AbuseGuard<R, A>,
@@ -348,6 +349,17 @@ where
         csrf::Credential::BearerToken
     };
     if csrf::is_required("POST", credential) {
+        // 009/L-4, CLOSED AT THE TRANSPORT (FR-085): a cookie-authenticated unsafe request that
+        // the user agent itself marks `cross-site`, or whose `Origin` is another origin than the
+        // one this request was addressed to — scheme, host, and port — is refused before the
+        // body is read. Absent headers do not refuse — the session-bound CSRF token below stays
+        // the primary control.
+        if cross_site_refused(&request) {
+            return problem::render_service_error(
+                &ServiceError::Refused(AuthError::NotPermitted),
+                correlation,
+            );
+        }
         let body: dto::LogoutRequest = match read_body(&request, correlation) {
             Ok(body) => body,
             Err(response) => return response,
@@ -387,6 +399,35 @@ where
     {
         Ok((cookie, _outcome)) => with_cookie(json(200, &dto::AcknowledgedResponse::new()), cookie),
         Err(error) => problem::render_service_error(&error, correlation),
+    }
+}
+
+/// True when the user agent said the request is cross-site, or its `Origin` is an origin other
+/// than the one this request was addressed to (FR-085). Absent headers never refuse.
+///
+/// # All three fields
+///
+/// The comparison is [`EffectiveOrigin`](renvor_http::EffectiveOrigin) against
+/// [`EffectiveOrigin`](renvor_http::EffectiveOrigin): scheme, host, **and** port, which is what
+/// RFC 6454 §5 means by "same origin". It used to compare the `Origin`'s host against the
+/// validated host — no scheme, port stripped — so `https://app.example` could drive a logout on
+/// the `http` origin and `app.example:8443` one on port 443. A page on the plaintext origin, or on
+/// another port, is a different security principal. Phase 010 correction round, finding 1.
+///
+/// The request's own origin is a fact the transport resolved (`RequestContext::origin`: the
+/// configured scheme or a trusted proxy's `proto`, the validated `Host`, its port or the scheme's
+/// default); the `Origin` is parsed once, in `FetchMetadata`, by the same host rules. Nothing here
+/// parses a header.
+pub(crate) fn cross_site_refused(request: &Request) -> bool {
+    let metadata = request.fetch_metadata();
+    if metadata.sec_fetch_site() == Some(renvor_http::SecFetchSite::CrossSite) {
+        return true;
+    }
+    match metadata.effective_origin() {
+        Some(origin) => origin != request.context().origin(),
+        // An `Origin` that is present but not a serialised origin (`null`, or garbage) names no
+        // origin this request was addressed to.
+        None => metadata.origin().is_some(),
     }
 }
 
@@ -805,4 +846,166 @@ where
         async move { refresh_tokens(&shared, request).await }
     })?;
     Ok(group)
+}
+
+#[cfg(test)]
+mod tests {
+    //! `cross_site_refused` against a constructed request, so the origin comparison is proven
+    //! without a database. The PostgreSQL-backed flow test in `tests/test_application.rs` drives
+    //! the same gate through the real logout route.
+
+    use std::collections::BTreeMap;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    use renvor_core::identity::ClientIdentity;
+    use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
+    use renvor_http::{EffectiveOrigin, FetchMetadata, Request, RequestContext, RequestId, Scheme};
+
+    use super::cross_site_refused;
+
+    /// A request addressed to `addressed`, carrying what the user agent said about its origin.
+    fn request(addressed: EffectiveOrigin, metadata: FetchMetadata) -> Request {
+        let context = RequestContext::new(
+            RunIdentifier::generate(&OsEntropy).expect("entropy"),
+            RequestId::from_entropy([4; 8]),
+            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            addressed,
+            CancelScope::root().child("request"),
+        );
+        Request::new(context, Vec::new(), String::new(), BTreeMap::new())
+            .with_fetch_metadata(metadata)
+    }
+
+    /// What a request reaching an `http` listener directly resolves to.
+    fn http_listener() -> EffectiveOrigin {
+        EffectiveOrigin::new(Scheme::Http, "example.test", 80)
+    }
+
+    fn origin(value: &str) -> FetchMetadata {
+        FetchMetadata::new(Some(value), None)
+    }
+
+    #[test]
+    fn an_origin_on_another_scheme_of_the_same_host_is_refused() {
+        // THE DEFECT (Phase 010 correction round, finding 1). `https://example.test` and
+        // `http://example.test` share a host, and the host was all the comparison read — so a
+        // page on the plaintext origin could drive the cookie-authenticated logout.
+        assert!(
+            cross_site_refused(&request(http_listener(), origin("https://example.test"))),
+            "an https Origin was accepted by a request addressed to the http origin"
+        );
+
+        // POSITIVE CONTROL: the same host on the SAME scheme is not refused, so the refusal above
+        // is about the scheme rather than about every Origin being refused.
+        assert!(!cross_site_refused(&request(
+            http_listener(),
+            origin("http://example.test")
+        )));
+    }
+
+    #[test]
+    fn an_origin_on_another_port_of_the_same_host_is_refused() {
+        // The other half of the defect: host validation stripped the port, so `:8443` matched.
+        assert!(
+            cross_site_refused(&request(
+                http_listener(),
+                origin("http://example.test:8443")
+            )),
+            "an Origin on another port was accepted"
+        );
+
+        // RFC 6454 §4 step 5: an absent port IS the default port, written or not — on either side.
+        assert!(!cross_site_refused(&request(
+            http_listener(),
+            origin("http://example.test:80")
+        )));
+        assert!(!cross_site_refused(&request(
+            EffectiveOrigin::new(Scheme::Http, "example.test", 80),
+            origin("http://example.test")
+        )));
+    }
+
+    #[test]
+    fn the_scheme_the_router_resolved_is_what_the_origin_is_compared_against() {
+        // The router resolves `https` from a trusted proxy's `proto`, or leaves the listener's own
+        // `http` for an untrusted peer — `renvor-http`'s `tests/effective_origin.rs` proves that
+        // resolution. This gate reads its result and nothing else.
+        let via_tls_terminator = EffectiveOrigin::new(Scheme::Https, "example.test", 443);
+        assert!(!cross_site_refused(&request(
+            via_tls_terminator.clone(),
+            origin("https://example.test")
+        )));
+        assert!(!cross_site_refused(&request(
+            via_tls_terminator.clone(),
+            origin("https://example.test:443")
+        )));
+
+        // The same Origin against the listener's own scheme — what an untrusted peer's `proto`
+        // header leaves the request with — is refused.
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            origin("https://example.test")
+        )));
+        assert!(cross_site_refused(&request(
+            via_tls_terminator,
+            origin("http://example.test")
+        )));
+    }
+
+    #[test]
+    fn an_ipv6_host_compares_with_its_brackets_and_its_port() {
+        let addressed = EffectiveOrigin::new(Scheme::Http, "[::1]", 8080);
+        assert!(
+            !cross_site_refused(&request(addressed.clone(), origin("http://[::1]:8080"))),
+            "a same-origin IPv6 request was refused"
+        );
+        assert!(
+            cross_site_refused(&request(addressed.clone(), origin("http://[::1]"))),
+            "port 80 was accepted against port 8080"
+        );
+        assert!(cross_site_refused(&request(
+            addressed,
+            origin("http://[::2]:8080")
+        )));
+    }
+
+    #[test]
+    fn an_opaque_or_malformed_origin_is_refused_and_an_absent_one_is_not() {
+        // RFC 6454 §7.1: `null` matches nothing. A value that is not a serialised origin at all
+        // names no origin this request was addressed to.
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            origin("null")
+        )));
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            origin("example.test")
+        )));
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            origin("http://example.test/path")
+        )));
+
+        // Absent headers never refuse: the session-bound CSRF token stays the primary control.
+        assert!(!cross_site_refused(&request(
+            http_listener(),
+            FetchMetadata::default()
+        )));
+        assert!(!cross_site_refused(&request(
+            http_listener(),
+            FetchMetadata::new(None, Some("same-origin"))
+        )));
+    }
+
+    #[test]
+    fn the_user_agents_cross_site_verdict_refuses_whatever_the_origin_says() {
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            FetchMetadata::new(Some("http://example.test"), Some("cross-site"))
+        )));
+        assert!(cross_site_refused(&request(
+            http_listener(),
+            FetchMetadata::new(None, Some("cross-site"))
+        )));
+    }
 }

@@ -153,12 +153,17 @@ Current order:
 | 2 | `renvor-validation` | `renvor-error` | The validation boundary. Independent of the kernel |
 | 3 | `renvor-database` | `renvor-core`, `renvor-validation` | The persistence **ports**. Names no driver, so it can be depended on by an application that has not chosen one |
 | 3 | `renvor-openapi` | `renvor-validation`, `renvor-error` | Description generation. Waits for the validation boundary, whose schema values it embeds |
+| 3 | `renvor-jobs` | `renvor-core` | The durable-job **port**, value types, substitute, and worker (Phase 010). Names no driver: the durable stores are implemented in `renvor-sqlx` and `renvor-seaorm` behind their `jobs` features, which is what lets a MySQL application choose jobs without resolving a PostgreSQL crate. Publishes with the ports, before the adapters that implement it |
+| 3 | `renvor-cache` | `renvor-core`, `renvor-config` | The cache port, its memory substitute, and the Valkey adapter behind `valkey` (Phase 010). Names no driver in any feature |
+| 3 | `renvor-storage` | `renvor-core` | The object-storage port, its memory substitute, and the filesystem adapter behind `filesystem` (Phase 010) |
 | 4 | `renvor-auth` | `renvor-core`, `renvor-config`, `renvor-database` | The authentication domain. Names **no driver and no transport** — `xtask` step 7 asserts it resolves neither — so it publishes with the ports rather than with the adapters that implement them |
+| 5 | `renvor-mail` | `renvor-core`, `renvor-config`, `renvor-auth` *(optional)* | The mail port, its recording substitute, and the SMTP adapter behind `smtp` (Phase 010). Its `auth` feature implements `renvor_auth::MailPort`, so it publishes **after** `renvor-auth` — the topological test builds every package with `--all-features`, and an optional edge is a real edge to it |
 | 5 | `renvor-testkit` | `renvor-core`, `renvor-database`, `renvor-auth` *(optional)* | The test harness. **Moved from 2 to 4 in Phase 007** and from 4 to 5 in Phase 009 batch G2: it hosts every shared contract both adapters are measured against, and the refresh one names `renvor-auth` |
-| 5 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-auth` | The direct-SQLx adapter. Publishes after the ports it implements — and, **since Phase 009, after `renvor-auth`**, whose repository ports it also implements |
-| 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation` | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
+| 5 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-auth`, `renvor-jobs` (optional, under `jobs`) | The direct-SQLx adapter. Publishes after the ports it implements — and, **since Phase 009, after `renvor-auth`**, whose repository ports it also implements |
+| 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-jobs` (optional, under `jobs`) | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
 | 5 | `renvor` | `renvor-core`, `renvor-config`, `renvor-http`, `renvor-error`, `renvor-validation`, `renvor-openapi` | Facade. `renvor-config` is optional-but-default-on; the other four are optional-and-default-**off**, and `transport-rest` enables `renvor-http`, `renvor-error`, `renvor-validation` and `renvor-openapi` together. **All six** must exist first |
+| 6 | `renvor-observability` | `renvor-core`, `renvor-config`, `renvor-http` *(optional)* | The observability crate (Phase 010): the JSON subscriber, redaction, the Prometheus renderer, health documents, and OTLP export behind `otel`. Its `http` feature hosts two health routes on `renvor-http`, so it publishes after the transport |
 | 5 | `renvor-auth-http` | `renvor-auth`, `renvor-http`, `renvor-error`, `renvor-openapi`, `renvor-core` | The authentication **transport adapter**. Added in Phase 009 batch J, and it publishes after both sides because it depends on both. It exists because `renvor-http` **cannot** depend on `renvor-auth`: that would pull `renvor-config` into the transport's graph, which step 7's CLAIM 3 forbids |
 | — | `xtask` | *(nothing)* | **Never published** — `publish = false` |
 
@@ -228,7 +233,16 @@ Packages sharing a position have no dependency on each other and may publish in 
 order, or concurrently. Each later position waits for **every** package at every
 earlier one — an optional dependency still has to be resolvable at publish time.
 
-**Thirteen publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
+> **Extended 2026-09-04 (Phase 010).** Five capability crates join the table: `renvor-jobs`,
+> `renvor-cache`, and `renvor-storage` with the ports; `renvor-mail` after `renvor-auth`, whose
+> port its `auth` feature implements; `renvor-observability` after `renvor-http`, which its `http`
+> feature reaches. Every one is publishable for the reason `renvor-database` is — an application
+> depends on it directly — rather than the reason `renvor-http` is, because the facade reaches them
+> only behind off-by-default features. The skeletons, the `xtask` count, this sentence, and the
+> rehearsal's `CRATES` list landed in **one commit** so the recurring count drift had no window to
+> occur in.
+
+**Eighteen publishable packages.** `xtask` step 7 asserts that count against the actual manifests, so
 a package added without appearing in this table fails verification rather than being discovered at
 publication time. `publishable_package_count_is_stated_correctly` asserts the same count against
 **this sentence**, which is a separate claim and was the one that had drifted.

@@ -60,11 +60,12 @@
 //! taxonomy a catch-all is a reasonable default; for an audit trail it is a gap that looks like
 //! coverage.
 //!
-//! # Phase 010 owns the adapters
+//! # The adapters live downstream
 //!
 //! FR-075. This module ships the port and [`RecordingAuditSink`], which is a **test** sink.
 //! There is no `tracing` bridge, no OpenTelemetry exporter, and no file writer here — those are
-//! rendering decisions, and they belong downstream of the boundary that makes the guarantee.
+//! rendering decisions, and they belong downstream of the boundary that makes the guarantee
+//! (`renvor-observability` ships the JSON subscriber and, behind `otel`, the OTLP exporter).
 
 use core::fmt;
 
@@ -477,8 +478,8 @@ pub trait AuditSink: Send + Sync {
 /// A deterministic in-memory sink. FR-074.
 ///
 /// Records in call order, so ordering assertions are about the code under test rather than about a
-/// scheduler. It is not an operational adapter and is not intended as one — Phase 010 owns those
-/// (FR-075).
+/// scheduler. It is not an operational adapter and is not intended as one — those live downstream
+/// in `renvor-observability` (FR-075).
 #[derive(Debug, Default)]
 pub struct RecordingAuditSink {
     events: std::sync::Mutex<Vec<AuditEvent>>,

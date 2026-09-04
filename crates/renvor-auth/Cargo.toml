@@ -119,6 +119,9 @@ cookie = { version = "0.18.2", default-features = false }
 hmac = { version = "0.13.0", default-features = false }
 
 thiserror = { version = "2.0.20", default-features = false, features = ["std"] }
+# The facade only (C-O7), for the one infrastructure event the abuse guard emits (FR-084). Already
+# in the graph through `renvor-core`; this names the edge.
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 
 # ---- API token mode (batch G, FR-035 … FR-043). OFF BY DEFAULT. ----
 #
