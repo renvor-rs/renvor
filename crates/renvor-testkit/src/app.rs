@@ -17,13 +17,13 @@
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use renvor_core::identity::ClientIdentity;
 use renvor_core::lifecycle::application::Application;
 use renvor_core::lifecycle::rollback::BootFailure;
 use renvor_core::observe::entropy::OsEntropy;
-use renvor_core::{ApplicationBuilder, CancelScope, RunIdentifier};
+use renvor_core::{ApplicationBuilder, CancelScope, RunIdentifier, TypedStateMap};
 use renvor_http::route::{Method, PresentedCredentials, Request, Response, RouteRegistry};
 use renvor_http::{EffectiveOrigin, FetchMetadata, RequestContext, RequestId, Scheme};
 
@@ -65,6 +65,8 @@ pub struct TestApplication {
     listener: EffectiveOrigin,
     swept: Mutex<Vec<String>>,
     request_ids: Mutex<u64>,
+    run_id: RunIdentifier,
+    state: Arc<TypedStateMap>,
 }
 
 impl std::fmt::Debug for TestApplication {
@@ -87,7 +89,25 @@ impl TestApplication {
             listener: EffectiveOrigin::new(Scheme::Http, "example.test", 80),
             swept: Mutex::new(Vec::new()),
             request_ids: Mutex::new(0),
+            run_id: RunIdentifier::generate(&OsEntropy).expect("the operating system has entropy"),
+            state: Arc::new(TypedStateMap::new()),
         }
+    }
+
+    /// The typed state every dispatched request carries — for handlers that read what the test
+    /// built rather than what a booted provider registered. A booted application's own map is
+    /// attached by [`Self::boot`]; this replaces it.
+    #[must_use]
+    pub fn with_state(mut self, state: Arc<TypedStateMap>) -> Self {
+        self.state = state;
+        self
+    }
+
+    /// The one run identifier every request from this application carries: the booted
+    /// application's, or one generated when the registry alone was wrapped.
+    #[must_use]
+    pub const fn run_id(&self) -> RunIdentifier {
+        self.run_id
     }
 
     /// Boots `builder` — the caller's providers and configuration sources — and keeps the
@@ -106,6 +126,12 @@ impl TestApplication {
             .unwrap_or_else(|never: std::convert::Infallible| match never {});
         let application = application.boot().await?;
         let mut this = Self::new(registry);
+        this.run_id = *application.run_id();
+        // The map the caller's providers registered into, shared with every request — the shape
+        // a served request has, where the transport hands handlers the application's real state.
+        if let Some(state) = application.shared_state() {
+            this.state = state;
+        }
         this.application = Some(application);
         Ok(this)
     }
@@ -133,19 +159,42 @@ impl TestApplication {
     /// a request for another origin is answered.
     #[must_use]
     pub fn request_to(&self, listener: &EffectiveOrigin, body: impl Into<Vec<u8>>) -> Request {
+        self.request_as(
+            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            listener,
+            body,
+        )
+    }
+
+    /// A request from `client` rather than the loopback peer — for a test that proves what a
+    /// route promised to loopback answers a caller from elsewhere.
+    #[must_use]
+    pub fn request_from(&self, client: ClientIdentity, body: impl Into<Vec<u8>>) -> Request {
+        self.request_as(client, &self.listener, body)
+    }
+
+    /// Every request: this application's one run id, the next request id, the state the booted
+    /// providers registered (or the test attached), and a fresh cancellation scope.
+    fn request_as(
+        &self,
+        client: ClientIdentity,
+        listener: &EffectiveOrigin,
+        body: impl Into<Vec<u8>>,
+    ) -> Request {
         let mut counter = self
             .request_ids
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         *counter += 1;
         let context = RequestContext::new(
-            RunIdentifier::generate(&OsEntropy).expect("the operating system has entropy"),
+            self.run_id,
             RequestId::from_entropy(counter.to_le_bytes()),
-            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+            client,
             listener.clone(),
             CancelScope::root().child("request"),
         );
         Request::new(context, body.into(), String::new(), BTreeMap::new())
+            .with_state(Arc::clone(&self.state))
     }
 
     /// Dispatches `request` to the route declared for `method` and `path`, and sweeps the answer.
@@ -270,6 +319,89 @@ mod tests {
         assert_eq!(answer.status, 200);
         let report = app.shutdown().await.expect("a booted application reports");
         assert!(report.clean, "{:?}", report.failures);
+    }
+
+    /// A value a provider publishes at Boot and a route reads.
+    struct Published(&'static str);
+
+    struct Publisher {
+        id: renvor_core::provider::ProviderId,
+    }
+
+    impl renvor_core::provider::Provider for Publisher {
+        fn id(&self) -> &renvor_core::provider::ProviderId {
+            &self.id
+        }
+
+        fn initialise<'a>(
+            &'a self,
+            context: &'a mut renvor_core::provider::InitContext<'_>,
+        ) -> renvor_core::provider::ProviderFuture<'a> {
+            let registered = context.register_state(Published("from-boot"));
+            Box::pin(async move {
+                registered.map_err(|error| Box::new(error) as renvor_core::error::BoxedCause)
+            })
+        }
+    }
+
+    async fn reads_state(request: Request) -> Response {
+        match request.state::<Published>() {
+            Ok(value) => Response::text(value.0.to_owned()),
+            Err(error) => Response::status(500)
+                .expect("500 is valid")
+                .with_body(error.to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_carries_the_state_the_booted_providers_registered() {
+        // FOUND BY THE CODEX REVIEW (P2). `boot` kept the application but built every request
+        // with an empty state map, so a route that read what one of the caller's providers had
+        // registered got `StateMissing` — the provider-backed harness FR-050 promises was
+        // unusable. The booted application's state is shared with every request.
+        let mut registry = RouteRegistry::new();
+        registry.get("/state", reads_state).expect("route");
+        let builder = ApplicationBuilder::new().with_provider(Box::new(Publisher {
+            id: renvor_core::provider::ProviderId::new("publisher"),
+        }));
+        let app = TestApplication::boot(builder, registry)
+            .await
+            .expect("boots");
+        let answer = app.send(Method::Get, "/state", "", "").await;
+        assert_eq!(answer.status, 200, "{}", answer.body);
+        assert_eq!(answer.body, "from-boot");
+        let report = app.shutdown().await.expect("a booted application reports");
+        assert!(report.clean, "{:?}", report.failures);
+    }
+
+    #[tokio::test]
+    async fn every_request_carries_the_applications_one_run_identifier() {
+        // FOUND BY THE CODEX REVIEW (P2). Every request generated a fresh `RunIdentifier`, so
+        // handler telemetry could not be correlated with the application's lifecycle, unlike a
+        // served request, which carries the provider's one run id. One id per test application:
+        // the booted application's, or one generated once for a registry alone.
+        let mut registry = RouteRegistry::new();
+        registry.get("/", hello).expect("route");
+        let app = TestApplication::boot(ApplicationBuilder::new(), registry)
+            .await
+            .expect("boots");
+        let first = app.request(Vec::new()).context().run_id();
+        let second = app.request(Vec::new()).context().run_id();
+        assert_eq!(first, second, "two requests, two run ids");
+        assert_eq!(
+            first,
+            app.run_id(),
+            "the requests carry the application's run id"
+        );
+        let _ = app.shutdown().await;
+
+        let mut registry = RouteRegistry::new();
+        registry.get("/", hello).expect("route");
+        let bare = TestApplication::new(registry);
+        assert_eq!(
+            bare.request(Vec::new()).context().run_id(),
+            bare.request(Vec::new()).context().run_id()
+        );
     }
 
     #[tokio::test]
