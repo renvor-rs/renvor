@@ -183,6 +183,25 @@ regression in §5.
   capability crates are absent when unselected, as required; the auth domain crate is not, and
   that is recorded as limitation L-13 and asserted exactly (`renvor-auth-http` follows the
   choice; `renvor-auth` follows the database).
+- **The first gate leg on the closure records' commit (`83faf1e`) failed step 4** on three
+  file-set tests never run by hand during the phase — `container::each_selection_generates_exactly_its_file_set`
+  and two in `seaorm.rs` — each expecting a generated tree without `.renvor/generated.toml`, the
+  provenance record every project has carried since batch F. The expectations were corrected
+  (`9dd8d13`), every `renvor-cli` test binary was run with the rows off (446 passed), and both legs
+  were run again on that head (§10). The lesson is the same as the template one: a change to what
+  the generator emits is proven by every binary that pins the emission, not by the ones the author
+  remembers.
+- **The first gate leg on `9dd8d13` reached step 8 and failed the history secret scan**: one
+  `generic-api-key` finding in the starter test template at commit `9dd5bc4` — the made-up
+  password of the example user the generated test registered to prove authorization refusal, a
+  JSON fixture that authenticates nobody. Batch F had already replaced every fixed user with
+  factory-drawn values (`afab721`), so the working tree was clean and the history was not.
+  Allowlisted as FP-005 in `.gitleaks.toml` by the fixture line's address and key, not by path or
+  commit and without the value; verified by a canary beside a copy of the line still being
+  reported. The history scan is clean; both legs re-run (§10).
+- **The second validation pass found a release-order regression** (`publication_order_is_topological`):
+  the testkit's optional `renvor-http` edge put it before `renvor-openapi` in the publication list.
+  Fixed in `8c09835` (`release-dry-run.yml`, `RELEASING.md`).
 - **Feature-gated rustdoc links** (`EntropySource`, `ApplicationBuilder`) resolved at the crate root
   because of the outer `///` on the modules; qualified. The gate's step 9 does not run
   `--all-features` (a known gap); `RUSTDOCFLAGS=-D warnings cargo doc -p renvor-testkit --all-features
