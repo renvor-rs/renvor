@@ -228,19 +228,121 @@ const PASSED_THROUGH: &[&str] = &[
     "windir",
 ];
 
-/// Keeps, in order, the variables of `parent` that [`PASSED_THROUGH`] names.
 ///
 /// A pure function of its input, so a test can prove the seal without touching the process
 /// environment — which this crate forbids `unsafe` code to do anyway.
-pub fn sealed_environment(
-    parent: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
-) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
-    parent
-        .filter(|(name, _)| {
-            name.to_str()
-                .is_some_and(|name| PASSED_THROUGH.contains(&name))
-        })
-        .collect()
+/// The proxy variables the seal passes through — every one with its credential removed.
+const PROXY_VARIABLES: &[&str] = &[
+    "CARGO_HTTP_PROXY",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+];
+
+/// The sealed environment, and the credentials the seal removed from it — so the output of a
+/// child that somehow learned one can be redacted before it is reported.
+pub struct Sealed {
+    /// The variables the checks run with.
+    pub variables: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    /// Every `user:password` removed from a proxy value.
+    pub credentials: Vec<String>,
+}
+
+/// Seals `parent`: keeps the variables [`PASSED_THROUGH`] names, in order, and strips the
+/// `user:password@` a proxy URL may carry.
+///
+/// # Why the credential goes and the host stays
+///
+/// A proxy variable passes through so a fetch can route; its URL may carry a credential, and the
+/// seal handed that to every build script and dependency the staged project compiles, which
+/// contradicted the "no credential" the transaction contract promises (found by the Standards
+/// review of Phase 011). Verification needs no registry update — the framework's lockfile seeds
+/// resolution (FR-006) — so an authenticated proxy is not something it has to be able to use;
+/// the host is kept so a proxy that needs no credential still routes. A proxy value that is not
+/// text is dropped rather than guessed at.
+#[must_use]
+pub fn seal(parent: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>) -> Sealed {
+    let mut variables = Vec::new();
+    let mut credentials = Vec::new();
+    for (name, value) in parent {
+        let Some(text_name) = name.to_str() else {
+            continue;
+        };
+        if !PASSED_THROUGH.contains(&text_name) {
+            continue;
+        }
+        if PROXY_VARIABLES.contains(&text_name) {
+            let Some(text) = value.to_str() else {
+                continue;
+            };
+            let (stripped, credential) = without_proxy_credential(text);
+            if let Some(credential) = credential {
+                credentials.push(credential);
+            }
+            variables.push((name, std::ffi::OsString::from(stripped)));
+        } else {
+            variables.push((name, value));
+        }
+    }
+    Sealed {
+        variables,
+        credentials,
+    }
+}
+
+/// `scheme://user:password@host…` → (`scheme://host…`, `Some("user:password")`); a value without
+/// a credential comes back unchanged with `None`.
+fn without_proxy_credential(value: &str) -> (String, Option<String>) {
+    let (scheme, rest) = match value.find("://") {
+        Some(at) => (&value[..at + 3], &value[at + 3..]),
+        None => ("", value),
+    };
+    let authority_end = rest.find('/').unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    match authority.rfind('@') {
+        Some(at) => (
+            format!("{scheme}{}{}", &authority[at + 1..], &rest[authority_end..]),
+            Some(authority[..at].to_owned()),
+        ),
+        None => (value.to_owned(), None),
+    }
+}
+
+/// A child's output, fit to report: every `user:password@` in a URL replaced, every credential
+/// the seal removed replaced, and every control character escaped so a build script cannot
+/// reprogram the operator's terminal.
+fn redacted_output(text: &str, credentials: &[String]) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("://") {
+        let (head, tail) = rest.split_at(at + 3);
+        out.push_str(head);
+        let authority_end = tail
+            .find(|c: char| c == '/' || c.is_whitespace() || c == '"' || c == '\'')
+            .unwrap_or(tail.len());
+        let authority = &tail[..authority_end];
+        match authority.rfind('@') {
+            Some(user_end) => {
+                out.push_str("<credential removed>@");
+                out.push_str(&authority[user_end + 1..]);
+            }
+            None => out.push_str(authority),
+        }
+        rest = &tail[authority_end..];
+    }
+    out.push_str(rest);
+    for credential in credentials {
+        if !credential.is_empty() {
+            out = out.replace(credential, "<credential removed>");
+            if let Some((_, password)) = credential.split_once(':')
+                && !password.is_empty()
+            {
+                out = out.replace(password, "<credential removed>");
+            }
+        }
+    }
+    crate::output::redact::for_terminal(&out)
 }
 
 /// Runs the generated project's own checks while it is still in staging.
@@ -259,7 +361,28 @@ pub fn sealed_environment(
 /// defect over a compile error. This is the same class of misreporting as A-R6's three sites, found
 /// in the same sweep and corrected with them.
 pub fn in_staging(staging: &Path, progress: &Progress, smoke: Smoke) -> Result<(), CliError> {
-    let target = target_directory(std::env::var_os("CARGO_TARGET_DIR").as_deref())?;
+    in_staging_with(staging, progress, smoke, std::env::vars_os())
+}
+
+/// [`in_staging`] with the parent environment given rather than read — the seam the
+/// sealed-environment controls use to hand the checks a shell they can shape.
+///
+/// # Errors
+///
+/// As [`in_staging`].
+pub fn in_staging_with(
+    staging: &Path,
+    progress: &Progress,
+    smoke: Smoke,
+    parent: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Result<(), CliError> {
+    let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = parent.collect();
+    let configured_target = parent
+        .iter()
+        .find(|(name, _)| name == "CARGO_TARGET_DIR")
+        .map(|(_, value)| value.clone());
+    let target = target_directory(configured_target.as_deref())?;
+    let sealed = seal(parent.into_iter());
 
     for (program, arguments, complaint) in CHECKS.into_iter().chain(std::iter::once(smoke.check()))
     {
@@ -274,7 +397,7 @@ pub fn in_staging(staging: &Path, progress: &Progress, smoke: Smoke) -> Result<(
             // SEALED: see `PASSED_THROUGH`. The build directory is set explicitly, after the
             // seal, so the operator's `CARGO_TARGET_DIR` reaches cargo through `target` alone.
             .env_clear()
-            .envs(sealed_environment(std::env::vars_os()))
+            .envs(sealed.variables.iter().cloned())
             .env("CARGO_TARGET_DIR", target.path())
             .output()
             .map_err(|error| {
@@ -298,8 +421,17 @@ pub fn in_staging(staging: &Path, progress: &Progress, smoke: Smoke) -> Result<(
             // stderr; a message built from stderr alone reported a formatting failure with no
             // diff (Phase 011's first starter render), which is the bare message this exists to
             // avoid. Stdout first, because for the one check that uses it the diff is the answer.
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            // REDACTED, not raw: a build script's or a compiler's output is text nobody
+            // reviewed — every URL credential is removed, every credential the seal took out of
+            // a proxy value is removed, every control character is escaped.
+            let stdout = redacted_output(
+                &String::from_utf8_lossy(&output.stdout),
+                &sealed.credentials,
+            );
+            let stderr = redacted_output(
+                &String::from_utf8_lossy(&output.stderr),
+                &sealed.credentials,
+            );
             let detail = format!("{}\n{}", stdout.trim(), stderr.trim());
             return Err(CliError::new(
                 Code::ProjectVerificationFailed,
@@ -452,7 +584,7 @@ mod tests {
             ("SOME_UNRELATED_VARIABLE", "value"),
         ]
         .map(|(name, value)| (OsString::from(name), OsString::from(value)));
-        let sealed = sealed_environment(parent.into_iter());
+        let sealed = seal(parent.into_iter()).variables;
         let names: Vec<&str> = sealed
             .iter()
             .map(|(name, _)| name.to_str().expect("utf-8"))
@@ -461,6 +593,189 @@ mod tests {
             names,
             ["PATH", "HOME", "CARGO_HOME", "RUSTUP_TOOLCHAIN"],
             "only what the toolchain needs passes through, in the parent's order"
+        );
+    }
+
+    /// Every rendering a diagnostic could leak a secret in.
+    fn every_form_of(secret: &str) -> Vec<String> {
+        let bytes = secret.as_bytes();
+        vec![
+            secret.to_owned(),
+            format!("{secret:?}"),
+            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            bytes.iter().map(|b| format!("{b:02X}")).collect::<String>(),
+            bytes
+                .iter()
+                .map(|b| b.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ]
+    }
+
+    #[test]
+    fn a_proxy_credential_never_reaches_the_sealed_environment() {
+        // STANDARDS AXIS (P1). The proxy variables pass through the seal so a fetch can route,
+        // and a proxy URL may carry `user:password@`; that credential was handed to every build
+        // script and dependency the staged project compiles. The host survives, the credential
+        // does not: verification needs no registry update (FR-006), so an authenticated proxy is
+        // not something it has to be able to use.
+        use std::ffi::OsString;
+        let parent = [
+            ("PATH", "/usr/bin"),
+            (
+                "HTTPS_PROXY",
+                "http://alice:s3cr3t-proxy-pass@proxy.example:3128",
+            ),
+            ("http_proxy", "http://bob:hunter2@10.0.0.1:8080/"),
+            (
+                "CARGO_HTTP_PROXY",
+                "socks5://carol:pw-9f@proxy.example:1080",
+            ),
+            ("HTTP_PROXY", "http://proxy.example:3128"),
+            ("NO_PROXY", "localhost,127.0.0.1"),
+        ]
+        .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        let sealed = seal(parent.into_iter()).variables;
+        for (name, value) in &sealed {
+            let value = value.to_string_lossy();
+            for secret in [
+                "s3cr3t-proxy-pass",
+                "hunter2",
+                "pw-9f",
+                "alice",
+                "bob",
+                "carol",
+            ] {
+                for form in every_form_of(secret) {
+                    assert!(
+                        !value.contains(&form),
+                        "{} carries {secret:?} as {form:?}: {value}",
+                        name.to_string_lossy()
+                    );
+                }
+            }
+        }
+        let value_of = |wanted: &str| {
+            sealed
+                .iter()
+                .find(|(name, _)| name == wanted)
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+        };
+        assert_eq!(
+            value_of("HTTPS_PROXY").as_deref(),
+            Some("http://proxy.example:3128"),
+            "the host, scheme, and port survive"
+        );
+        assert_eq!(
+            value_of("http_proxy").as_deref(),
+            Some("http://10.0.0.1:8080/")
+        );
+        assert_eq!(
+            value_of("CARGO_HTTP_PROXY").as_deref(),
+            Some("socks5://proxy.example:1080")
+        );
+        assert_eq!(
+            value_of("HTTP_PROXY").as_deref(),
+            Some("http://proxy.example:3128"),
+            "a credential-free value passes unchanged"
+        );
+        assert_eq!(value_of("NO_PROXY").as_deref(), Some("localhost,127.0.0.1"));
+    }
+
+    #[test]
+    fn a_childs_output_is_reported_without_url_credentials_or_control_characters() {
+        // The redaction on its own: the end-to-end control above cannot tell it from the seal,
+        // because once the seal has stripped the credential no child can print it. Here a child's
+        // text carries one anyway — a URL credential of its own, and the credential the seal
+        // removed — and both leave; the host stays; a control character is escaped.
+        let removed = vec!["alice:s3cr3t-proxy-pass".to_owned()];
+        let text = "warning: proxy http://alice:s3cr3t-proxy-pass@proxy.example:3128/x failed\n\
+                    also socks5://bob:hunter2@10.0.0.1:1080 and plain http://host:80/ok\n\
+                    and the password s3cr3t-proxy-pass on its own\u{1b}[31m";
+        let reported = redacted_output(text, &removed);
+        for secret in ["s3cr3t-proxy-pass", "hunter2", "alice", "bob"] {
+            for form in every_form_of(secret) {
+                assert!(
+                    !reported.contains(&form),
+                    "{secret} as {form:?}: {reported}"
+                );
+            }
+        }
+        assert!(reported.contains("http://<credential removed>@proxy.example:3128/x"));
+        assert!(reported.contains("socks5://<credential removed>@10.0.0.1:1080"));
+        assert!(
+            reported.contains("http://host:80/ok"),
+            "a credential-free URL is untouched"
+        );
+        assert!(
+            reported.contains("\\u{1b}[31m"),
+            "the escape is escaped: {reported}"
+        );
+        assert!(!reported.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn a_build_script_cannot_observe_or_print_a_proxy_credential() {
+        // STANDARDS AXIS (P1), the end-to-end control: a staged project's build script reads
+        // every proxy variable it can see, prints them, and fails — so its output lands in the
+        // verification error. Neither the environment it saw nor the error the operator reads
+        // may carry the credential in any form; the host survives in both.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\n",
+        )
+        .expect("write");
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").expect("write");
+        std::fs::write(
+            dir.path().join("build.rs"),
+            "fn main() {\n    let mut seen: Vec<String> = std::env::vars()\n        .filter(|(name, _)| name.to_ascii_lowercase().contains(\"proxy\"))\n        .map(|(name, value)| format!(\"{name}={value}\"))\n        .collect();\n    seen.sort();\n    eprintln!(\n        \"proxy variables seen by the build script: {}\",\n        seen.join(\" \")\n    );\n    std::process::exit(1);\n}\n",
+        )
+        .expect("write");
+        let secret = "s3cr3t-proxy-pass";
+        let mut parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os()
+            .filter(|(name, _)| {
+                !name
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .contains("proxy")
+            })
+            .collect();
+        parent.push((
+            "HTTPS_PROXY".into(),
+            format!("http://alice:{secret}@127.0.0.1:1").into(),
+        ));
+        parent.push((
+            "http_proxy".into(),
+            format!("http://alice:{secret}@127.0.0.1:1/").into(),
+        ));
+        let error = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect_err("the build script fails on purpose");
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
+        assert!(
+            error
+                .message
+                .contains("proxy variables seen by the build script:"),
+            "the build script's output must be embedded, or this control proves nothing:\n{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("127.0.0.1:1"),
+            "the credential-free host survives:\n{}",
+            error.message
+        );
+        for form in every_form_of(secret) {
+            assert!(
+                !error.message.contains(&form),
+                "the verification error carries the proxy credential as {form:?}:\n{}",
+                error.message
+            );
+        }
+        assert!(
+            !error.message.contains("alice"),
+            "the user name is part of the credential:\n{}",
+            error.message
         );
     }
 
