@@ -429,10 +429,11 @@ pub fn commit(
                 return Err(error);
             }
         }
-    }
-    if let Err(error) = crate::inject::fail_at("generate-stage") {
-        unstage(&staged);
-        return Err(error);
+        // A boundary per staged file: `RENVOR_FAIL_AT=generate-stage-<decision index>`.
+        if let Err(error) = crate::inject::fail_at(&format!("generate-stage-{index}")) {
+            unstage(&staged);
+            return Err(error);
+        }
     }
 
     // ── 2. PLACE ─────────────────────────────────────────────────────────────────────
@@ -459,12 +460,15 @@ pub fn commit(
             path: path.clone(),
             previous,
         });
-        if position == 0
-            && let Err(error) = crate::inject::fail_at("generate-commit")
-        {
+        // A boundary per placed file: `RENVOR_FAIL_AT=generate-place-<decision index>`.
+        if let Err(error) = crate::inject::fail_at(&format!("generate-place-{index}")) {
             unstage(&staged[position + 1..]);
             return Err(roll_back(project, &placed, error));
         }
+    }
+    // The last boundary: everything placed, the record not yet rewritten.
+    if let Err(error) = crate::inject::fail_at("generate-record") {
+        return Err(roll_back(project, &placed, error));
     }
 
     // ── 3. RECORD ────────────────────────────────────────────────────────────────────

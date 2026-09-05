@@ -337,41 +337,73 @@ fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
 }
 
 #[test]
-fn a_failure_during_commit_leaves_the_project_unchanged() {
-    // The rule the correction round of Phase 011 made explicit: a generation into an existing
-    // project either lands whole or leaves the tree exactly as it found it. Files are staged as
-    // temporary siblings first, then renamed; a failure at either point rolls back what was
-    // renamed and removes what was staged. `RENVOR_FAIL_AT` is honoured by debug builds only,
-    // which `cargo test` is.
+fn a_failure_at_every_placement_boundary_leaves_the_project_byte_identical() {
+    // STANDARDS AXIS (P2), and the rule the correction round made explicit: a generation into an
+    // existing project either lands whole or leaves the tree exactly as it found it. The commit
+    // stages every file as a temporary sibling, then renames each into place, then rewrites the
+    // record; a failure is injected after EVERY one of those steps — after each staged file,
+    // after each placed file, and before the record — and the whole project is compared byte for
+    // byte each time, the record and the migration directory included. `RENVOR_FAIL_AT` is
+    // honoured by debug builds only, which `cargo test` is.
     let base = tempfile::tempdir().expect("tempdir");
-    let project = project(base.path(), "postgres");
-    let before = snapshot(&project);
-    for step in ["generate-stage", "generate-commit"] {
-        let (ok, document, _) = renvor_with(
-            &["generate", "migration", "add_index", "--output", "json"],
-            &project,
-            &[("RENVOR_FAIL_AT", step)],
-        );
-        assert!(
-            !ok,
-            "the injected failure at `{step}` was not reported: {document}"
-        );
-        assert_eq!(document["status"], "failure", "{document}");
-        assert_eq!(document["error"]["details"]["injected"], step, "{document}");
-        assert_eq!(
-            snapshot(&project),
-            before,
-            "a failure at `{step}` left the project changed"
-        );
+    let project = project(base.path(), "mysql");
+    for (label, args) in [
+        (
+            "a migration pair",
+            vec!["generate", "migration", "add_index", "--output", "json"],
+        ),
+        (
+            "the auth set",
+            vec![
+                "generate",
+                "migration",
+                "--import",
+                "auth",
+                "--output",
+                "json",
+            ],
+        ),
+    ] {
+        let before = snapshot(&project);
+        let mut dry = args.clone();
+        dry.push("--dry-run");
+        let (ok, plan, _) = renvor(&dry, &project);
+        assert!(ok, "{plan}");
+        let files = plan["result"]["files"].as_array().expect("files").len();
+        assert!(files >= 2, "{label}: {plan}");
+        let mut boundaries: Vec<String> = Vec::with_capacity(2 * files + 1);
+        for index in 0..files {
+            boundaries.push(format!("generate-stage-{index}"));
+        }
+        for index in 0..files {
+            boundaries.push(format!("generate-place-{index}"));
+        }
+        boundaries.push("generate-record".to_owned());
+        for step in &boundaries {
+            let (ok, document, _) =
+                renvor_with(&args, &project, &[("RENVOR_FAIL_AT", step.as_str())]);
+            assert!(
+                !ok,
+                "{label}: the injected failure at `{step}` was not reported: {document}"
+            );
+            assert_eq!(document["status"], "failure", "{document}");
+            assert_eq!(
+                document["error"]["details"]["injected"],
+                step.as_str(),
+                "{document}"
+            );
+            assert_eq!(
+                snapshot(&project),
+                before,
+                "{label}: a failure at `{step}` left the project changed"
+            );
+        }
+        // POSITIVE CONTROL: the same command without the injector lands whole.
+        let (ok, document, _) = renvor(&args, &project);
+        assert!(ok, "{document}");
+        assert_eq!(document["result"]["written"], files);
+        assert_ne!(snapshot(&project), before);
     }
-    // POSITIVE CONTROL: the same command without the injector writes the pair.
-    let (ok, document, _) = renvor(
-        &["generate", "migration", "add_index", "--output", "json"],
-        &project,
-    );
-    assert!(ok, "{document}");
-    assert_eq!(document["result"]["written"], 2);
-    assert_ne!(snapshot(&project), before);
 }
 
 #[test]
@@ -388,6 +420,7 @@ fn an_import_refuses_a_version_another_migration_already_holds() {
     )
     .expect("write");
     let before = snapshot(&project);
+    let record_before = record(&project);
     let (ok, refused, _) = renvor(
         &[
             "generate",
@@ -404,6 +437,11 @@ fn an_import_refuses_a_version_another_migration_already_holds() {
     assert_eq!(refused["error"]["details"]["reason"], "version_present");
     assert_eq!(refused["error"]["details"]["versions"], "20260901000001");
     assert_eq!(snapshot(&project), before, "a refusal wrote something");
+    assert_eq!(
+        record(&project),
+        record_before,
+        "a refusal must leave the provenance record as it was"
+    );
 }
 
 #[test]
@@ -429,6 +467,22 @@ fn two_names_generated_within_a_second_get_distinct_versions() {
             .to_owned()
     };
     assert_ne!(version(&first), version(&second));
+    // Each pair's up and down carry the same version.
+    for document in [&first, &second] {
+        let paths: Vec<&str> = document["result"]["files"]
+            .as_array()
+            .expect("files")
+            .iter()
+            .map(|f| f["path"].as_str().expect("path"))
+            .collect();
+        assert_eq!(paths.len(), 2, "{document}");
+        assert_eq!(
+            &paths[0][..24],
+            &paths[1][..24],
+            "one version per pair: {paths:?}"
+        );
+        assert!(paths[0].ends_with(".up.sql") && paths[1].ends_with(".down.sql"));
+    }
     // Every version in the directory is held by exactly one pair.
     let names = migration_files(&project);
     let mut versions: Vec<String> = names
