@@ -46,6 +46,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use renvor_core::error::BoxedCause;
 use renvor_core::{
     CapabilityId, DrainOutcome, InitContext, Provider, ProviderId, Readiness, ReadinessContributor,
     TypedStateMap,
@@ -146,6 +147,9 @@ impl ReadinessContributor for ServerReadiness {
     }
 }
 
+/// A configuration built at Boot; see [`HttpServerProvider::configured_at_boot`].
+type Configure = Box<dyn FnOnce() -> Result<HttpServerConfig, BoxedCause> + Send>;
+
 /// The HTTP server, as a provider the kernel boots, drains, and stops.
 ///
 /// # Why the interior is behind mutexes
@@ -161,6 +165,9 @@ pub struct HttpServerProvider {
     provides: Vec<CapabilityId>,
     dependencies: Vec<CapabilityId>,
     config: Mutex<Option<HttpServerConfig>>,
+    /// The configuration to build at Boot when none was given at construction; see
+    /// [`HttpServerProvider::configured_at_boot`].
+    configure: Mutex<Option<Configure>>,
     registry: Mutex<Option<RouteRegistry>>,
     running: Mutex<Option<Running>>,
     bound: Mutex<Option<SocketAddr>>,
@@ -179,6 +186,38 @@ impl HttpServerProvider {
             provides: Vec::new(),
             dependencies: Vec::new(),
             config: Mutex::new(Some(config)),
+            configure: Mutex::new(None),
+            registry: Mutex::new(Some(registry)),
+            running: Mutex::new(None),
+            bound: Mutex::new(None),
+            serving: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Builds a provider that will serve `registry` under the configuration `configure` answers
+    /// **at this provider's Boot** — after every configuration source has resolved (Load) and
+    /// been checked (Validate), and after every dependency has initialised.
+    ///
+    /// # Why a closure and not a configuration
+    ///
+    /// Phase 011. An application whose bind address and host policy come from a kernel
+    /// configuration section cannot have them at construction: the section resolves inside
+    /// `boot()`. Reading its handle earlier either fails or invites a placeholder, and a
+    /// placeholder address is a silent fallback. The closure moves the read to the phase where
+    /// the answer exists. A refusal from it is a Boot failure like a bind failure: reported with
+    /// its reason, nothing bound, everything initialised before it rolled back.
+    #[must_use]
+    pub fn configured_at_boot(
+        id: impl Into<String>,
+        registry: RouteRegistry,
+        configure: impl FnOnce() -> Result<HttpServerConfig, BoxedCause> + Send + 'static,
+    ) -> Self {
+        Self {
+            id: ProviderId::new(id),
+            provides: Vec::new(),
+            dependencies: Vec::new(),
+            config: Mutex::new(None),
+            configure: Mutex::new(Some(Box::new(configure))),
             registry: Mutex::new(Some(registry)),
             running: Mutex::new(None),
             bound: Mutex::new(None),
@@ -250,16 +289,30 @@ impl Provider for HttpServerProvider {
         }));
 
         Box::pin(async move {
-            let config = self
+            let given = self
                 .config
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .take()
-                .ok_or_else(|| {
-                    // A second Boot of the same provider value. Reported rather than defaulted:
-                    // serving an empty configuration would be a silent fallback.
-                    boxed("this server provider has already been initialised once")
-                })?;
+                .take();
+            let config = match given {
+                Some(config) => config,
+                None => {
+                    let configure = self
+                        .configure
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take()
+                        .ok_or_else(|| {
+                            // A second Boot of the same provider value. Reported rather than
+                            // defaulted: serving an empty configuration would be a silent
+                            // fallback.
+                            boxed("this server provider has already been initialised once")
+                        })?;
+                    // Run with no lock held: the closure reads configuration handles, and a
+                    // handle that took this provider's lock would deadlock.
+                    configure()?
+                }
+            };
             let registry = self
                 .registry
                 .lock()

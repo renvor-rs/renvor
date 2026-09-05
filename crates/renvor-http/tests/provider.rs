@@ -355,3 +355,85 @@ impl Provider for ArcProvider {
         self.0.stop()
     }
 }
+
+/// Phase 011. A kernel configuration source resolves its section at Load and checks it at
+/// Validate — phases that run inside `boot()`, after the provider was constructed. A server whose
+/// address comes from such a section therefore cannot be given an `HttpServerConfig` at
+/// construction; it is given a closure the provider runs at its own Boot, when every source has
+/// resolved and every dependency has initialised. This proves the closure runs THEN and not
+/// before, and that what it answers is what gets bound.
+#[tokio::test]
+async fn a_server_configured_at_boot_runs_its_closure_at_boot_and_binds_what_it_answers() {
+    let mut registry = RouteRegistry::new();
+    registry.get("/health", quick).expect("route");
+    let asked = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let seen = Arc::clone(&asked);
+    let provider = Arc::new(HttpServerProvider::configured_at_boot(
+        "http",
+        registry,
+        move || {
+            seen.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(config(any_port()))
+        },
+    ));
+
+    let application = ApplicationBuilder::new()
+        .with_provider(Box::new(ArcProvider(Arc::clone(&provider))))
+        .build()
+        .expect("the application builds");
+    assert!(
+        !asked.load(std::sync::atomic::Ordering::SeqCst),
+        "the configuration closure ran before Boot"
+    );
+    assert_eq!(provider.bound_address(), None);
+
+    let mut application = application.boot().await.expect("boot succeeds");
+    assert!(
+        asked.load(std::sync::atomic::Ordering::SeqCst),
+        "Boot did not run the configuration closure"
+    );
+    let address = provider.bound_address().expect("Boot bound the listener");
+    let response = round_trip(address, "/health").await;
+    assert!(response.contains("200"), "{response}");
+    application.shutdown().await;
+    assert!(!provider.is_serving());
+}
+
+/// The closure's refusal is a Boot failure like any other: named, nothing bound, nothing served.
+#[tokio::test]
+async fn a_server_whose_boot_time_configuration_is_refused_does_not_bind() {
+    let mut registry = RouteRegistry::new();
+    registry.get("/health", quick).expect("route");
+    let provider = Arc::new(HttpServerProvider::configured_at_boot(
+        "http",
+        registry,
+        || Err("the [http] section did not resolve".into()),
+    ));
+    let application = ApplicationBuilder::new()
+        .with_provider(Box::new(ArcProvider(Arc::clone(&provider))))
+        .build()
+        .expect("the application builds");
+    let failure = application
+        .boot()
+        .await
+        .expect_err("a refused configuration must fail Boot");
+    // The reason travels as the cause chain: the kernel names the provider, the provider's
+    // error names the closure's refusal.
+    let mut chain = failure.to_string();
+    let mut cause = std::error::Error::source(&failure);
+    while let Some(error) = cause {
+        chain.push_str(" <- ");
+        chain.push_str(&error.to_string());
+        cause = error.source();
+    }
+    assert!(
+        chain.contains("did not resolve"),
+        "the failure must carry the closure's reason: {chain}"
+    );
+    assert_eq!(
+        provider.bound_address(),
+        None,
+        "a refused configuration bound a socket"
+    );
+    assert!(!provider.is_serving());
+}
