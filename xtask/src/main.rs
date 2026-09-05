@@ -4643,14 +4643,44 @@ mod tests {
                         .strip_prefix('|')?
                         .trim()
                         .trim_matches('*');
-                    trimmed
-                        .starts_with("W-")
+                    // PHASE 011. A closed waiver keeps its row for the record and is NOT active:
+                    // its last cell says `closed`, with the date and the head it was closed
+                    // against (asserted below). W-023 and W-024 were the first, on 2026-09-05.
+                    let last_cell = line.trim_end().trim_end_matches('|').rsplit('|').next()?;
+                    (trimmed.starts_with("W-") && !last_cell.contains("closed"))
                         .then(|| trimmed.chars().take(5).collect::<String>())
                 })
                 .collect();
             found.sort();
             found.dedup();
             found
+        }
+
+        // A closed row must say when and against what: a closure by prose alone is the failure
+        // mode the whole ledger exists to prevent.
+        for line in ledger.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("| **W-") else {
+                continue;
+            };
+            let last_cell = line
+                .trim_end()
+                .trim_end_matches('|')
+                .rsplit('|')
+                .next()
+                .unwrap_or("");
+            // The ledger's own table has nine cells; the per-phase summary below it has three
+            // and names the same closure without repeating the head.
+            if !last_cell.contains("closed") || line.matches('|').count() < 9 {
+                continue;
+            }
+            let names_a_head = last_cell
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .any(|word| word.len() == 40);
+            assert!(
+                last_cell.contains("2026-") && names_a_head,
+                "W-{} is closed without a date and a 40-hex head in its status cell",
+                rest.chars().take(3).collect::<String>()
+            );
         }
 
         let granted = identifiers(&ledger);
@@ -4809,7 +4839,28 @@ mod tests {
         // reads, to anyone auditing it, as one that has.
         //
         // W-007 is the single exemption, and an explicit one: both documents record at length that
-        // it does not exist and that the identifier is permanently burned.
+        // it does not exist and that the identifier is permanently burned. A CLOSED waiver is
+        // still a granted one — it was issued, and its row records the closure — so a reference
+        // to it is a reference to something the table holds (PHASE 011: W-023, W-024).
+        let closed: Vec<String> = ledger
+            .lines()
+            .filter_map(|line| {
+                let identifier = line
+                    .trim_start()
+                    .strip_prefix('|')?
+                    .trim()
+                    .trim_matches('*');
+                let last_cell = line.trim_end().trim_end_matches('|').rsplit('|').next()?;
+                (identifier.starts_with("W-") && last_cell.contains("closed"))
+                    .then(|| identifier.chars().take(5).collect::<String>())
+            })
+            .collect();
+        for identifier in &closed {
+            assert!(
+                !granted.contains(identifier),
+                "{identifier} is both active and closed in the ledger's tables"
+            );
+        }
         for (label, text) in [("ledger", &ledger), ("GOVERNANCE.md", &governance)] {
             let mut rest = text.as_str();
             while let Some(at) = rest.find("W-0") {
@@ -4822,7 +4873,7 @@ mod tests {
                     continue;
                 }
                 assert!(
-                    granted.contains(&identifier),
+                    granted.contains(&identifier) || closed.contains(&identifier),
                     "{label} refers to {identifier}, which its own table does not grant"
                 );
             }

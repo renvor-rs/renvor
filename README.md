@@ -68,7 +68,11 @@
 
 Renvor is a Rust framework. **Phase 010** of its development programme (cache, jobs, mail,
 storage, and observability capabilities) closed on 2026-09-04 under waiver W-022 — no independent
-review occurred — and its records are `governance/phase-010-*.md`. Phase 011 has not started.
+review occurred — and its records are `governance/phase-010-*.md`. **Phase 011** (generators for
+the auth starter and the five capabilities, the resource and migration generators, and the testing
+kit) is implemented on `feat/phase-011-generators-testing-kit` and stands at its
+review/merge-authority checkpoint — **unmerged, not closed**; its records are
+`governance/phase-011-*.md`.
 
 ## The command is `renvor`
 

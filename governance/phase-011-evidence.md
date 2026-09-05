@@ -1,0 +1,237 @@
+# Phase 011 — Evidence
+
+**Phase**: 011 — Generators for the auth starter and the five capabilities, the resource and
+migration generators, and the testing kit
+**State**: **at the review/merge-authority checkpoint — implemented, unmerged, not closed.** No
+publication, tag, release, or deployment; no waiver created or granted; every decision record this
+phase touches stays `proposed`. Closure of W-023 and W-024 is recorded in `waivers.md` only after
+the validation review in `phase-011-review-record.md` and only against the head and tree named in
+§10 below.
+**Base**: `4f383005851809802fb91cc4cc97972689b1c58b` (origin/main, after PR #60), tree
+`e77cb1b6c9fc4100a502b9c48fb9a3385c3716eb`
+**Branch**: `feat/phase-011-generators-testing-kit`
+**Closure head**: `5eff451c435c8676aaa3cd231ccfc7d2e5ec5ba0` (tree `d1cab4cb7b1a1a18e387689e6ad3fdd0f6a628f9`) — the last implementation commit; the checkpoint head adds the closure records and the ledger parser's closed-row rule (§10)
+**Working record**: `specs/011-generators-auth-starter-testing-kit/` — spec, clarifications, plan,
+data model, threat model, package research, and one evidence file per batch; **gitignored**,
+`git ls-files specs` = 0. This file and its companions (`phase-011-limitations.md`,
+`phase-011-mutation-ledger.md`, `phase-011-dependency-inventory.md`, `phase-011-review-record.md`)
+are the clone-visible mirror.
+
+## 1. What this phase added
+
+**The generator honours the two governed choices it could not honour before (W-023, W-024).**
+`renvor new` asks for — and `--auth none|session` and `--capabilities <list>|none` accept — the auth
+starter and the five capabilities, through one configuration model (`ProjectConfiguration::resolve`)
+that the wizard and the flags both feed. Every choice is persisted canonically in `renvor.toml`
+(`[auth]`, `[capabilities]`, `[framework]`) and read back by `renvor check`. Unsupported values fail
+explicitly and name why (`api`/`full`: `unsupported_value`, `reason = no_token_issuance_route` —
+Phase 009 ships refresh, not issuance, so no mode is invented to fill the list); unsupported
+combinations fail before any write (`session` without a database or without `mail`; `jobs`
+without a database; a selection needing the framework without `--framework-path`; `--container-cache
+none` beside `cache`). Nothing inert is ever recorded.
+
+**A framework-backed starter.** With `--framework-path`, the generated project depends on the
+workspace crates by path, seeds its resolution from the framework's lockfile, and is generated with
+the auth starter (`renvor-auth` + `renvor-auth-http`: registration, login, `/auth/me`, deny-by-default
+authorization inside the operation, CSRF-protected logout, verification and recovery with
+indistinguishable responses) and each selected capability wired through the facade's `capability-*`
+features and the adapter features (`cache` → Valkey, `jobs` → the four-row job store with its
+embedded migrations, `mail` → SMTP, `storage` → a `cap-std` filesystem root, `observability` → JSON
+logs, bounded metrics, OTLP/HTTP traces). The start-up order is real: the database provider is
+available before `AuthEndpoints` or any pool-dependent route is constructed (`routes_deferred` +
+`configured_at_boot`, this phase). Unselected capabilities appear nowhere in the tree
+(`assert_recorded`).
+
+**Every generated starter proves itself.** Generation verifies the staged project in a sealed
+environment (`fmt --check`, `clippy --all-targets -D warnings`, `build`, `test`, and a route-dump
+smoke that the binary must answer) before anything reaches the destination, and the placed project
+carries `tests/starter.rs` + `tests/support/mod.rs`: start the binary on a free port against the
+real services, migrate, seed, register, log in, authorize, refuse, log out, confirm the verification
+mail from the sink, exercise each capability, interrupt with a real `SIGINT`, and assert the clean
+exit. Users come from `renvor_testkit::factory`; the loopback client is `renvor_testkit::client`.
+
+**Generators for a placed project.** `renvor generate migration <name>` (a UTC-versioned reversible
+pair; a rerun reuses the pair), `--import auth|jobs` (the engine's embedded set into the project's one
+directory — 010/L-7), `renvor generate resource <Name> field:type…` (module, migration pair, test,
+marker edits, `rustfmt` at generation), and `renvor generate auth` (the auth starter into a placed
+starter, refusing where `new` would). Every one plans against `.renvor/generated.toml` (generator
+version, template version, SHA-256 per file): absent → written, byte-identical → no-op, untouched
+since generation → regenerated, changed by the author → `generation_conflict` naming the paths and
+writing nothing; commits go through a temporary sibling and a rename, record last.
+
+**The testing kit.** `factory` (deterministic `Sequence`, `Factory`, `UserFactory`, `ItemFactory`),
+`app::TestApplication` (boots an `ApplicationBuilder` with the caller's providers and dispatches
+requests through the registry without a socket — `renvor-auth-http`'s own suite now runs on it),
+and `client` (a blocking loopback client over `minreq`, for tests that spawn a binary).
+
+**Framework changes this needed**: embedded migration sets (`renvor_auth::migrations`,
+`renvor_jobs::migrations`, counted by tests); `routes_deferred`/`DeferredEndpoints` (503 until set)
+and `HttpServerProvider::configured_at_boot`; `boot_deadline_for` on both persistence providers;
+`UserRepository::mark_email_verified` (a Phase 009 defect: the flag never became true — RED first,
+proven on all four rows); `from_forwarded` reads every parameter (010/L-17); `renvor-mail` and
+`renvor-storage` warning-free without their adapter feature (no `allow(dead_code)`, no lint
+weakened); the jobs README's migration count pinned by a test.
+
+**Contracts**: `command-surface.md` 1.2.0, `json-output.md` (`generation_conflict`, 21 codes),
+`project-manifest.md` 1.1.0, `template-contract.md` 1.1.0 (verbatim files, starter sets, snapshot
+policy, provenance record), `generation-transaction.md` (the sealed verification environment),
+`verification-sequence.md` 2.3.0 (census 86; step 4's general run with
+`RENVOR_TEST_STARTER_ROWS=none`; `cargo xtask census` for the rows).
+
+## 2. W-023 and W-024 — every removal-plan control, and the test that executes it
+
+| Control | W-023 (the auth starter) | W-024 (the five capabilities) |
+|---|---|---|
+| (1) unsupported inputs fail explicitly, never recorded as inert | `api_and_full_are_unsupported_values_not_reservations` (code, `supported`, prose, and the machine-readable `reason` — M-A1, M-A2); `every_governed_choice_of_principle_seven_is_classified` now classifies the auth starter as `Honoured(--auth)`; the `RESERVED` table no longer names `--auth` (pinned by its own test) | `an_unknown_capability_is_refused_naming_the_five`, `a_duplicate_capability_is_refused_and_none_with_a_name_is_refused` (M-A3, M-A4); the governed-choice test classifies capabilities as `Honoured(--capabilities)` |
+| (2) wizard/flag parity, validated `renvor.toml` persistence, real wiring, compile and start | parity: `parity::a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects` (a real pty, `y` to confirm); persistence: `a_valid_starter_selection_resolves_and_records_everything`, `the_equivalent_command_carries_every_answered_choice`, the `manifest-v7-*` snapshots, `renvor check` reads `[auth]`; wiring and start: every `*_with_everything_generates_and_proves_itself` row and `authentication_with_only_its_mail_generates_and_proves_itself` (`assert_recorded`: `src/auth.rs` present, `renvor-auth` in `Cargo.toml`, `renvor-auth-http` reachable in the lock closure exactly when chosen, the auth migrations applied, register → login → `/auth/me` → 401/403/204 → logout) | the same parity and persistence tests (`[capabilities]`); `the_cache_capability_with_containers_wires_the_container_cache` (M-A10); wiring and start: the five lean rows (`the_cache_alone…`, `mail_alone…`, `storage_alone…`, `observability_alone…`, `a_starter_without_a_database…`) and the four full rows, each `assert_recorded` for presence of the selected and absence of the unselected — in `renvor.toml`, in `Cargo.toml`, on disk, and in the **lock closure walked from the manifest's runtime dependencies** (`lock_closure`, FR-024) |
+| (3) the four-row and capability combinations, censused | `sqlx_postgres_…`, `sqlx_mysql_…`, `seaorm_postgres_…`, `seaorm_mysql_…` `_with_everything_generates_and_proves_itself` — auth on each row, the authenticated flow end to end; 19 `renvor-cli` rows in `ROW_EVIDENCE` (§4) | the same four rows carry `jobs` with its migrations applied on each engine; `cache` against Valkey 9.1.1, `mail` against Mailpit 1.29.1 (the verification mail read from its API), `storage` against an isolated root, `observability` against a local OTLP receiver and `/metrics`; censused (§4) |
+| (4) no tag, release, deployment, or publication while active | unchanged: nothing published; the `renvor` facade still says so | unchanged |
+
+Everything above is executable; the three negative controls in §4 prove the census notices a row
+that stops reporting. The validation review of this table is in `phase-011-review-record.md`.
+
+## 3. The covering matrix
+
+| Row | Database / ORM | Auth | Capabilities | Domain | Proves |
+|---|---|---|---|---|---|
+| `pgsqlx` | PostgreSQL / SQLx | session | all five | example + seed | the full flow on the first row |
+| `mysqlx` | MySQL / SQLx | session | all five | example + seed | the same on MySQL (the InnoDB lock-first trap, Phase 010, stays fixed) |
+| `pgsea` | PostgreSQL / SeaORM | session | all five | example + seed | the SeaORM entity/repository layout |
+| `mysea` | MySQL / SeaORM | session | all five | example + seed | the same on MySQL |
+| `authonly` | PostgreSQL / SQLx | session | mail only | none | auth without the example domain |
+| `cacheonly` | none | none | cache | none | Valkey wiring with no database |
+| `mailonly` | none | none | mail | none | SMTP wiring alone |
+| `storageonly` | none | none | storage | none | the filesystem root alone |
+| `observeonly` | none | none | observability | none | logs, metrics, and an OTLP export at shutdown |
+| `nodb` | none | none | none | none | the framework-backed starter with nothing selected |
+| refusals | — | — | — | — | `every_invalid_combination_is_refused_before_any_write` |
+| determinism | PostgreSQL / SQLx | session | all five | example | dry-run == real (`a_dry_run_of_a_starter_matches_the_real_run_and_writes_nothing`), byte-identical twice and a rerun a no-op (`a_starter_generated_twice_is_byte_identical_and_a_rerun_changes_nothing`), failure after verification leaves the destination absent |
+| `ressqlx`, `ressea` | PostgreSQL / SQLx, SeaORM | session | mail | example | `renvor generate resource` into a placed starter, proven live |
+| `authadded`, `authrefused` | PostgreSQL / SQLx | added later | mail | example | `renvor generate auth` into a placed starter; refused where `new` refuses |
+| parity | PostgreSQL / SQLx | session | all five | example | the wizard through a real terminal equals the flags, byte for byte |
+
+Every row runs in `crates/renvor-cli/tests/starter_matrix.rs` (`parity.rs` for the last), against
+rv-postgres 17.11, rv-mysql 8.4.11, rv-valkey 9.1.1, and rv-mailpit 1.29.1, with
+`CARGO_INCREMENTAL=0` and a shared absolute `RENVOR_TEST_TARGET_DIR`.
+
+## 4. The census on the checkpoint head, and its negative controls
+
+**The census** (`cargo xtask census`, step 4 of the verification sequence run over every four-row
+suite with the starter rows enabled), on head `d8e3a445363da965f40470b12100082d02c68254`, tree
+`ea7e3a52d0db8198b14508041e1622a327780317`, 2026-09-05 06:46:58–06:58:19, `CARGO_INCREMENTAL=0`,
+every `RENVOR_TEST_*` variable set (both `REQUIRE` flags and the Mailpit API included, so a skipped
+live proof fails rather than passes): **`[4/9] tests (four-row persistence census): ok — all 86
+required suites reported in`** — `renvor-auth-http` 0m11s, `renvor-cli` 10m09s (the eighteen
+`starter_matrix` rows — ten covering rows, the refusals, three determinism proofs, four generator
+rows — and the parity row: nineteen of the 86), `renvor-seaorm` 0m31s, `renvor-sqlx` 0m28s; exit 0. The
+only tracked files modified at the time were three governance/README documents (no build input);
+the code was exactly the committed tree. Log: `census-final.log` (scratch, quoted here).
+
+**Re-run on the closure head** `5eff451c435c8676aaa3cd231ccfc7d2e5ec5ba0` (tree
+`d1cab4cb7b1a1a18e387689e6ad3fdd0f6a628f9`, = `d8e3a44` + the publication-order fix + the
+manifest-comment pin test), 07:36:43–07:48:36, the same environment: **all 86 required suites
+reported in**, exit 0 — `renvor-cli` 10m57s, `renvor-seaorm` 0m22s, `renvor-sqlx` 0m20s
+(`census-h1.log`). The three negative controls are cited from `d8e3a44`: the delta to the closure
+head is a workflow line, `RELEASING.md`, and one unit test, none of which the census or the row
+table reads.
+
+**The three negative controls** (FR-032), run by `census-controls.sh` (scratch): the storage row's
+`row!(…)` invocation is renamed, then deleted, then gated behind `#[cfg(feature = "never-set")]`;
+after each edit the census runs and the file is restored from git (the trap guarantees it), and the
+census must fail naming that row. Run twice — on `3df5589` (10m46s / 9m51s / 9m54s) and, after
+the corrections, on the checkpoint head `d8e3a44` (2026-09-05 06:58:49–07:29:20) — all three fired
+each time:
+
+| Control | Census outcome on `d8e3a44` | `renvor-cli` group |
+|---|---|---|
+| rename | exit 1 — `[4/9] tests (four-row persistence census): FAILED — row renvor-cli::storage_alone_generates_and_proves_itself did not report in. Expected the line test storage_alone_generates_and_proves_itself ... ok from starter_matrix …` | 10m13s |
+| delete | exit 1 — the same line | 9m42s |
+| cfg-gate | exit 1 — the same line | 9m56s |
+
+The census reports the *first* row that did not report, so a control run proves the mechanism,
+not the other rows; the other rows' proof is the full census above on the same head. The matrix
+file was restored from git after each control (`git status` clean for it; the trap guarantees it).
+Logs: `census-control-{rename,delete,cfggate}.log` (scratch, quoted here).
+
+A first attempt at the rename control (on `9dd5bc4`) edited a `fn` that does not exist — the rows
+are a macro — so its census was effectively unmodified, and it is what caught the full-row
+regression in §5.
+
+## 5. Defects found, and by what
+
+- **The full rows regressed and the census control caught it.** After the generated tests were
+  switched to the testkit factories (`afab721`), only the generator rows were re-run; the four full
+  rows failed to compile their own test (`let session: Vec<…>` shadowing the new `session()` helper,
+  E0618 ×2). The first census control — a no-op rename, so an unmodified census — reported it.
+  Fixed in `63ab6f8` (one binding renamed, two lines reflowed for `rustfmt`), re-proven on all four
+  rows (223 s, 18 passed). Recorded in `phase-011-limitations.md` §Closed in this phase and in the
+  memory that governs template edits.
+- **`email_verified` never became true** (Phase 009): `confirm_verification` consumed the token and
+  wrote nothing to the user row. `UserRepository::mark_email_verified` added, RED first, proven on
+  all four rows, mutation M-B-01.
+- **The verification mail was never sent by the starter** until `/auth/verification/resend` was
+  wired; the OTLP batch was lost at drop until the telemetry is shut down explicitly; `/metrics` was
+  empty until a start-time gauge existed; the seeds raced the first request until `SeedProvider`.
+- **Two entry findings** (Phase 010's review): the jobs README said four pairs (five shipped) — now
+  a test reads both; `renvor-mail`/`renvor-storage` warned without their feature — the variant and
+  its arms are gated on the feature that constructs them; xtask step 7 compiles each port crate
+  featureless under `-D warnings` with a control that must fire.
+- **M-A1 survived**: the auth refusal's machine-readable `reason` was unpinned; pinned.
+- **The lock-closure walk (FR-024, added after the first validation pass) found `renvor-auth` in
+  a mail-only starter's graph** — reachable through the persistence adapters, which implement
+  its repositories, in every database-backed starter whether or not auth was chosen. The
+  capability crates are absent when unselected, as required; the auth domain crate is not, and
+  that is recorded as limitation L-13 and asserted exactly (`renvor-auth-http` follows the
+  choice; `renvor-auth` follows the database).
+- **Feature-gated rustdoc links** (`EntropySource`, `ApplicationBuilder`) resolved at the crate root
+  because of the outer `///` on the modules; qualified. The gate's step 9 does not run
+  `--all-features` (a known gap); `RUSTDOCFLAGS=-D warnings cargo doc -p renvor-testkit --all-features
+  --no-deps` was run by hand after the fix (06:05, green) and again by the second validation pass
+  (07:07, green).
+
+## 6. Testing discipline
+
+Every batch: the failing test first (quoted in the batch evidence), the minimal change, the green
+run, a positive control, then the mutations in `phase-011-mutation-ledger.md`. The four-row suites
+are not process-safe, so no two four-row runs overlap; the template rows are re-run for every
+guard the edit touches (§5, first bullet, is the case that wrote that rule down).
+
+## 7. Documentation
+
+`crates/renvor-cli/README.md` (`generate`), `crates/renvor-testkit/README.md` and crate docs
+(`factory`, `app`, `client`), every generated `README.md` (what is production-capable and what is
+not, the environment keys, how to run the generated test against real services), the contracts in
+§1, `verification-sequence.md` 2.3.0, and `README.md` (Phase 011's state). ADRs: none accepted;
+none created — the decisions this phase took are recorded in the contracts and in
+`phase-011-dependency-inventory.md`, and the two API changes it declined (010/L-15's
+`ConnectionString` constructor; a capability generator) are named in `phase-011-limitations.md`
+as Phase 012 work behind their own records.
+
+## 8. Limitations
+
+`phase-011-limitations.md`: 13 retained rows of this phase; 010/L-7, 010/L-17, 009/L-15 closed with
+the measurement; 010/L-14 closed only after the validation review; 010/L-1, L-5, L-6, L-15 retained
+with a disposition; eleven Phase 009 rows inventoried.
+
+## 8a. Task ledger at the checkpoint, stated as it actually is
+
+The hey-daddy ledger for this phase (statuses set by the implementer and the validation agent;
+nobody marks `complete` but the final authority): **#101** batch A (model), **#102** batch B
+(templates), **#103** batch C (matrix, census, controls), **#106** batch F (generators, factories,
+harness, dispositions) — `coding_done` after the corrections of 2026-09-05, awaiting the second
+validation pass; **#104** batch D (the two entry findings) — `validated`; **#105** batch E (the
+W-023/W-024 closure records) — written against the checkpoint head after the second pass, then
+`coding_done`. Nothing in the ledger is `complete`.
+
+## 9. What this phase did not do
+
+- No S3 adapter, no TLS handshake in a generated project, no `renvor generate capability`, no
+  upgrade command over the recorded template metadata, no two-process jobs test (010/L-6), no
+  `ConnectionString` API change (010/L-15), no Windows run of a database-backed row, no work on the
+  ten retained Phase 009 auth rows — each with an owner and a target in `phase-011-limitations.md`.
+- No ADR accepted, no waiver created or granted, no independent human review (none is claimed),
+  nothing published.
+
+## 10. Verification and closure binding
+
+PENDING-GATES

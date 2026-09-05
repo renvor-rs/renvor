@@ -36,9 +36,10 @@ section. It is not amended by practice, precedent, or convenience.
 | Registry bootstrap owner | **Ahmed Anbar** | Accountable for the first manual registry publication and the least-scope token lifecycle |
 
 **Renvor currently has one maintainer.** Every role above is held by the same person.
-This concentration is the root cause of every active waiver **but two** — W-023 and W-024
-waive the timing of a generator obligation, not a review — and it is stated plainly rather
-than distributed across four rows to look larger than it is.
+This concentration is the root cause of every active waiver — W-023 and W-024, which waived the
+timing of a generator obligation rather than a review, were closed on 2026-09-05 when Phase 011
+proved the support — and it is stated plainly rather than distributed across four rows to look
+larger than it is.
 
 ## Decision records
 
@@ -161,10 +162,11 @@ Rules that make a waiver a waiver rather than a loophole:
   release blocker.
 - **Security release blockers cannot be waived** for a public release.
 
-**Twenty-three** waivers are currently active: twenty-one traceable to the same
-single-maintainer gap, and two (W-023, W-024) to constitution principle VII's generator
-obligation, which two library-only phases left unmet. Each covers one rule, at one level, in
-one phase — and none is extended to another by reinterpretation:
+**Twenty-one** waivers are currently active, every one traceable to the same single-maintainer
+gap. W-023 and W-024 — constitution principle VII's generator obligation, which two library-only
+phases left unmet — were **closed on 2026-09-05**, when Phase 011 proved the support; they stay in
+the table marked closed and are not counted. Each covers one rule, at one level, in one phase — and
+none is extended to another by reinterpretation:
 
 | ID | Gap | Level | Phase | Expiry |
 |---|---|---|---|---|
@@ -189,13 +191,12 @@ one phase — and none is extended to another by reinterpretation:
 | **W-020** | no independent requirements-and-security review | phase level | Phase 009 | **2027-02-11** |
 | **W-021** | no independent reviewer for **ADR-0031 … ADR-0037** (one coupled cluster) | decision record | Phase 010 | **2027-02-11** |
 | **W-022** | no independent requirements-and-security review | phase level | Phase 010 | **2027-02-11** |
-| **W-023** | principle VII's **auth-starter** choice is not yet mandatory in `renvor new` — timing only, **not a review gap** | generator obligation | Phase 009 | **2026-10-04** |
-| **W-024** | principle VII's **capabilities** choice is not yet mandatory in `renvor new` — timing only, **not a review gap** | generator obligation | Phase 010 | **2026-10-04** |
+| **W-023** | principle VII's **auth-starter** choice was not mandatory in `renvor new` until Phase 011 — timing only, **not a review gap** | generator obligation | Phase 009 | **closed 2026-09-05** (expiry was 2026-10-04) |
+| **W-024** | principle VII's **capabilities** choice was not mandatory in `renvor new` until Phase 011 — timing only, **not a review gap** | generator obligation | Phase 010 | **closed 2026-09-05** (expiry was 2026-10-04) |
 
 Each review-gap waiver expires on the date shown **or** immediately when a qualified second
-person becomes available — whichever comes first; W-023 and W-024 expire on the date shown
-**or** earlier when Phase 011 implements and proves the generator support — whichever comes
-first. Full text, compensating controls, and scope limits are in
+person becomes available — whichever comes first; W-023 and W-024 closed on 2026-09-05, when
+Phase 011 implemented and proved the generator support, before their 2026-10-04 expiry. Full text, compensating controls, and scope limits are in
 [`governance/waivers.md`](governance/waivers.md).
 
 **W-006 is the third explicit reviewed exception in Phase 002**, which exceeds the waiver
@@ -240,8 +241,17 @@ capabilities input failing explicitly rather than being recorded as an inert cho
 block while either is active. They make Phase 009 and Phase 010 the second and third phases to hold
 **three** explicit reviewed exceptions, recorded in the ledger as acknowledged departures rather
 than hidden by extending another waiver. **W-023 is not retroactive** and does not make Phase 009's
-closure compliant. The limitation that records the gap, Phase 010's L-14, stays *deferred* — not
-fixed, not closed.
+closure compliant. The limitation that records the gap, Phase 010's L-14, stayed *deferred* — not
+fixed, not closed — until Phase 011 closed it with the measurement.
+
+**W-023 and W-024 closed on 2026-09-05, the first closures in the ledger.** Phase 011 made both
+choices mandatory in `renvor new`'s wizard and flags, persisted them in `renvor.toml`, wired the
+selected crates into the generated project, and proved every removal-plan control by executable
+tests on all four persistence rows and against each capability's real server — censused (86 rows),
+the three negative controls fired, bound to head `5eff451c435c8676aaa3cd231ccfc7d2e5ec5ba0`, tree
+`d1cab4cb7b1a1a18e387689e6ad3fdd0f6a628f9` (`governance/phase-011-evidence.md`, reviewed in
+`governance/phase-011-review-record.md`). The rows stay in both tables, marked closed and not
+counted as active; W-023 stays non-retroactive.
 
 **Ahmed Anbar's acceptance of Phase 010 is a human maintainer decision, and it is not independent
 review.** No independent human requirements-and-security review of Phase 010 has occurred. The
