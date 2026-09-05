@@ -302,6 +302,36 @@ mod boot_deadline {
         assert_eq!(never.required_boot_deadline(), DEFAULT_PROVIDER_DEADLINE);
     }
 
+    /// Phase 011: an application that constructs its provider AT Boot — so that the connection
+    /// string is read by the provider that needs it and the inspection requests need no
+    /// database — has no provider to ask before Boot. The deadline depends on the migration
+    /// settings alone, so it is answerable from them, and the two answers must never differ.
+    #[test]
+    fn the_boot_deadline_is_answerable_from_the_settings_before_the_provider_exists() {
+        for settings in [
+            MigrationSettings::default().with_policy(MigrationPolicy::OnBoot),
+            MigrationSettings::default(),
+            MigrationSettings::default()
+                .with_policy(MigrationPolicy::OnBoot)
+                .with_lock_timeout(Duration::from_secs(2))
+                .expect("bounded")
+                .with_run_timeout(Duration::from_secs(3))
+                .expect("bounded"),
+        ] {
+            assert_eq!(
+                SqlxProvider::<sqlx::Postgres>::boot_deadline_for(&settings),
+                provider_with(settings.clone()).required_boot_deadline(),
+                "the settings-only answer drifted from the provider's own"
+            );
+        }
+        assert_eq!(
+            SqlxProvider::<sqlx::Postgres>::boot_deadline_for(
+                &MigrationSettings::default().with_policy(MigrationPolicy::OnBoot)
+            ),
+            Duration::from_secs(365)
+        );
+    }
+
     /// The answer tracks the configured bounds rather than the defaults.
     #[test]
     fn the_required_deadline_follows_the_configured_bounds() {
