@@ -551,16 +551,17 @@ refusals, and they live under `specs/`, which is gitignored, so the edit is on t
 `488ca176fcc887aab2ffc3c1933e40e2d6c0cffc`, one signed subject-only commit over `a9f873e`
 (`feat(cli): gate regeneration of unchanged files behind --overwrite-unchanged`): the classifier,
 the flag on every `generate` action, the dispatch, the help snapshot, the two contracts, the
-limitation, and the tests; 10 tracked files, 915 insertions and 115 deletions before the
-formatter's reflow.
+limitation, and the tests; `git show --stat`: 11 files changed, 961 insertions(+), 115
+deletions(-).
 
 **Red before green.** `red-fr048.log`: `a9f873e` exported to a scratch directory with the new
 `tests/generate.rs` copied over it and its own target directory, 22:37:49–22:38:07, both new
 binary tests FAILED — the regenerable one at its first assertion (the reviewed head replaced the
 file: `"action":"regenerate"`, `"written":1`), the mixed-plan one because the refusal carried no
 `reason`. The first run of the tests on the worktree, before the implementation, failed the same
-way, the mixed-plan test then also for a reason of its own (half a migration pair removed trips
-the version check first), which was corrected before the export above.
+way (its output is in the session transcript only, not on disk), the mixed-plan test then also
+for a reason of its own — half a migration pair removed trips the version check first — which
+was corrected before the export above.
 
 **Suites on the source head** (worktree, `CARGO_INCREMENTAL=0`, before the commit and again after
 the re-application §5 records):

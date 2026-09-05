@@ -261,7 +261,7 @@ assertion (`a regenerable file was replaced without the flag`, the envelope show
 `"action":"regenerate"` and `"written":1`), and
 `a_changed_file_is_refused_with_the_flag_and_a_mixed_plan_writes_nothing` FAILED because the
 refusal carried no `reason`. The same two failures were seen on the worktree before the change
-(22:2x, the first run of the tests), the second then for a wrong reason of the test's own — half a
+(the first run of the tests, in the session transcript only), the second then for a wrong reason of the test's own — half a
 migration pair removed trips the version check first — corrected before the red run above.
 
 | Required case | Test |
