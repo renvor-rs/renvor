@@ -62,7 +62,7 @@ first-pass fix verified in code, not prose.
 | Finding | Severity | Disposition |
 |---|---|---|
 | **D-1** `cargo test -p xtask` fails `publication_order_is_topological`: the testkit's new optional `renvor-http` edge (feature `http`) puts it before `renvor-openapi` in the release dry-run's publication order, so step 4 of `cargo xtask verify` cannot pass on this head | HIGH | `renvor-testkit` moved after `renvor-http` in `release-dry-run.yml` and `RELEASING.md`; the test passes; the closure head is the one carrying this fix, gated there (§evidence §10) |
-| **D-2** closure prerequisites unwritten: five `PENDING` fields; a review-record row promising the pull request's checks while no pull request existed | HIGH (governance) | filled at the checkpoint, after the gates and the pull request — this record's §3 and the evidence's §10 |
+| **D-2** closure prerequisites unwritten: five `PENDING` fields; a review-record row promising the pull request's checks while no pull request existed | HIGH (governance) | filled at the checkpoint: the gates and the pull request are in the evidence's §10 (PR #62, its checks, and the two Windows corrections they forced), the Codex review in this record's §3 |
 | **D-3** the mutation ledger said the controls were re-run on the final head before those runs existed | MEDIUM | the three outcomes on `d8e3a44` are quoted; the sentence now names both heads |
 | **D-4** two mutations cited without a log (M-A1's re-application, M-F2) | MEDIUM | both re-run to logs (`m-a1-rerun.log`, `m-f2.log`) and independently reproduced by this pass |
 | **D-5** "fourteen starter-matrix rows" — `ROW_EVIDENCE` holds eighteen plus parity | LOW | corrected |

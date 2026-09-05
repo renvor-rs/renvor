@@ -2,7 +2,7 @@
 
 **Companion to**: [`phase-011-evidence.md`](phase-011-evidence.md)
 **Phase**: 011 — Generators, the auth starter, and the testing kit
-**Total**: **23 controlled mutations** — **22 killed by a named test, 1 survived its first run**
+**Total**: **24 controlled mutations** — **23 killed by a named test, 1 survived its first run**
 (M-A1: the test asserted the code, the `supported` detail, and the prose, but not the
 machine-readable `reason`; the test was strengthened, the mutation re-applied and killed) — plus the
 **three census negative controls** (a starter row renamed, deleted, and `cfg`-gated), each of which
@@ -24,7 +24,7 @@ tracked.
 | B — auth verification confirmation | 1 | 1 | 0 | `crates/renvor-auth/src/service.rs`; the adapter proof ran green on all four rows |
 | C — the starter matrix | 0 + 3 controls | 3 controls fired | — | the census's negative controls are the mutations of this batch: a row renamed, deleted, and `cfg`-gated |
 | D — the two entry findings | 2 | 2 | 0 | README count; the `cfg`-gated variant |
-| E/F — L-17, the testkit client, the apply engine, the record, verification, the generators, the manifest comment | 10 | 10 | 0 | M-F1 … M-F10; F3–F9 run on head `d8e3a44` by `mutate-f.py`, final pristine run 288 passed; F10 on the closure head |
+| E/F — L-17, the testkit client, the apply engine, the record, verification, the generators, the manifest comment, the Windows path | 11 | 11 | 0 | M-F1 … M-F11; F3–F9 run on head `d8e3a44` by `mutate-f.py`, final pristine run 288 passed; F10 on the closure head; F11 on `f95ab6b` |
 
 ## The entries worth reading
 
@@ -104,3 +104,4 @@ Run on head `3df5589` and re-run on the checkpoint head `d8e3a44` (07:29, all th
 | M-F8 | the migration version's month unpadded (`{month}`) | `commands::generate::tests::the_version_is_the_utc_instant_to_the_second` (generate.rs:336) |
 | M-F9 | a resource name need not start with an upper-case letter | `commands::generate::resource_tests::names_are_pascal_case_and_columns_are_the_closed_set` (generate.rs:940) |
 | M-F10 | `renvor.toml.j2`: the comment names `RENVOR_AUTH__CSRF_KEY` again (the first-pass defect) | `commands::new::tests::the_manifest_names_the_variables_the_starter_reads` (new.rs:1249; `m-f10.log`, 07:42) — the pin the second pass asked for (D-7) |
+| M-F11 | `config/model.rs` `without_verbatim_prefix`: the `\\?\` disk prefix is never removed | `config::model::tests::a_verbatim_windows_prefix_is_removed_from_the_canonical_path` (model.rs:2232; `m-f11.log`, 10:51) — the Windows defect PR #62 found |

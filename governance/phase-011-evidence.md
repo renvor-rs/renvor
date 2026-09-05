@@ -199,6 +199,19 @@ regression in §5.
   Allowlisted as FP-005 in `.gitleaks.toml` by the fixture line's address and key, not by path or
   commit and without the value; verified by a canary beside a copy of the line still being
   reported. The history scan is clean; both legs re-run (§10).
+- **PR #62's Windows platform legs failed twice, on the `nodb` row and then on a unit test.**
+  First (`03a3e8d`): on Windows `std::fs::canonicalize` answers with a verbatim path
+  (`\\?\D:\…`), the generator rendered it into the starter's `Cargo.toml` as a path dependency,
+  and cargo refused it (`invalid path url`) in staging — a defect no macOS or Linux run can see.
+  Fixed in `f95ab6b` by removing the prefix at the canonicalisation site (`without_verbatim_prefix`,
+  pure text, RED first, tested on every platform; M-F11). Second (`f95ab6b`): the model's own
+  test compared the recorded path with the raw canonical form, prefix included; the expectation
+  now strips it too (`2df9f81`). Third (`2df9f81`): generation and the generated test's own run
+  passed on Windows up to the last assertion — a clean exit after the interrupt — which the Windows
+  stop path can never satisfy, because a test there cannot send its child a SIGINT and the template
+  ended the process with `kill()`. `stop()` now returns `None` where no interrupt can be sent and the
+  generated test prints `SKIPPED` for that assertion instead of faking a status (limitation L-10).
+  Both local legs were run again on each of these heads.
 - **The second validation pass found a release-order regression** (`publication_order_is_topological`):
   the testkit's optional `renvor-http` edge put it before `renvor-openapi` in the publication list.
   Fixed in `8c09835` (`release-dry-run.yml`, `RELEASING.md`).
@@ -258,19 +271,21 @@ services (rv-postgres 17.11, rv-mysql 8.4.11, rv-valkey 9.1.1, rv-mailpit 1.29.1
 `RENVOR_TEST_*` variable set including both `REQUIRE` flags, `RENVOR_TEST_STARTER_ROWS` unset for
 the census, a clean tracked tree (step 9 asserts it; a first attempt on `e06ae4b` reached step 9
 green through 8 and failed only that step, because this record was being edited in the tree while
-the leg ran — recorded, not hidden).
+the leg ran — recorded, not hidden). Both legs were green on `5cb4b25` (08:45–09:28) before the Windows
+corrections moved the head, and again on `f95ab6b` and `2df9f81` after each; the table records the
+final pair, on the head below.
 
 | | leg A | leg B |
 |---|---|---|
 | Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
 | Toolchain | rustc 1.94.0 | rustc 1.97.1 (8bab26f4f 2026-07-14) |
-| Head | `5cb4b257eb9434bbf25b1bde2e93eb3378cc167f` | `5cb4b257eb9434bbf25b1bde2e93eb3378cc167f` |
-| Tree | `fd006cc188b92a57e6ec7f4639f5b68dc70d3777` | `fd006cc188b92a57e6ec7f4639f5b68dc70d3777` |
+| Head | `84a8d2e7b2d6ae2d3333a3ee1c2ac90df87fec57` | `84a8d2e7b2d6ae2d3333a3ee1c2ac90df87fec57` |
+| Tree | `faddc2185bc42bcc4b51957b0f4373cbd32f6cb5` | `faddc2185bc42bcc4b51957b0f4373cbd32f6cb5` |
 | Steps | 9/9 ok | 9/9 ok |
 | Exit | 0 | 0 |
-| Tests | 2170 passed, 0 failed, 5 ignored (145 `test result` lines) | 2170 passed, 0 failed, 5 ignored (145 `test result` lines) |
-| Census | 86/86 rows reported in (`renvor-cli` 10m34s) | 86/86 rows reported in (`renvor-cli` 10m22s) |
-| Elapsed | 19 min 44 s (08:45:37–09:05:21; step 4 general run 8m04s) | 22 min 39 s (09:05:21–09:28:00; step 4 general run 8m37s) |
+| Tests | 2171 passed, 0 failed, 5 ignored (145 `test result` lines) | 2171 passed, 0 failed, 5 ignored (145 `test result` lines) |
+| Census | 86/86 rows reported in (`renvor-cli` 9m 56s) | 86/86 rows reported in (`renvor-cli` 10m 04s) |
+| Elapsed | 11:35:44–11:53:53 (step 4 general run 6m 53s) | 11:53:53–12:12:31 (step 4 general run 7m 10s) |
 
 Logs: `gate-1.94.0.log`, `gate-stable.log` (scratch, quoted here).
 
@@ -281,12 +296,12 @@ Logs: `gate-1.94.0.log`, `gate-stable.log` (scratch, quoted here).
 | `4f383005851809802fb91cc4cc97972689b1c58b` | `e77cb1b6c9fc4100a502b9c48fb9a3385c3716eb` | base (origin/main) |
 | `d8e3a445363da965f40470b12100082d02c68254` | `ea7e3a52d0db8198b14508041e1622a327780317` | the second validation pass's head: census 86/86, the three controls fired |
 | `5eff451c435c8676aaa3cd231ccfc7d2e5ec5ba0` | `d1cab4cb7b1a1a18e387689e6ad3fdd0f6a628f9` | **the closure head** W-023, W-024, and 010/L-14 are bound to: `d8e3a44` + the publication-order fix + the manifest-comment pin; census 86/86 re-run here |
-| `5cb4b257eb9434bbf25b1bde2e93eb3378cc167f` | `fd006cc188b92a57e6ec7f4639f5b68dc70d3777` | **the gate head**: both legs green; = the closure head + the closure records, two file-set test corrections, the FP-005 allowlist entry, and this record's earlier sections — no generator, template, or framework code differs from the closure head (`git diff 5eff451 5cb4b257eb9434bbf25b1bde2e93eb3378cc167f --stat -- crates/ templates/` is empty apart from the two test files named) |
+| `84a8d2e7b2d6ae2d3333a3ee1c2ac90df87fec57` | `faddc2185bc42bcc4b51957b0f4373cbd32f6cb5` | **the gate head**: both legs green; = the closure head + the closure records, two file-set test corrections, the FP-005 allowlist entry, this record's earlier sections, and the three Windows corrections PR #62's platform legs forced — `without_verbatim_prefix` (Windows' verbatim canonical path refused by cargo in a path dependency; a pure text function tested on every platform, M-F11), its test expectation, and the platform-honest stop path of the generated tests (`67449a5`, L-10). `git diff 5eff451 84a8d2e --stat -- crates/` names two test files, `config/model.rs`, and three test templates; no generator logic other than the path text changed |
 | the tip of `feat/phase-011-generators-testing-kit` | — | **the checkpoint (pull-request) head**: the gate head + this section, then the CI record — documents only; named, with the pull request's number, in the CI paragraph below once it exists |
 
-**Pull request.** Opened against `main` from this section's commit; number and CI recorded in the paragraph below by the following documents-only commit. **Kept unmerged**; nothing tagged, released, published, or deployed.
+**Pull request.** [#62](https://github.com/renvor-rs/renvor/pull/62), `feat/phase-011-generators-testing-kit` → `main`, opened 2026-09-05 from `03a3e8d`; the Windows fix and this record were pushed onto it. **Kept unmerged**; nothing tagged, released, published, or deployed.
 
-**CI.** Recorded after the pull request's checks complete (the following commit).
+**CI.** On `84a8d2e7b2d6ae2d3333a3ee1c2ac90df87fec57` every required check passed — 13 passed, 1 skipped by design (`attest rehearsal artifacts`, release-only): verify (1.94.0) (40m8s), verify (stable) (40m25s), platform (macos-latest, 1.94.0) (10m37s), platform (macos-latest, stable) (11m8s), platform (windows-latest, 1.94.0) (18m58s), platform (windows-latest, stable) (16m6s), docs (1m48s), security (2m38s), dependency-review (8s), Analyze (rust) (7m59s), Analyze (actions) (49s), CodeQL (3s), package and verify without publishing (2m9s). The `verify` jobs run the same nine steps against real PostgreSQL, MySQL, Valkey, and Mailpit containers with `RENVOR_TEST_STARTER_ROWS=none` for the general run and the census for the rows; the platform jobs run the `nodb` starter row. Three earlier runs on this pull request failed only their Windows platform legs, each on a defect recorded in §5 and corrected before this head (`03a3e8d`: the verbatim canonical path; `f95ab6b`: the model's own expectation of it; `2df9f81`: the clean-exit assertion after an interrupt Windows cannot send). The commit that adds this paragraph is documents-only; its own run is the pull request's final state.
 
 **What is not claimed.** No independent human review; no merge, tag, release, publication, or
 deployment; W-023 and W-024 are closed by the ledger entries that cite the closure head, not by
