@@ -5,8 +5,11 @@
 //! `renvor new` writes where nothing was. Everything here writes where the user already works,
 //! so it goes through [`crate::generate::apply`]: every target path is classified against the
 //! working tree and the provenance record before the first byte is written, and a file the user
-//! changed since generation is a `generation_conflict` that writes nothing. A rerun of the same
-//! command is a no-op that says so.
+//! changed since generation is a `generation_conflict` that writes nothing. A file that differs
+//! from the render but is unchanged since generation is *regenerable*, and is replaced only
+//! under `--overwrite-unchanged` (FR-048 as decided on 2026-09-05); without the flag it refuses
+//! the run the same way, naming the flag. A rerun of the same command is a no-op that says so,
+//! and a dry run classifies exactly as a real run does.
 //!
 //! # Migrations
 //!
@@ -431,19 +434,56 @@ fn copy_project(from: &Path, into: &Path) -> Result<(), CliError> {
     Ok(())
 }
 
+/// The pieces `main` hands to [`run`] for a parsed `renvor generate` action: the project path,
+/// what to generate, and whether regenerable files may be replaced — one place, so every action
+/// carries `--overwrite-unchanged` the same way.
+#[must_use]
+pub fn parts(action: crate::config::flags::GenerateAction) -> (std::path::PathBuf, Action, bool) {
+    use crate::config::flags::GenerateAction;
+    match action {
+        GenerateAction::Migration {
+            name,
+            import,
+            path,
+            overwrite_unchanged,
+        } => (
+            path,
+            Action::Migration { name, import },
+            overwrite_unchanged,
+        ),
+        GenerateAction::Resource {
+            name,
+            fields,
+            path,
+            overwrite_unchanged,
+        } => (path, Action::Resource { name, fields }, overwrite_unchanged),
+        GenerateAction::Auth {
+            path,
+            overwrite_unchanged,
+        } => (path, Action::Auth, overwrite_unchanged),
+    }
+}
+
 /// Runs a generation into the project at `path`.
+///
+/// `overwrite_unchanged` is the operator's `--overwrite-unchanged`: a target that differs from
+/// the render but is unchanged since generation is replaced with it and refuses the run without
+/// it. It waives nothing else: a changed file refuses the run either way, and a dry run
+/// classifies exactly as a real run does.
 ///
 /// # Errors
 ///
 /// [`Code::ManifestInvalid`] when `renvor.toml` does not validate; [`Code::UnsupportedCombination`]
 /// when the project has no database to migrate; [`Code::UnsupportedValue`] for a name or an
 /// import outside the grammar; [`Code::GenerationConflict`] when a target file was changed since
-/// generation — nothing is written; [`Code::RenderFailed`] when a write fails.
+/// generation, or is regenerable and the flag was not given — nothing is written;
+/// [`Code::RenderFailed`] when a write fails.
 pub fn run(
     reporter: &Reporter,
     path: &Path,
     action: Action,
     dry_run: bool,
+    overwrite_unchanged: bool,
 ) -> Result<Exit, CliError> {
     let manifest = check::load(path)?;
     let project = Dir::open_ambient_dir(path, cap_std::ambient_authority()).map_err(|error| {
@@ -516,7 +556,7 @@ pub fn run(
         Action::Auth => plan_auth(&project, &manifest)?,
     };
 
-    let mut plan = apply::plan(&project, planned)?;
+    let mut plan = apply::plan(&project, planned, overwrite_unchanged)?;
     if let Some(definition) = resource {
         plan = plan.with_resource(definition);
     }
@@ -633,6 +673,37 @@ mod tests {
         assert_eq!(version_of("README.md"), None);
         assert_eq!(version_of("notes_20260901.sql"), None);
         assert_eq!(version_of("_x.up.sql"), None);
+    }
+
+    #[test]
+    fn every_generate_action_carries_the_overwrite_flag_and_it_is_off_by_default() {
+        // FR-048 AS DECIDED: the flag is per action, so `renvor generate auth
+        // --overwrite-unchanged` reads naturally, and `parts` is the one place that hands it on
+        // — a dispatch that dropped it for one action would drop it here, where this test looks.
+        use clap::Parser as _;
+        for argv in [
+            vec!["renvor", "generate", "migration", "add_x"],
+            vec!["renvor", "generate", "resource", "Post", "title:string"],
+            vec!["renvor", "generate", "auth"],
+        ] {
+            let cli = crate::config::flags::Cli::try_parse_from(&argv).expect("parses");
+            let crate::config::flags::Command::Generate { action } = cli.command else {
+                panic!("not a generate command")
+            };
+            let (path, _, overwrite) = parts(action);
+            assert!(!overwrite, "{argv:?}: on by default");
+            assert_eq!(path, std::path::PathBuf::from("."));
+            let mut with = argv.clone();
+            with.extend(["--overwrite-unchanged", "--dry-run", "--path", "elsewhere"]);
+            let cli = crate::config::flags::Cli::try_parse_from(&with).expect("parses");
+            assert!(cli.dry_run, "{with:?}: a dry run may carry the flag");
+            let crate::config::flags::Command::Generate { action } = cli.command else {
+                panic!("not a generate command")
+            };
+            let (path, _, overwrite) = parts(action);
+            assert!(overwrite, "{with:?}: the flag was dropped");
+            assert_eq!(path, std::path::PathBuf::from("elsewhere"));
+        }
     }
 
     #[test]
@@ -1975,8 +2046,8 @@ mod auth_tests {
         let version = &up.path["migrations/".len().."migrations/".len() + 14];
         assert!(version.bytes().all(|b| b.is_ascii_digit()), "{}", up.path);
         // The plan classifies the project's own migration as untouched — it is not in the plan —
-        // and the rest as regenerated or new; nothing conflicts.
-        let plan = apply::plan(&dir, planned).expect("no conflict");
+        // and the rest as regenerated or new; nothing conflicts under the flag.
+        let plan = apply::plan(&dir, planned, true).expect("no conflict");
         assert!(
             plan.summary()
                 .iter()
@@ -2014,8 +2085,8 @@ mod auth_tests {
         let (_, planned, definition) =
             plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
                 .expect("plans the resource");
-        let plan = apply::plan(&dir, planned)
-            .expect("plans")
+        let plan = apply::plan(&dir, planned, false)
+            .expect("a resource creates and edits: no flag needed")
             .with_resource(definition);
         apply::commit(&dir, plan, "0.0.0", crate::templates::VERSION).expect("commits");
         let before = dir.read_to_string("src/resources/post.rs").expect("module");
@@ -2036,7 +2107,7 @@ mod auth_tests {
             !planned.iter().any(|p| p.path.contains("_create_post.")),
             "the resource's migration does not depend on auth and is not re-planned"
         );
-        let plan = apply::plan(&dir, planned).expect("an untouched module regenerates");
+        let plan = apply::plan(&dir, planned, true).expect("an untouched module regenerates");
         assert!(
             plan.summary()
                 .iter()
@@ -2051,7 +2122,7 @@ mod auth_tests {
         dir.write("src/resources/post.rs", edited.as_bytes())
             .expect("write");
         let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
-        let error = apply::plan(&dir, planned).expect_err("an edited module is a conflict");
+        let error = apply::plan(&dir, planned, true).expect_err("an edited module is a conflict");
         assert_eq!(error.code, Code::GenerationConflict);
         assert!(
             error
@@ -2061,6 +2132,157 @@ mod auth_tests {
             "{:?}",
             error.details
         );
+    }
+
+    /// One detail of an error, by key.
+    fn detail<'a>(error: &'a CliError, key: &str) -> Option<&'a str> {
+        error
+            .details
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// The lines between the resources markers of `src/routes.rs`.
+    fn resources_block(text: &str) -> &str {
+        let (_, begin, end) = MARKED[1];
+        let start = text.find(begin).expect("begin marker");
+        let start = start + text[start..].find('\n').expect("newline") + 1;
+        let stop = text[start..].find(end).expect("end marker") + start;
+        &text[start..stop]
+    }
+
+    #[test]
+    fn adding_auth_needs_the_flag_and_replaces_only_what_the_generator_owns() {
+        // FR-048 AS DECIDED (2026-09-05). `generate auth` renders every generator-owned file
+        // again, so on a starter nobody edited each of them is regenerable: without
+        // `--overwrite-unchanged` the run is refused, names the flag, and writes nothing; with
+        // it they are replaced — and a marked file's block, the generators' shared zone, is
+        // carried across the re-render, so only the bytes the generator owns change.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (path, dir) = starter_without_auth(base.path(), true);
+        let manifest = check::load(&path).expect("loads");
+        let (_, planned, definition) =
+            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
+                .expect("plans the resource");
+        let plan = apply::plan(&dir, planned, false)
+            .expect("a resource creates and edits: no flag needed")
+            .with_resource(definition);
+        apply::commit(&dir, plan, "0.0.0", crate::templates::VERSION).expect("commits");
+        let routes_before = dir.read_to_string("src/routes.rs").expect("routes");
+        assert!(
+            resources_block(&routes_before).contains("crate::resources::post::declare"),
+            "{routes_before}"
+        );
+        let main_before = dir.read_to_string("src/main.rs").expect("main");
+
+        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let error = apply::plan(&dir, planned, false).expect_err("regenerable files need the flag");
+        assert_eq!(error.code, Code::GenerationConflict);
+        assert_eq!(detail(&error, "reason"), Some("overwrite_required"));
+        assert_eq!(detail(&error, "flag"), Some(apply::OVERWRITE_FLAG));
+        let regenerable = detail(&error, "regenerable").expect("the regenerable paths are named");
+        for owned in ["src/main.rs", "src/routes.rs", "Cargo.toml", "renvor.toml"] {
+            assert!(
+                regenerable.contains(owned),
+                "{owned} missing from: {regenerable}"
+            );
+        }
+        assert_eq!(detail(&error, "changed"), None, "{:?}", error.details);
+        assert!(!dir.exists("src/auth.rs"), "a refusal wrote the starter");
+        assert_eq!(
+            dir.read_to_string("src/main.rs").expect("main"),
+            main_before,
+            "a refusal replaced a regenerable file"
+        );
+
+        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let plan =
+            apply::plan(&dir, planned, true).expect("with the flag, regenerable regenerates");
+        assert!(
+            plan.summary()
+                .iter()
+                .any(|(p, a)| *p == "src/routes.rs" && *a == Applied::Regenerate),
+            "{:?}",
+            plan.summary()
+        );
+        apply::commit(&dir, plan, "0.0.0", crate::templates::VERSION).expect("commits");
+        let routes_after = dir.read_to_string("src/routes.rs").expect("routes");
+        assert_ne!(
+            routes_after, routes_before,
+            "the generator-owned bytes changed"
+        );
+        assert_eq!(
+            resources_block(&routes_after),
+            resources_block(&routes_before),
+            "the block — the shared zone — is carried verbatim"
+        );
+        assert!(dir.exists("src/auth.rs"));
+        assert_ne!(
+            dir.read_to_string("src/main.rs").expect("main"),
+            main_before
+        );
+    }
+
+    #[test]
+    fn a_line_outside_the_markers_survives_an_edit_and_refuses_a_re_render_with_the_flag() {
+        // FR-048 AS DECIDED: the flag replaces what is unchanged since generation and nothing
+        // else. A line the user added to a marked file outside its markers survives a resource's
+        // marker edit — the edit touches the block only — and makes the auth re-render a
+        // conflict, flag or no flag, so it is never overwritten.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (path, dir) = starter_without_auth(base.path(), true);
+        let manifest = check::load(&path).expect("loads");
+        let mine = "// the user's own registration lives here\n";
+        let original = dir.read_to_string("src/routes.rs").expect("routes");
+        dir.write("src/routes.rs", format!("{original}{mine}"))
+            .expect("write");
+        let (_, planned, definition) =
+            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
+                .expect("plans the resource");
+        let plan = apply::plan(&dir, planned, false)
+            .expect("an edit of the block is not a conflict")
+            .with_resource(definition);
+        assert!(
+            plan.summary()
+                .iter()
+                .any(|(p, a)| *p == "src/routes.rs" && *a == Applied::Edit),
+            "{:?}",
+            plan.summary()
+        );
+        apply::commit(&dir, plan, "0.0.0", crate::templates::VERSION).expect("commits");
+        let edited = dir.read_to_string("src/routes.rs").expect("routes");
+        assert!(
+            edited.ends_with(mine),
+            "the user's line outside the markers was lost:\n{edited}"
+        );
+        assert!(
+            resources_block(&edited).contains("crate::resources::post::declare(&mut routes)?;"),
+            "{edited}"
+        );
+
+        for flag in [false, true] {
+            let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+            let error =
+                apply::plan(&dir, planned, flag).expect_err("a changed file refuses the re-render");
+            assert_eq!(error.code, Code::GenerationConflict, "flag = {flag}");
+            assert_eq!(
+                detail(&error, "reason"),
+                Some("changed_since_generation"),
+                "flag = {flag}"
+            );
+            let changed = detail(&error, "changed").expect("the changed file is named");
+            assert!(
+                changed.contains("src/routes.rs"),
+                "flag = {flag}: {changed}"
+            );
+            assert_eq!(
+                dir.read_to_string("src/routes.rs").expect("routes"),
+                edited,
+                "flag = {flag}: the user's file was touched"
+            );
+            assert!(!dir.exists("src/auth.rs"), "flag = {flag}");
+        }
     }
 
     #[test]

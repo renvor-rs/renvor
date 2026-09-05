@@ -1,0 +1,46 @@
+`renvor generate`'s help, and the help of the action that renders a starter's files again. Every
+action carries `--overwrite-unchanged` (FR-048 as decided 2026-09-05): a generator-owned file that
+differs from the render but is unchanged since generation is replaced only under the flag, and a
+file the user changed is never replaced.
+
+```
+$ renvor generate --help
+Add to an existing project, rerun-safe: a file you changed is never overwritten
+
+Usage: renvor generate [OPTIONS] <COMMAND>
+
+Commands:
+  migration  Write a reversible migration pair, or import the framework's `auth` or `jobs` set
+  resource   Add a resource to a starter: a module, a migration pair, five routes, and a test
+  auth       Add the session authentication starter to a starter that has a database and `mail`; it
+             renders the starter's files again, so it needs `--overwrite-unchanged`
+
+Options:
+      --output <human|json>  Result format for stdout [default: human]
+      --yes                  Accept confirmations. Never waives validation
+      --dry-run              Compute and report without writing anything
+      --no-color             Disable styling. Styling is also off automatically when the stream is
+                             not a terminal
+  -h, --help                 Print help
+
+```
+
+```
+$ renvor generate auth --help
+Add the session authentication starter to a starter that has a database and `mail`; it renders the
+starter's files again, so it needs `--overwrite-unchanged`
+
+Usage: renvor generate auth [OPTIONS]
+
+Options:
+      --output <human|json>  Result format for stdout [default: human]
+      --path <PATH>          The project directory [default: .]
+      --overwrite-unchanged  Replace generator-owned files that differ from the render but are
+                             unchanged since generation. Never a file you changed
+      --yes                  Accept confirmations. Never waives validation
+      --dry-run              Compute and report without writing anything
+      --no-color             Disable styling. Styling is also off automatically when the stream is
+                             not a terminal
+  -h, --help                 Print help
+
+```

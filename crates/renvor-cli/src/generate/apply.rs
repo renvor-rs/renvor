@@ -8,13 +8,17 @@
 //! |---|---|---|
 //! | absent | [`Action::Write`] | written |
 //! | present, byte-identical to the render | [`Action::Unchanged`] | nothing |
-//! | present, different, **untouched since generation** — its digest equals the one `.renvor/generated.toml` recorded | [`Action::Regenerate`] | overwritten: the generator owns it |
-//! | present, different, and changed since generation (or never generated) | a conflict | **nothing at all is written**; every such path is named |
+//! | present, different, **unchanged since generation** — its digest equals the one `.renvor/generated.toml` recorded — and `--overwrite-unchanged` was given | [`Action::Regenerate`] | replaced: the generator owns it, and the operator said so |
+//! | the same, **without** the flag | refused, [`Refusal::OverwriteRequired`] | **nothing at all is written**; the path and the flag are named |
+//! | present, different, and changed since generation (or never generated) | refused, [`Refusal::Changed`] | **nothing at all is written**, flag or no flag; every such path is named |
+//! | an [`Planned::edit`] of an existing file's managed region | [`Action::Edit`] | the region is written; the rest of the file is kept |
 //!
-//! The provenance record is what makes "untouched" decidable without a network, a second copy, or
-//! a guess: a digest equal to the recorded one says nobody edited the file since the generator
-//! wrote it. A conflict is reported as `generation_conflict` before the first write, so a rerun
-//! after a refusal starts from the tree it found.
+//! The provenance record is what makes "unchanged" decidable without a network, a second copy,
+//! or a guess: a digest equal to the recorded one says nobody edited the file since the generator
+//! wrote it. That proves ownership; it does not grant permission to replace, which is the flag's
+//! (FR-048 as decided on 2026-09-05: a differing file is never overwritten implicitly). A refusal
+//! is reported as `generation_conflict` before the first write, so a rerun after a refusal starts
+//! from the tree it found — and a dry run classifies exactly as a real run does.
 //!
 //! Writes are staged as temporary siblings first and renamed into place second, after the whole
 //! plan has passed; a failure at either point leaves the project as it was found ([`commit`]).
@@ -69,11 +73,26 @@ pub enum Action {
     Write,
     /// Present and byte-identical: nothing to do.
     Unchanged,
-    /// Present, different, and untouched since generation: it will be overwritten.
+    /// Present, different, unchanged since generation, and `--overwrite-unchanged` given: it
+    /// will be replaced.
     Regenerate,
     /// A marked block of an existing file will be edited.
     Edit,
 }
+
+/// Why a target path refused the whole plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Refusal {
+    /// Present, different, and its digest is not the recorded one — or the record does not list
+    /// it: the user changed it, or nobody knows who owns it. Never overwritten, flag or no flag.
+    Changed,
+    /// Present, different, and unchanged since generation — regenerable — but
+    /// [`OVERWRITE_FLAG`] was not given.
+    OverwriteRequired,
+}
+
+/// The flag that lets a regenerable file be replaced, spelled once.
+pub const OVERWRITE_FLAG: &str = "--overwrite-unchanged";
 
 impl Action {
     /// The wire name.
@@ -227,12 +246,20 @@ pub fn provenance_digest(path: &str, bytes: &[u8]) -> String {
 
 /// Classifies every planned path against the project tree and its provenance record.
 ///
+/// `overwrite_unchanged` is the operator's `--overwrite-unchanged`: with it a regenerable path
+/// is [`Action::Regenerate`]; without it the path refuses the plan. Nothing else depends on the
+/// flag — a changed file refuses either way, an edit is written either way.
+///
 /// # Errors
 ///
-/// [`Code::GenerationConflict`] naming every conflicting path, with nothing written;
-/// [`Code::ManifestInvalid`] for a provenance record that does not parse; [`Code::RenderFailed`]
-/// when a target cannot be read.
-pub fn plan(project: &Dir, planned: Vec<Planned>) -> Result<Plan, CliError> {
+/// [`Code::GenerationConflict`] naming every refusing path and, for a regenerable one, the flag —
+/// with nothing written; [`Code::ManifestInvalid`] for a provenance record that does not parse;
+/// [`Code::RenderFailed`] when a target cannot be read.
+pub fn plan(
+    project: &Dir,
+    planned: Vec<Planned>,
+    overwrite_unchanged: bool,
+) -> Result<Plan, CliError> {
     let record = record::read(project)?;
     let recorded = |path: &str| -> Option<&str> {
         record
@@ -243,7 +270,7 @@ pub fn plan(project: &Dir, planned: Vec<Planned>) -> Result<Plan, CliError> {
             .map(|file| file.sha256.as_str())
     };
     let mut decisions = Vec::with_capacity(planned.len());
-    let mut conflicts: Vec<String> = Vec::new();
+    let mut refusals: Vec<(String, Refusal)> = Vec::new();
     for item in planned {
         let current = match project.read(&item.path) {
             Ok(bytes) => Some(bytes),
@@ -270,34 +297,93 @@ pub fn plan(project: &Dir, planned: Vec<Planned>) -> Result<Plan, CliError> {
             Some(bytes) if bytes == item.bytes => Action::Unchanged,
             Some(_) if item.edit => Action::Edit,
             Some(bytes) => {
-                if recorded(&item.path) == Some(provenance_digest(&item.path, &bytes).as_str()) {
-                    Action::Regenerate
-                } else {
-                    conflicts.push(item.path.clone());
-                    Action::Unchanged
+                let unchanged_since_generation =
+                    recorded(&item.path) == Some(provenance_digest(&item.path, &bytes).as_str());
+                match (unchanged_since_generation, overwrite_unchanged) {
+                    (true, true) => Action::Regenerate,
+                    (true, false) => {
+                        refusals.push((item.path.clone(), Refusal::OverwriteRequired));
+                        Action::Unchanged
+                    }
+                    (false, _) => {
+                        refusals.push((item.path.clone(), Refusal::Changed));
+                        Action::Unchanged
+                    }
                 }
             }
         };
         decisions.push((item, action));
     }
-    if !conflicts.is_empty() {
-        return Err(CliError::new(
-            Code::GenerationConflict,
-            format!(
-                "{} file(s) exist and were changed since generation, so nothing was written: {}. \
-                 Move or revert them, then run again",
-                conflicts.len(),
-                conflicts.join(", ")
-            ),
-        )
-        .with("count", conflicts.len().to_string())
-        .with("paths", conflicts.join(", ")));
+    if !refusals.is_empty() {
+        return Err(refused(&refusals));
     }
     Ok(Plan {
         decisions,
         record,
         resources: Vec::new(),
     })
+}
+
+/// The refusal for these paths, in plan order: paths and reasons, never contents.
+///
+/// `details.paths` and `details.count` cover every refusing path; `details.changed` and
+/// `details.regenerable` split them; `details.flag` names [`OVERWRITE_FLAG`] whenever a
+/// regenerable path is among them; `details.reason` is `changed_since_generation` when any path
+/// was changed — the flag alone would not help — and `overwrite_required` otherwise.
+fn refused(refusals: &[(String, Refusal)]) -> CliError {
+    let of = |wanted: Refusal| -> Vec<&str> {
+        refusals
+            .iter()
+            .filter(|(_, why)| *why == wanted)
+            .map(|(path, _)| path.as_str())
+            .collect()
+    };
+    let changed = of(Refusal::Changed);
+    let regenerable = of(Refusal::OverwriteRequired);
+    let paths: Vec<&str> = refusals.iter().map(|(path, _)| path.as_str()).collect();
+    let message = match (changed.is_empty(), regenerable.is_empty()) {
+        (false, true) => format!(
+            "{} file(s) exist and were changed since generation (or were never generated), so \
+             nothing was written: {}. Move or revert them, then run again",
+            changed.len(),
+            changed.join(", ")
+        ),
+        (true, false) => format!(
+            "{} file(s) differ from the render but are unchanged since generation, so nothing \
+             was written: {}. They are regenerable: run again with `{OVERWRITE_FLAG}` to replace \
+             them",
+            regenerable.len(),
+            regenerable.join(", ")
+        ),
+        _ => format!(
+            "{} file(s) would be overwritten, so nothing was written. Changed since generation, \
+             move or revert them: {}. Unchanged since generation, replaced only with \
+             `{OVERWRITE_FLAG}`: {}",
+            paths.len(),
+            changed.join(", "),
+            regenerable.join(", ")
+        ),
+    };
+    let mut error = CliError::new(Code::GenerationConflict, message)
+        .with(
+            "reason",
+            if changed.is_empty() {
+                "overwrite_required"
+            } else {
+                "changed_since_generation"
+            },
+        )
+        .with("count", paths.len().to_string())
+        .with("paths", paths.join(", "));
+    if !changed.is_empty() {
+        error = error.with("changed", changed.join(", "));
+    }
+    if !regenerable.is_empty() {
+        error = error
+            .with("regenerable", regenerable.join(", "))
+            .with("flag", OVERWRITE_FLAG);
+    }
+    error
 }
 
 fn failed(path: &str, what: &str, error: &dyn std::fmt::Display) -> CliError {
@@ -529,18 +615,33 @@ mod tests {
                 "routes.rs",
                 b"// begin\nnew\n// end\n".to_vec(),
             )],
+            false,
         )
-        .expect("an edit never conflicts");
+        .expect("an edit never conflicts, and needs no flag");
         assert_eq!(ok.summary(), vec![("routes.rs", Action::Edit)]);
         let same = plan(
             &dir,
             vec![Planned::edit("routes.rs", b"// begin\n// end\n".to_vec())],
+            false,
         )
         .expect("plans");
         assert_eq!(same.summary(), vec![("routes.rs", Action::Unchanged)]);
-        let error = plan(&dir, vec![Planned::edit("missing.rs", b"x".to_vec())])
-            .expect_err("an edit needs its file");
+        let error = plan(
+            &dir,
+            vec![Planned::edit("missing.rs", b"x".to_vec())],
+            false,
+        )
+        .expect_err("an edit needs its file");
         assert_eq!(error.code, Code::RenderFailed);
+    }
+
+    /// One detail of an error, by key.
+    fn detail<'a>(error: &'a CliError, key: &str) -> Option<&'a str> {
+        error
+            .details
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
     }
 
     #[test]
@@ -571,15 +672,30 @@ mod tests {
         )
         .expect("rewrite");
 
-        let ok = plan(
-            &dir,
+        // FR-048 AS DECIDED (2026-09-05): the untouched file is regenerable, and without the
+        // flag that refuses the plan — naming the path and the flag — and writes nothing.
+        let items = || {
             vec![
                 planned("new.txt", b"new\n"),
                 planned("same.txt", b"same\n"),
                 planned("untouched.txt", b"new render\n"),
-            ],
-        )
-        .expect("no conflict");
+            ]
+        };
+        let error = plan(&dir, items(), false).expect_err("regenerable needs the flag");
+        assert_eq!(error.code, Code::GenerationConflict);
+        assert_eq!(detail(&error, "reason"), Some("overwrite_required"));
+        assert_eq!(detail(&error, "flag"), Some(OVERWRITE_FLAG));
+        assert_eq!(detail(&error, "regenerable"), Some("untouched.txt"));
+        assert_eq!(detail(&error, "paths"), Some("untouched.txt"));
+        assert_eq!(detail(&error, "count"), Some("1"));
+        assert_eq!(detail(&error, "changed"), None);
+        assert!(error.message.contains(OVERWRITE_FLAG), "{}", error.message);
+        assert!(
+            !dir.exists("new.txt"),
+            "a refusal must write NOTHING, not even the file that could have been written"
+        );
+        // With the flag: the four cases, and the regenerable one is replaced.
+        let ok = plan(&dir, items(), true).expect("no conflict");
         assert_eq!(
             ok.summary(),
             vec![
@@ -590,32 +706,70 @@ mod tests {
         );
         assert_eq!(ok.writes(), 2);
 
-        let error = plan(
-            &dir,
-            vec![
-                planned("new.txt", b"new\n"),
-                planned("edited.txt", b"new render\n"),
-            ],
-        )
-        .expect_err("an edited file is a conflict");
-        assert_eq!(error.code, Code::GenerationConflict);
-        assert!(
-            error
-                .details
-                .iter()
-                .any(|(k, v)| k == "paths" && v == "edited.txt")
-        );
-        assert!(
-            !dir.exists("new.txt"),
-            "a conflict must write NOTHING, not even the files that could have been written"
-        );
+        // An edited file refuses with the flag and without it; the flag waives nothing.
+        for flag in [false, true] {
+            let error = plan(
+                &dir,
+                vec![
+                    planned("new.txt", b"new\n"),
+                    planned("edited.txt", b"new render\n"),
+                    planned("untouched.txt", b"new render\n"),
+                ],
+                flag,
+            )
+            .expect_err("an edited file is a conflict");
+            assert_eq!(error.code, Code::GenerationConflict, "flag = {flag}");
+            assert_eq!(
+                detail(&error, "reason"),
+                Some("changed_since_generation"),
+                "flag = {flag}"
+            );
+            assert_eq!(
+                detail(&error, "changed"),
+                Some("edited.txt"),
+                "flag = {flag}"
+            );
+            // Without the flag the regenerable path is refused beside it; with it, it is not.
+            let expected = if flag {
+                ("edited.txt", "1", None, None)
+            } else {
+                (
+                    "edited.txt, untouched.txt",
+                    "2",
+                    Some("untouched.txt"),
+                    Some(OVERWRITE_FLAG),
+                )
+            };
+            assert_eq!(detail(&error, "paths"), Some(expected.0), "flag = {flag}");
+            assert_eq!(detail(&error, "count"), Some(expected.1), "flag = {flag}");
+            assert_eq!(detail(&error, "regenerable"), expected.2, "flag = {flag}");
+            assert_eq!(detail(&error, "flag"), expected.3, "flag = {flag}");
+            assert!(
+                !dir.exists("new.txt"),
+                "a conflict must write NOTHING, not even the files that could have been written"
+            );
+            assert_eq!(
+                std::fs::read(_keep.path().join("untouched.txt")).expect("read"),
+                b"old render\n",
+                "flag = {flag}: a refused plan replaced the regenerable file"
+            );
+        }
     }
 
     #[test]
     fn a_file_never_generated_is_a_conflict_even_without_a_record() {
         let (_keep, dir) = project(&[("theirs.txt", b"theirs\n")]);
-        let error = plan(&dir, vec![planned("theirs.txt", b"ours\n")]).expect_err("conflict");
-        assert_eq!(error.code, Code::GenerationConflict);
+        for flag in [false, true] {
+            let error =
+                plan(&dir, vec![planned("theirs.txt", b"ours\n")], flag).expect_err("conflict");
+            assert_eq!(error.code, Code::GenerationConflict, "flag = {flag}");
+            assert_eq!(
+                detail(&error, "reason"),
+                Some("changed_since_generation"),
+                "unknown ownership is never a licence to overwrite (flag = {flag})"
+            );
+            assert_eq!(detail(&error, "changed"), Some("theirs.txt"));
+        }
     }
 
     #[test]
@@ -641,38 +795,64 @@ mod tests {
                 "src/routes.rs",
                 with_block.as_bytes().to_vec(),
             )],
+            false,
         )
         .expect("an edit never conflicts");
         commit(&dir, edit, "0.0.0", "7").expect("commits");
-        // A later full re-render carries the block but not the user's line.
-        let rerender =
-            "new head\n// renvor:resources:begin\nadded();\n// renvor:resources:end\ntail\n";
-        let error = plan(
-            &dir,
-            vec![Planned::file("src/routes.rs", rerender.as_bytes().to_vec())],
-        )
-        .expect_err("the user's line outside the markers must not be overwritten");
-        assert_eq!(error.code, Code::GenerationConflict);
         assert_eq!(
             std::fs::read_to_string(_keep.path().join("src/routes.rs")).expect("read"),
             with_block,
-            "a conflict writes nothing"
+            "the edit wrote the block and kept the user's line outside it"
         );
+        // A later full re-render carries the block but not the user's line: refused with the
+        // flag and without it.
+        let rerender =
+            "new head\n// renvor:resources:begin\nadded();\n// renvor:resources:end\ntail\n";
+        for flag in [false, true] {
+            let error = plan(
+                &dir,
+                vec![Planned::file("src/routes.rs", rerender.as_bytes().to_vec())],
+                flag,
+            )
+            .expect_err("the user's line outside the markers must not be overwritten");
+            assert_eq!(error.code, Code::GenerationConflict, "flag = {flag}");
+            assert_eq!(
+                detail(&error, "changed"),
+                Some("src/routes.rs"),
+                "flag = {flag}"
+            );
+            assert_eq!(
+                std::fs::read_to_string(_keep.path().join("src/routes.rs")).expect("read"),
+                with_block,
+                "a conflict writes nothing"
+            );
+        }
 
-        // POSITIVE CONTROL: the same sequence WITHOUT the user's line regenerates, because the
-        // block's contents are the generators' and do not count against the file.
+        // POSITIVE CONTROL: the same sequence WITHOUT the user's line is regenerable, because the
+        // block's contents are the generators' and do not count against the file — refused
+        // without the flag, regenerated with it.
         let (_keep2, dir2) = project(&[("src/routes.rs", generated.as_bytes())]);
         record::write(&dir2, "0.0.0", "7").expect("record");
         let filled = "head\n// renvor:resources:begin\nadded();\n// renvor:resources:end\ntail\n";
         let edit = plan(
             &dir2,
             vec![Planned::edit("src/routes.rs", filled.as_bytes().to_vec())],
+            false,
         )
         .expect("plans");
         commit(&dir2, edit, "0.0.0", "7").expect("commits");
+        let error = plan(
+            &dir2,
+            vec![Planned::file("src/routes.rs", rerender.as_bytes().to_vec())],
+            false,
+        )
+        .expect_err("regenerable, but the flag was not given");
+        assert_eq!(detail(&error, "reason"), Some("overwrite_required"));
+        assert_eq!(detail(&error, "regenerable"), Some("src/routes.rs"));
         let ok = plan(
             &dir2,
             vec![Planned::file("src/routes.rs", rerender.as_bytes().to_vec())],
+            true,
         )
         .expect("untouched outside the markers: regenerated");
         assert_eq!(ok.summary(), vec![("src/routes.rs", Action::Regenerate)]);
@@ -781,6 +961,7 @@ mod tests {
                 planned("deep/new.txt", b"new\n"),
                 planned("same.txt", b"same\n"),
             ],
+            false,
         )
         .expect("plans");
         let done = commit(&dir, ok, "0.0.0", "7").expect("commits");
@@ -807,7 +988,7 @@ mod tests {
             .collect();
         assert_eq!(leftovers, ["new.txt"]);
         // A second commit of the same plan is a no-op that keeps the record.
-        let again = plan(&dir, vec![planned("deep/new.txt", b"new\n")]).expect("plans");
+        let again = plan(&dir, vec![planned("deep/new.txt", b"new\n")], false).expect("plans");
         assert_eq!(again.summary(), vec![("deep/new.txt", Action::Unchanged)]);
     }
 }

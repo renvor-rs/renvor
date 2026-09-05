@@ -1224,6 +1224,16 @@ fn the_auth_starter_added_later(row_name: &'static str, database: &'static str, 
         "the user's line was overwritten: {refused}"
     );
     assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "changed_since_generation",
+        "{refused}"
+    );
+    assert!(
+        refused["error"]["details"]["changed"]
+            .as_str()
+            .is_some_and(|paths| paths.contains("src/routes.rs")),
+        "{refused}"
+    );
     assert!(
         refused["error"]["details"]["paths"]
             .as_str()
@@ -1236,10 +1246,37 @@ fn the_auth_starter_added_later(row_name: &'static str, database: &'static str, 
     );
     std::fs::write(&routes, &original).expect("restore");
 
-    // 4. The auth starter, added.
+    // 4. The auth starter renders every generator-owned file again, so each is regenerable, and
+    //    FR-048 (as decided 2026-09-05) replaces one only under `--overwrite-unchanged`: without
+    //    the flag the run is refused naming it, and nothing is written.
+    let (outcome, refused) = generate_into(&project, &["auth"]);
+    assert!(
+        !outcome.succeeded,
+        "regenerable files were replaced without the flag: {refused}"
+    );
+    assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["reason"], "overwrite_required",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["flag"], "--overwrite-unchanged",
+        "{refused}"
+    );
+    assert!(
+        refused["error"]["details"]["regenerable"]
+            .as_str()
+            .is_some_and(|paths| paths.contains("src/main.rs")),
+        "{refused}"
+    );
+    assert!(
+        !project.join("src/auth.rs").exists(),
+        "a refusal wrote the starter"
+    );
+    // With the flag, added.
     let item_up = project.join("migrations/0001_create_item.up.sql");
     let item_up_before = std::fs::read_to_string(&item_up).expect("the item migration");
-    let (outcome, document) = generate_into(&project, &["auth"]);
+    let (outcome, document) = generate_into(&project, &["auth", "--overwrite-unchanged"]);
     assert!(outcome.succeeded, "{document}\n{}", outcome.output);
     assert!(project.join("src/auth.rs").is_file());
     assert!(project.join("config/auth.toml").is_file());

@@ -26,7 +26,7 @@ use std::io::IsTerminal;
 use clap::Parser;
 use clap::error::ErrorKind;
 
-use config::flags::{Cli, Command, DockerAction, GenerateAction, TlsAction};
+use config::flags::{Cli, Command, DockerAction, TlsAction};
 use exit::{CliError, Code, Exit};
 use output::{Format, Reporter};
 
@@ -499,22 +499,9 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
                 commands::tls::trust(reporter, consent, std::io::stdin().is_terminal(), dry_run)
             }
         },
-        Command::Generate { action } => match action {
-            GenerateAction::Migration { name, import, path } => commands::generate::run(
-                reporter,
-                &path,
-                commands::generate::Action::Migration { name, import },
-                dry_run,
-            ),
-            GenerateAction::Resource { name, fields, path } => commands::generate::run(
-                reporter,
-                &path,
-                commands::generate::Action::Resource { name, fields },
-                dry_run,
-            ),
-            GenerateAction::Auth { path } => {
-                commands::generate::run(reporter, &path, commands::generate::Action::Auth, dry_run)
-            }
-        },
+        Command::Generate { action } => {
+            let (path, action, overwrite_unchanged) = commands::generate::parts(action);
+            commands::generate::run(reporter, &path, action, dry_run, overwrite_unchanged)
+        }
     }
 }

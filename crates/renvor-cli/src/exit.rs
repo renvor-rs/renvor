@@ -102,9 +102,11 @@ pub enum Code {
     /// bump: C-2 defines breaking as renaming, reusing, or **removing** a code. The `1 → 2` bump
     /// was caused by a removal, not by the four additions that accompanied it.
     TransportNotWired,
-    /// `renvor generate` found a target file that exists and was changed since generation, so
-    /// nothing was written. `details.paths` names every conflicting path; `details.count` says
-    /// how many. Added in Phase 011 (FR-048); see `json-output.md` §"Added in Phase 011".
+    /// `renvor generate` found a target file it may not write — changed since generation, or
+    /// regenerable without `--overwrite-unchanged` — so nothing was written. `details.paths`
+    /// names every refusing path and `details.count` says how many; `details.reason`,
+    /// `details.changed`, `details.regenerable`, and `details.flag` say which kind and what
+    /// would help. Added in Phase 011 (FR-048); see `json-output.md` §"Added in Phase 011".
     GenerationConflict,
     /// The project has no container controls to drive.
     ///

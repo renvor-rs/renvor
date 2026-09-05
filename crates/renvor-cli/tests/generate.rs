@@ -569,3 +569,346 @@ fn the_record_digests_are_the_placed_files_including_the_resolved_lockfile() {
         "the resolved lockfile is generated and must be recorded: {listed:?}"
     );
 }
+
+/// `renvor` in human mode: the exit code and both streams joined.
+fn renvor_human(args: &[&str], directory: &Path) -> (Option<i32>, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(args)
+        .current_dir(directory)
+        .env("CARGO_TARGET_DIR", directory.join(".target"))
+        .output()
+        .expect("renvor runs");
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    (output.status.code(), said)
+}
+
+/// Makes `path` read as generated with `bytes`: writes them and records their digest — the state
+/// a project is in when an earlier `renvor` wrote a different render of the same file and nobody
+/// touched it since. The record is what says so; nothing else does.
+fn mark_as_generated(project: &Path, path: &str, bytes: &[u8]) {
+    use sha2::{Digest as _, Sha256};
+    std::fs::write(project.join(path), bytes).expect("write");
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .fold(String::new(), |acc, b| format!("{acc}{b:02x}"));
+    let record_path = project.join(".renvor/generated.toml");
+    let text = std::fs::read_to_string(&record_path).expect("the record");
+    let needle = format!("path = {path:?}\nsha256 = \"");
+    let at = text
+        .find(&needle)
+        .unwrap_or_else(|| panic!("`{path}` is not in the record:\n{text}"));
+    let start = at + needle.len();
+    let mut out = String::with_capacity(text.len());
+    out.push_str(&text[..start]);
+    out.push_str(&digest);
+    out.push_str(&text[start + 64..]);
+    std::fs::write(&record_path, out).expect("rewrite");
+}
+
+/// The paths whose bytes differ between two snapshots of the same file set.
+fn differing(before: &[(String, Vec<u8>)], after: &[(String, Vec<u8>)]) -> Vec<String> {
+    assert_eq!(
+        before.iter().map(|(p, _)| p).collect::<Vec<_>>(),
+        after.iter().map(|(p, _)| p).collect::<Vec<_>>(),
+        "the file set changed"
+    );
+    before
+        .iter()
+        .zip(after)
+        .filter(|(b, a)| b.1 != a.1)
+        .map(|(b, _)| b.0.clone())
+        .collect()
+}
+
+fn action_of(document: &serde_json::Value, path: &str) -> Option<String> {
+    document["result"]["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|f| f["path"] == path)
+        .map(|f| f["action"].as_str().unwrap_or("").to_owned())
+}
+
+#[test]
+fn a_regenerable_file_is_refused_without_the_flag_and_replaced_only_with_it() {
+    // FR-048 AS DECIDED (2026-09-05, the maintainer's option 3). A file that differs from the
+    // render but is unchanged since generation — its digest is the recorded one — is
+    // *regenerable*: reported, and replaced only under `--overwrite-unchanged`. Without the flag
+    // the whole run is refused, names the flag, and writes nothing; with it that file is
+    // replaced and nothing else moves. A dry run classifies exactly as the real run does.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "postgres");
+    let args = ["generate", "migration", "add_index", "--output", "json"];
+    let (ok, first, _) = renvor(&args, &project);
+    assert!(ok, "{first}");
+    let up = first["result"]["files"][0]["path"]
+        .as_str()
+        .expect("path")
+        .to_owned();
+    let render = std::fs::read(project.join(&up)).expect("the render");
+    // An earlier renvor wrote a different render of the same file, and recorded it.
+    mark_as_generated(
+        &project,
+        &up,
+        b"-- add_index: an older render, generator-owned and never touched\n",
+    );
+    let before = snapshot(&project);
+
+    let (ok, refused, stderr) = renvor(&args, &project);
+    assert!(
+        !ok,
+        "a regenerable file was replaced without the flag: {refused}"
+    );
+    assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+    let details = &refused["error"]["details"];
+    assert_eq!(details["reason"], "overwrite_required", "{refused}");
+    assert_eq!(details["flag"], "--overwrite-unchanged", "{refused}");
+    assert_eq!(details["regenerable"], up, "{refused}");
+    assert_eq!(details["paths"], up, "{refused}");
+    assert_eq!(details["count"], "1", "{refused}");
+    assert!(
+        details.get("changed").is_none(),
+        "nothing was changed by the user: {refused}"
+    );
+    assert_eq!(snapshot(&project), before, "a refusal wrote something");
+    // Paths, never contents: no line of either version of the file reaches either stream.
+    let said = format!("{refused}{stderr}");
+    assert!(!said.contains("older render"), "{said}");
+    assert!(!said.contains("Applied on Boot"), "{said}");
+
+    // Human output names the flag and the path the same way, and prints no contents either.
+    let (code, human) = renvor_human(&["generate", "migration", "add_index"], &project);
+    assert_eq!(code, Some(3), "{human}");
+    assert!(human.contains("--overwrite-unchanged"), "{human}");
+    assert!(human.contains(&up), "{human}");
+    assert!(!human.contains("older render"), "{human}");
+    assert!(!human.contains("Applied on Boot"), "{human}");
+    assert_eq!(snapshot(&project), before);
+
+    // A dry run is the same classification: the same refusal, the same details.
+    let (ok, dry, _) = renvor(
+        &[
+            "generate",
+            "migration",
+            "add_index",
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+        &project,
+    );
+    assert!(!ok, "{dry}");
+    assert_eq!(
+        dry["error"], refused["error"],
+        "a dry run classified differently from the real run"
+    );
+    assert_eq!(snapshot(&project), before);
+
+    // With the flag: the dry run reports the plan, writes nothing; the real run applies it.
+    let with = [
+        "generate",
+        "migration",
+        "add_index",
+        "--overwrite-unchanged",
+        "--output",
+        "json",
+    ];
+    let mut dry_with = with.to_vec();
+    dry_with.push("--dry-run");
+    let (ok, planned, _) = renvor(&dry_with, &project);
+    assert!(ok, "{planned}");
+    assert_eq!(planned["result"]["dryRun"], true);
+    assert_eq!(planned["result"]["written"], 0);
+    assert_eq!(snapshot(&project), before, "a dry run wrote");
+    let (ok, done, _) = renvor(&with, &project);
+    assert!(ok, "{done}");
+    assert_eq!(done["result"]["written"], 1);
+    assert_eq!(
+        done["result"]["files"], planned["result"]["files"],
+        "the dry run's classification is not the real plan's"
+    );
+    assert_eq!(action_of(&done, &up).as_deref(), Some("regenerate"));
+    assert_eq!(
+        std::fs::read(project.join(&up)).expect("read"),
+        render,
+        "the regenerable file is replaced by the render"
+    );
+    let after = snapshot(&project);
+    assert_eq!(
+        differing(&before, &after),
+        [".renvor/generated.toml".to_owned(), up.clone()],
+        "only the regenerated file and the record moved"
+    );
+
+    // Idempotent: again with the flag, and again without it, both write nothing.
+    for again in [with.as_slice(), args.as_slice()] {
+        let (ok, document, _) = renvor(again, &project);
+        assert!(ok, "{document}");
+        assert_eq!(document["result"]["written"], 0, "{document}");
+        assert!(
+            document["result"]["files"]
+                .as_array()
+                .expect("files")
+                .iter()
+                .all(|f| f["action"] == "unchanged"),
+            "{document}"
+        );
+        assert_eq!(snapshot(&project), after);
+    }
+}
+
+#[test]
+fn a_changed_file_is_refused_with_the_flag_and_a_mixed_plan_writes_nothing() {
+    // FR-048 AS DECIDED: `--overwrite-unchanged` replaces only what is unchanged since
+    // generation. A file the user changed refuses the run with or without the flag, and a plan
+    // that mixes a file to create, one to regenerate, and one that conflicts writes none of them
+    // — not even the one that could have been created. No output carries the user's contents.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "mysql");
+    let import = [
+        "generate",
+        "migration",
+        "--import",
+        "auth",
+        "--output",
+        "json",
+    ];
+    let (ok, first, _) = renvor(&import, &project);
+    assert!(ok, "{first}");
+    let paths: Vec<String> = first["result"]["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .map(|f| f["path"].as_str().expect("path").to_owned())
+        .collect();
+    assert_eq!(paths.len(), 16, "{first}");
+    // A whole pair is removed (a lone half would trip the version check first); the next two
+    // files, of other versions, are the regenerable and the changed one.
+    let version = |path: &str| {
+        path.strip_prefix("migrations/")
+            .and_then(|name| name.split('_').next())
+            .expect("a version")
+            .to_owned()
+    };
+    let gone = version(&paths[0]);
+    let absent: Vec<&String> = paths.iter().filter(|p| version(p) == gone).collect();
+    assert_eq!(absent.len(), 2, "{paths:?}");
+    let mut rest = paths.iter().filter(|p| version(p) != gone);
+    let regenerable = rest.next().expect("a second version");
+    let changed = rest
+        .find(|p| version(p) != version(regenerable))
+        .expect("a third version");
+    let original = std::fs::read(project.join(changed)).expect("read");
+    for path in &absent {
+        std::fs::remove_file(project.join(path)).expect("remove");
+    }
+    mark_as_generated(
+        &project,
+        regenerable,
+        b"-- an older render of this migration, never touched\n",
+    );
+    let canary = "-- CANARY-7f3a: the user's own statement, which must never be printed\n";
+    std::fs::write(project.join(changed), canary).expect("write");
+    let before = snapshot(&project);
+
+    let mut with = import.to_vec();
+    with.push("--overwrite-unchanged");
+    let mut dry = with.clone();
+    dry.push("--dry-run");
+    // Without the flag both refuse — the regenerable one beside the changed one, the flag named;
+    // with it only the changed one refuses, and the flag is not what is missing.
+    for (label, args, flagged) in [
+        ("without the flag", import.as_slice(), false),
+        ("with the flag", with.as_slice(), true),
+        ("with the flag, dry", dry.as_slice(), true),
+    ] {
+        let (ok, refused, stderr) = renvor(args, &project);
+        assert!(
+            !ok,
+            "{label}: a changed file did not refuse the run: {refused}"
+        );
+        assert_eq!(
+            refused["error"]["code"], "generation_conflict",
+            "{label}: {refused}"
+        );
+        let details = &refused["error"]["details"];
+        assert_eq!(
+            details["reason"], "changed_since_generation",
+            "{label}: {refused}"
+        );
+        assert_eq!(details["changed"], changed.as_str(), "{label}: {refused}");
+        if flagged {
+            assert!(details.get("regenerable").is_none(), "{label}: {refused}");
+            assert!(details.get("flag").is_none(), "{label}: {refused}");
+            assert_eq!(details["paths"], changed.as_str(), "{label}: {refused}");
+            assert_eq!(details["count"], "1", "{label}: {refused}");
+        } else {
+            assert_eq!(
+                details["regenerable"],
+                regenerable.as_str(),
+                "{label}: {refused}"
+            );
+            assert_eq!(
+                details["flag"], "--overwrite-unchanged",
+                "{label}: {refused}"
+            );
+            assert_eq!(
+                details["paths"],
+                format!("{regenerable}, {changed}"),
+                "{label}: {refused}"
+            );
+            assert_eq!(details["count"], "2", "{label}: {refused}");
+        }
+        assert_eq!(
+            snapshot(&project),
+            before,
+            "{label}: a refusal wrote something"
+        );
+        assert!(
+            absent.iter().all(|path| !project.join(path).exists()),
+            "{label}: a file that could have been created was created"
+        );
+        let said = format!("{refused}{stderr}");
+        assert!(
+            !said.contains("CANARY-7f3a"),
+            "{label}: contents leaked:\n{said}"
+        );
+        assert!(
+            !said.contains("older render"),
+            "{label}: contents leaked:\n{said}"
+        );
+    }
+    let (code, human) = renvor_human(
+        &[
+            "generate",
+            "migration",
+            "--import",
+            "auth",
+            "--overwrite-unchanged",
+        ],
+        &project,
+    );
+    assert_eq!(code, Some(3), "{human}");
+    assert!(human.contains(changed.as_str()), "{human}");
+    assert!(!human.contains("CANARY-7f3a"), "{human}");
+    assert_eq!(snapshot(&project), before);
+
+    // The flag never waived the changed file; with that file back as generated, the plan lands
+    // whole: the absent one created, the regenerable one replaced, the restored one untouched.
+    std::fs::write(project.join(changed), &original).expect("restore");
+    let (ok, done, _) = renvor(&with, &project);
+    assert!(ok, "{done}");
+    assert_eq!(done["result"]["written"], 3, "{done}");
+    for path in &absent {
+        assert_eq!(action_of(&done, path).as_deref(), Some("write"), "{done}");
+    }
+    assert_eq!(action_of(&done, regenerable).as_deref(), Some("regenerate"));
+    assert_eq!(action_of(&done, changed).as_deref(), Some("unchanged"));
+    let (ok, again, _) = renvor(&import, &project);
+    assert!(ok, "{again}");
+    assert_eq!(again["result"]["written"], 0, "{again}");
+}

@@ -185,6 +185,10 @@ pub enum GenerateAction {
         /// The project directory
         #[arg(long, default_value = ".")]
         path: PathBuf,
+        /// Replace generator-owned files that differ from the render but are unchanged since
+        /// generation. Never a file you changed
+        #[arg(long)]
+        overwrite_unchanged: bool,
     },
     /// Add a resource to a starter: a module, a migration pair, five routes, and a test
     Resource {
@@ -196,12 +200,21 @@ pub enum GenerateAction {
         /// The project directory
         #[arg(long, default_value = ".")]
         path: PathBuf,
+        /// Replace generator-owned files that differ from the render but are unchanged since
+        /// generation. Never a file you changed
+        #[arg(long)]
+        overwrite_unchanged: bool,
     },
-    /// Add the session authentication starter to a starter that has a database and `mail`
+    /// Add the session authentication starter to a starter that has a database and `mail`;
+    /// it renders the starter's files again, so it needs `--overwrite-unchanged`
     Auth {
         /// The project directory
         #[arg(long, default_value = ".")]
         path: PathBuf,
+        /// Replace generator-owned files that differ from the render but are unchanged since
+        /// generation. Never a file you changed
+        #[arg(long)]
+        overwrite_unchanged: bool,
     },
 }
 
