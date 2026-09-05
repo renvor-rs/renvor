@@ -88,7 +88,9 @@ below, and only what reached the correcting session is recorded.**
 Every finding was reproduced independently before it was fixed — by reading the cited site and
 by a test that failed on the unfixed tree (the red run is in the scratch logs named). Every fix
 is a root-cause change with the regression test that failed first; no test, gate, contract, or
-assertion was weakened.
+assertion was weakened by the Native fixes. The continuation loosened one assertion of the
+census's own, deliberately and on record — the transcript rule for a placed project's test —
+stated at the end of this section.
 
 | # | Finding (Codex's title) | Sev. | Reproduced by | Fix | Regression test (red on `db952ef`, green after) |
 |---|---|---|---|---|---|
@@ -132,7 +134,7 @@ Native finding — and dispositioned here independently.
 
 | # | Finding | Sev. | Reproduced by | Disposition |
 |---|---|---|---|---|
-| S1 | Secret-check failures disclose the credentials they detect (`renvor-testkit` sweep; the generated starter test's cookie and mailed-token diagnostics) | P1 | testkit test `a_failed_sweep_names_the_canary_by_index_and_never_by_value` failed on `f6305a7`: the panic carried the canary and the whole swept line; render test `the_generated_tests_fail_without_printing_a_credential` failed: `tests/starter.rs` printed `{cookie}`, `login.body` (the CSRF token), and the mail's text | **fixed.** The sweep's failure names the canary and the entry **by position** and their lengths; every credential extraction in the generated tests goes through a support helper with a static label (`session_cookie_of`, `csrf_token_of`, `token_in`), the sink listing's failure prints a count, and the login answer's failure prints its status. Negative controls: the testkit test (raw, `Debug`, hex, decimal renderings via `renvor_testkit::every_rendering_of`), and the generated support module's own `a_failed_secret_extraction_names_nothing_secret`, which fails each helper on a canary-bearing input and checks the panic text, with a positive control — run by `cargo test` inside every auth starter's verification and rows. Live: the rows pass with the control compiled into their test binaries — a green row prints no inner test name, so the direct sighting is the 18:16 attempt's failure transcript in `row-authonly.log` (the row failed on the census's old "exactly one test" rule) which lists `support::a_failed_secret_extraction_names_nothing_secret ... ok` beside the starter test — and M-H8 shows the control fires: a helper made to print the cookie made `renvor new` refuse the starter. The rows re-run on the continuation's templates are in §evidence §12 |
+| S1 | Secret-check failures disclose the credentials they detect (`renvor-testkit` sweep; the generated starter test's cookie and mailed-token diagnostics) | P1 | testkit test `a_failed_sweep_names_the_canary_by_index_and_never_by_value` failed on `f6305a7`: the panic carried the canary and the whole swept line; render test `the_generated_tests_fail_without_printing_a_credential` failed: `tests/starter.rs` printed `{cookie}`, `login.body` (the CSRF token), and the mail's text | **fixed.** The sweep's failure names the canary and the entry **by position** and their lengths; every credential extraction in the generated tests goes through a support helper with a static label (`session_cookie_of`, `csrf_token_of`, `token_in`), the sink listing's failure prints a count, and the login answer's failure prints its status. Negative controls: the testkit test (raw, `Debug`, hex, decimal renderings via `renvor_testkit::every_rendering_of`), and the generated support module's own `a_failed_secret_extraction_names_nothing_secret`, which fails each helper on a canary-bearing input and checks the panic text, with a positive control — run by `cargo test` inside every auth starter's verification and rows. Live: the rows pass with the control compiled into their test binaries; a green row prints no inner test name, and the one transcript on disk that shows the generated control running inside a starter's test binary is `mutations-h-M-H8.out` — where it is `FAILED` beside `the_starter_starts_answers_and_stops_cleanly ... ok`, because that run is the mutation: a helper made to print the cookie, and the control refusing the starter for it. The rows re-run on the continuation's templates are in §evidence §12 |
 | S2 | The sealed verification environment forwards credential-bearing proxy URLs and returns raw child output | P1 | unit test `a_proxy_credential_never_reaches_the_sealed_environment` failed on `f6305a7` (`http://alice:s3cr3t…@` passed through verbatim); the end-to-end control `a_build_script_cannot_observe_or_print_a_proxy_credential` failed: a staged project's build script printed the proxy credential and the verification error carried it | **fixed.** `seal` keeps the proxy variables with their `user:password@` removed (the host, scheme, port, and path survive; a non-text value is dropped); `in_staging` reports a child's output only after `redacted_output` — every URL credential replaced, every credential the seal removed replaced, every control character escaped. The build-script control now proves the script sees `http://127.0.0.1:1` and the error names it without the credential in any rendering; `a_childs_output_is_reported_without_url_credentials_or_control_characters` tests the redaction alone. `generation-transaction.md` 1.1.0 states the rule. **One shape the validation agent found passes verbatim:** a value with an unencoded `/` inside its userinfo (`http://user:p/w@host`) is not a URL, the authority is cut at that `/`, no `@` is found, and the value is passed as it was; recorded rather than handled |
 | S3 | Existing-project generation can leave partial updates after a write failure | P2 | on `f6305a7` the commit was already staged-then-placed with rollback, but only two boundaries were injected. `a_failure_at_every_placement_boundary_leaves_the_project_byte_identical` failed on `f6305a7` because the per-file boundaries did not exist (an unknown injection point is not a failure) | **fixed and proven at every boundary.** `RENVOR_FAIL_AT=generate-stage-<n>` after each staged file, `generate-place-<n>` after each placed file, `generate-record` before the record; the test sweeps all of them for a two-file plan (5) and a sixteen-file plan (33) — **38 boundaries** — and compares the whole project byte for byte each time, the record and the migration directory included. **Stated gap:** both plans are all `write` actions, so the rollback branch that restores a file's previous bytes (an `edit` or a `regenerate`, which is exactly what the starter-only files — the marked files, `Cargo.toml`, `Cargo.lock` — undergo) is reached end to end by no injected failure; it is covered by the direct unit test of `roll_back` and by the same commit engine (L-14). The auth-added rows exercise those files live: step 3 asserts the refusal code, the conflicting path, and that `src/auth.rs` was not written; step 4 asserts what was rewritten |
 | S4 | Migration versions were not globally classified | P2 | the Native reproduction (two equal versions in one second; an imported version written beside a user's file) re-run on `f6305a7`: green after the Native fix | **independently dispositioned as fixed.** The Standards cases: two names in one second (`two_names_generated_within_a_second_get_distinct_versions`, now also asserting each pair's up and down share one version), an imported version held under another name (`an_import_refuses_a_version_another_migration_already_holds`, now also asserting the provenance record is unchanged after the refusal), the whole tree unchanged after the refusal |
@@ -172,9 +174,11 @@ of batches G and H (all killed), added three of its own (V-11, V-13, V-15b; all 
 Specification P2 is stated accurately and left open, confirmed the offline case realises an empty
 cache and the lockfile gained exactly one package, confirmed no credential extraction in the
 generated tests prints a value, and found no real secret in any changed file or cited log. It
-found sixteen defects: **one code blocker** (D1: seventeen interpolated assertion messages in
-`verify.rs`, a credential-handling file, which the kernel's diagnostics gate refuses — the gate's
-own leg had failed on exactly that six minutes after the agent's chain found it) and fifteen
+found sixteen defects: **one code blocker** (D1: seventeen interpolated renderings across eleven
+lines in ten assertion messages of `verify.rs`, a credential-handling file, which the kernel's
+diagnostics gate refuses; three of the ten assertions predate the round and were pulled into the
+gate's scope by the file's new subject — the gate's own leg had failed on exactly that six minutes
+after the agent's chain found it) and fifteen
 record defects (a fabricated log citation, stale test and injection-point names, an over-counted
 mutation batch and its cascaded totals, 37 for 38 boundaries, doubled row text, stale
 "not received" sentences, an unfilled placeholder, a mislabelled "green" log, an unscoped "nothing
@@ -182,12 +186,23 @@ weakened" sentence, a rollback branch the sweep does not reach, a proxy shape th
 two inconclusive M-H8 attempts, a Phase 009 row count). D1 was fixed in `8c72414` and `0d62313`
 (fixed labels, indices where a case must be named; the diagnostics gate passes; both gate legs
 green on `0d62313`); every record defect is corrected in this section's file and the evidence,
-ledger, and limitations, in the commit that carries this paragraph. Task #107 returns to
+ledger, and limitations, in the commit that carries this paragraph. Task #107 returned to
 `coding_done` for a fourth pass.
+
+**The fourth pass** (on `20705ea`, 20:06–20:20) found D1 resolved, every suite it may run green,
+Specification P2 still open and unamended, no secret anywhere, and seven documents-only defects:
+a corrected citation of mine that pointed at a transcript the row runner had overwritten (the
+failed `authonly` attempt at 18:18:55 was replaced by the 18:21 re-run), a sentence of §3f that
+still said the two axes were not received, the mutation ledger's header totals, the D1 count
+stated two ways, the unscoped "nothing weakened" sentence, an unevidenced cause for the two
+inconclusive M-H8 attempts, and a §5 reference to a defect §5 did not record. All seven are
+corrected in the commit that carries this paragraph; its verdict on that commit is in the ledger
+(task #107) and in the round's final report.
 
 ### 3f. What the round did not do
 
-- It did not run the Standards or Specification findings, because it did not have them (§3b, §3c).
+- The Standards and Specification findings arrived after the Native axis had been answered and
+  pushed; §3b and §3c answer them, with one (Specification P2) open for the maintainer.
 - It did not make the rename-failure branch of `apply::commit` reachable by a test: a rename after
   a successful stage in the same directory fails only on a cross-device move. The rollback
   function that branch calls is tested directly, and the injected-failure branch beside it is

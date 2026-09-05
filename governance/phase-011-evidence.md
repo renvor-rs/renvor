@@ -237,13 +237,20 @@ regression in §5.
   the framework's own sets create, selected or not. Each was found by a row, fixed in the template,
   and re-proven by the row.
 
+- **A brace pair in a generated test broke every starter render for one run.** The negative
+  control written into `tests_support_mod.rs.j2` built two JSON bodies with `format!("{{…}}")`;
+  inside a Jinja template `{{` opens an expression, so the template stopped compiling ("syntax
+  error: unexpected character (in tests/support/mod.rs:423)") and thirteen render tests failed in
+  one CLI unit run (`green-axes-unit.log`, 18:11, mislabelled by its name). The bodies are built
+  with `serde_json::json!` instead, which carries no brace pair, and the run after it was green.
 - **Three of the round's own tests were refused by gates of this repository, and each refusal
   was right.** The first leg of the continuation's gate run failed the presentation scan: the
   proxy control's build script — a string literal in `verify.rs` — carried a print macro, and
   the scan reads shipped source, fixtures included; the script moved beside the test harness
   (`cdf5e50`). The second failed the kernel's diagnostics gate, which now classified `verify.rs`
-  as a credential-handling file (it names proxy credentials) and refused **eleven** interpolated
-  assertion messages — nine written by this round and two older ones — because a failure that
+  as a credential-handling file (it names proxy credentials) and refused **seventeen** interpolated
+  renderings across eleven lines in ten assertion messages — three of the ten assertions predate
+  the round and were pulled into the gate's scope by the file's new subject — because a failure that
   printed its operands would put a credential into the test log on exactly the regression it
   guards; every message became a fixed label, with indices where a case must be named
   (`8c72414`). The third was the same gate reading the `{}` of `fn main() {}` inside a literal
@@ -479,9 +486,9 @@ the starter test binary now carries the negative control too); `ressqlx` 18:23:0
 green. Every row that failed on the way did so on a rustfmt width in a generated line, fixed in
 the template and re-proven by the row.
 
-**Mutations.** Batch H (`phase-011-mutation-ledger.md`): eight scripted mutations, eight killed — seven by unit tests in the isolated copy, one (M-H8, the generated helper printing the cookie) by the generated negative control refusing `renvor new`'s own verification, after two attempts that failed earlier on a rustfmt width in the same template and are recorded as inconclusive — plus M-H9, which is the offline case's own red run on the unfixed tree rather than a scripted edit. Phase totals: 52 scripted mutations, 52 killed; one by history; three census controls, all fired. The validation agent's third pass re-applied 16 and added V-11, V-13, and V-15b, all killed.
+**Mutations.** Batch H (`phase-011-mutation-ledger.md`): eight scripted mutations, eight killed — seven by unit tests in the isolated copy, one (M-H8, the generated helper printing the cookie) by the generated negative control refusing `renvor new`'s own verification, after two attempts recorded as inconclusive whose cause is not evidenced (the script overwrote their output) — plus M-H9, which is the offline case's own red run on the unfixed tree rather than a scripted edit. Phase totals: 52 scripted mutations, 52 killed; one by history; three census controls, all fired. The validation agent's third pass re-applied 16 and added V-11, V-13, and V-15b, all killed.
 
-**One log is mislabelled and is not cited as green.** `green-axes-unit.log` (18:11) holds the CLI unit run that failed on the template brace defect §5 records; the green runs of the CLI unit suite for the continuation are the gate legs' own step 4 (`gate-*.log`) and the validation agent's runs. It is kept under its name so the citation trail stays true.
+**One log is mislabelled and is not cited as green.** `green-axes-unit.log` (18:11) holds the CLI unit run in which every starter render failed on the template syntax defect §5 records (`syntax error: unexpected character (in tests/support/mod.rs:423)`); the green runs of the CLI unit suite for the continuation are the gate legs' own step 4 (`gate-*.log`) and the validation agent's runs. It is kept under its name so the citation trail stays true.
 
 **Open for the maintainer, not closed here.** Specification P2 (FR-048 / SR-009 / the data
 model's `--overwrite-unchanged`): the shipped `Regenerate` classification overwrites a
@@ -515,4 +522,16 @@ legs are kept as `gate-*-round1.log`).
 | `0d6231306f1414eabc8fe20995f3510525c88f7c` | `dd18ea63645ca50757f02708cbd5fe30bd122955` | **the final source head of the whole round**: ten signed commits `d5ca258` … `0d62313` (the testkit sweep, the seal, the boundary sweep, the generated tests and README, the facade's interrupt wait and the lockfile, the pty proofs, the records, and three corrections the first legs forced: the proxy control's fixture moved out of shipped source, the sealed-environment controls' messages made fixed labels, and the formatting control asserting on the diff header — each a gate of this repository refusing a test of this round, recorded in §5); both gate legs green here |
 | the commit that adds this paragraph | — | documents only: the gate table above and the pull request's CI, added after the legs ran on the head they name |
 
-CONT-CI-PENDING
+**Pull request and CI.** [#62](https://github.com/renvor-rs/renvor/pull/62), pushed fast-forward
+from `dff4c96` to `20705ea` (the continuation's ten source commits, the proxy-control fixture
+move, the two diagnostics-gate corrections, and the records corrected after the third validation
+pass) on 2026-09-05 20:03; the pull request's description carries the continuation's summary. On
+`20705eae930d457db9e78d1c311b1a356c1a20ef` every check passed — 13 passed, 1 skipped by design
+(`attest rehearsal artifacts`, release-only): verify (1.94.0) (46m52s), verify (stable) (39m43s),
+platform (macos-latest, 1.94.0) (9m14s), platform (macos-latest, stable) (13m14s), platform
+(windows-latest, 1.94.0) (21m55s), platform (windows-latest, stable) (24m15s), docs (1m52s),
+security (2m40s), dependency-review (6s), Analyze (rust) (7m36s), Analyze (actions) (50s), CodeQL
+(4s), package and verify without publishing (2m42s) — started 17:04:06 UTC, the last complete at
+17:50:59 UTC. No check needed a rerun. The commit that adds this paragraph — and the fourth
+validation pass's seven record corrections — is documents-only; its own run is the pull request's
+final state. **Kept unmerged**; nothing tagged, released, published, or deployed.

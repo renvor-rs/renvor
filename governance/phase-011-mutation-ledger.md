@@ -2,9 +2,13 @@
 
 **Companion to**: [`phase-011-evidence.md`](phase-011-evidence.md)
 **Phase**: 011 — Generators, the auth starter, and the testing kit
-**Total**: **24 controlled mutations** — **23 killed by a named test, 1 survived its first run**
-(M-A1: the test asserted the code, the `supported` detail, and the prose, but not the
-machine-readable `reason`; the test was strengthened, the mutation re-applied and killed) — plus the
+**Total**: **52 scripted mutations, 52 killed by a named test**, plus one by history (M-H9, the
+offline case's red run on the unfixed tree), across batches A, B, D, E/F, G, and H (2026-09-05,
+the correction round's continuation included). **Three survived their first form**: M-A1 (the
+test asserted the code, the `supported` detail, and the prose, but not the machine-readable
+`reason`; strengthened, re-applied, killed), M-G10 (the render assertion asked for a token, not
+the refusal; strengthened, killed), and M-G15 (its first edit mutated a branch no test reaches;
+abandoned as unreachable and re-targeted, both forms killed) — plus the
 **three census negative controls** (a starter row renamed, deleted, and `cfg`-gated), each of which
 must make `cargo xtask census` fail naming the vanished row, and one non-mutation (a first attempt at
 M-F1 that did not compile, recorded and replaced).
@@ -26,7 +30,7 @@ tracked.
 | D — the two entry findings | 2 | 2 | 0 | README count; the `cfg`-gated variant |
 | E/F — L-17, the testkit client, the apply engine, the record, verification, the generators, the manifest comment, the Windows path | 11 | 11 | 0 | M-F1 … M-F11; F3–F9 run on head `d8e3a44` by `mutate-f.py`, final pristine run 288 passed; F10 on the closure head; F11 on `f95ab6b` |
 | G — the correction round (every Native Codex fix, the transactional commit) | 20 distinct (22 runs) | 20 | 2 in their first form: M-G10 killed after the control was strengthened; M-G15's first edit abandoned as unreachable and re-targeted (M-G15, M-G15b) | run by `mutations-g.py` in an isolated copy of the working tree (`mutsrc`, its own build directory) so the census rows compiling beside it could not pick up a mutation; logs `mutations-g.log`, `mutations-g-<id>.out` |
-| H — the Standards and Specification fixes (the continuation of the round) | 8 scripted + 1 by history | 8 + 1 | 0 (M-H8 needed three attempts; the first two failed earlier on a rustfmt width in the same template and are inconclusive, not survivals) | `mutations-h.py` and `mutations-h8.sh` in the same isolated copy; M-H8 is killed by the **generated** negative control while `renvor new` verifies the staged starter, so its kill is a refused generation; M-H9 is the offline case's own red run on the unfixed tree (`red-offline.log`), which is the mutation "the facade offers no interrupt wait and the starter enables `signal` itself" applied by history rather than by script |
+| H — the Standards and Specification fixes (the continuation of the round) | 8 scripted + 1 by history | 8 + 1 | 0 (M-H8 needed three attempts; the first two are logged only as `SURVIVED-or-UNKNOWN exit=3` — inconclusive, not survivals — and their cause is not evidenced, because the script overwrote each attempt's output) | `mutations-h.py` and `mutations-h8.sh` in the same isolated copy; M-H8 is killed by the **generated** negative control while `renvor new` verifies the staged starter, so its kill is a refused generation; M-H9 is the offline case's own red run on the unfixed tree (`red-offline.log`), which is the mutation "the facade offers no interrupt wait and the starter enables `signal` itself" applied by history rather than by script |
 
 ## The entries worth reading
 
@@ -163,5 +167,5 @@ log files keep their names.
 | M-H5 | apply engine: the record boundary fails without rolling back | the same test (the project is left changed) |
 | M-H6 | README template: the unqualified "requires a clean exit" sentence restored | `commands::new::tests::the_generated_readme_states_the_windows_shutdown_limitation` |
 | M-H7 | starter test template: `"{cookie}"` printed again after the helper | `commands::new::tests::the_generated_tests_fail_without_printing_a_credential` |
-| M-H8 | support template: `session_cookie_of` prints the cookie's value in its panic | the generated `a_failed_secret_extraction_names_nothing_secret`, run by `cargo test` inside `renvor new`'s verification of an auth starter: generation was **refused** (`mutations-h-M-H8.out`, exit 3, "does not pass its own tests"). Two earlier attempts (`mutations-h.log`: "SURVIVED-or-UNKNOWN exit=3") failed before the tests ran, on the rustfmt width of a generated line in the same template, and are inconclusive rather than survivals |
+| M-H8 | support template: `session_cookie_of` prints the cookie's value in its panic | the generated `a_failed_secret_extraction_names_nothing_secret`, run by `cargo test` inside `renvor new`'s verification of an auth starter: generation was **refused** (`mutations-h-M-H8.out`, exit 3, "does not pass its own tests"). Two earlier attempts (`mutations-h.log`: "SURVIVED-or-UNKNOWN exit=3") are inconclusive rather than survivals; their cause is **not evidenced** — `mutations-h8.sh` overwrote each attempt's output, so only the third's survives — and is not claimed |
 | M-H9 | the facade's `shutdown_signal` absent and the starter enabling Tokio `signal` itself (the tree before the fix) | `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — `red-offline.log`: `no matching package named signal-hook-registry found` |
