@@ -240,8 +240,9 @@ regression in §5.
 - **A brace pair in a generated test broke every starter render for one run.** The negative
   control written into `tests_support_mod.rs.j2` built two JSON bodies with `format!("{{…}}")`;
   inside a Jinja template `{{` opens an expression, so the template stopped compiling ("syntax
-  error: unexpected character (in tests/support/mod.rs:423)") and thirteen render tests failed in
-  one CLI unit run (`green-axes-unit.log`, 18:11, mislabelled by its name). The bodies are built
+  error: unexpected character (in tests/support/mod.rs:423)") and twelve tests failed in one CLI
+  unit run — ten starter renders, the proxy build-script control, and the catalogue compile test
+  — (`green-axes-unit.log`, 18:11, mislabelled by its name). The bodies are built
   with `serde_json::json!` instead, which carries no brace pair, and the run after it was green.
 - **Three of the round's own tests were refused by gates of this repository, and each refusal
   was right.** The first leg of the continuation's gate run failed the presentation scan: the
@@ -470,7 +471,7 @@ enters the lock (L-3 closed). `generation-transaction.md` 1.1.0 states the seal'
 | Claim | Measured by | Result |
 |---|---|---|
 | a failed sweep prints no canary in any rendering | `renvor_testkit::app::tests::a_failed_sweep_names_the_canary_by_index_and_never_by_value` (red on `f6305a7`) | green |
-| the generated tests' failures print no credential | render scan `the_generated_tests_fail_without_printing_a_credential` (red on `f6305a7`); the generated `a_failed_secret_extraction_names_nothing_secret`, run inside `renvor new`'s verification of every auth starter | green; live: the `authonly`, `ressqlx`, `ressea`, `authadded`, and `pgsqlx` rows passed with the control compiled into their test binaries (a green row prints no inner test name; the 18:16 failure transcript of `row-authonly.log` shows the control's own `ok` line, and M-H8 shows it fires) |
+| the generated tests' failures print no credential | render scan `the_generated_tests_fail_without_printing_a_credential` (red on `f6305a7`); the generated `a_failed_secret_extraction_names_nothing_secret`, run inside `renvor new`'s verification of every auth starter | green; live: the `authonly`, `ressqlx`, `ressea`, `authadded`, and `pgsqlx` rows passed with the control compiled into their test binaries (a green row prints no inner test name; the one transcript showing the control running inside a starter's binary is `mutations-h-M-H8.out`, where it is `FAILED` beside the starter test's `ok` because that run is the mutation) |
 | no proxy credential reaches a build script; none is reported | `a_proxy_credential_never_reaches_the_sealed_environment`, `a_build_script_cannot_observe_or_print_a_proxy_credential` (both red on `f6305a7`), `a_childs_output_is_reported_without_url_credentials_or_control_characters` | green |
 | a failure at every placement boundary leaves the project byte-identical | `tests/generate.rs::a_failure_at_every_placement_boundary_leaves_the_project_byte_identical`: 5 boundaries of a two-file plan and 33 of a sixteen-file plan, the whole tree compared each time (red on `f6305a7`: the boundaries did not exist). Both plans are all `write` actions: the rollback that restores previous bytes is reached only by the direct unit test (L-14) | green, 38 boundaries |
 | migration versions: same second, import collision, pairs, nothing written or recorded after a refusal | `two_names_generated_within_a_second_get_distinct_versions`, `an_import_refuses_a_version_another_migration_already_holds` | green |
@@ -523,9 +524,9 @@ legs are kept as `gate-*-round1.log`).
 | the commit that adds this paragraph | — | documents only: the gate table above and the pull request's CI, added after the legs ran on the head they name |
 
 **Pull request and CI.** [#62](https://github.com/renvor-rs/renvor/pull/62), pushed fast-forward
-from `dff4c96` to `20705ea` (the continuation's ten source commits, the proxy-control fixture
-move, the two diagnostics-gate corrections, and the records corrected after the third validation
-pass) on 2026-09-05 20:03; the pull request's description carries the continuation's summary. On
+from `dff4c96` to `20705ea` (eleven commits: the continuation's ten source commits — the three
+gate-forced corrections among them — and the records corrected after the third validation pass)
+on 2026-09-05 20:03; the pull request's description carries the continuation's summary. On
 `20705eae930d457db9e78d1c311b1a356c1a20ef` every check passed — 13 passed, 1 skipped by design
 (`attest rehearsal artifacts`, release-only): verify (1.94.0) (46m52s), verify (stable) (39m43s),
 platform (macos-latest, 1.94.0) (9m14s), platform (macos-latest, stable) (13m14s), platform

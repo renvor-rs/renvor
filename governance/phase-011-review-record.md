@@ -195,14 +195,22 @@ a corrected citation of mine that pointed at a transcript the row runner had ove
 failed `authonly` attempt at 18:18:55 was replaced by the 18:21 re-run), a sentence of §3f that
 still said the two axes were not received, the mutation ledger's header totals, the D1 count
 stated two ways, the unscoped "nothing weakened" sentence, an unevidenced cause for the two
-inconclusive M-H8 attempts, and a §5 reference to a defect §5 did not record. All seven are
-corrected in the commit that carries this paragraph; its verdict on that commit is in the ledger
-(task #107) and in the round's final report.
+inconclusive M-H8 attempts, and a §5 reference to a defect §5 did not record. Six of the seven
+were corrected in `05e9818`; the seventh survived in a second copy of the same citation.
+
+**The fifth pass** (on `05e9818`, 20:53) found those six resolved and matching the logs, the CI
+paragraph matching the check runs to the second, Specification P2 still open and unamended, no
+secret, and four residuals: the citation remnant in the evidence's §12 claims table, a
+"thirteen" that the log says is twelve, a commit enumeration that counted three corrections twice,
+and the sentence above that called all seven corrected. All four are corrected in the commit
+that carries this paragraph; its verdict on that commit is in the ledger (task #107) and in the
+round's final report.
 
 ### 3f. What the round did not do
 
-- The Standards and Specification findings arrived after the Native axis had been answered and
-  pushed; §3b and §3c answer them, with one (Specification P2) open for the maintainer.
+- It did not have the Standards or Specification findings until after the Native axis had been
+  answered and pushed; §3b and §3c answer them once received, with one (Specification P2) open
+  for the maintainer.
 - It did not make the rename-failure branch of `apply::commit` reachable by a test: a rename after
   a successful stage in the same directory fails only on a cross-device move. The rollback
   function that branch calls is tested directly, and the injected-failure branch beside it is
