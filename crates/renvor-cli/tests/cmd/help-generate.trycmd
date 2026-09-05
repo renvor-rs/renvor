@@ -7,7 +7,7 @@ file the user changed is never replaced.
 $ renvor generate --help
 Add to an existing project, rerun-safe: a file you changed is never overwritten
 
-Usage: renvor generate [OPTIONS] <COMMAND>
+Usage: renvor[EXE] generate [OPTIONS] <COMMAND>
 
 Commands:
   migration  Write a reversible migration pair, or import the framework's `auth` or `jobs` set
@@ -30,7 +30,7 @@ $ renvor generate auth --help
 Add the session authentication starter to a starter that has a database and `mail`; it renders the
 starter's files again, so it needs `--overwrite-unchanged`
 
-Usage: renvor generate auth [OPTIONS]
+Usage: renvor[EXE] generate auth [OPTIONS]
 
 Options:
       --output <human|json>  Result format for stdout [default: human]
