@@ -22,7 +22,8 @@ async fn {{ snake }}_is_created_read_replaced_and_deleted() {
     let mut app = start();
     let address = app.address.clone();
 {% if auth_session %}
-    let cookie = session(&address, "{{ snake }}-editor-9f3a@example.test");
+    let editor = users().build(&mut sequence());
+    let cookie = session(&address, &editor);
     let writer: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
 
     // A write without a session is refused, and nothing was written.

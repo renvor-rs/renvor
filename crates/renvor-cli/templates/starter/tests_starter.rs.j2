@@ -77,8 +77,10 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
 {% endif %}
 
     // ── 4. registration, a duplicate that answers identically, login ──────────────
-    let ada = "ada-9f3a@example.test";
-    let register = serde_json::json!({"email": ada, "password": PASSWORD}).to_string();
+    let users = users();
+    let mut sequence = sequence();
+    let ada = users.build(&mut sequence);
+    let register = serde_json::json!({"email": ada.email, "password": ada.password}).to_string();
     let first = http(&address, "POST", "/auth/register", &[], &register);
     assert_eq!(first.status, 202, "{}", first.body);
     let again = http(&address, "POST", "/auth/register", &[], &register);
@@ -93,7 +95,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         "POST",
         "/auth/login",
         &[],
-        &serde_json::json!({"email": ada, "password": "not-it"}).to_string(),
+        &serde_json::json!({"email": ada.email, "password": "not-it"}).to_string(),
     );
     assert_eq!(wrong.status, 401);
     let login = http(&address, "POST", "/auth/login", &[], &register);
@@ -115,7 +117,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     // ── 5. the current user, with and without the cookie ───────────────────────────
     let me = http(&address, "GET", "/auth/me", &session, "");
     assert_eq!(me.status, 200, "{}", me.body);
-    assert!(me.body.contains(ada));
+    assert!(me.body.contains(&ada.email));
     assert_eq!(http(&address, "GET", "/auth/me", &[], "").status, 401);
 {% if example_domain %}
 
@@ -131,8 +133,9 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     let id = serde_json::from_str::<serde_json::Value>(&created.body).expect("json")["id"]
         .as_i64()
         .expect("an id");
-    let bob = "bob-9f3a@example.test";
-    let bob_register = serde_json::json!({"email": bob, "password": PASSWORD}).to_string();
+    let bob = users.build(&mut sequence);
+    let bob_register =
+        serde_json::json!({"email": bob.email, "password": bob.password}).to_string();
     assert_eq!(
         http(&address, "POST", "/auth/register", &[], &bob_register).status,
         202
@@ -179,7 +182,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         "POST",
         "/auth/password/forgot",
         &[],
-        &serde_json::json!({"email": ada}).to_string(),
+        &serde_json::json!({"email": ada.email}).to_string(),
     );
     let unknown = http(
         &address,
@@ -201,10 +204,10 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
             "POST",
             "/auth/verification/resend",
             &[],
-            &serde_json::json!({"email": ada}).to_string(),
+            &serde_json::json!({"email": ada.email}).to_string(),
         );
         assert_eq!(requested.status, 202, "{}", requested.body);
-        let token = verification_token_from_sink(&api, ada);
+        let token = verification_token_from_sink(&api, &ada.email);
         let confirmed = http(
             &address,
             "POST",
@@ -252,7 +255,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     for reply in [&first, &again, &login, &me, &known, &unknown, &out] {
 {% endif %}
         assert!(
-            !reply.body.contains(PASSWORD),
+            !reply.body.contains(&ada.password),
             "a response echoed the password"
         );
         assert!(
@@ -276,7 +279,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
 
     // ── storage: put, then get, through the real root ─────────────────────────────
 {% if auth_session %}
-    let carol = session(&address, "carol-9f3a@example.test");
+    let carol = session(&address, &users.build(&mut sequence));
     let carol_session: Vec<(&str, &str)> = vec![("Cookie", carol.as_str())];
     let put = http(&address, "PUT", "/files/hello.txt", &carol_session, "hello");
 {% else %}
@@ -291,7 +294,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
 
     // ── jobs: enqueue, then watch the worker complete it ──────────────────────────
 {% if auth_session %}
-    let carol = session(&address, "carol-9f3a@example.test");
+    let carol = session(&address, &users.build(&mut sequence));
     let carol_session: Vec<(&str, &str)> = vec![("Cookie", carol.as_str())];
     let enqueued = http(
         &address,
@@ -337,7 +340,8 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         "POST",
         "/mail/notice",
         &[],
-        r#"{"to":"ada-9f3a@example.test","subject":"starter notice"}"#,
+        &serde_json::json!({"to": users().build(&mut sequence()).email, "subject": "starter notice"})
+            .to_string(),
     );
     assert_eq!(notice.status, 202, "{}", notice.body);
 {% endif %}
@@ -385,7 +389,7 @@ fn verification_token_from_sink(api: &str, address: &str) -> String {
     let listing = http(
         host,
         "GET",
-        "/api/v1/search?query=to:%22ada-9f3a@example.test%22",
+        &format!("/api/v1/search?query=to:%22{address}%22"),
         &[],
         "",
     );

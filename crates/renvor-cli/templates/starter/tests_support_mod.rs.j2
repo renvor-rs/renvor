@@ -11,6 +11,12 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+{% if auth_session %}
+pub use renvor_testkit::{Factory as _, Sequence, UserDraft, UserFactory};
+{% else %}
+pub use renvor_testkit::{Factory as _, Sequence, UserFactory};
+{% endif %}
+
 /// How long readiness may take, cold build included: `cargo test` builds the binary first, so
 /// this covers migrations and the backend probes only.
 pub const READY_WITHIN: Duration = Duration::from_secs(60);
@@ -19,10 +25,17 @@ pub const STOP_WITHIN: Duration = Duration::from_secs(40);
 
 /// The application's name, which is also its binary's.
 pub const NAME: &str = "{{ name }}";
-{% if auth_session %}
-/// A password no response may echo.
-pub const PASSWORD: &str = "correct-horse-battery-staple-9f3a";
-{% endif %}
+
+/// The sequence every draft in this test binary draws from: the same seed, the same users and
+/// items, run after run.
+pub fn sequence() -> Sequence {
+    Sequence::new(0x9f3a)
+}
+
+/// Users under the local domain.
+pub fn users() -> UserFactory {
+    UserFactory::new("example.test")
+}
 
 /// The application binary cargo built beside this test: `target/<profile>/<name>`, two levels
 /// above the test executable in `target/<profile>/deps/`. `CARGO_BIN_EXE_<name>` names the same
@@ -154,10 +167,10 @@ pub fn otlp_receiver() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>
                     if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
                         break;
                     }
-                    if let Some((name, value)) = line.split_once(':') {
-                        if name.eq_ignore_ascii_case("content-length") {
-                            length = value.trim().parse().unwrap_or(0);
-                        }
+                    if let Some((name, value)) = line.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().expect("a numeric content-length");
                     }
                 }
                 let mut body = vec![0_u8; length];
@@ -342,10 +355,11 @@ pub fn start() -> Application {
 }
 {% if auth_session %}
 
-/// Registers `email` (a second registration answers exactly like the first) and logs it in;
+/// Registers `user` (a second registration answers exactly like the first) and logs it in;
 /// returns the session cookie as `name=value`, for a `Cookie` header.
-pub fn session(address: &str, email: &str) -> String {
-    let credentials = serde_json::json!({"email": email, "password": PASSWORD}).to_string();
+pub fn session(address: &str, user: &UserDraft) -> String {
+    let credentials =
+        serde_json::json!({"email": user.email, "password": user.password}).to_string();
     assert_eq!(
         http(address, "POST", "/auth/register", &[], &credentials).status,
         202
