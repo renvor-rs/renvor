@@ -314,13 +314,41 @@ reverted the not-yet-committed implementation on its first launch; the edits wer
 the same scripts, the suites re-run green, the implementation committed, and the script now refuses
 to run over uncommitted work.
 
-**Gates.** Both legs on `2b3e4a8` (tree `488ca17`), clean tree, one after the other:
+**Gates, twice.** Both legs on `2b3e4a8` (tree `488ca17`), clean tree, one after the other:
 `cargo +1.94.0 xtask verify` 22:40:13–23:03:27 and `cargo +stable xtask verify`
 23:03:27–23:25:56, 9/9 steps and exit 0 each, 2209 passed / 0 failed / 5 ignored each (the five
-over the continuation's 2204 are this round's tests), census 87/87 each — the evidence §13 has
-the table and the log names. The source head was pushed fast-forward at 23:27; the pull
-request's checks and the seventh validation pass are recorded by the commit after the one that
-carries this section.
+over the continuation's 2204 are this round's tests), census 87/87 each. That head was pushed
+fast-forward at 23:27 and validated by the seventh pass below, which found the two documentation
+statements; the corrected source head `61a43af` (tree `5a2202e`) then had the four rows that
+render a resource module re-run (`ressqlx` 23:42:57–23:43:40, `ressea` 23:43:40–23:44:28,
+`authadded` 23:44:28–23:46:12, `authaddedmysql` 23:46:12–23:48:12, exit 0 each,
+`row-<name>-fr048b.log`), the twelve mutations of batch I run on it (twelve killed,
+`mutations-i.log`), and both legs launched again. That run did not bind: its first leg's 2209
+tests passed and its census reported 87/87, but the pull request's two Windows legs had meanwhile
+failed on the new help snapshot — written by `TRYCMD=overwrite` on macOS, its usage lines said
+`renvor` where every other snapshot says `renvor[EXE]`, trycmd's marker for `renvor.exe` — and
+the one-line fix, made while that leg was in its last steps, dirtied the tree so step 9 refused
+it (exit 3, `gate-1.94.0-fr048b.log`; the second leg was not run). The fix is `ac6062d` (tree
+`b763aed`); its Windows legs then failed the regenerable binary test itself — the test's
+`snapshot` helper rendered paths with `\` on Windows and compared them to the envelope's `/`
+paths — and the helper now joins components with `/` on every platform: `3025cc0` (tree
+`a62a1bd`), **the final source head**. The run on `ac6062d` was stopped after both legs' census
+steps had passed (leg A green throughout, 2209 / 0 / 5; leg B 87/87 then stopped before its
+last steps), since that head was no longer final; both legs ran on `3025cc0`, clean:
+`+1.94.0` 00:56:57–01:18:41 and `+stable` 01:18:41–01:39:48, 9/9 and exit 0 each, 2209 passed, 0 failed, 5 ignored (145 `test result` lines) and 2209 passed, 0 failed, 5 ignored (145 lines), census
+87/87 rows reported in (`renvor-cli` 12m 54s) and 87/87 rows reported in (`renvor-cli` 13m 02s) — the evidence §13 has the tables. On `3025cc0` the pull request's checks all passed — 13, with the
+release-only attestation skipped by design, both Windows legs and CodeQL among them, every
+workflow at its first attempt; the evidence §13 lists them with their durations. The eighth
+validation pass is recorded by the commit after the one that carries this paragraph.
+
+**The seventh validation pass** (on `d5e78fc`, 23:33–23:3x) found the code, the nine cases, the
+mutations, the gates, the commits, the contracts, and the specification edits holding, and
+returned NEEDS_FIXES on requirement 5: the two resource templates' module comment and the crate
+README stated the old rule, and this section had claimed no template did (both corrected above,
+in `61a43af`); it also read requirement 3 as asking a refused dry run to list what would have been
+created, regenerated, or edited (taken, above), and asked that "`--test cli` 4" not be read as a
+fifth test (reworded). Its verdict on `61a43af` and the records over it is the eighth pass's, in
+the ledger (task #107) and in the round's final report.
 
 ## 4. What this record does not claim
 

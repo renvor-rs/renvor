@@ -258,6 +258,7 @@ regression in §5.
   as an interpolation; the control asserts on rustfmt's diff header instead (`0d62313`). The
   Standards axis's S1 rule, applied by the repository to the tests written to satisfy it.
 - **The FR-048 round's mutation script reverted the uncommitted implementation on its first launch.** `mutations-i.sh` restores the two mutated files with `git checkout` before every mutation; run before the implementation was committed, its first `git checkout` reverted `apply.rs` and `generate.rs` to the reviewed head, and every mutation reported `ANCHOR-MISSING` because there was nothing to mutate. Nothing was lost: the edits were re-applied from the same scripts, `cargo fmt`, every fast suite re-run green (313 / 11 / 4 / 17 / 1 / 2 / 36), and the implementation committed as `2b3e4a8` before the batch ran again. The script now refuses to run when either file has uncommitted changes. The two auth-added rows had already run on the working tree at 22:28, before the revert; the gate legs on `2b3e4a8` are what bind them.
+- **A one-line edit during a gate run made its step 9 refuse the run.** The help snapshot's `[EXE]` fix was written while the gate legs on `61a43af` were in step 8; step 9 (working-tree cleanliness) then reported the modified file and exited 3, and the runner did not start the second leg (`gate-1.94.0-fr048b.log`, `gates-fr048b.log`). Nothing about `61a43af` was wrong locally — its tests and census had passed — but that run does not bind, and both legs were run again on `ac6062d` with the tree clean. The rule this round adds to its own notes: a tracked file is not edited while a leg runs.
 
 ## 6. Testing discipline
 
@@ -614,6 +615,99 @@ round added.
 | `2b3e4a8fdf5bf53f9187d2cd221a18de96eede6e` | `488ca176fcc887aab2ffc3c1933e40e2d6c0cffc` | **the source head of the decision round**; both gate legs green here; pushed fast-forward 23:27 |
 | the commit that adds this section | — | documents only: this section, the review record §3g, the ledger's batch I |
 
-**Pull request and CI.** The pull request's checks on `2b3e4a8` and the seventh validation pass
-are recorded by the commit that follows this one, after both have reported. **Kept unmerged**;
-nothing tagged, released, published, or deployed.
+**The seventh validation pass and the second source commit.** The seventh pass (on `d5e78fc`,
+task #107 → `needs_fixes`) confirmed everything above against the logs and found that generated
+documentation still stated the old rule — the module comment of `resource_sqlx.rs.j2` and
+`resource_seaorm.rs.j2` ("the generator regenerates it only while its digest still matches …")
+and `crates/renvor-cli/README.md`'s `renvor generate` section ("untouched since generation is
+regenerated") — while the review record §3g had claimed no template did; and it read
+requirement 3 as asking a refused dry run to list what the plan would have created, regenerated,
+or edited. `61a43af1e015f83e6ca482ef72b7f41ab9fd193a` (tree
+`5a2202e534732c4b60bc130ad0121c1ed181db38`, one signed subject-only commit:
+`fix(cli): state the overwrite flag in generated modules and list a refused plan's writes`)
+corrects both comments and the README, adds `details.write`, `details.edit`, and (under the flag)
+`details.regenerate` to every refusal (`apply::refused` takes the decisions), states it in
+`command-surface.md` and `json-output.md`, and corrects §3g. Red first: the mixed-plan binary
+test's new assertion on `details.write` failed on the tree before the change (the first run of
+the amended test, session transcript only); the unit test asserts the same for both flags.
+
+**Suites, rows, mutations on `61a43af`.** The fast suites as in the table above, identical
+counts (313 / 11 / 4 / 17 / 1 / 2 / 36; clippy and fmt clean). The rendered resource module
+changed, so the rows that render one ran again on the working tree that became `61a43af`:
+`ressqlx` 23:42:57–23:43:40, `ressea` 23:43:40–23:44:28, `authadded` 23:44:28–23:46:12,
+`authaddedmysql` 23:46:12–23:48:12, exit 0 and 19 passed each (`row-<name>-fr048b.log`,
+`rows-summary-fr048b.log`); the earlier rows' logs are untouched. Batch I was run again on the
+committed `61a43af` with two mutations added for the listing (M-I9, M-I10): twelve scripted,
+twelve killed by the named tests, none by a compile error (`mutations-i.log`,
+`mutations-i-<id>.out`; the run on `2b3e4a8` is kept as `mutations-i-2b3e4a8.log`, its per-mutation
+outputs overwritten by the rerun). Phase totals: 64 scripted mutations, 64 killed; one by history.
+
+**The help snapshot on Windows, and the third source commit.** On `61a43af` the pull request's
+two Windows platform legs failed in `the_command_surface_matches_its_recorded_contract`: the new
+`help-generate.trycmd`, written by `TRYCMD=overwrite` on macOS, pinned `Usage: renvor generate …`
+where every other snapshot writes `renvor[EXE]`, trycmd's portability marker for the `.exe` name
+Windows prints (`ci-win-1.94.0-61a43af.log`, lines 2085–2103: 2 of 4 cases failed, both in that
+file). The two usage lines now carry the marker; `--test cli` passes on macOS with it (4 passed,
+run in a side target directory so the census then running kept its binary). The fix is
+`ac6062d9fecd7763f4e7e58227bd18b66be914ff` (tree `b763aed2e68e672ddf24a4ab7c67ad40de98ad6c`, one
+signed subject-only commit: `test(cli): pin the generate help with the portable executable
+marker`). The gate run on `61a43af` did not bind: its first leg's tests passed (2209 / 0 / 5,
+census 87/87, `gate-1.94.0-fr048b.log`) but the snapshot edit landed while that leg was in step
+8, so step 9 (working-tree cleanliness) refused it with exit 3 and the runner did not start the
+second leg — a defect of this round's own sequencing, recorded in §5.
+
+**The snapshot helper on Windows, and the fourth source commit.** On `ac6062d` both Windows
+legs passed the help snapshot and failed `a_regenerable_file_is_refused_without_the_flag_and_replaced_only_with_it`
+at its "only the regenerated file and the record moved" assertion: the test's own `snapshot`
+helper built relative paths with `Path::display`, which writes `\` on Windows, and compared them
+to the envelope's `/` paths (`ci-job-101376758151-ac6062d.log`: `left: [".renvor\\generated.toml", …]`).
+The helper now joins path components with `/` on every platform; `--test generate` 11 passed on
+macOS with it, run in the side target directory. The fix is
+`3025cc0df0ea7b2cfff4b9e31744c02ccf401887` (tree `a62a1bd8776bf9b655c749986e81b52c795439c5`,
+one signed subject-only commit: `test(cli): compare generate snapshots by forward-slash paths on
+every platform`), **the final source head**. The gate run on `ac6062d` (`gate-*-fr048c.log`)
+was stopped by hand at 00:56 after both legs' census steps had passed — leg A green throughout,
+9/9, 2209 / 0 / 5, 87/87, 00:12:30–00:34:20; leg B's tests 2209 / 0 / 5 and census 87/87, then
+stopped before its steps 5–9 — because that head was no longer final; it is not claimed as a
+gate result.
+
+**Gates on `3025cc0`.** Both legs, the same way, new log files.
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Head | `3025cc0df0ea7b2cfff4b9e31744c02ccf401887` | `3025cc0df0ea7b2cfff4b9e31744c02ccf401887` |
+| Tree | `a62a1bd8776bf9b655c749986e81b52c795439c5` | `a62a1bd8776bf9b655c749986e81b52c795439c5` |
+| Dirty tracked files at start | 0 | 0 |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2209 passed, 0 failed, 5 ignored (145 `test result` lines) | 2209 passed, 0 failed, 5 ignored (145 lines) |
+| Census | 87/87 rows reported in (`renvor-cli` 12m 54s) | 87/87 rows reported in (`renvor-cli` 13m 02s) |
+| Elapsed | 00:56:57–01:18:41 | 01:18:41–01:39:48 |
+
+Logs: `gate-1.94.0-fr048d.log`, `gate-stable-fr048d.log`, `gates-fr048d.log` (the `fr048b`
+files are the run on `61a43af` that step 9 refused; the `fr048c` files the run on `ac6062d`
+stopped by hand).
+
+| Head | Tree | What it is |
+|---|---|---|
+| `61a43af1e015f83e6ca482ef72b7f41ab9fd193a` | `5a2202e534732c4b60bc130ad0121c1ed181db38` | the second source commit: the template comments, the README, the refusal's listing; rows and the twelve mutations ran here; pushed 23:49; its Windows CI legs failed on the help snapshot |
+| `ac6062d9fecd7763f4e7e58227bd18b66be914ff` | `b763aed2e68e672ddf24a4ab7c67ad40de98ad6c` | the third source commit: the help snapshot's `[EXE]` marker; pushed 00:12; its Windows CI legs failed on the test's snapshot helper |
+| `3025cc0df0ea7b2cfff4b9e31744c02ccf401887` | `a62a1bd8776bf9b655c749986e81b52c795439c5` | **the final source head of the decision round**: the snapshot helper's forward slashes; both gate legs green here; pushed fast-forward 00:56 |
+| the commit that adds this paragraph | — | documents only |
+
+**Pull request and CI.** [#62](https://github.com/renvor-rs/renvor/pull/62), pushed fast-forward
+four times in this round (`2b3e4a8` 23:27, `61a43af` 23:49, `ac6062d` 00:12, `3025cc0` 00:56, each
+over the records commits between). On `3025cc0df0ea7b2cfff4b9e31744c02ccf401887` every check
+passed — 13 passed, 1 skipped by design (`attest rehearsal artifacts`, release-only): verify
+(1.94.0) (21:57:21–22:44:58 UTC, 47m37s), verify (stable) (38m34s), platform (macos-latest,
+1.94.0) (10m38s), platform (macos-latest, stable) (10m18s), platform (windows-latest, 1.94.0)
+(23m17s), platform (windows-latest, stable) (19m29s), docs (1m21s), security (2m31s),
+dependency-review (7s), Analyze (rust) (7m55s), Analyze (actions) (43s), CodeQL (3s), package and
+verify without publishing (2m46s) — started 21:57:03 UTC, the last complete at 22:44:58 UTC
+(01:44:58 local), every workflow at attempt 1. The two heads before it were the round's Windows
+lessons: on `61a43af` both Windows platform legs failed on the help snapshot's missing `[EXE]`
+marker, on `ac6062d` both failed on the test's backslash paths; `3025cc0` passes both. Open
+code-scanning alerts: 0; open Dependabot alerts: 0. The eighth validation pass is recorded by
+the commit that follows this one. **Kept unmerged**; nothing tagged, released, published, or
+deployed.
