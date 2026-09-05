@@ -112,10 +112,10 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         .as_str()
         .expect("a csrf token")
         .to_owned();
-    let session: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
+    let ada_session: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
 
     // ── 5. the current user, with and without the cookie ───────────────────────────
-    let me = http(&address, "GET", "/auth/me", &session, "");
+    let me = http(&address, "GET", "/auth/me", &ada_session, "");
     assert_eq!(me.status, 200, "{}", me.body);
     assert!(me.body.contains(&ada.email));
     assert_eq!(http(&address, "GET", "/auth/me", &[], "").status, 401);
@@ -126,7 +126,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         &address,
         "POST",
         "/items",
-        &session,
+        &ada_session,
         r#"{"name":"ada's item"}"#,
     );
     assert_eq!(created.status, 201, "{}", created.body);
@@ -164,11 +164,17 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         &address,
         "PUT",
         &format!("/items/{id}"),
-        &session,
+        &ada_session,
         r#"{"name":"ada's renamed item"}"#,
     );
     assert_eq!(renamed.status, 200, "{}", renamed.body);
-    let deleted = http(&address, "DELETE", &format!("/items/{id}"), &session, "");
+    let deleted = http(
+        &address,
+        "DELETE",
+        &format!("/items/{id}"),
+        &ada_session,
+        "",
+    );
     assert_eq!(deleted.status, 204, "{}", deleted.body);
     assert_eq!(
         http(&address, "GET", &format!("/items/{id}"), &[], "").status,
@@ -216,7 +222,7 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
             &serde_json::json!({"token": token}).to_string(),
         );
         assert_eq!(confirmed.status, 200, "{}", confirmed.body);
-        let me = http(&address, "GET", "/auth/me", &session, "");
+        let me = http(&address, "GET", "/auth/me", &ada_session, "");
         assert!(me.body.contains("\"email_verified\":true"), "{}", me.body);
     } else {
         println!("SKIPPED: set RENVOR_TEST_SMTP_API_URL to confirm the verification mail");
@@ -227,12 +233,12 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         &address,
         "POST",
         "/auth/logout",
-        &session,
+        &ada_session,
         r#"{"csrf_token":""}"#,
     );
     assert_eq!(refused.status, 403);
     assert_eq!(
-        http(&address, "GET", "/auth/me", &session, "").status,
+        http(&address, "GET", "/auth/me", &ada_session, "").status,
         200,
         "the session survived"
     );
@@ -240,11 +246,14 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         &address,
         "POST",
         "/auth/logout",
-        &session,
+        &ada_session,
         &serde_json::json!({"csrf_token": csrf}).to_string(),
     );
     assert_eq!(out.status, 200, "{}", out.body);
-    assert_eq!(http(&address, "GET", "/auth/me", &session, "").status, 401);
+    assert_eq!(
+        http(&address, "GET", "/auth/me", &ada_session, "").status,
+        401
+    );
 
     // ── 10. nothing secret came back ──────────────────────────────────────────────
 {% if example_domain %}
