@@ -1,0 +1,50 @@
+---
+source: crates/renvor-cli/tests/snapshots.rs
+description: "Template version 7, variant `postgres`. A change here is a change to a generated tree: bump `templates::VERSION` in crates/renvor-cli/src/templates.rs and record the new snapshot with `cargo insta review`; do not overwrite this one."
+---
+[
+  {
+    "digest": "a565fbc84fdc100740331de7893a78df444f12479bc7ed4c64e374f412d9aa39",
+    "path": ".gitignore"
+  },
+  {
+    "digest": "b67193adaa8c4ad1d0aa507ff96ebfb2c3c4db9598523dcb53511ad38ad9a667",
+    "path": ".renvor/generated.toml"
+  },
+  {
+    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "path": "Cargo.lock"
+  },
+  {
+    "digest": "eae5d47eaddce32eec3c1bac95e0b8cd0fd81274f6a40620332f900b9c783f94",
+    "path": "Cargo.toml"
+  },
+  {
+    "digest": "4d8d26e5559d0e458df950447f801e51149680fafd05a7ab73d767007542a66a",
+    "path": "README.md"
+  },
+  {
+    "digest": "4b1908a06a2cda08e9ae9d3530f823c99d8c675d9482dd6bbd952529d35b003e",
+    "path": "migrations/0001_create_item.down.sql"
+  },
+  {
+    "digest": "95b32e5994a63125d2f7b15472d9ab05046f0fa9e82dbe7220a64d51811ca47f",
+    "path": "migrations/0001_create_item.up.sql"
+  },
+  {
+    "digest": "a60e25363045d010d0e8f093f008373ad7592f45ae1a55423980b653395d28f1",
+    "path": "renvor.toml"
+  },
+  {
+    "digest": "fd4696664eb056c1ed87f231ea3f324dd38021e26900455a6648484b59d642b3",
+    "path": "src/domain.rs"
+  },
+  {
+    "digest": "f01eca6bd86f411da424f5b2b305a1bedd9e7f2007551ff0fa2113a21485a9e1",
+    "path": "src/main.rs"
+  },
+  {
+    "digest": "59c3b1d97b7f89a5159f0a36c110e7b4444af5d1c8741f536ecbb04a7d703d61",
+    "path": "src/persistence.rs"
+  }
+]

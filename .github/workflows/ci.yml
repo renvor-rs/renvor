@@ -389,6 +389,7 @@ jobs:
         run: cargo test --workspace --all-features -- --test-threads=1
         env:
           RENVOR_TEST_STARTER_ROWS: nodb
+          INSTA_UPDATE: "no"
 
       # FR-034: the facade must build with no default features on every claimed platform, not
       # only on the one where the feature graph was designed.

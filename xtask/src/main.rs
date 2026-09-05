@@ -300,7 +300,10 @@ fn verify() -> i32 {
         "cargo",
         &["test", "--workspace", "--all-features"],
         &root,
-        &[("RENVOR_TEST_STARTER_ROWS", "none")],
+        // `INSTA_UPDATE=no`: the manifest snapshots (`renvor-cli/tests/snapshots.rs`) fail on a
+        // drift rather than write a `.snap.new` beside the pinned one — which would also dirty
+        // the tree step 9 requires clean. `cargo insta review` is the one path that accepts one.
+        &[("RENVOR_TEST_STARTER_ROWS", "none"), ("INSTA_UPDATE", "no")],
     ) {
         return EXIT_STEP_FAILED;
     }

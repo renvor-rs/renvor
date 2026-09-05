@@ -1,0 +1,38 @@
+---
+source: crates/renvor-cli/tests/snapshots.rs
+description: "Template version 7, variant `domain`. A change here is a change to a generated tree: bump `templates::VERSION` in crates/renvor-cli/src/templates.rs and record the new snapshot with `cargo insta review`; do not overwrite this one."
+---
+[
+  {
+    "digest": "a565fbc84fdc100740331de7893a78df444f12479bc7ed4c64e374f412d9aa39",
+    "path": ".gitignore"
+  },
+  {
+    "digest": "b50c51067a7a612a3ceb204737c5e4fc7942eda146ef5c44b5b408b5b76c2f32",
+    "path": ".renvor/generated.toml"
+  },
+  {
+    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "path": "Cargo.lock"
+  },
+  {
+    "digest": "533fa285f8e2dc34d9bd227f2c21d39fc2c7b5154e62f5715ed3d71b44975c01",
+    "path": "Cargo.toml"
+  },
+  {
+    "digest": "9e3575a17327d2b6fdb230670e41f3076547a7b016d147e91d3c20cf41eeb88d",
+    "path": "README.md"
+  },
+  {
+    "digest": "3f0f9d4c3b83ee0ce937c40b222af5edd35f241d08fb67f12cfe88f8efbe0464",
+    "path": "renvor.toml"
+  },
+  {
+    "digest": "fd4696664eb056c1ed87f231ea3f324dd38021e26900455a6648484b59d642b3",
+    "path": "src/domain.rs"
+  },
+  {
+    "digest": "9bc8c1f517c50dbefef1eeab375021a77377f74be7e9b9f489889134892e60be",
+    "path": "src/main.rs"
+  }
+]
