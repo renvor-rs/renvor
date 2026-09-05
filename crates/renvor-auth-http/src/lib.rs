@@ -46,7 +46,7 @@ pub mod routes;
 
 pub use openapi::{SESSION_SCHEME, no_credential_required, security_schemes, session_required};
 pub use problem::{PROBLEM_MEDIA_TYPE, classify, classify_refusal, render};
-pub use routes::{AuthEndpoints, SharedEndpoints, routes};
+pub use routes::{AuthEndpoints, DeferredEndpoints, SharedEndpoints, routes, routes_deferred};
 
 #[cfg(feature = "tokens")]
 pub use openapi::{BEARER_SCHEME, bearer_required};
