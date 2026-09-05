@@ -77,8 +77,10 @@ reviewer: #101, #102, #103 `validated`; #105, #106 `needs_fixes` (D-1 and the re
 
 ## 3. Codex review at the checkpoint
 
-PENDING-CODEX — performed by the maintainer with `/codex:review` on the pull request head; this
-session cannot invoke it and stops to hand over the command.
+**Not yet performed.** The maintainer runs `/codex:review` on the pull request head at the
+checkpoint; the implementing session cannot invoke it and stops to hand over the command. Its
+findings, and the one bounded correction round the directive allows, are recorded here by the
+maintainer's session when they exist — not before.
 
 ## 4. What this record does not claim
 
