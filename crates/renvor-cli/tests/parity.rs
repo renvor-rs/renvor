@@ -79,9 +79,17 @@ fn drive_wizard_accepting_defaults(terminal: &mut Terminal) -> i32 {
     // Phase 006. The gate question comes before the value one, so declining persistence needs a
     // single answer rather than naming a database in order to refuse one.
     terminal.expect("Generate database persistence?");
-    terminal.enter(); // default no // default no
+    terminal.enter(); // default no
+    // Phase 011. The auth starter is asked after persistence (its refusal names `--database`),
+    // and the capabilities after the container gate, in PLAN §9.1's order. Both default to
+    // `none`, and with both at `none` the framework-path question is NOT asked — a skeleton
+    // depends on nothing, so the wizard has nothing to ask where it is.
+    terminal.expect("Authentication starter");
+    terminal.enter(); // default none
     terminal.expect("Generate container development controls?");
     terminal.enter(); // default no
+    terminal.expect("Capabilities");
+    terminal.enter(); // default none
     terminal.expect("Record that local HTTPS is wanted?");
     terminal.enter(); // default no
     terminal.expect("Create this project?");
@@ -199,6 +207,8 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     // single answer rather than naming a database in order to refuse one.
     answered.expect("Generate database persistence?");
     answered.enter(); // default no
+    answered.expect("Authentication starter");
+    answered.enter(); // default none
     answered.expect("Generate container development controls?");
     answered.key("y");
     // Containers WITHOUT persistence, so the four database questions are skipped entirely and the
@@ -206,6 +216,8 @@ fn a_different_wizard_answer_really_does_produce_a_different_project() {
     // here as much as the answer is.
     answered.expect("Generate a local cache container?");
     answered.enter(); // default no
+    answered.expect("Capabilities");
+    answered.enter(); // default none
     answered.expect("Record that local HTTPS is wanted?");
     answered.enter();
     answered.expect("Create this project?");
@@ -412,7 +424,9 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         "Generate the example domain module?",
         "Generate seed data for it?",
         "Generate database persistence?",
+        "Authentication starter",
         "Generate container development controls?",
+        "Capabilities",
         "Record that local HTTPS is wanted?",
     ] {
         declined.expect(prompt);
@@ -519,5 +533,144 @@ fn the_equivalent_command_printed_by_the_wizard_actually_reproduces_the_project(
         tree(&from_command.join("demo")),
         tree(&from_wizard.join("demo")),
         "the printed command produced a different project from the wizard it claims to reproduce"
+    );
+}
+
+/// Whether `RENVOR_TEST_STARTER_ROWS` admits the starter parity proof — the same variable and
+/// the same reading as `tests/starter_matrix.rs`, under the row name `parity`.
+fn starter_parity_selected() -> bool {
+    match std::env::var("RENVOR_TEST_STARTER_ROWS") {
+        Err(_) => true,
+        Ok(value) if value.trim() == "none" => {
+            println!("SKIPPED row parity: RENVOR_TEST_STARTER_ROWS=none");
+            false
+        }
+        Ok(value) => {
+            let selected = value.split(',').any(|row| row.trim() == "parity");
+            if !selected {
+                println!("SKIPPED row parity: not in RENVOR_TEST_STARTER_ROWS={value}");
+            }
+            selected
+        }
+    }
+}
+
+#[test]
+fn a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects() {
+    // Phase 011 (W-023). SC-003 for the shape the waiver is about: the session starter with the
+    // mail it needs, on PostgreSQL through SQLx, pointed at this checkout. Every answer the wizard
+    // takes has a flag, and the two must produce one tree — `renvor.toml` included, since that is
+    // the record of what was chosen.
+    //
+    // THE FLAG RUN GOES FIRST, on purpose. Both runs verify the generated project, and the first
+    // one pays the framework's cold build into the shared build directory. The pty harness bounds
+    // a run at five minutes, which a warm verification meets and a cold one on a runner may not;
+    // the flag run has no such bound.
+    if !starter_parity_selected() {
+        return;
+    }
+    let framework = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .expect("the workspace root exists");
+    let framework = framework.to_str().expect("utf-8").to_owned();
+    let root = tempfile::tempdir().expect("a temporary directory");
+    let target = std::env::var_os("RENVOR_TEST_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.path().join(".target"));
+    let target = target.to_str().expect("utf-8").to_owned();
+    let env: [(&str, &str); 2] = [("CARGO_TARGET_DIR", &target), ("CARGO_INCREMENTAL", "0")];
+    let wizard_parent = root.path().join("w");
+    let flag_parent = root.path().join("f");
+    std::fs::create_dir_all(&wizard_parent).expect("the parent is created");
+    std::fs::create_dir_all(&flag_parent).expect("the parent is created");
+
+    let (flag_exit, _, stderr) = renvor(
+        &[
+            "new",
+            "demo",
+            "--path",
+            flag_parent.join("demo").to_str().expect("utf-8"),
+            "--database",
+            "postgres",
+            "--orm",
+            "sqlx",
+            "--example-domain",
+            "--auth",
+            "session",
+            "--capabilities",
+            "mail",
+            "--framework-path",
+            &framework,
+        ],
+        root.path(),
+        &env,
+    );
+    assert_eq!(flag_exit, 0, "the flag run succeeds: {stderr}");
+
+    let mut terminal = Terminal::spawn(
+        &[
+            "new",
+            "--path",
+            wizard_parent.join("demo").to_str().expect("utf-8"),
+        ],
+        root.path(),
+        &env,
+    );
+    terminal.expect("Project name");
+    terminal.enter();
+    terminal.expect("Local development domain");
+    terminal.enter();
+    terminal.expect("Generate the example domain module?");
+    terminal.enter(); // default yes
+    terminal.expect("Generate seed data for it?");
+    terminal.enter(); // default no
+    terminal.expect("Generate database persistence?");
+    // `y` submits the confirmation by itself; an Enter after it would answer the next prompt.
+    terminal.send("y");
+    terminal.expect("Database");
+    terminal.send_line("postgres");
+    terminal.expect("Persistence model");
+    terminal.send_line("sqlx");
+    terminal.expect("Authentication starter");
+    terminal.send_line("session");
+    terminal.expect("Generate container development controls?");
+    terminal.enter(); // default no
+    // With `session` chosen the capabilities default is `mail`, the one the starter needs.
+    terminal.expect("Capabilities");
+    terminal.enter();
+    terminal.expect("Record that local HTTPS is wanted?");
+    terminal.enter(); // default no
+    terminal.expect("Path to the Renvor framework checkout");
+    terminal.send_line(&framework);
+    terminal.expect("Create this project?");
+    terminal.enter(); // default yes
+    let wizard_exit = terminal.wait();
+    assert_eq!(
+        wizard_exit,
+        0,
+        "the wizard run succeeds\n--- transcript ---\n{}",
+        terminal.visible()
+    );
+
+    let from_prompts = tree(&wizard_parent.join("demo"));
+    let from_flags = tree(&flag_parent.join("demo"));
+    assert_eq!(
+        from_prompts.keys().collect::<Vec<_>>(),
+        from_flags.keys().collect::<Vec<_>>(),
+        "both interfaces produce the same file list"
+    );
+    for (path, prompt_bytes) in &from_prompts {
+        assert_eq!(
+            String::from_utf8_lossy(prompt_bytes),
+            String::from_utf8_lossy(&from_flags[path]),
+            "{path} differs between the wizard and the flags"
+        );
+    }
+    let manifest = String::from_utf8_lossy(&from_prompts["renvor.toml"]);
+    assert!(
+        manifest.contains("auth = \"session\"") && manifest.contains("mail = true"),
+        "the recorded manifest carries the starter choices:\n{manifest}"
     );
 }

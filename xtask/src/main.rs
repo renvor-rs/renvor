@@ -189,6 +189,7 @@ fn main() -> std::process::ExitCode {
     let task = env::args().nth(1);
     match task.as_deref() {
         Some("verify") => std::process::ExitCode::from(verify() as u8),
+        Some("census") => std::process::ExitCode::from(census() as u8),
         Some(other) => {
             eprintln!("error: unknown task `{other}`");
             usage();
@@ -202,13 +203,41 @@ fn main() -> std::process::ExitCode {
 }
 
 fn usage() {
-    eprintln!("usage: cargo xtask verify");
+    eprintln!("usage: cargo xtask verify | cargo xtask census");
     eprintln!();
-    eprintln!("Runs the full verification sequence. Exit codes:");
+    eprintln!("`verify` runs the full verification sequence; `census` runs step 1 and step 4's");
+    eprintln!(
+        "row census alone, for a change to the census rows or a negative control. Exit codes:"
+    );
     eprintln!("  0  every step ran and passed");
     eprintln!("  1  a step ran and failed");
     eprintln!("  2  a required tool or the database environment is missing; no steps ran");
     eprintln!("  3  the working tree was dirty after a successful run");
+}
+
+/// Runs step 1 and the step 4 row census alone, and returns the process exit code.
+///
+/// Phase 011. The census gained fourteen rows that each generate and build a starter, so a
+/// change to the rows — or the negative control that renames, deletes, or compiles one out and
+/// expects the census to say so — no longer has to pay the whole sequence to be observed.
+fn census() -> i32 {
+    let root = workspace_root();
+    let environment = |name: &str| std::env::var_os(name);
+    let missing_tools = probe_tooling();
+    let missing_databases = missing_database_prerequisites(&environment);
+    if let Some(code) = prerequisites_gate(&missing_tools, &missing_databases) {
+        report_missing(&missing_tools, &missing_databases);
+        return code;
+    }
+    step_ok(
+        1,
+        "prerequisite probe",
+        "all required tooling present, and the four-row database environment is set",
+    );
+    if !the_four_rows_all_ran(&root, &environment) {
+        return EXIT_STEP_FAILED;
+    }
+    EXIT_OK
 }
 
 /// Runs the sequence and returns the process exit code.
@@ -261,13 +290,17 @@ fn verify() -> i32 {
     ) {
         return EXIT_STEP_FAILED;
     }
+    // The starter matrix (`crates/renvor-cli/tests/starter_matrix.rs`) generates and builds a
+    // project per row. It runs ONCE, in the census below, against a persistent build directory;
+    // here its rows skip by name (the test says so on stdout), and the census refuses the same
+    // variable so a skipped row can never stand in for a run one.
     if !run(
         4,
         "tests",
         "cargo",
         &["test", "--workspace", "--all-features"],
         &root,
-        &[],
+        &[("RENVOR_TEST_STARTER_ROWS", "none")],
     ) {
         return EXIT_STEP_FAILED;
     }
@@ -2210,6 +2243,14 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// cannot see inside the function it names.
 ///
 /// This pair is also why the census invocation carries `tokens`: see `the_four_rows_all_ran`.
+/// # The starter matrix, added in Phase 011
+///
+/// **Sixty-seven became eighty-two.** The fourteen rows of `renvor-cli`'s `starter_matrix` and
+/// the starter parity row of its `parity` binary are the removal-plan controls of W-023 and
+/// W-024: each covering row generates a framework-backed starter and runs the placed project's
+/// own test against the real services, and the parity row drives the wizard through a real
+/// terminal. They carry an empty feature string because the package has no database feature.
+///
 /// The database-backed suites that must report in, with the features each needs.
 ///
 /// # The feature string moved from the invocation to the row, and the reason is `renvor-auth-http`
@@ -2219,7 +2260,102 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
 /// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
 /// extra — it is an error, and the census would have failed to run rather than failed to find.
-const ROW_EVIDENCE: [(&str, &str, &str, &str); 67] = [
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 82] = [
+    // THE STARTER MATRIX (Phase 011, W-023 and W-024). Fourteen rows in one binary — the ten
+    // covering rows, each generating a framework-backed starter and running its own live proof,
+    // the refusals, and the three determinism proofs — and the wizard-versus-flags parity of a
+    // starter through the real terminal, in `parity`. `renvor-cli` has no database feature; the
+    // rows reach the services through the same `RENVOR_TEST_*` variables as every suite above.
+    (
+        "renvor-cli",
+        "parity",
+        "a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "sqlx_postgres_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "sqlx_mysql_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "seaorm_postgres_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "seaorm_mysql_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "authentication_with_only_its_mail_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_cache_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "storage_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "mail_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "observability_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_starter_without_a_database_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "every_invalid_combination_is_refused_before_any_write",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_dry_run_of_a_starter_matches_the_real_run_and_writes_nothing",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_starter_generated_twice_is_byte_identical_and_a_rerun_changes_nothing",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_failure_after_verification_leaves_the_destination_absent",
+        "",
+    ),
     // THE TEST APPLICATION (FR-083). Not a four-row entry — it exercises the ROUTES, and the thing
     // that varies by engine is the adapter, which the four-row suites already measure. It reaches
     // PostgreSQL through a dev-dependency, so it takes NO database feature of its own; passing one
@@ -2770,6 +2906,20 @@ fn ambiguous_rows_in_group<'a>(package: &str, features: &str) -> Vec<&'a str> {
 fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> bool {
     const TITLE: &str = "tests (four-row persistence census)";
 
+    // Phase 011. The starter-matrix rows honour `RENVOR_TEST_STARTER_ROWS` so the general test run
+    // and the platform job can skip them by name. The census is where they must RUN, so an
+    // environment that carries the variable is refused rather than honoured: a skipped row prints
+    // the same `ok` line as a run one, and the census could not tell them apart.
+    if env("RENVOR_TEST_STARTER_ROWS").is_some() {
+        step_fail(
+            4,
+            TITLE,
+            "RENVOR_TEST_STARTER_ROWS is set; the census runs every starter-matrix row and \
+             cannot honour a selection. Unset it and run again",
+        );
+        return false;
+    }
+
     // Defence in depth. Step 1 already refuses the run without these, so reaching here with one
     // absent means the environment changed mid-sequence. Either way the answer is the same: a
     // census that did not run is not a census that passed.
@@ -2836,6 +2986,13 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             .args(&args)
             // Deterministic output regardless of runner. See `without_ansi`.
             .env("CARGO_TERM_COLOR", "never")
+            // The starter matrix builds every generated project here, so the framework's
+            // dependencies compile once per machine and every later row, and every later run,
+            // pays only for the project itself. Absolute, as the matrix requires.
+            .env(
+                "RENVOR_TEST_TARGET_DIR",
+                root.join("target").join("starter-matrix"),
+            )
             .current_dir(root)
             .output();
         let elapsed = started.elapsed();
