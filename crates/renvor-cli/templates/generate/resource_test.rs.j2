@@ -59,6 +59,9 @@ async fn {{ snake }}_is_created_read_replaced_and_deleted() {
     assert_eq!(deleted.status, 204, "{}", deleted.body);
     assert_eq!(http(&address, "GET", &format!("/{{ plural }}/{id}"), &[], "").status, 404);
 
-    let status = app.stop();
-    assert!(status.success(), "the application did not exit cleanly: {status}");
+    if let Some(status) = app.stop() {
+        assert!(status.success(), "the application did not exit cleanly: {status}");
+    } else {
+        println!("SKIPPED: no interrupt can be sent to a child on this platform");
+    }
 }

@@ -232,9 +232,22 @@ pub struct Application {
 }
 
 impl Application {
-    /// Sends the interrupt a terminal sends and waits for the exit status, bounded.
-    pub fn stop(&mut self) -> std::process::ExitStatus {
-        interrupt_and_wait(&mut self.child.0).expect("the application stopped within the bound")
+    /// Sends the interrupt a terminal sends and waits for the exit status, bounded: `Some` on a
+    /// platform that can send one, and the test asserts on it.
+    #[cfg(unix)]
+    pub fn stop(&mut self) -> Option<std::process::ExitStatus> {
+        Some(
+            interrupt_and_wait(&mut self.child.0)
+                .expect("the application stopped within the bound"),
+        )
+    }
+
+    /// Ends the process: Windows has no SIGINT to send a child from a test, so there is no exit
+    /// status to assert on, and `None` says so rather than faking one.
+    #[cfg(not(unix))]
+    pub fn stop(&mut self) -> Option<std::process::ExitStatus> {
+        let _ = interrupt_and_wait(&mut self.child.0);
+        None
     }
 }
 

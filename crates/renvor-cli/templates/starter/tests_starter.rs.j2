@@ -407,21 +407,31 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
 {% endif %}
 
     // ── finally: the interrupt a terminal sends, and a clean exit ─────────────────
-    let status = app.stop();
-    assert!(
-        status.success(),
-        "the application did not exit cleanly: {status}"
-    );
+    let stopped = app.stop();
+    if let Some(status) = stopped {
+        assert!(
+            status.success(),
+            "the application did not exit cleanly: {status}"
+        );
+    } else {
+        // Windows has no SIGINT to send a child from a test: the process was ended, and the
+        // clean-shutdown path is proven on the platforms that can send one.
+        println!("SKIPPED: no interrupt can be sent to a child on this platform");
+    }
 {% if cap_observability %}
 
     // ── observability: the exporter flushed to the receiver before the process ended ──
-    let exports = app.otlp.lock().expect("not poisoned");
-    assert!(
-        exports
-            .iter()
-            .any(|line| line.starts_with("POST /v1/traces")),
-        "no OTLP export reached the loopback receiver: {exports:?}"
-    );
+    if stopped.is_some() {
+        let exports = app.otlp.lock().expect("not poisoned");
+        assert!(
+            exports
+                .iter()
+                .any(|line| line.starts_with("POST /v1/traces")),
+            "no OTLP export reached the loopback receiver: {exports:?}"
+        );
+    } else {
+        println!("SKIPPED: the shutdown export needs the interrupt this platform cannot send");
+    }
 {% endif %}
 }
 {% if auth_session %}
