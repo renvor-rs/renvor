@@ -126,6 +126,13 @@ impl TestApplication {
     /// A request from the loopback peer, addressed to the listener, with a fresh request id.
     #[must_use]
     pub fn request(&self, body: impl Into<Vec<u8>>) -> Request {
+        self.request_to(&self.listener, body)
+    }
+
+    /// A request addressed to `listener` rather than the default — for a test that proves what
+    /// a request for another origin is answered.
+    #[must_use]
+    pub fn request_to(&self, listener: &EffectiveOrigin, body: impl Into<Vec<u8>>) -> Request {
         let mut counter = self
             .request_ids
             .lock()
@@ -135,7 +142,7 @@ impl TestApplication {
             RunIdentifier::generate(&OsEntropy).expect("the operating system has entropy"),
             RequestId::from_entropy(counter.to_le_bytes()),
             ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            self.listener.clone(),
+            listener.clone(),
             CancelScope::root().child("request"),
         );
         Request::new(context, body.into(), String::new(), BTreeMap::new())

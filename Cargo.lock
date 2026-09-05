@@ -3089,6 +3089,7 @@ dependencies = [
  "renvor-http",
  "renvor-openapi",
  "renvor-sqlx",
+ "renvor-testkit",
  "serde",
  "serde_json",
  "sqlx",

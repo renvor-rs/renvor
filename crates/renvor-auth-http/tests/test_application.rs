@@ -22,7 +22,6 @@
 //! same routes twice; the thing that varies by engine is the adapter, and `renvor-testkit`'s
 //! four-row suites already measure that on all four rows.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
@@ -37,18 +36,17 @@ use renvor_auth::password::{PasswordPolicy, PasswordService, StaticBlocklist};
 use renvor_auth::service::{AuthenticationService, TokenLifetime};
 use renvor_auth::session::{SessionPolicy, SessionService};
 use renvor_auth_http::routes::{AuthEndpoints, routes};
-use renvor_core::identity::ClientIdentity;
-use renvor_core::{CancelScope, OsEntropy, RunIdentifier};
+use renvor_core::OsEntropy;
 use renvor_database::{ConnectionString, Database as _, MigrationSettings, PoolSettings};
-use renvor_http::route::{Method, PresentedCredentials, Request, RouteRegistry};
-use renvor_http::{EffectiveOrigin, FetchMetadata, RequestContext, RequestId, Scheme};
+use renvor_http::route::{Method, PresentedCredentials, RouteRegistry};
+use renvor_http::{EffectiveOrigin, FetchMetadata, Scheme};
 use renvor_sqlx::Migrations;
 use renvor_sqlx::auth::TokenTable;
 use renvor_sqlx::auth::postgres::{
     SqlxAttemptRepository, SqlxCredentialRepository, SqlxSessionRepository,
     SqlxSingleUseTokenRepository, SqlxUserRepository,
 };
-use std::net::{IpAddr, Ipv4Addr};
+use renvor_testkit::TestApplication;
 
 /// A value the test supplies and that no response may echo.
 const PASSWORD_CANARY: &str = "hunter2CanaryDoNotLeak-correct-horse";
@@ -109,23 +107,21 @@ fn url() -> Option<ConnectionString> {
 }
 
 /// Everything the application holds, plus what the sinks recorded.
+/// This crate's end-to-end proof rides on the testkit's socket-free application (Phase 011,
+/// FR-050): the registry, the loopback request, the dispatch, and the sweep are the harness's;
+/// what stays here is what is this crate's — the database, the recording sink, and the flows.
 struct Application {
-    registry: RouteRegistry,
+    app: TestApplication,
     database: renvor_sqlx::SqlxDatabase<sqlx::Postgres>,
     mail: Arc<RecordingMailSink>,
-    /// Every response body and header this test produced, for the canary sweep.
-    swept: std::sync::Mutex<Vec<String>>,
 }
 
 impl Application {
-    /// Sends one request through the real route table and records the response for the sweep.
     async fn send(&self, method: Method, route: &str, body: &str, cookie: &str) -> (u16, String) {
         self.send_with_metadata(method, route, body, cookie, FetchMetadata::default())
             .await
     }
 
-    /// `send`, with what the user agent said about the request's origin (FR-085), addressed to
-    /// the `http` origin a request reaching the listener directly resolves to.
     async fn send_with_metadata(
         &self,
         method: Method,
@@ -138,8 +134,6 @@ impl Application {
             .await
     }
 
-    /// `send_with_metadata`, with the origin the transport resolved for the request — what the
-    /// router builds from the configured scheme, a trusted proxy's `proto`, and the `Host`.
     async fn send_addressed(
         &self,
         method: Method,
@@ -149,85 +143,31 @@ impl Application {
         metadata: FetchMetadata,
         addressed: EffectiveOrigin,
     ) -> (u16, String) {
-        // THE METHOD IS MATCHED, not discarded.
-        //
-        // The first version located a route by path alone and threw the method away with
-        // `let _ = method;` — so a route table that declared `GET /auth/login` would have passed
-        // this suite unchanged. Found by requirements review.
-        let declared = self
-            .registry
-            .routes()
-            .iter()
-            .find(|candidate| candidate.path() == route && candidate.method() == method)
-            .unwrap_or_else(|| panic!("no route declares that path for that method"));
-
-        let context = RequestContext::new(
-            RunIdentifier::generate(&OsEntropy).expect("entropy"),
-            RequestId::from_entropy([9, 8, 7, 6, 5, 4, 3, 2]),
-            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            addressed,
-            CancelScope::root().child("request"),
-        );
-        let request = Request::new(
-            context,
-            body.as_bytes().to_vec(),
-            String::new(),
-            BTreeMap::new(),
-        )
-        .with_credentials(PresentedCredentials::new(cookie, ""))
-        .with_fetch_metadata(metadata);
-
-        let response = declared.dispatch(request).await;
-        let status = response.status_code();
-        let rendered = String::from_utf8_lossy(response.body()).into_owned();
-
-        // THE SWEEP ACCUMULATES HERE, so it covers every response this file produced rather than
-        // the ones somebody remembered to check.
-        let mut swept = self.swept.lock().expect("unpoisoned");
-        swept.push(rendered.clone());
-        for (name, value) in response.headers() {
-            swept.push(format!("{name}: {value}"));
-        }
-        (status, rendered)
+        let request = self
+            .app
+            .request_to(&addressed, body.as_bytes().to_vec())
+            .with_credentials(PresentedCredentials::new(cookie, ""))
+            .with_fetch_metadata(metadata);
+        let answer = self.app.dispatch(method, route, request).await;
+        (answer.status, answer.body)
     }
 
-    /// The `Set-Cookie` value a response carried, if any.
     async fn login(&self, address: &str, password: &str) -> (u16, String, String) {
-        let route = self
-            .registry
-            .routes()
-            .iter()
-            .find(|route| route.path() == "/auth/login")
-            .expect("the login route");
-        let context = RequestContext::new(
-            RunIdentifier::generate(&OsEntropy).expect("entropy"),
-            RequestId::from_entropy([1, 1, 1, 1, 2, 2, 2, 2]),
-            ClientIdentity::DirectPeer(IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            http_listener(),
-            CancelScope::root().child("request"),
-        );
         let body = format!(r#"{{"email":"{address}","password":"{password}"}}"#);
-        let request = Request::new(context, body.into_bytes(), String::new(), BTreeMap::new());
-        let response = route.dispatch(request).await;
-        let status = response.status_code();
-        let rendered = String::from_utf8_lossy(response.body()).into_owned();
-        let cookie = response
-            .headers()
-            .iter()
-            .find(|(name, _)| name == "set-cookie")
-            .map(|(_, value)| value.clone())
-            .unwrap_or_default();
+        let request = self.app.request(body.into_bytes());
+        let answer = self
+            .app
+            .dispatch(Method::Post, "/auth/login", request)
+            .await;
+        let cookie = answer.header("set-cookie").unwrap_or_default().to_owned();
+        (answer.status, answer.body, cookie)
+    }
 
-        let mut swept = self.swept.lock().expect("unpoisoned");
-        swept.push(rendered.clone());
-        for (name, value) in response.headers() {
-            swept.push(format!("{name}: {value}"));
-        }
-        (status, rendered, cookie)
+    fn swept(&self) -> String {
+        self.app.swept().join("\n")
     }
 }
 
-/// Builds the application against a freshly migrated database.
 async fn application() -> Option<Application> {
     let dsn = url()?;
     let settings = PoolSettings::default()
@@ -314,10 +254,9 @@ async fn application() -> Option<Application> {
         .expect("the group registers");
 
     Some(Application {
-        registry,
+        app: TestApplication::new(registry).with_listener(http_listener()),
         database,
         mail,
-        swept: std::sync::Mutex::new(Vec::new()),
     })
 }
 
@@ -632,7 +571,7 @@ async fn every_flow_answers_and_nothing_secret_comes_back() {
     //
     // The canaries are values THIS TEST supplied. Finding one would mean the transport echoed input
     // it was given, which is the leak SC-006 is about.
-    let swept = app.swept.lock().expect("unpoisoned").join("\n");
+    let swept = app.swept();
     assert!(!swept.is_empty(), "the sweep collected nothing");
     // NEITHER THE CANARY NOR THE SWEPT TEXT IS PRINTED. On a real leak this failure message would
     // otherwise carry the leaked credential into the test log — the one run where that matters
