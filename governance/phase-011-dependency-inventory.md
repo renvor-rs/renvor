@@ -65,9 +65,19 @@ mirror of its decisions.
 | `renvor_testkit::client` (over `minreq`) | one signature shared by every generated test — `http(address, method, path, headers, body) -> Reply` — with the JSON content type and the zero-length body rule the starter's write routes expect |
 | `renvor_testkit::app::TestApplication` | socket-free dispatch through the registry with the caller's providers (FR-050); the shape `renvor-auth-http`'s suite hand-wrote in Phase 009 |
 
-## 4a. The correction round (2026-09-05): nothing added
+## 4a. The correction round (2026-09-05): one package, by an edge the facade needed
 
-The seventeen Native Codex fixes added **no dependency**. The wizard's multi-select is
+The seventeen Native Codex fixes added **no dependency**. The Standards and Specification
+continuation added **one package to the lockfile**: `signal-hook-registry` 1.4.8 (MIT OR
+Apache-2.0, one dependency — `libc` — already in the graph), reached through a new optional edge
+`renvor → tokio` with the `signal` feature under `transport-rest`, which every starter enables.
+It is the package the seeded lockfile was short of (L-3): a starter enabled Tokio's `signal`
+itself and resolved it outside the framework's lock, which broke offline generation (FR-006).
+The facade now offers `renvor::shutdown_signal()` and the starter enables `signal` nowhere; the
+package is in the framework's lock and in the cache any fetch of it leaves. The gate's
+`cargo deny` (advisories, bans, licences, sources) runs on both toolchains with it in place; the
+CLI's lock-closure ban tests are unaffected (it is neither a driver, an archive, nor an HTTP
+client). The wizard's multi-select is
 `cliclack::MultiSelect`, from the prompt library already in the lock; the reserved-word table is a
 sorted `&[&str]` in `generate.rs` (a crate carrying the two engines' keyword lists was considered
 and rejected as a larger surface than a static table — `sqlparser` would bring a full SQL parser

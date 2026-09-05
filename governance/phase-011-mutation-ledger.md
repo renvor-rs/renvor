@@ -26,9 +26,11 @@ tracked.
 | D — the two entry findings | 2 | 2 | 0 | README count; the `cfg`-gated variant |
 | E/F — L-17, the testkit client, the apply engine, the record, verification, the generators, the manifest comment, the Windows path | 11 | 11 | 0 | M-F1 … M-F11; F3–F9 run on head `d8e3a44` by `mutate-f.py`, final pristine run 288 passed; F10 on the closure head; F11 on `f95ab6b` |
 | G — the correction round (every Native Codex fix, the transactional commit) | 21 | 21 | 2 in their first form (M-G10, M-G15), killed after the control was strengthened or re-targeted | run by `mutations-g.py` in an isolated copy of the working tree (`mutsrc`, its own build directory) so the census rows compiling beside it could not pick up a mutation; logs `mutations-g.log`, `mutations-g-<id>.out` |
+| H — the Standards and Specification fixes (the continuation of the round) | 9 | 9 | 0 | `mutations-h.py` and `mutations-h8.sh` in the same isolated copy; M-H8 is killed by the **generated** negative control while `renvor new` verifies the staged starter, so its kill is a refused generation; M-H9 is the offline case's own red run on the unfixed tree (`red-offline.log`), which is the mutation "the facade offers no interrupt wait and the starter enables `signal` itself" applied by history rather than by script |
 
 ## The entries worth reading
 
+- **M-H8 is killed by a generated test, inside generation.** The mutation lives in a template; the control that kills it is rendered into the starter's `tests/support/mod.rs` and runs when `renvor new` verifies the staged project, so the kill is a refused generation (exit 3, "does not pass its own tests") rather than a red `cargo test` in this repository — the same place a consumer's copy would catch it.
 - **M-A1 survived, then killed.** `.with("reason", "no_token_issuance_route")` → `"reserved"`:
   `api_and_full_are_unsupported_values_not_reservations` asserted the exit code, the `supported`
   detail, and that the prose says why, and not the machine-readable `reason` a script keys on. The
@@ -147,3 +149,17 @@ Run on head `3df5589` and re-run on the checkpoint head `d8e3a44` (07:29, all th
 
 There is no M-G11: the identifier was skipped when the batch was written and is left unused so the
 log files keep their names.
+
+### Batch H — the Standards and Specification fixes (2026-09-05, isolated copy of the tree after the fixes)
+
+| ID | Edit | Killed by |
+|---|---|---|
+| M-H1 | testkit sweep: the failure prints the canary and the swept line again | `renvor_testkit::app::tests::a_failed_sweep_names_the_canary_by_index_and_never_by_value` |
+| M-H2 | `without_proxy_credential`: the value is returned unchanged (no credential stripped) | `generate::verify::tests::a_proxy_credential_never_reaches_the_sealed_environment` |
+| M-H3 | `redacted_output`: the child's text is returned as it was | `generate::verify::tests::a_childs_output_is_reported_without_url_credentials_or_control_characters` |
+| M-H4 | apply engine: the `generate-record` boundary removed | `tests/generate.rs::a_failure_at_every_placement_boundary_leaves_the_project_byte_identical` (an injection point that does not fire is a run that succeeds where it must fail) |
+| M-H5 | apply engine: the record boundary fails without rolling back | the same test (the project is left changed) |
+| M-H6 | README template: the unqualified "requires a clean exit" sentence restored | `commands::new::tests::the_generated_readme_states_the_windows_shutdown_limitation` |
+| M-H7 | starter test template: `"{cookie}"` printed again after the helper | `commands::new::tests::the_generated_tests_fail_without_printing_a_credential` |
+| M-H8 | support template: `session_cookie_of` prints the cookie's value in its panic | the generated `a_failed_secret_extraction_names_nothing_secret`, run by `cargo test` inside `renvor new`'s verification of an auth starter: generation was **refused** (`mutations-h-M-H8.out`, exit 3, "does not pass its own tests") |
+| M-H9 | the facade's `shutdown_signal` absent and the starter enabling Tokio `signal` itself (the tree before the fix) | `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — `red-offline.log`: `no matching package named signal-hook-registry found` |

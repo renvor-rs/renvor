@@ -4,8 +4,9 @@
 **Phase**: 011 — Generators, the auth starter, and the testing kit
 **State**: **at the review/merge-authority checkpoint — unmerged, not closed.** Nothing here is
 published, tagged, released, or deployed, and no waiver was created or granted by this phase.
-**Count**: **16 retained limitations of this phase** (2 security-relevant, 14 correctness and
-operations; L-14, L-15, and L-16 were added by the correction round of 2026-09-05). Carried rows: **010/L-7, 010/L-17, and 009/L-15 closed with the measurement**;
+**Count**: **15 retained limitations of this phase** (2 security-relevant, 13 correctness and
+operations; L-14, L-15, and L-16 were added by the correction round of 2026-09-05, and L-3 was
+closed by it with the measurement below). Carried rows: **010/L-7, 010/L-17, and 009/L-15 closed with the measurement**;
 **010/L-14 closed with the measurement after the validation review** (§Closed from Phase 010);
 **010/L-1, L-5, L-6, and L-15 retained** with an owner, a target, a consequence, and the reason;
 **eleven Phase 009 rows** whose owner was "Stage 8 / a follow-up batch" **inventoried, each with
@@ -28,7 +29,6 @@ evidence are the clone-visible mirror.
 
 | Row | What | Why it was not closed | Owner / target / consequence |
 |---|---|---|---|
-| **L-3** | **The seeded lockfile is one package short.** The framework's `Cargo.lock` is copied into staging to seed resolution (FR-006, SR-007), and no workspace crate enables Tokio's `signal` feature, so the starter's first `cargo` invocation resolves `signal-hook-registry` against the registry index ("Locking 1 package", visible in every verification log). Generation itself still opens no socket; verification is `cargo`'s. | Adding a workspace edge only to widen the seed would put a dependency into the framework for the generator's convenience. | `renvor-cli`; **Phase 012** (a seed manifest beside the lock, or the edge once the facade needs it). Consequence: an offline first generation fails at verification unless the crate is already in the local registry cache. |
 | **L-4** | **`renvor generate resource` knows five field types** — `string`, `text`, `integer`, `boolean`, `float` — and renders no relation, uniqueness, index, default, or nullable column. | The five cover the example domain and every generated test; relations need a decision on how the resource module names the other side. | `renvor-cli`; **Phase 012**. Consequence: anything else is a hand-written migration and repository, which the generator's rerun safety leaves untouched. |
 | **L-5** | **Capabilities are chosen at `renvor new` and only there.** `renvor generate auth` adds the auth starter to a placed starter; there is no `renvor generate capability <name>`, so adding `cache`, `jobs`, `mail`, `storage`, or `observability` later is manual. | The auth generator exists because W-023's closure required a post-generation path; a capability generator has the same shape but was not in the phase's controls. | `renvor-cli`; **Phase 012**. Consequence: an author who wants a capability later regenerates into a scratch tree and merges by hand. |
 | **L-6** | **`renvor generate auth` re-renders the affected starter files and reports every author-changed one as a conflict.** The resources block of `src/routes.rs` between the `// renvor:resources:begin/end` markers is carried across the re-render; every other differing file is a `generation_conflict` that writes nothing (FR-048, SR-009) and must be reconciled by hand. There is no three-way merge. | Merging arbitrary edits into a re-rendered file is not deterministic; refusing is the contract. | `renvor-cli`; **stays** (documented in the command reference). Consequence: adding auth late to a heavily edited starter is a manual merge. |
@@ -53,6 +53,10 @@ the new `session()` helper in `tests/starter.rs`, a compile error in every full 
 only by the first census control run. The fix is one template edit, re-proven on all four rows
 (`phase-011-evidence.md` §batch E), and the checkpoint census is run on the final head, not on a
 predecessor.
+
+| Row | Was | Closed by |
+|---|---|---|
+| **L-3** | **The seeded lockfile is one package short.** No workspace crate enabled Tokio's `signal` feature, so a starter's first `cargo` invocation resolved `signal-hook-registry` against the registry index, and an offline first generation failed at verification unless the crate happened to be cached. | The Specification review's continuation (2026-09-05) measured FR-006 the way it is promised — an **empty** `CARGO_HOME`, the framework's lockfile closure fetched into it, then `CARGO_NET_OFFLINE=true` generation of a starter — and the case failed with `no matching package named signal-hook-registry found` (`red-offline.log`). The facade now offers `renvor::shutdown_signal()` (Tokio `signal`, optional, under `transport-rest`), the starter waits on it instead of enabling the feature itself, `signal-hook-registry` 1.4.8 is in the framework's `Cargo.lock`, and the same case passes (`green-offline.log`, 41 s, `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves`). What the measurement does **not** settle: FR-006 says "when the framework has been built" without saying which features; the test's precondition is the whole lockfile closure in the cache, which a `cargo fetch` or the gate's all-feature build leaves and a subset build does not. Reported to the maintainer as a reading of the requirement, not decided. |
 
 ## Closed from Phase 010, with the measurement
 

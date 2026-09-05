@@ -422,3 +422,55 @@ final state. **Kept unmerged**; nothing tagged, released, published, or deployed
 were not received and are open; the merged-tree verification of `generate auth` costs a full
 build of the project (measured once by hand: about 6 s on this machine with a warm shared build directory — `repro-auth.log`, `generate auth` 15:39:38 → 15:39:44; a cold build directory costs the project's full build, the same cost `renvor new` pays);
 nothing merged, tagged, released, published, or deployed.
+
+## 12. The continuation of the correction round — the Standards and Specification axes
+
+**What arrived, and when.** The maintainer supplied the two remaining axes (five Standards
+findings, five Specification findings) after §11's work had been pushed; the round continued on
+the same branch. Every finding was reproduced on its own against `f6305a7` before any change —
+none was taken as resolved for overlapping a Native finding — and each carries its own row in
+`phase-011-review-record.md` §3b and §3c.
+
+**What it changed in the product.** The test application's sweep fails by position, never by
+value; the generated starter test extracts every credential through a support helper with a
+static label and carries the negative control that proves it; the sealed verification
+environment strips `user:password@` from every proxy variable it passes through, and a failed
+check's output is reported redacted (URL credentials, the stripped credentials, control
+characters); the commit engine exposes a failure boundary after every staged file, after every
+placed file, and before the record; the generated README states the unix interrupt assertion
+and the Windows skip precisely; the facade offers `renvor::shutdown_signal()` so a starter enables
+no Tokio feature the framework's lockfile does not already carry — `signal-hook-registry` 1.4.8
+enters the lock (L-3 closed). `generation-transaction.md` 1.1.0 states the seal's rule.
+
+**Measurements.**
+
+| Claim | Measured by | Result |
+|---|---|---|
+| a failed sweep prints no canary in any rendering | `renvor_testkit::app::tests::a_failed_sweep_names_the_canary_by_index_and_never_by_value` (red on `f6305a7`) | green |
+| the generated tests' failures print no credential | render scan `the_generated_tests_fail_without_printing_a_credential` (red on `f6305a7`); the generated `a_failed_secret_extraction_names_nothing_secret`, run inside `renvor new`'s verification of every auth starter | green; live: the generated control ran green inside the `authonly`, `ressqlx`, `ressea`, `authadded`, and `pgsqlx` rows (see below) |
+| no proxy credential reaches a build script; none is reported | `a_proxy_credential_never_reaches_the_sealed_environment`, `a_build_script_cannot_observe_or_print_a_proxy_credential` (both red on `f6305a7`), `a_childs_output_is_reported_without_url_credentials_or_control_characters` | green |
+| a failure at every placement boundary leaves the project byte-identical | `tests/generate.rs::a_failure_at_every_placement_boundary_leaves_the_project_byte_identical`: 5 boundaries of a two-file plan and 33 of a sixteen-file plan, the whole tree compared each time (red on `f6305a7`: the boundaries did not exist) | green, 38 boundaries |
+| migration versions: same second, import collision, pairs, nothing written or recorded after a refusal | `two_names_generated_within_a_second_get_distinct_versions`, `an_import_refuses_a_version_another_migration_already_holds` | green |
+| the generated README states both platforms | `the_generated_readme_states_the_windows_shutdown_limitation` (red on `f6305a7`) | green |
+| FR-006: a starter generates offline from an empty cache filled by the framework's fetch | `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — red on `f6305a7` (`red-offline.log`: `no matching package named signal-hook-registry`) | green after the fix (`green-offline.log`, 41 s) |
+| FR-021 through the real terminal | `tests/terminal.rs`: exactly five choices, an empty selection is `none`, Escape writes nothing; `tests/parity.rs`: `storage` then `cache` toggled beside the pre-selected `mail`, the review's equivalent command `--capabilities cache,mail,storage`, the wizard's tree equal to the flags' tree | terminal: green (3 cases); parity: green, 30 s (`green-parity.log`) |
+
+**Rows re-run on the continuation's templates** (real services, both `REQUIRE` flags, logs
+`row-<name>.log`): `nodb` 18:15:09–18:15:53 green; `mailonly` 18:15:53–18:16:31 green;
+`authonly` 18:21:28–18:22:10 green (after the matrix's own "exactly one test" rule was relaxed —
+the starter test binary now carries the negative control too); `ressqlx` 18:23:02–18:23:44 green;
+`ressea` 18:23:44–18:24:31 green; `authadded` 18:24:31–18:26:14 green; `pgsqlx` 18:26:14–18:27:04
+green. Every row that failed on the way did so on a rustfmt width in a generated line, fixed in
+the template and re-proven by the row.
+
+**Mutations.** Batch H (`phase-011-mutation-ledger.md`): nine, nine killed — seven by unit tests in the isolated copy, one (M-H8, the generated helper printing the cookie) by the generated negative control refusing `renvor new`'s own verification, one (M-H9) by the offline case's red run on the unfixed tree. Phase totals: 54 mutations, 54 killed, plus the three census controls.
+
+**Open for the maintainer, not closed here.** Specification P2 (FR-048 / SR-009 / the data
+model's `--overwrite-unchanged`): the shipped `Regenerate` classification overwrites a
+generator-owned file that differs from the render and matches its recorded digest; the
+specification says it must not, and `generate auth` cannot complete without it. The choices are
+in the review record §3c. FR-006's "when the framework has been built" is measured against the
+whole lockfile closure in the cache; whether a subset build counts is a reading of the
+requirement, reported there too.
+
+**Gates, heads, CI.** CONT-GATES-PENDING
