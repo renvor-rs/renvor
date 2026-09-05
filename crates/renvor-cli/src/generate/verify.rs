@@ -833,8 +833,11 @@ mod tests {
         // AND THE DIFF. `rustfmt --check` writes its diff to STDOUT; a message built from stderr
         // alone said "not correctly formatted" and nothing else, which sends the reader back to
         // regenerate blind. Found by Phase 011's first starter render.
+        // The diff's own header, rather than the formatted line: the kernel's diagnostics gate
+        // reads a `{}` inside a literal as an interpolation, and a credential-handling file may
+        // interpolate nothing into a failure.
         assert!(
-            error.message.contains("fn main() {}"),
+            error.message.contains("Diff in"),
             "the formatter's own diff must reach the message"
         );
     }
