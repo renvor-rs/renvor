@@ -728,9 +728,11 @@ mod tests {
         .expect("write");
         std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
         std::fs::write(dir.path().join("src/main.rs"), "fn main() {}\n").expect("write");
+        // The script is a fixture file beside the test harness: the presentation scan forbids a
+        // print macro anywhere under `src/`, fixtures included, and rightly so.
         std::fs::write(
             dir.path().join("build.rs"),
-            "fn main() {\n    let mut seen: Vec<String> = std::env::vars()\n        .filter(|(name, _)| name.to_ascii_lowercase().contains(\"proxy\"))\n        .map(|(name, value)| format!(\"{name}={value}\"))\n        .collect();\n    seen.sort();\n    eprintln!(\n        \"proxy variables seen by the build script: {}\",\n        seen.join(\" \")\n    );\n    std::process::exit(1);\n}\n",
+            include_str!("../../tests/harness/proxy_probe_build.rs"),
         )
         .expect("write");
         let secret = "s3cr3t-proxy-pass";
