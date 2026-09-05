@@ -246,17 +246,25 @@ impl TestApplication {
             .clone()
     }
 
-    /// Panics naming the first canary that any answer carried.
+    /// Panics naming the first canary that any answer carried — **by position**, never by
+    /// value: the canary is the secret the sweep exists to keep out of output, and the entry that
+    /// carried it is the response that leaked it, so a failure that printed either would put the
+    /// secret into the test output it was guarding (SR-001; found by the Standards review of
+    /// Phase 011). The message names the canary's index among `canaries` and the entry's index
+    /// among the swept answers.
     ///
     /// # Panics
     ///
     /// When a swept body or header contains one of `canaries`.
     pub fn assert_nothing_swept_contains(&self, canaries: &[&str]) {
-        for line in self.swept() {
-            for canary in canaries {
+        for (entry, line) in self.swept().iter().enumerate() {
+            for (position, canary) in canaries.iter().enumerate() {
                 assert!(
                     !line.contains(canary),
-                    "a response carried the canary {canary:?}: {line}"
+                    "a swept response carried canary {position} of {} in entry {entry} ({} bytes); \
+                     neither the canary nor the entry is printed, by design",
+                    canaries.len(),
+                    line.len()
                 );
             }
         }
@@ -401,6 +409,40 @@ mod tests {
         assert_eq!(
             bare.request(Vec::new()).context().run_id(),
             bare.request(Vec::new()).context().run_id()
+        );
+    }
+
+    use crate::every_rendering_of as every_form_of;
+
+    #[tokio::test]
+    async fn a_failed_sweep_names_the_canary_by_index_and_never_by_value() {
+        // STANDARDS AXIS (P1). The failure message carried the matched canary and the whole
+        // response line — the very secret the sweep exists to keep out of output, printed by the
+        // check that found it. A failure now says which canary (by position) and which swept
+        // entry (by position), and nothing of either's text.
+        let mut registry = RouteRegistry::new();
+        registry.post("/hello", hello).expect("route");
+        let app = TestApplication::new(registry);
+        let secret = "s3cr3t-canary-7c1d";
+        let _ = app.send(Method::Post, "/hello", secret, "").await;
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.assert_nothing_swept_contains(&["decoy-that-never-appears", secret]);
+        }));
+        let payload = caught.expect_err("the sweep must fail on a canary that came back");
+        let message = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .expect("a text panic");
+        for form in every_form_of(secret) {
+            assert!(
+                !message.contains(&form),
+                "the failure message carries the canary as {form:?}: {message}"
+            );
+        }
+        assert!(
+            message.contains("canary 1") && message.contains("entry"),
+            "the message names the canary and the entry by position: {message}"
         );
     }
 

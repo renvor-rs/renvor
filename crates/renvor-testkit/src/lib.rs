@@ -55,3 +55,20 @@ pub use persistence::PersistenceFixture;
 pub use portability::PortabilityFixture;
 #[cfg(feature = "tokens")]
 pub use refresh::{RefreshFixture, StoredRefreshToken};
+
+/// Every rendering a diagnostic could leak `secret` in: the text itself, its `Debug` escape, its
+/// bytes as hexadecimal (both cases), and its bytes as decimal (comma-separated, with and without
+/// a space). A negative control for a failure message asserts the message contains none of them.
+#[must_use]
+pub fn every_rendering_of(secret: &str) -> Vec<String> {
+    let bytes = secret.as_bytes();
+    let decimal: Vec<String> = bytes.iter().map(ToString::to_string).collect();
+    vec![
+        secret.to_owned(),
+        format!("{secret:?}"),
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+        bytes.iter().map(|b| format!("{b:02X}")).collect::<String>(),
+        decimal.join(", "),
+        decimal.join(","),
+    ]
+}
