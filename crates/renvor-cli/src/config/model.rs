@@ -568,6 +568,12 @@ impl FrameworkSource {
                 format!("does not resolve to an existing directory: {error}"),
             )
         })?;
+        // Windows answers with a verbatim path (`\\?\D:\…`), which cargo refuses in a `path`
+        // dependency; the prefix is removed before anything is rendered from the path.
+        let canonical = match canonical.to_str() {
+            Some(text) if text.starts_with(r"\\?\") => PathBuf::from(without_verbatim_prefix(text)),
+            _ => canonical,
+        };
         if !canonical.is_dir() {
             return Err(refuse(
                 "framework_directory",
@@ -1535,6 +1541,20 @@ fn reserved(flag: &str, value: &str, phase: &str) -> CliError {
     .with("phase", phase.to_owned())
 }
 
+/// Removes Windows' verbatim prefix from a canonical path's text: `\\?\D:\x` → `D:\x`,
+/// `\\?\UNC\server\share\x` → `\\server\share\x`; any other text is returned unchanged.
+///
+/// `std::fs::canonicalize` answers with the verbatim form on Windows, and cargo refuses it in a
+/// `path` dependency ("invalid path url `//?/D:\…`") — the defect PR #62's Windows platform legs
+/// found on the `nodb` row. Pure text and platform-free, so it is proven on every platform rather
+/// than only where it bites.
+fn without_verbatim_prefix(text: &str) -> String {
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return format!(r"\\{rest}");
+    }
+    text.strip_prefix(r"\\?\").unwrap_or(text).to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     /// Every serialised ORM value must be one `--orm` accepts.
@@ -2200,5 +2220,27 @@ mod tests {
         assert!(printed.contains("--example-domain"), "{printed}");
         assert!(printed.contains("--yes"), "{printed}");
         assert!(!printed.contains("--seed-data"), "{printed}");
+    }
+
+    /// Windows' `canonicalize` answers with a verbatim path (`\\?\D:\…`), which cargo refuses in a
+    /// `path` dependency ("invalid path url") — the defect PR #62's Windows platform legs found on
+    /// the `nodb` row. The prefix carries no information a path dependency needs; it is removed
+    /// from the canonical path before anything is rendered from it. Pure and platform-free, so it
+    /// is proven on every platform, not only where it bites.
+    #[test]
+    fn a_verbatim_windows_prefix_is_removed_from_the_canonical_path() {
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\D:\a\renvor\renvor"),
+            r"D:\a\renvor\renvor"
+        );
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\UNC\server\share\renvor"),
+            r"\\server\share\renvor"
+        );
+        assert_eq!(
+            without_verbatim_prefix("/Users/someone/renvor"),
+            "/Users/someone/renvor"
+        );
+        assert_eq!(without_verbatim_prefix(r"D:\plain"), r"D:\plain");
     }
 }
