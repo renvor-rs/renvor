@@ -177,7 +177,7 @@ pub enum GenerateAction {
     /// Write a reversible migration pair, or import the framework's `auth` or `jobs` set
     Migration {
         /// The migration's name: lowercase letters, digits, and `_`, starting with a letter
-        #[arg(required_unless_present = "import")]
+        #[arg(required_unless_present = "import", conflicts_with = "import")]
         name: Option<String>,
         /// Copy the framework's migration set for this project's engine: `auth` or `jobs`
         #[arg(long, value_name = "auth|jobs")]

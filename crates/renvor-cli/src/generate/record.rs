@@ -6,12 +6,13 @@
 //! evaluating anything**. Digests only, never contents; and the record is itself generated, so it
 //! appears in the manifest like every other file.
 //!
-//! # Written before the manifest walk, after everything else
+//! # Written after verification, before the manifest walk
 //!
 //! It lists what the staging tree holds at the moment it is written, which is why it is the last
-//! file generation produces: after rendering, after the seeded lockfile, before verification and
-//! before the manifest. A record written earlier would omit the lockfile; one written later would
-//! be absent from the manifest.
+//! file generation produces: after rendering, after the seeded lockfile, **after verification** —
+//! which resolves `Cargo.lock` to the project's own closure, or creates it for a skeleton — and
+//! before the manifest. A record written before verification digested a lockfile that no longer
+//! existed by the time the project did; one written after the manifest would be absent from it.
 
 use std::fmt::Write as _;
 
@@ -35,6 +36,20 @@ pub struct GeneratedFile {
     pub sha256: String,
 }
 
+/// One resource `renvor generate resource` rendered: what it needs to render it again.
+///
+/// A digest says whether a module was touched; it cannot say what the module was rendered
+/// **from**. `renvor generate auth` re-renders every untouched resource module with the session
+/// guards the manifest now promises, and for that it needs the name and the fields exactly as
+/// they were given (found by the Codex review of Phase 011).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneratedResource {
+    /// The PascalCase type name.
+    pub name: String,
+    /// The fields as given: `name:type`, in order.
+    pub fields: Vec<String>,
+}
+
 /// The record as read back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +61,9 @@ pub struct Record {
     /// Every file generation produced, sorted by path; the record itself is not listed.
     #[serde(rename = "file", default)]
     pub files: Vec<GeneratedFile>,
+    /// Every resource a generator rendered, by name.
+    #[serde(rename = "resource", default)]
+    pub resources: Vec<GeneratedResource>,
 }
 
 /// Writes the record for the tree under `root`.
@@ -66,7 +84,7 @@ pub fn write(root: &Dir, generator_version: &str, template_version: &str) -> Res
             })
         })
         .collect();
-    let text = render(generator_version, template_version, &files);
+    let text = render(generator_version, template_version, &files, &[]);
     root.create_dir_all(DIRECTORY).map_err(|error| {
         CliError::new(
             Code::RenderFailed,
@@ -81,9 +99,15 @@ pub fn write(root: &Dir, generator_version: &str, template_version: &str) -> Res
     })
 }
 
-/// The record's text for these entries: a header, the two versions, one `[[file]]` per entry.
+/// The record's text for these entries: a header, the two versions, one `[[file]]` per entry,
+/// and one `[[resource]]` per generated resource.
 #[must_use]
-pub fn render(generator_version: &str, template_version: &str, files: &[GeneratedFile]) -> String {
+pub fn render(
+    generator_version: &str,
+    template_version: &str,
+    files: &[GeneratedFile],
+    resources: &[GeneratedResource],
+) -> String {
     let mut text = String::new();
     let _ = writeln!(
         text,
@@ -97,6 +121,13 @@ pub fn render(generator_version: &str, template_version: &str, files: &[Generate
             text,
             "\n[[file]]\npath = {:?}\nsha256 = {:?}",
             file.path, file.sha256
+        );
+    }
+    for resource in resources {
+        let _ = writeln!(
+            text,
+            "\n[[resource]]\nname = {:?}\nfields = {:?}",
+            resource.name, resource.fields
         );
     }
     text
@@ -173,6 +204,35 @@ mod tests {
         assert!(
             manifest.entries.iter().any(|entry| entry.path == PATH),
             "the record is itself part of the tree the manifest describes"
+        );
+    }
+
+    #[test]
+    fn the_record_carries_the_resources_a_generator_defined() {
+        // FOUND BY THE CODEX REVIEW (P1). A resource module is rendered from its name and its
+        // fields; a later `renvor generate auth` has to render it again with the session guards,
+        // and digests cannot say what the fields were. The record therefore carries one
+        // `[[resource]]` per generated resource, and reads it back.
+        let resources = vec![GeneratedResource {
+            name: "Post".to_owned(),
+            fields: vec!["title:string".to_owned(), "published:boolean".to_owned()],
+        }];
+        let text = render("0.0.0", "7", &[], &resources);
+        assert!(text.contains("[[resource]]"), "{text}");
+        let (_keep, dir) = tree(&[]);
+        dir.create_dir_all(DIRECTORY).expect("mkdir");
+        dir.write(PATH, text.as_bytes()).expect("write");
+        let record = read(&dir).expect("reads").expect("present");
+        assert_eq!(record.resources, resources);
+        // A record without the table — every record `renvor new` writes — reads as none.
+        dir.write(PATH, render("0.0.0", "7", &[], &[]).as_bytes())
+            .expect("write");
+        assert!(
+            read(&dir)
+                .expect("reads")
+                .expect("present")
+                .resources
+                .is_empty()
         );
     }
 

@@ -1,0 +1,3 @@
+-- add_item_owner: reverses the forward migration exactly, so a rollback leaves the table as the
+-- item migration created it.
+ALTER TABLE item DROP COLUMN owner_id;

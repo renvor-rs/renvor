@@ -130,6 +130,99 @@ fn existing_version(project: &Dir, name: &str) -> Result<Option<String>, CliErro
     Ok(found.into_iter().next())
 }
 
+/// Every version the directory holds, whichever name follows it: `0001`, `20260901000001`, …
+///
+/// Read so a version is never handed out twice. SQLx keys its ledger by version, so two files
+/// that share one — two names generated within the same second, or an imported set colliding
+/// with a migration the user wrote — make migration loading fail at the next Boot (found by the
+/// Codex review of Phase 011).
+fn existing_versions(project: &Dir) -> Result<std::collections::BTreeSet<String>, CliError> {
+    let entries = match project.read_dir("migrations") {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(std::collections::BTreeSet::new());
+        }
+        Err(error) => {
+            return Err(CliError::new(
+                Code::RenderFailed,
+                format!("`migrations/` could not be read: {error}"),
+            ));
+        }
+    };
+    let mut versions = std::collections::BTreeSet::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            CliError::new(
+                Code::RenderFailed,
+                format!("`migrations/` could not be read: {error}"),
+            )
+        })?;
+        let file = entry.file_name().to_string_lossy().into_owned();
+        if let Some(version) = version_of(&file) {
+            versions.insert(version.to_owned());
+        }
+    }
+    Ok(versions)
+}
+
+/// The version prefix of a migration file name: the digits before the first `_`, when the name
+/// is `<digits>_<name>.<up|down>.sql`.
+fn version_of(file: &str) -> Option<&str> {
+    let (version, rest) = file.split_once('_')?;
+    let numeric = !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit());
+    let migration = rest.ends_with(".up.sql") || rest.ends_with(".down.sql");
+    (numeric && migration).then_some(version)
+}
+
+/// The UTC instant `now` as a version, moved forward second by second past every version in
+/// `taken`, so a pair generated in the same second as another gets the next free second rather
+/// than the same number.
+fn allocate_version(taken: &std::collections::BTreeSet<String>, now: u64) -> String {
+    let mut candidate = now;
+    loop {
+        let version = utc_version(candidate);
+        if !taken.contains(&version) {
+            return version;
+        }
+        candidate += 1;
+    }
+}
+
+/// The version for the pair named `name`: the one it already has, so a rerun finds its pair, or
+/// a fresh one past every version the directory holds.
+fn version_for(project: &Dir, name: &str) -> Result<String, CliError> {
+    if let Some(version) = existing_version(project, name)? {
+        return Ok(version);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| CliError::new(Code::Internal, "the system clock is before the Unix epoch"))?
+        .as_secs();
+    Ok(allocate_version(&existing_versions(project)?, now))
+}
+
+/// The versions in `planned` that another file in the directory already holds — an import that
+/// would land beside a user's migration with the same version.
+fn colliding_versions(project: &Dir, planned: &[Planned]) -> Result<Vec<String>, CliError> {
+    let taken = existing_versions(project)?;
+    let mut collisions = Vec::new();
+    for item in planned {
+        let Some(file) = item.path.strip_prefix("migrations/") else {
+            continue;
+        };
+        let Some(version) = version_of(file) else {
+            continue;
+        };
+        if taken.contains(version) && !project.exists(&item.path) {
+            let version = version.to_owned();
+            if !collisions.contains(&version) {
+                collisions.push(version);
+            }
+        }
+    }
+    Ok(collisions)
+}
+
 fn planned_pair(version: &str, name: &str) -> Vec<Planned> {
     let up = format!(
         "-- {name}: the forward migration.\n\
@@ -199,6 +292,145 @@ fn planned_import(engine: &str, set: &str) -> Result<Vec<Planned>, CliError> {
         .collect())
 }
 
+/// How much of a project the scratch copy will take: the bound keeps a mistaken path — a home
+/// directory, a monorepo — from being copied wholesale.
+const MERGE_MAX_FILES: usize = 20_000;
+const MERGE_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Copies the project into `into`, without `target/`, `.git/`, or any symbolic link, applies the
+/// plan's writes on top, runs the same verification `renvor new` runs on a starter, and returns
+/// the lockfile the build resolved.
+///
+/// # Errors
+///
+/// [`Code::BoundExceeded`] past the copy bound; [`Code::ProjectVerificationFailed`] when the
+/// merged project does not build, lint, format, test, or start; [`Code::StagingFailed`] when the
+/// scratch copy cannot be made.
+fn verify_merged(
+    reporter: &Reporter,
+    project_path: &Path,
+    plan: &apply::Plan,
+) -> Result<Vec<u8>, CliError> {
+    let scratch = tempfile::tempdir().map_err(|error| {
+        CliError::new(
+            Code::StagingFailed,
+            format!("a scratch directory could not be created: {error}"),
+        )
+    })?;
+    let merged = scratch.path().join("merged");
+    copy_project(project_path, &merged)?;
+    for (planned, action) in &plan.decisions {
+        if *action == Applied::Unchanged {
+            continue;
+        }
+        let target = merged.join(&planned.path);
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                CliError::new(
+                    Code::StagingFailed,
+                    format!(
+                        "`{}` could not be staged for verification: {error}",
+                        planned.path
+                    ),
+                )
+            })?;
+        }
+        std::fs::write(&target, &planned.bytes).map_err(|error| {
+            CliError::new(
+                Code::StagingFailed,
+                format!(
+                    "`{}` could not be staged for verification: {error}",
+                    planned.path
+                ),
+            )
+        })?;
+    }
+    let progress = crate::output::progress::Progress::start(
+        "verifying the project with the auth starter",
+        reporter,
+    );
+    let verified = crate::generate::verify::in_staging(
+        &merged,
+        &progress,
+        crate::generate::verify::Smoke::AnswersDumpRequest,
+    );
+    progress.finish();
+    verified?;
+    std::fs::read(merged.join("Cargo.lock")).map_err(|error| {
+        CliError::new(
+            Code::ProjectVerificationFailed,
+            format!("the verified project has no `Cargo.lock` to record: {error}"),
+        )
+        .with("check", "Cargo.lock is resolved")
+    })
+}
+
+/// Copies every regular file under `from` to `into`, skipping `target` and `.git` at the root
+/// and every symbolic link, within [`MERGE_MAX_FILES`] and [`MERGE_MAX_BYTES`].
+fn copy_project(from: &Path, into: &Path) -> Result<(), CliError> {
+    let failed = |what: String| CliError::new(Code::StagingFailed, what);
+    let mut files = 0_usize;
+    let mut bytes = 0_u64;
+    let mut stack: Vec<std::path::PathBuf> = vec![std::path::PathBuf::new()];
+    while let Some(relative) = stack.pop() {
+        let directory = from.join(&relative);
+        let entries = std::fs::read_dir(&directory).map_err(|error| {
+            failed(format!(
+                "`{}` could not be read for verification: {error}",
+                crate::output::redact::path(&directory)
+            ))
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                failed(format!(
+                    "the project could not be read for verification: {error}"
+                ))
+            })?;
+            let name = entry.file_name();
+            if relative.as_os_str().is_empty() && (name == "target" || name == ".git") {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|error| {
+                failed(format!(
+                    "the project could not be read for verification: {error}"
+                ))
+            })?;
+            let child = relative.join(&name);
+            if kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() {
+                stack.push(child);
+                continue;
+            }
+            if !kind.is_file() {
+                continue;
+            }
+            files += 1;
+            bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if files > MERGE_MAX_FILES || bytes > MERGE_MAX_BYTES {
+                return Err(CliError::new(
+                    Code::BoundExceeded,
+                    format!(
+                        "the project exceeds the verification copy bound ({MERGE_MAX_FILES} \
+                         files, {MERGE_MAX_BYTES} bytes); is `--path` the project root?"
+                    ),
+                )
+                .with("bound", "verification copy"));
+            }
+            let target = into.join(&child);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    failed(format!("the scratch copy could not be made: {error}"))
+                })?;
+            }
+            std::fs::copy(entry.path(), &target)
+                .map_err(|error| failed(format!("the scratch copy could not be made: {error}")))?;
+        }
+    }
+    Ok(())
+}
+
 /// Runs a generation into the project at `path`.
 ///
 /// # Errors
@@ -224,6 +456,8 @@ pub fn run(
         )
     })?;
 
+    let mut resource: Option<crate::generate::record::GeneratedResource> = None;
+    let verifies = matches!(action, Action::Auth);
     let (what, planned) = match action {
         Action::Migration { name, import } => {
             let Some(persistence) = manifest.persistence.as_ref() else {
@@ -239,25 +473,28 @@ pub fn run(
             match (name, import) {
                 (_, Some(set)) => {
                     let planned = planned_import(&persistence.database, &set)?;
+                    let collisions = colliding_versions(&project, &planned)?;
+                    if !collisions.is_empty() {
+                        return Err(CliError::new(
+                            Code::GenerationConflict,
+                            format!(
+                                "{} version(s) of the `{set}` set are already held by another \
+                                 migration in `migrations/`, so nothing was written: {}. SQLx \
+                                 keys its ledger by version; rename or renumber yours, then run \
+                                 again",
+                                collisions.len(),
+                                collisions.join(", ")
+                            ),
+                        )
+                        .with("reason", "version_present")
+                        .with("count", collisions.len().to_string())
+                        .with("versions", collisions.join(", ")));
+                    }
                     (format!("the framework's `{set}` migration set"), planned)
                 }
                 (Some(name), None) => {
                     validate_migration_name(&name)?;
-                    let version = match existing_version(&project, &name)? {
-                        Some(version) => version,
-                        None => {
-                            let now = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_err(|_| {
-                                    CliError::new(
-                                        Code::Internal,
-                                        "the system clock is before the Unix epoch",
-                                    )
-                                })?
-                                .as_secs();
-                            utc_version(now)
-                        }
-                    };
+                    let version = version_for(&project, &name)?;
                     (
                         format!("migration `{version}_{name}`"),
                         planned_pair(&version, &name),
@@ -271,11 +508,28 @@ pub fn run(
                 }
             }
         }
-        Action::Resource { name, fields } => plan_resource(&project, &manifest, &name, &fields)?,
+        Action::Resource { name, fields } => {
+            let (what, planned, definition) = plan_resource(&project, &manifest, &name, &fields)?;
+            resource = Some(definition);
+            (what, planned)
+        }
         Action::Auth => plan_auth(&project, &manifest)?,
     };
 
-    let plan = apply::plan(&project, planned)?;
+    let mut plan = apply::plan(&project, planned)?;
+    if let Some(definition) = resource {
+        plan = plan.with_resource(definition);
+    }
+    if verifies {
+        // AFTER the conflict check, so a refusal costs no build; BEFORE the commit — and on a
+        // dry run too — so the plan reports the lockfile it will write. The auth render adds
+        // dependencies, and a lockfile left as it was fails `cargo build --locked` the moment the
+        // command has reported success (found by the Codex review of Phase 011). The merged tree
+        // is built and tested in a scratch copy, which is also what proves a resource module
+        // rendered again with its guards still compiles beside everything the user wrote.
+        let lock = verify_merged(reporter, path, &plan)?;
+        plan = plan.with_edit(&project, "Cargo.lock", lock)?;
+    }
     let decisions: Vec<(String, Applied)> = plan
         .summary()
         .into_iter()
@@ -358,6 +612,30 @@ mod tests {
     }
 
     #[test]
+    fn a_version_is_allocated_past_every_version_the_directory_holds() {
+        // FOUND BY THE CODEX REVIEW (P1). Two names generated within one second received one
+        // version, because the lookup searched by name; SQLx keys its ledger by version.
+        let mut taken = std::collections::BTreeSet::new();
+        assert_eq!(allocate_version(&taken, 1_700_000_000), "20231114221320");
+        taken.insert("20231114221320".to_owned());
+        taken.insert("20231114221321".to_owned());
+        assert_eq!(
+            allocate_version(&taken, 1_700_000_000),
+            "20231114221322",
+            "the next free second, not the same one"
+        );
+        // The version prefix is what is compared, whichever name and direction follow it.
+        assert_eq!(version_of("0001_create_item.up.sql"), Some("0001"));
+        assert_eq!(
+            version_of("20260901000001_create_auth_user.down.sql"),
+            Some("20260901000001")
+        );
+        assert_eq!(version_of("README.md"), None);
+        assert_eq!(version_of("notes_20260901.sql"), None);
+        assert_eq!(version_of("_x.up.sql"), None);
+    }
+
+    #[test]
     fn an_import_is_one_of_the_two_shipped_sets_for_the_engine() {
         assert_eq!(planned_import("postgres", "auth").expect("auth").len(), 18);
         assert_eq!(planned_import("mysql", "auth").expect("auth").len(), 16);
@@ -420,6 +698,13 @@ fn field(spec: &str, engine: &str) -> Result<Field, CliError> {
             "`{name}` is not a field name: a lowercase identifier of at most 32 characters, and \
              not `id`, which every resource carries"
         )));
+    }
+    if is_reserved_sql_word(name) {
+        return Err(refused(format!(
+            "`{name}` is a word PostgreSQL or MySQL reserves as a keyword, and the generated SQL \
+             uses column names bare; choose another, such as `{name}_value`"
+        ))
+        .with("reason", "reserved_identifier"));
     }
     let mysql = engine == "mysql";
     let (rust_type, sql_type, sea_column_type, sample_a, sample_b) = match kind {
@@ -496,12 +781,341 @@ fn plural(snake: &str) -> String {
     format!("{snake}s")
 }
 
+/// The words PostgreSQL and MySQL reserve, lowercase and sorted, so an unquoted table or column
+/// identifier derived from a user's name is never one of them.
+///
+/// The union of PostgreSQL's reserved key words (Appendix C of its manual) and MySQL 8.4's
+/// reserved words (marked `(R)` in its keyword list). The generated SQL uses the identifiers
+/// bare, so `Order` would become `FROM order` and fail on both engines after generation had
+/// reported success (found by the Codex review of Phase 011). Refusing is the fail-closed choice
+/// the constitution's allowlist rule for dynamic identifiers asks for; quoting would make every
+/// generated statement engine-specific.
+const RESERVED_SQL_WORDS: &[&str] = &[
+    "accessible",
+    "add",
+    "all",
+    "alter",
+    "analyse",
+    "analyze",
+    "and",
+    "any",
+    "array",
+    "as",
+    "asc",
+    "asensitive",
+    "asymmetric",
+    "authorization",
+    "before",
+    "between",
+    "bigint",
+    "binary",
+    "blob",
+    "both",
+    "by",
+    "call",
+    "cascade",
+    "case",
+    "cast",
+    "change",
+    "char",
+    "character",
+    "check",
+    "collate",
+    "collation",
+    "column",
+    "concurrently",
+    "condition",
+    "constraint",
+    "continue",
+    "convert",
+    "create",
+    "cross",
+    "cube",
+    "cume_dist",
+    "current_catalog",
+    "current_date",
+    "current_role",
+    "current_schema",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "cursor",
+    "database",
+    "databases",
+    "day_hour",
+    "day_microsecond",
+    "day_minute",
+    "day_second",
+    "dec",
+    "decimal",
+    "declare",
+    "default",
+    "deferrable",
+    "delayed",
+    "delete",
+    "dense_rank",
+    "desc",
+    "describe",
+    "deterministic",
+    "distinct",
+    "distinctrow",
+    "div",
+    "do",
+    "double",
+    "drop",
+    "dual",
+    "each",
+    "else",
+    "elseif",
+    "empty",
+    "enclosed",
+    "end",
+    "escaped",
+    "except",
+    "exists",
+    "exit",
+    "explain",
+    "false",
+    "fetch",
+    "first_value",
+    "float",
+    "float4",
+    "float8",
+    "for",
+    "force",
+    "foreign",
+    "freeze",
+    "from",
+    "full",
+    "fulltext",
+    "function",
+    "generated",
+    "get",
+    "grant",
+    "group",
+    "grouping",
+    "groups",
+    "having",
+    "high_priority",
+    "hour_microsecond",
+    "hour_minute",
+    "hour_second",
+    "if",
+    "ignore",
+    "ilike",
+    "in",
+    "index",
+    "infile",
+    "initially",
+    "inner",
+    "inout",
+    "insensitive",
+    "insert",
+    "int",
+    "int1",
+    "int2",
+    "int3",
+    "int4",
+    "int8",
+    "integer",
+    "intersect",
+    "interval",
+    "into",
+    "io_after_gtids",
+    "io_before_gtids",
+    "is",
+    "isnull",
+    "iterate",
+    "join",
+    "json_table",
+    "key",
+    "keys",
+    "kill",
+    "lag",
+    "last_value",
+    "lateral",
+    "lead",
+    "leading",
+    "leave",
+    "left",
+    "like",
+    "limit",
+    "linear",
+    "lines",
+    "load",
+    "localtime",
+    "localtimestamp",
+    "lock",
+    "long",
+    "longblob",
+    "longtext",
+    "loop",
+    "low_priority",
+    "manual",
+    "master_bind",
+    "match",
+    "maxvalue",
+    "mediumblob",
+    "mediumint",
+    "mediumtext",
+    "middleint",
+    "minute_microsecond",
+    "minute_second",
+    "mod",
+    "modifies",
+    "natural",
+    "no_write_to_binlog",
+    "not",
+    "notnull",
+    "nth_value",
+    "ntile",
+    "null",
+    "numeric",
+    "of",
+    "offset",
+    "on",
+    "only",
+    "optimize",
+    "optimizer_costs",
+    "option",
+    "optionally",
+    "or",
+    "order",
+    "out",
+    "outer",
+    "outfile",
+    "over",
+    "overlaps",
+    "parallel",
+    "partition",
+    "percent_rank",
+    "placing",
+    "precision",
+    "primary",
+    "procedure",
+    "purge",
+    "qualify",
+    "range",
+    "rank",
+    "read",
+    "read_write",
+    "reads",
+    "real",
+    "recursive",
+    "references",
+    "regexp",
+    "release",
+    "rename",
+    "repeat",
+    "replace",
+    "require",
+    "resignal",
+    "restrict",
+    "return",
+    "returning",
+    "revoke",
+    "right",
+    "rlike",
+    "row",
+    "row_number",
+    "rows",
+    "schema",
+    "schemas",
+    "second_microsecond",
+    "select",
+    "sensitive",
+    "separator",
+    "session_user",
+    "set",
+    "show",
+    "signal",
+    "similar",
+    "smallint",
+    "some",
+    "spatial",
+    "specific",
+    "sql",
+    "sql_big_result",
+    "sql_calc_found_rows",
+    "sql_small_result",
+    "sqlexception",
+    "sqlstate",
+    "sqlwarning",
+    "ssl",
+    "starting",
+    "stored",
+    "straight_join",
+    "symmetric",
+    "system",
+    "system_user",
+    "table",
+    "tablesample",
+    "terminated",
+    "then",
+    "tinyblob",
+    "tinyint",
+    "tinytext",
+    "to",
+    "trailing",
+    "trigger",
+    "true",
+    "undo",
+    "union",
+    "unique",
+    "unlock",
+    "unsigned",
+    "update",
+    "usage",
+    "use",
+    "user",
+    "using",
+    "utc_date",
+    "utc_time",
+    "utc_timestamp",
+    "values",
+    "varbinary",
+    "varchar",
+    "varcharacter",
+    "variadic",
+    "varying",
+    "verbose",
+    "virtual",
+    "when",
+    "where",
+    "while",
+    "window",
+    "with",
+    "write",
+    "xor",
+    "year_month",
+    "zerofill",
+];
+
+/// Whether a lowercase identifier is a word one of the two engines reserves.
+fn is_reserved_sql_word(identifier: &str) -> bool {
+    RESERVED_SQL_WORDS.binary_search(&identifier).is_ok()
+}
+
 fn validate_type_name(name: &str) -> Result<(), CliError> {
     let valid = !name.is_empty()
         && name.len() <= 32
         && name.starts_with(|c: char| c.is_ascii_uppercase())
         && name.chars().all(|c| c.is_ascii_alphanumeric());
     if valid {
+        let table = snake_case(name);
+        if is_reserved_sql_word(&table) {
+            return Err(CliError::new(
+                Code::UnsupportedValue,
+                format!(
+                    "`{name}` would name the table `{table}`, which PostgreSQL or MySQL reserves \
+                     as a keyword; the generated SQL uses the name bare, so choose another, such \
+                     as `{name}Record`"
+                ),
+            )
+            .with("flag", "name")
+            .with("reason", "reserved_identifier")
+            .with("supported", "PascalCase, not an SQL keyword"));
+        }
         return Ok(());
     }
     Err(CliError::new(
@@ -788,15 +1402,76 @@ const RESOURCE_SEAORM: &str = include_str!("../../templates/generate/resource_se
 const RESOURCE_UP: &str = include_str!("../../templates/generate/resource_migration_up.sql.j2");
 const RESOURCE_DOWN: &str = include_str!("../../templates/generate/resource_migration_down.sql.j2");
 const RESOURCE_TEST: &str = include_str!("../../templates/generate/resource_test.rs.j2");
+const ITEM_OWNER_UP: &str = include_str!("../../templates/generate/item_owner_up.sql.j2");
+const ITEM_OWNER_DOWN: &str = include_str!("../../templates/generate/item_owner_down.sql.j2");
+
+/// The parsed columns, each name once.
+fn parse_fields(field_specs: &[String], engine: &str) -> Result<Vec<Field>, CliError> {
+    let mut fields = Vec::with_capacity(field_specs.len());
+    for spec in field_specs {
+        let parsed = field(spec, engine)?;
+        if fields.iter().any(|f: &Field| f.name == parsed.name) {
+            return Err(CliError::new(
+                Code::UnsupportedValue,
+                format!("`{}` is given twice", parsed.name),
+            )
+            .with("flag", "FIELD:TYPE")
+            .with("supported", "each field once"));
+        }
+        fields.push(parsed);
+    }
+    Ok(fields)
+}
+
+/// Renders a resource's module and test for `auth_session` — the same two files whether they
+/// are generated for the first time or rendered again when the auth starter is added.
+fn render_resource(
+    persistence: &check::PersistenceTable,
+    name: &str,
+    fields: Vec<Field>,
+    auth_session: bool,
+) -> Result<(ResourceContext, String, String), CliError> {
+    let context = ResourceContext::build(
+        name,
+        fields,
+        &persistence.database,
+        &persistence.orm,
+        auth_session,
+    );
+    let module_template = if persistence.orm == "seaorm" {
+        RESOURCE_SEAORM
+    } else {
+        RESOURCE_SQLX
+    };
+    let module = rustfmt(&crate::generate::render::render_body(
+        module_template,
+        &context,
+        true,
+    )?)?;
+    let test = rustfmt(&crate::generate::render::render_body(
+        RESOURCE_TEST,
+        &context,
+        true,
+    )?)?;
+    Ok((context, module, test))
+}
 
 /// Plans a resource: its module, its migration pair, its test, the support module it shares, and
-/// the two marker edits.
+/// the two marker edits — and the definition the record keeps so `generate auth` can render the
+/// module again.
 fn plan_resource(
     project: &Dir,
     manifest: &check::Manifest,
     name: &str,
     field_specs: &[String],
-) -> Result<(String, Vec<Planned>), CliError> {
+) -> Result<
+    (
+        String,
+        Vec<Planned>,
+        crate::generate::record::GeneratedResource,
+    ),
+    CliError,
+> {
     validate_type_name(name)?;
     let Some(persistence) = manifest.persistence.as_ref() else {
         return Err(CliError::new(
@@ -825,57 +1500,13 @@ fn plan_resource(
             "a resource needs at least one field, as `name:type`",
         ));
     }
-    let mut fields = Vec::with_capacity(field_specs.len());
-    for spec in field_specs {
-        let parsed = field(spec, &persistence.database)?;
-        if fields.iter().any(|f: &Field| f.name == parsed.name) {
-            return Err(CliError::new(
-                Code::UnsupportedValue,
-                format!("`{}` is given twice", parsed.name),
-            )
-            .with("flag", "FIELD:TYPE")
-            .with("supported", "each field once"));
-        }
-        fields.push(parsed);
-    }
+    let fields = parse_fields(field_specs, &persistence.database)?;
     let auth_session = manifest.project.auth.as_deref() == Some("session");
-    let context = ResourceContext::build(
-        name,
-        fields,
-        &persistence.database,
-        &persistence.orm,
-        auth_session,
-    );
-    let module_template = if persistence.orm == "seaorm" {
-        RESOURCE_SEAORM
-    } else {
-        RESOURCE_SQLX
-    };
-    let module = rustfmt(&crate::generate::render::render_body(
-        module_template,
-        &context,
-        true,
-    )?)?;
-    let test = rustfmt(&crate::generate::render::render_body(
-        RESOURCE_TEST,
-        &context,
-        true,
-    )?)?;
+    let (context, module, test) = render_resource(persistence, name, fields, auth_session)?;
     let up = crate::generate::render::render_body(RESOURCE_UP, &context, true)?;
     let down = crate::generate::render::render_body(RESOURCE_DOWN, &context, true)?;
     let migration_name = format!("create_{}", context.snake);
-    let version = match existing_version(project, &migration_name)? {
-        Some(version) => version,
-        None => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| {
-                    CliError::new(Code::Internal, "the system clock is before the Unix epoch")
-                })?
-                .as_secs();
-            utc_version(now)
-        }
-    };
+    let version = version_for(project, &migration_name)?;
 
     let read = |path: &str| -> Result<String, CliError> {
         project.read_to_string(path).map_err(|error| {
@@ -903,6 +1534,10 @@ fn plan_resource(
     let support = rerender_starter_file(manifest, "tests/support/mod.rs")?;
 
     let what = format!("resource `{name}` at `/{}`", context.plural);
+    let definition = crate::generate::record::GeneratedResource {
+        name: name.to_owned(),
+        fields: field_specs.to_vec(),
+    };
     Ok((
         what,
         vec![
@@ -923,6 +1558,7 @@ fn plan_resource(
             Planned::edit("src/resources/mod.rs", modules.into_bytes()),
             Planned::edit("src/routes.rs", routes.into_bytes()),
         ],
+        definition,
     ))
 }
 
@@ -964,6 +1600,54 @@ mod resource_tests {
                 field(spec, "postgres").expect_err(spec).code,
                 Code::UnsupportedValue
             );
+        }
+    }
+
+    #[test]
+    fn a_reserved_sql_word_is_refused_as_a_table_or_a_column() {
+        // FOUND BY THE CODEX REVIEW (P2). `Order` passed the PascalCase check and became the
+        // bare identifier `order` in every generated statement, which neither engine parses;
+        // the failure surfaced at the project's first query, after generation had reported
+        // success. Columns are bound bare too, so a field named `key` is the same defect.
+        assert!(
+            RESERVED_SQL_WORDS.windows(2).all(|pair| pair[0] < pair[1]),
+            "sorted and unique, for the binary search"
+        );
+        for name in ["Order", "User", "Group", "Select", "Table", "Key", "Window"] {
+            let error = validate_type_name(name).expect_err(name);
+            assert_eq!(error.code, Code::UnsupportedValue, "{name}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "reason" && v == "reserved_identifier"),
+                "{name}: {:?}",
+                error.details
+            );
+        }
+        for spec in [
+            "key:string",
+            "order:integer",
+            "user:string",
+            "index:integer",
+        ] {
+            let error = field(spec, "postgres").expect_err(spec);
+            assert_eq!(error.code, Code::UnsupportedValue, "{spec}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "reason" && v == "reserved_identifier"),
+                "{spec}: {:?}",
+                error.details
+            );
+        }
+        // POSITIVE CONTROL: a two-word name is never a reserved word, and ordinary names pass.
+        for name in ["BlogPost", "OrderLine", "Post", "Item"] {
+            validate_type_name(name).expect(name);
+        }
+        for spec in ["title:string", "order_index:integer", "user_name:string"] {
+            field(spec, "mysql").expect(spec);
         }
     }
 
@@ -1107,8 +1791,17 @@ fn plan_auth(
     renderer.render_into(&dir, &context)?;
     let rendered = crate::generate::manifest::FileManifest::describe(&dir)?;
     let mut planned = Vec::with_capacity(rendered.entries.len());
+    let mut item_table_exists = false;
     for entry in &rendered.entries {
         if entry.kind != crate::generate::manifest::EntryKind::File {
+            continue;
+        }
+        // APPLIED MIGRATIONS ARE NEVER RE-PLANNED. The auth render produces the item migration
+        // with `owner_id`; the project's copy is applied and recorded by its checksum, and a
+        // rewrite would make SQLx refuse the ledger at the next Boot (found by the Codex review
+        // of Phase 011). The column arrives by the forward migration planned below.
+        if entry.path.starts_with("migrations/0001_") && project.exists(&entry.path) {
+            item_table_exists = true;
             continue;
         }
         let mut bytes = dir.read(&entry.path).map_err(|error| {
@@ -1125,12 +1818,250 @@ fn plan_auth(
         }
         planned.push(Planned::file(entry.path.clone(), bytes));
     }
+    let Some(persistence) = manifest.persistence.as_ref() else {
+        // `resolve` above refuses a session starter without a database; unreachable in practice,
+        // reported rather than assumed.
+        return Err(CliError::new(
+            Code::UnsupportedCombination,
+            "the session starter needs a database, and this project records none",
+        )
+        .with("flags", "--auth session")
+        .with("reason", "no_database"));
+    };
+    if item_table_exists && manifest.project.example_domain {
+        #[derive(serde::Serialize)]
+        struct OwnerContext<'a> {
+            database: &'a str,
+        }
+        let owner = OwnerContext {
+            database: &persistence.database,
+        };
+        let version = version_for(project, "add_item_owner")?;
+        planned.push(Planned::file(
+            format!("migrations/{version}_add_item_owner.up.sql"),
+            crate::generate::render::render_body(ITEM_OWNER_UP, &owner, true)?.into_bytes(),
+        ));
+        planned.push(Planned::file(
+            format!("migrations/{version}_add_item_owner.down.sql"),
+            crate::generate::render::render_body(ITEM_OWNER_DOWN, &owner, true)?.into_bytes(),
+        ));
+    }
+    // EVERY RECORDED RESOURCE IS RENDERED AGAIN with the session guards the manifest now
+    // promises; a module the user changed is a conflict like any other file, so the auth starter
+    // is refused rather than added beside a public write route (found by the Codex review of
+    // Phase 011).
+    if let Some(record) = crate::generate::record::read(project)? {
+        for resource in &record.resources {
+            validate_type_name(&resource.name)?;
+            let fields = parse_fields(&resource.fields, &persistence.database)?;
+            let (context, module, test) =
+                render_resource(persistence, &resource.name, fields, true)?;
+            planned.push(Planned::file(
+                format!("src/resources/{}.rs", context.snake),
+                module.into_bytes(),
+            ));
+            planned.push(Planned::file(
+                format!("tests/{}.rs", context.snake),
+                test.into_bytes(),
+            ));
+        }
+    }
     Ok(("the session authentication starter".to_owned(), planned))
 }
 
 #[cfg(test)]
 mod auth_tests {
-    use super::carry_marked_block;
+    use super::*;
+
+    /// A workspace-shaped directory `--framework-path` accepts; nothing in it is built.
+    fn fake_framework(base: &std::path::Path) -> std::path::PathBuf {
+        let root = base.join("framework");
+        std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("crates/renvor/Cargo.toml"),
+            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write");
+        std::fs::write(root.join("Cargo.lock"), "# lock\nversion = 4\n").expect("write");
+        root
+    }
+
+    /// A starter rendered without the auth starter, with its record, as `renvor new` leaves it —
+    /// minus the build. `example_domain` decides whether the item table exists.
+    fn starter_without_auth(
+        base: &std::path::Path,
+        example_domain: bool,
+    ) -> (std::path::PathBuf, Dir) {
+        let framework = fake_framework(base);
+        let destination = base.join("demo");
+        let answers = crate::config::model::Answers {
+            name: Some("demo".to_owned()),
+            destination: destination.clone(),
+            local_domain: None,
+            target: "api".to_owned(),
+            transport: None,
+            container: false,
+            local_https: false,
+            seed_data: false,
+            example_domain,
+            orm: Some("sqlx".to_owned()),
+            database: Some("postgres".to_owned()),
+            database_version: None,
+            database_name: None,
+            database_user: None,
+            database_port: None,
+            container_cache: None,
+            cache_port: None,
+            auth: None,
+            capabilities: Some("mail".to_owned()),
+            framework_path: Some(framework),
+        };
+        let (configuration, _) =
+            crate::config::model::ProjectConfiguration::resolve(answers).expect("resolves");
+        let context = crate::commands::new::Context::build(&configuration);
+        let renderer =
+            crate::generate::render::Renderer::new(crate::templates::select(&configuration))
+                .expect("builds");
+        std::fs::create_dir_all(&destination).expect("mkdir");
+        let dir = Dir::open_ambient_dir(&destination, cap_std::ambient_authority()).expect("opens");
+        renderer.render_into(&dir, &context).expect("renders");
+        crate::generate::record::write(&dir, "0.0.0", crate::templates::VERSION).expect("record");
+        (destination, dir)
+    }
+
+    #[test]
+    fn adding_auth_keeps_the_applied_item_migration_and_adds_the_owner_forward() {
+        // FOUND BY THE CODEX REVIEW (P1). The auth render produces `0001_create_item.up.sql`
+        // WITH `owner_id`; the project's copy — already applied, its checksum in the ledger —
+        // matched the record, so it was overwritten, and SQLx refused the changed checksum at
+        // the next Boot. An applied migration is never re-planned; the column arrives by a new
+        // forward migration.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (path, dir) = starter_without_auth(base.path(), true);
+        let manifest = check::load(&path).expect("loads");
+        let item_up = dir
+            .read_to_string("migrations/0001_create_item.up.sql")
+            .expect("the item migration");
+        assert!(!item_up.contains("owner_id"), "{item_up}");
+
+        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let paths: Vec<&str> = planned.iter().map(|p| p.path.as_str()).collect();
+        assert!(
+            !paths.iter().any(|p| p.starts_with("migrations/0001_")),
+            "an applied migration was planned again: {paths:?}"
+        );
+        let up = planned
+            .iter()
+            .find(|p| {
+                p.path.starts_with("migrations/") && p.path.ends_with("_add_item_owner.up.sql")
+            })
+            .unwrap_or_else(|| panic!("no forward migration adds the owner column: {paths:?}"));
+        let sql = String::from_utf8(up.bytes.clone()).expect("utf-8");
+        assert!(
+            sql.contains("ALTER TABLE item ADD COLUMN owner_id"),
+            "{sql}"
+        );
+        assert!(
+            paths
+                .iter()
+                .any(|p| p.ends_with("_add_item_owner.down.sql")),
+            "{paths:?}"
+        );
+        let version = &up.path["migrations/".len().."migrations/".len() + 14];
+        assert!(version.bytes().all(|b| b.is_ascii_digit()), "{}", up.path);
+        // The plan classifies the project's own migration as untouched — it is not in the plan —
+        // and the rest as regenerated or new; nothing conflicts.
+        let plan = apply::plan(&dir, planned).expect("no conflict");
+        assert!(
+            plan.summary()
+                .iter()
+                .all(|(p, _)| !p.starts_with("migrations/0001_"))
+        );
+        assert_eq!(
+            dir.read_to_string("migrations/0001_create_item.up.sql")
+                .expect("still there"),
+            item_up,
+            "the applied migration must stay byte-identical"
+        );
+
+        // POSITIVE CONTROL on the condition: without the example domain there is no item table,
+        // so nothing is added forward.
+        let base2 = tempfile::tempdir().expect("tempdir");
+        let (path2, dir2) = starter_without_auth(base2.path(), false);
+        let manifest2 = check::load(&path2).expect("loads");
+        let (_, planned2) = plan_auth(&dir2, &manifest2).expect("plans");
+        assert!(
+            !planned2.iter().any(|p| p.path.contains("_add_item_owner")),
+            "a forward migration for a table that does not exist"
+        );
+    }
+
+    #[test]
+    fn adding_auth_renders_every_recorded_resource_again_with_its_guards() {
+        // FOUND BY THE CODEX REVIEW (P1). A resource generated before the auth starter was
+        // rendered with `auth_session = false`, and the auth plan re-rendered only the starter's
+        // own files, so the resource's POST, PUT, and DELETE stayed public under a manifest that
+        // promised session writes. The record now carries each resource's definition, and the
+        // auth plan renders every one again; an edited module is a conflict like any other.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (path, dir) = starter_without_auth(base.path(), true);
+        let manifest = check::load(&path).expect("loads");
+        let (_, planned, definition) =
+            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
+                .expect("plans the resource");
+        let plan = apply::plan(&dir, planned)
+            .expect("plans")
+            .with_resource(definition);
+        apply::commit(&dir, plan, "0.0.0", crate::templates::VERSION).expect("commits");
+        let before = dir.read_to_string("src/resources/post.rs").expect("module");
+        assert!(!before.contains("require_session"), "{before}");
+
+        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let module = planned
+            .iter()
+            .find(|p| p.path == "src/resources/post.rs")
+            .expect("the recorded resource is rendered again");
+        let text = String::from_utf8(module.bytes.clone()).expect("utf-8");
+        assert!(text.contains("require_session"), "{text}");
+        assert!(
+            planned.iter().any(|p| p.path == "tests/post.rs"),
+            "the resource's test is rendered again too"
+        );
+        assert!(
+            !planned.iter().any(|p| p.path.contains("_create_post.")),
+            "the resource's migration does not depend on auth and is not re-planned"
+        );
+        let plan = apply::plan(&dir, planned).expect("an untouched module regenerates");
+        assert!(
+            plan.summary()
+                .iter()
+                .any(|(p, a)| *p == "src/resources/post.rs" && *a == Applied::Regenerate),
+            "{:?}",
+            plan.summary()
+        );
+
+        // A module the user edited is a conflict, and nothing is written.
+        let mut edited = before.clone();
+        edited.push_str("\n// mine\n");
+        dir.write("src/resources/post.rs", edited.as_bytes())
+            .expect("write");
+        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let error = apply::plan(&dir, planned).expect_err("an edited module is a conflict");
+        assert_eq!(error.code, Code::GenerationConflict);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "paths" && v.contains("src/resources/post.rs")),
+            "{:?}",
+            error.details
+        );
+    }
 
     #[test]
     fn a_re_render_keeps_what_other_generators_put_between_the_markers() {

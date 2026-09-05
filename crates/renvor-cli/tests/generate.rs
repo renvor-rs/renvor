@@ -12,10 +12,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn renvor(args: &[&str], directory: &Path) -> (bool, serde_json::Value, String) {
+    renvor_with(args, directory, &[])
+}
+
+/// `renvor` with extra environment, for the failure injector.
+fn renvor_with(
+    args: &[&str],
+    directory: &Path,
+    envs: &[(&str, &str)],
+) -> (bool, serde_json::Value, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
         .args(args)
         .current_dir(directory)
         .env("CARGO_TARGET_DIR", directory.join(".target"))
+        .envs(envs.iter().copied())
         .output()
         .expect("renvor runs");
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -297,4 +307,211 @@ fn a_dry_run_writes_nothing_and_a_project_without_a_database_is_refused() {
     );
     assert!(!ok);
     assert_eq!(bad["error"]["code"], "unsupported_value");
+}
+
+/// Every file under `root` with its bytes, sorted — the whole project, so "unchanged" means
+/// unchanged and not "the files this test thought to look at".
+fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        for entry in std::fs::read_dir(&directory).expect("read_dir").flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|name| name == ".target") {
+                continue;
+            }
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("relative")
+                    .display()
+                    .to_string();
+                files.push((relative, std::fs::read(&path).expect("read")));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+#[test]
+fn a_failure_during_commit_leaves_the_project_unchanged() {
+    // The rule the correction round of Phase 011 made explicit: a generation into an existing
+    // project either lands whole or leaves the tree exactly as it found it. Files are staged as
+    // temporary siblings first, then renamed; a failure at either point rolls back what was
+    // renamed and removes what was staged. `RENVOR_FAIL_AT` is honoured by debug builds only,
+    // which `cargo test` is.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "postgres");
+    let before = snapshot(&project);
+    for step in ["generate-stage", "generate-commit"] {
+        let (ok, document, _) = renvor_with(
+            &["generate", "migration", "add_index", "--output", "json"],
+            &project,
+            &[("RENVOR_FAIL_AT", step)],
+        );
+        assert!(
+            !ok,
+            "the injected failure at `{step}` was not reported: {document}"
+        );
+        assert_eq!(document["status"], "failure", "{document}");
+        assert_eq!(document["error"]["details"]["injected"], step, "{document}");
+        assert_eq!(
+            snapshot(&project),
+            before,
+            "a failure at `{step}` left the project changed"
+        );
+    }
+    // POSITIVE CONTROL: the same command without the injector writes the pair.
+    let (ok, document, _) = renvor(
+        &["generate", "migration", "add_index", "--output", "json"],
+        &project,
+    );
+    assert!(ok, "{document}");
+    assert_eq!(document["result"]["written"], 2);
+    assert_ne!(snapshot(&project), before);
+}
+
+#[test]
+fn an_import_refuses_a_version_another_migration_already_holds() {
+    // FOUND BY THE CODEX REVIEW (P1). An imported set was checked against files of the same
+    // name only; a user's migration holding one of the set's versions under another name made
+    // two files share a version, which SQLx's ledger cannot represent.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "mysql");
+    let mine = "20260901000001_mine.up.sql";
+    std::fs::write(
+        project.join("migrations").join(mine),
+        "-- the user's own migration, versioned by hand\n",
+    )
+    .expect("write");
+    let before = snapshot(&project);
+    let (ok, refused, _) = renvor(
+        &[
+            "generate",
+            "migration",
+            "--import",
+            "auth",
+            "--output",
+            "json",
+        ],
+        &project,
+    );
+    assert!(!ok, "the collision was not refused: {refused}");
+    assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+    assert_eq!(refused["error"]["details"]["reason"], "version_present");
+    assert_eq!(refused["error"]["details"]["versions"], "20260901000001");
+    assert_eq!(snapshot(&project), before, "a refusal wrote something");
+}
+
+#[test]
+fn two_names_generated_within_a_second_get_distinct_versions() {
+    // Not flaky in either direction: when the two commands straddle a second boundary the
+    // versions differ anyway, and when they do not the allocator moves the second one forward.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "postgres");
+    let (ok, first, _) = renvor(
+        &["generate", "migration", "add_a", "--output", "json"],
+        &project,
+    );
+    assert!(ok, "{first}");
+    let (ok, second, _) = renvor(
+        &["generate", "migration", "add_b", "--output", "json"],
+        &project,
+    );
+    assert!(ok, "{second}");
+    let version = |document: &serde_json::Value| {
+        document["result"]["files"][0]["path"]
+            .as_str()
+            .expect("path")["migrations/".len()..][..14]
+            .to_owned()
+    };
+    assert_ne!(version(&first), version(&second));
+    // Every version in the directory is held by exactly one pair.
+    let names = migration_files(&project);
+    let mut versions: Vec<String> = names
+        .iter()
+        .filter(|name| name.ends_with(".up.sql"))
+        .map(|name| name.split('_').next().expect("a version").to_owned())
+        .collect();
+    let count = versions.len();
+    versions.dedup();
+    assert_eq!(versions.len(), count, "a version is shared: {names:?}");
+}
+
+#[test]
+fn a_name_beside_an_import_is_refused_rather_than_ignored() {
+    // FOUND BY THE CODEX REVIEW (P2). `generate migration add_users --import auth` imported the
+    // set and reported success, discarding the name — different work from what the positional
+    // argument asked for. The two are declared as conflicting, so the parser refuses them
+    // together before anything is planned.
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "postgres");
+    let before = snapshot(&project);
+    let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args([
+            "generate",
+            "migration",
+            "add_users",
+            "--import",
+            "auth",
+            "--output",
+            "json",
+        ])
+        .current_dir(&project)
+        .output()
+        .expect("renvor runs");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a usage error exits 2:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // In JSON mode the refusal is the envelope on stdout; either stream must name the flag.
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        said.contains("--import"),
+        "the refusal names the conflicting flag:\n{said}"
+    );
+    assert_eq!(snapshot(&project), before, "a usage error wrote something");
+}
+
+#[test]
+fn the_record_digests_are_the_placed_files_including_the_resolved_lockfile() {
+    // FOUND BY THE CODEX REVIEW (P2). The record was written before verification, and
+    // verification is what resolves `Cargo.lock`; the placed lockfile therefore never matched
+    // the record — for a starter the seeded framework lock was pruned, for a skeleton the file
+    // did not exist yet — so the first `renvor generate` after `renvor new` read the lockfile as
+    // changed by the user. The record is written after verification and describes the tree
+    // that is placed.
+    use sha2::{Digest as _, Sha256};
+    let base = tempfile::tempdir().expect("tempdir");
+    let project = project(base.path(), "postgres");
+    let record: toml::Value = toml::from_str(&record(&project)).expect("the record parses");
+    let files = record["file"].as_array().expect("[[file]]");
+    let mut listed = Vec::new();
+    for file in files {
+        let path = file["path"].as_str().expect("path");
+        let bytes = std::fs::read(project.join(path))
+            .unwrap_or_else(|error| panic!("`{path}` is recorded but not placed: {error}"));
+        let digest = Sha256::digest(&bytes)
+            .iter()
+            .fold(String::new(), |acc, b| format!("{acc}{b:02x}"));
+        assert_eq!(
+            file["sha256"].as_str(),
+            Some(digest.as_str()),
+            "`{path}`: the record's digest is not the placed file's"
+        );
+        listed.push(path.to_owned());
+    }
+    assert!(
+        listed.iter().any(|path| path == "Cargo.lock"),
+        "the resolved lockfile is generated and must be recorded: {listed:?}"
+    );
 }
