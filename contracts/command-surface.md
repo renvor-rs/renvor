@@ -45,7 +45,10 @@ working tree and the project's provenance record `.renvor/generated.toml`
 
 `details.paths` and `details.count` cover every refusing path of both kinds, in plan order; the
 two sub-lists split them, and `reason` is `changed_since_generation` whenever a changed path is
-among them, because the flag alone would not help. **A differing file is never overwritten
+among them, because the flag alone would not help. A refusal also lists what the plan would have
+done beside it — `details.write` (created), `details.edit`, and, under the flag,
+`details.regenerate` — each present only when non-empty, so a refused `--dry-run` reports the
+whole classification: created, regenerated, edited, refused. **A differing file is never overwritten
 implicitly** (FR-048, SR-009, decided 2026-09-05): the recorded digest proves the generator owns
 the file, and `--overwrite-unchanged` is the permission to replace it. The flag waives nothing
 else — not validation, not a conflict, not a verification failure.

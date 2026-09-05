@@ -65,9 +65,13 @@ interrupt a terminal sends. The framework's gate runs that proof for every cover
 `renvor generate migration <name>`, `migration --import auth|jobs`, `resource <Name> field:type…`,
 and `auth` write into an existing project without ever overwriting a file you changed: every
 target path is classified against the working tree and `.renvor/generated.toml` first — absent is
-written, identical is a no-op, untouched since generation is regenerated, changed is a
-`generation_conflict` that writes nothing. A rerun reports `unchanged`. See the command-surface
-contract's `renvor generate` section for each action's files and refusals.
+written, identical is a no-op, unchanged since generation but different from the render is
+*regenerable* and is replaced only under `--overwrite-unchanged` (without the flag the run is a
+`generation_conflict` naming the flag), changed is a `generation_conflict` with or without the
+flag. Every refusal writes nothing and lists the paths, never their contents; `--dry-run`
+classifies exactly as a real run. A rerun reports `unchanged`. `generate auth` renders the
+starter's files again, so it needs the flag. See the command-surface contract's `renvor generate`
+section for each action's files and refusals.
 
 ## Exit codes
 

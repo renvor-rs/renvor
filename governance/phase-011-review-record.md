@@ -248,10 +248,23 @@ permit implicit overwrites.
 | `governance/phase-011-limitations.md` L-6 | states the flag |
 | `specs/011-…/spec.md` FR-048 and SR-009, `data-model.md` §4 | state the flag and the refusal; untracked under `specs/` (gitignored), edited in place on this machine |
 
-Generated documentation was checked and left alone: no template states the old rule. The
-migrations README says only that `renvor generate migration <name>` writes a pair; the routes
-marker comment and the support module's comment name the generators without describing overwrite
-behaviour.
+Generated documentation **did** state the old rule, and the first commit of this round missed
+it: the module comment of both resource templates (`resource_sqlx.rs.j2`, `resource_seaorm.rs.j2`
+lines 3–4, "the generator regenerates it only while its digest still matches …") and the crate
+README's `renvor generate` section ("untouched since generation is regenerated"), found by the
+seventh validation pass. Both templates and the README now state the flag; the rendered module
+changed, so the rows that render one (`ressqlx`, `ressea`, `authadded`, `authaddedmysql`) and
+both gate legs were run again on the corrected source head, recorded below. The migrations
+README, the routes marker comment, and the support module's comment name the generators without
+describing overwrite behaviour and were left alone.
+
+**A refused dry run reports the whole plan** (the seventh pass's reading of requirement 3, taken):
+every refusal also carries `details.write`, `details.edit`, and — under the flag —
+`details.regenerate`, each present only when non-empty, so "which files would be regenerated,
+created, edited, or refused" is answered even when the run is refused. Red first: the mixed-plan
+binary test asserted `details.write` names the two absent files and failed on the tree before the
+change; `absent_identical_untouched_and_modified_are_the_four_cases` asserts the same for the
+unit plan, both flags.
 
 **Red, then green.** The two binary tests were written before the implementation and run against
 the reviewed head: `red-fr048.log` is `a9f873e` exported to a scratch directory with the new
@@ -279,8 +292,9 @@ migration pair removed trips the version check first — corrected before the re
 | the flag reaches every action | `commands::generate::tests::every_generate_action_carries_the_overwrite_flag_and_it_is_off_by_default` |
 
 **Suites on the source head.** `cargo test -p renvor-cli --bin renvor` 313 passed, 0 failed, 1
-ignored (310 before: the three new tests); `--test generate` 11 passed (9 before); `--test cli` 4
-(the new help snapshot among them); `--test presentation` 17; `--test snapshots` 1;
+ignored (310 before: the three new tests); `--test generate` 11 passed (9 before); `--test cli` 4 test
+functions (the trycmd case pinning the generate help runs inside one of them); `--test
+presentation` 17; `--test snapshots` 1;
 `renvor-core --test diagnostics` 2; `xtask` 36; `cargo clippy -p renvor-cli --all-targets -D
 warnings` clean; `cargo fmt --all --check` clean. The two rows that add the auth starter,
 `authadded` (22:28:48–22:30:35) and `authaddedmysql` (22:30:35–22:32:36), passed with the new

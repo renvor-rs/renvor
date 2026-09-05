@@ -315,7 +315,7 @@ pub fn plan(
         decisions.push((item, action));
     }
     if !refusals.is_empty() {
-        return Err(refused(&refusals));
+        return Err(refused(&refusals, &decisions));
     }
     Ok(Plan {
         decisions,
@@ -329,8 +329,11 @@ pub fn plan(
 /// `details.paths` and `details.count` cover every refusing path; `details.changed` and
 /// `details.regenerable` split them; `details.flag` names [`OVERWRITE_FLAG`] whenever a
 /// regenerable path is among them; `details.reason` is `changed_since_generation` when any path
-/// was changed — the flag alone would not help — and `overwrite_required` otherwise.
-fn refused(refusals: &[(String, Refusal)]) -> CliError {
+/// was changed — the flag alone would not help — and `overwrite_required` otherwise. What the
+/// plan would have done beside the refusal is listed too — `details.write`, `details.edit`, and
+/// `details.regenerate` (the last only under the flag) — so a refused dry run reports the whole
+/// classification, not just the refusal.
+fn refused(refusals: &[(String, Refusal)], decisions: &[(Planned, Action)]) -> CliError {
     let of = |wanted: Refusal| -> Vec<&str> {
         refusals
             .iter()
@@ -382,6 +385,16 @@ fn refused(refusals: &[(String, Refusal)]) -> CliError {
         error = error
             .with("regenerable", regenerable.join(", "))
             .with("flag", OVERWRITE_FLAG);
+    }
+    for action in [Action::Write, Action::Regenerate, Action::Edit] {
+        let would: Vec<&str> = decisions
+            .iter()
+            .filter(|(_, decided)| *decided == action)
+            .map(|(planned, _)| planned.path.as_str())
+            .collect();
+        if !would.is_empty() {
+            error = error.with(action.as_str(), would.join(", "));
+        }
     }
     error
 }
@@ -690,6 +703,12 @@ mod tests {
         assert_eq!(detail(&error, "count"), Some("1"));
         assert_eq!(detail(&error, "changed"), None);
         assert!(error.message.contains(OVERWRITE_FLAG), "{}", error.message);
+        assert_eq!(
+            detail(&error, "write"),
+            Some("new.txt"),
+            "the refusal reports what the plan would have created"
+        );
+        assert_eq!(detail(&error, "regenerate"), None, "not without the flag");
         assert!(
             !dir.exists("new.txt"),
             "a refusal must write NOTHING, not even the file that could have been written"
@@ -744,6 +763,12 @@ mod tests {
             assert_eq!(detail(&error, "count"), Some(expected.1), "flag = {flag}");
             assert_eq!(detail(&error, "regenerable"), expected.2, "flag = {flag}");
             assert_eq!(detail(&error, "flag"), expected.3, "flag = {flag}");
+            assert_eq!(detail(&error, "write"), Some("new.txt"), "flag = {flag}");
+            assert_eq!(
+                detail(&error, "regenerate"),
+                if flag { Some("untouched.txt") } else { None },
+                "flag = {flag}: with the flag the regenerable file would be regenerated"
+            );
             assert!(
                 !dir.exists("new.txt"),
                 "a conflict must write NOTHING, not even the files that could have been written"

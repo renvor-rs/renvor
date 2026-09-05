@@ -570,7 +570,7 @@ the re-application §5 records):
 |---|---|
 | `cargo test -p renvor-cli --bin renvor` | 313 passed, 0 failed, 1 ignored (310 before; the three new tests) |
 | `cargo test -p renvor-cli --test generate` | 11 passed (9 before; the two new tests) |
-| `cargo test -p renvor-cli --test cli` | 4 passed (the new `help-generate.trycmd` among them) |
+| `cargo test -p renvor-cli --test cli` | 4 passed (four test functions; the new `help-generate.trycmd` is a case inside one of them) |
 | `--test presentation`, `--test snapshots` | 17 passed; 1 passed |
 | `cargo test -p renvor-core --test diagnostics` | 2 passed |
 | `cargo test -p xtask` | 36 passed |

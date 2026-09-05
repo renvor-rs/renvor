@@ -674,6 +674,12 @@ fn a_regenerable_file_is_refused_without_the_flag_and_replaced_only_with_it() {
         details.get("changed").is_none(),
         "nothing was changed by the user: {refused}"
     );
+    for absent in ["write", "edit", "regenerate"] {
+        assert!(
+            details.get(absent).is_none(),
+            "nothing else would happen: {refused}"
+        );
+    }
     assert_eq!(snapshot(&project), before, "a refusal wrote something");
     // Paths, never contents: no line of either version of the file reaches either stream.
     let said = format!("{refused}{stderr}");
@@ -841,12 +847,26 @@ fn a_changed_file_is_refused_with_the_flag_and_a_mixed_plan_writes_nothing() {
             "{label}: {refused}"
         );
         assert_eq!(details["changed"], changed.as_str(), "{label}: {refused}");
+        // A refusal still reports what the plan would have created, regenerated, and edited —
+        // a refused dry run is otherwise blind to everything but the refusal.
+        assert_eq!(
+            details["write"],
+            format!("{}, {}", absent[0], absent[1]),
+            "{label}: {refused}"
+        );
+        assert!(details.get("edit").is_none(), "{label}: {refused}");
         if flagged {
             assert!(details.get("regenerable").is_none(), "{label}: {refused}");
             assert!(details.get("flag").is_none(), "{label}: {refused}");
+            assert_eq!(
+                details["regenerate"],
+                regenerable.as_str(),
+                "{label}: with the flag the regenerable file would be regenerated: {refused}"
+            );
             assert_eq!(details["paths"], changed.as_str(), "{label}: {refused}");
             assert_eq!(details["count"], "1", "{label}: {refused}");
         } else {
+            assert!(details.get("regenerate").is_none(), "{label}: {refused}");
             assert_eq!(
                 details["regenerable"],
                 regenerable.as_str(),
