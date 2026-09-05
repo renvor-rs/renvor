@@ -323,11 +323,15 @@ fn snapshot(root: &Path) -> Vec<(String, Vec<u8>)> {
             if path.is_dir() {
                 stack.push(path);
             } else {
+                // Forward slashes on every platform, so a path from a snapshot compares equal
+                // to the path the envelope names (Windows would otherwise write `\`).
                 let relative = path
                     .strip_prefix(root)
                     .expect("relative")
-                    .display()
-                    .to_string();
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
                 files.push((relative, std::fs::read(&path).expect("read")));
             }
         }
