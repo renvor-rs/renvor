@@ -82,7 +82,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .bound_address()
         .ok_or("the HTTP provider reported no bound address after Boot")?;
     println!("{NAME} is listening at http://{address}");
-    tokio::signal::ctrl_c().await?;
+    // The framework's own interrupt wait, so every package this binary resolves is in the
+    // framework's lockfile (offline generation, FR-006).
+    renvor::shutdown_signal().await?;
 
     let report = application.shutdown().await;
     if !report.is_clean() {
