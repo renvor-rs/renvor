@@ -507,8 +507,7 @@ mod tests {
                 .details
                 .iter()
                 .any(|(k, v)| k == "check" && v.contains("CARGO_TARGET_DIR")),
-            "{:?}",
-            error.details
+            "the refusal must name the CARGO_TARGET_DIR check in its details"
         );
         let error = target_directory(Some(OsStr::new(""))).expect_err("empty is refused");
         assert_eq!(error.code, Code::ProjectVerificationFailed);
@@ -550,8 +549,7 @@ mod tests {
                 .details
                 .iter()
                 .any(|(k, v)| k == "check" && v == "cargo run --quiet -- --renvor-dump-routes"),
-            "the failing check must name the request it sent: {:?}",
-            error.details
+            "the failing check must name the request it sent"
         );
         // And the skeleton's bare run does not send it: the same refusing main exits 0 without
         // the argument, so it verifies under `Smoke::Exits`.
@@ -636,24 +634,35 @@ mod tests {
         ]
         .map(|(name, value)| (OsString::from(name), OsString::from(value)));
         let sealed = seal(parent.into_iter()).variables;
-        for (name, value) in &sealed {
+        // Fixed messages throughout, and indices where a case must be named: this file handles
+        // credentials, and a failure here is the one run in which printing one matters most.
+        let secrets = [
+            "s3cr3t-proxy-pass",
+            "hunter2",
+            "pw-9f",
+            "alice",
+            "bob",
+            "carol",
+        ];
+        for (variable, (_, value)) in sealed.iter().enumerate() {
             let value = value.to_string_lossy();
-            for secret in [
-                "s3cr3t-proxy-pass",
-                "hunter2",
-                "pw-9f",
-                "alice",
-                "bob",
-                "carol",
-            ] {
-                for form in every_form_of(secret) {
-                    assert!(
-                        !value.contains(&form),
-                        "{} carries {secret:?} as {form:?}: {value}",
-                        name.to_string_lossy()
-                    );
-                }
-            }
+            let leaked: Vec<(usize, usize, usize)> = secrets
+                .iter()
+                .enumerate()
+                .flat_map(|(secret, text)| {
+                    every_form_of(text)
+                        .into_iter()
+                        .enumerate()
+                        .filter(|(_, form)| value.contains(form))
+                        .map(move |(rendering, _)| (variable, secret, rendering))
+                        .collect::<Vec<_>>()
+                })
+                .collect();
+            assert_eq!(
+                leaked,
+                Vec::<(usize, usize, usize)>::new(),
+                "a sealed proxy value carries a credential: (variable, secret, rendering) indices"
+            );
         }
         let value_of = |wanted: &str| {
             sealed
@@ -693,14 +702,24 @@ mod tests {
                     also socks5://bob:hunter2@10.0.0.1:1080 and plain http://host:80/ok\n\
                     and the password s3cr3t-proxy-pass on its own\u{1b}[31m";
         let reported = redacted_output(text, &removed);
-        for secret in ["s3cr3t-proxy-pass", "hunter2", "alice", "bob"] {
-            for form in every_form_of(secret) {
-                assert!(
-                    !reported.contains(&form),
-                    "{secret} as {form:?}: {reported}"
-                );
-            }
-        }
+        let secrets = ["s3cr3t-proxy-pass", "hunter2", "alice", "bob"];
+        let leaked: Vec<(usize, usize)> = secrets
+            .iter()
+            .enumerate()
+            .flat_map(|(secret, text)| {
+                every_form_of(text)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, form)| reported.contains(form))
+                    .map(move |(rendering, _)| (secret, rendering))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        assert_eq!(
+            leaked,
+            Vec::<(usize, usize)>::new(),
+            "the reported output carries a credential: (secret, rendering) indices"
+        );
         assert!(reported.contains("http://<credential removed>@proxy.example:3128/x"));
         assert!(reported.contains("socks5://<credential removed>@10.0.0.1:1080"));
         assert!(
@@ -709,7 +728,7 @@ mod tests {
         );
         assert!(
             reported.contains("\\u{1b}[31m"),
-            "the escape is escaped: {reported}"
+            "the escape sequence must be escaped in the reported output"
         );
         assert!(!reported.contains('\u{1b}'));
     }
@@ -759,25 +778,26 @@ mod tests {
             error
                 .message
                 .contains("proxy variables seen by the build script:"),
-            "the build script's output must be embedded, or this control proves nothing:\n{}",
-            error.message
+            "the build script's output must be embedded, or this control proves nothing"
         );
         assert!(
             error.message.contains("127.0.0.1:1"),
-            "the credential-free host survives:\n{}",
-            error.message
+            "the credential-free host must survive in the reported output"
         );
-        for form in every_form_of(secret) {
-            assert!(
-                !error.message.contains(&form),
-                "the verification error carries the proxy credential as {form:?}:\n{}",
-                error.message
-            );
-        }
+        let leaked: Vec<usize> = every_form_of(secret)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, form)| error.message.contains(form))
+            .map(|(rendering, _)| rendering)
+            .collect();
+        assert_eq!(
+            leaked,
+            Vec::<usize>::new(),
+            "the verification error carries the proxy credential: rendering indices"
+        );
         assert!(
             !error.message.contains("alice"),
-            "the user name is part of the credential:\n{}",
-            error.message
+            "the user name is part of the credential and must not be reported"
         );
     }
 
@@ -815,8 +835,7 @@ mod tests {
         // regenerate blind. Found by Phase 011's first starter render.
         assert!(
             error.message.contains("fn main() {}"),
-            "the formatter's own diff must reach the message: {}",
-            error.message
+            "the formatter's own diff must reach the message"
         );
     }
 
