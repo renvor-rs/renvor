@@ -406,7 +406,17 @@ Logs: `gate-1.94.0.log`, `gate-stable.log`, `gates.log` (scratch, quoted here).
 | `f6305a7fcc6c7b7ffab3da80f6718545a3e2b04f` | `b6f0cbfa9ba14768b1b2b372a9dd58f54b7b7274` | **the final source head of the correction round**: eight signed commits `5787541` … `f6305a7` (core, testkit, the starter templates, the generators and apply engine, the manifest check and record, the wizard, the census rows, the records); both gate legs green here |
 | the commit that adds this paragraph | — | documents only: the gate table above and the pull request's CI, added after the legs ran on the head they name |
 
-**Pull request and CI.** CI-PENDING
+**Pull request and CI.** [#62](https://github.com/renvor-rs/renvor/pull/62), pushed fast-forward from
+`db952ef` to `3a62fbd` (the source head `f6305a7` plus the gate-table commit) on 2026-09-05 16:38;
+the pull request's description carries the round's summary. On `3a62fbd8fcf65f303c7aae0184ac9e71b41c4ca8`
+every check passed — 13 passed, 1 skipped by design (`attest rehearsal artifacts`, release-only):
+verify (1.94.0) (39m11s), verify (stable) (39m19s), platform (macos-latest, 1.94.0) (8m09s),
+platform (macos-latest, stable) (10m04s), platform (windows-latest, 1.94.0) (16m57s),
+platform (windows-latest, stable) (20m08s), docs (1m45s), security (2m34s), dependency-review (6s),
+Analyze (rust) (8m08s), Analyze (actions) (42s), CodeQL (3s), package and verify without
+publishing (1m58s) — started 13:38:57 UTC, the last complete at 14:18:16 UTC. No check needed a
+rerun. The commit that adds this paragraph is documents-only; its own run is the pull request's
+final state. **Kept unmerged**; nothing tagged, released, published, or deployed.
 
 **Not done, not claimed.** No independent human review; the Standards and Specification findings
 were not received and are open; the merged-tree verification of `generate auth` costs a full
