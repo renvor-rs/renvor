@@ -377,15 +377,38 @@ reset; each failure is in the logs and each fix was re-proven by the row. The ro
 proofs, parity) are proven by the gate legs' census below.
 
 **Mutations.** Batch G, 21 runs, 21 killed, two first forms survived and were re-targeted
-(`phase-011-mutation-ledger.md` §Batch G). Totals for the phase: MUT-TOTALS-PENDING.
+(`phase-011-mutation-ledger.md` §Batch G). Totals for the phase: 45 mutations across batches A, B, D, E/F, and G, 45 killed (M-A1 and M-G10 after their tests were strengthened, M-G15 after it was re-targeted), plus the three census controls of batch C, all fired.
 
-**Gates on the final source head.** GATES-PENDING
+**Gates on the final source head.** Both legs, one after the other, on this machine,
+`CARGO_INCREMENTAL=0`, real services (rv-postgres 17.11, rv-mysql 8.4.11, rv-valkey 9.1.1,
+rv-mailpit 1.29.1), every `RENVOR_TEST_*` variable set including both `REQUIRE` flags,
+`RENVOR_TEST_STARTER_ROWS` unset for the census, a clean tracked tree.
 
-**Heads.** HEADS-PENDING
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `f6305a7fcc6c7b7ffab3da80f6718545a3e2b04f` | `f6305a7fcc6c7b7ffab3da80f6718545a3e2b04f` |
+| Tree | `b6f0cbfa9ba14768b1b2b372a9dd58f54b7b7274` | `b6f0cbfa9ba14768b1b2b372a9dd58f54b7b7274` |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2194 passed, 0 failed, 5 ignored (145 `test result` lines; 2171 at the checkpoint) | 2194 passed, 0 failed, 5 ignored (145 lines) |
+| Census | 87/87 rows reported in (`renvor-cli` 13m 39s) | 87/87 rows reported in (`renvor-cli` 13m 26s) |
+| Elapsed | 15:49:57–16:13:58 (step 4 general run 8m 11s) | 16:13:58–16:38:03 (step 4 general run 8m 34s) |
+
+Logs: `gate-1.94.0.log`, `gate-stable.log`, `gates.log` (scratch, quoted here).
+
+**Heads.**
+
+| Head | Tree | What it is |
+|---|---|---|
+| `db952eff2ff0d1713af39897ea79fac466641d81` | `fc4fb51e…` | the checkpoint head the Codex review read (§10) |
+| `f6305a7fcc6c7b7ffab3da80f6718545a3e2b04f` | `b6f0cbfa9ba14768b1b2b372a9dd58f54b7b7274` | **the final source head of the correction round**: eight signed commits `5787541` … `f6305a7` (core, testkit, the starter templates, the generators and apply engine, the manifest check and record, the wizard, the census rows, the records); both gate legs green here |
+| the commit that adds this paragraph | — | documents only: the gate table above and the pull request's CI, added after the legs ran on the head they name |
 
 **Pull request and CI.** CI-PENDING
 
 **Not done, not claimed.** No independent human review; the Standards and Specification findings
 were not received and are open; the merged-tree verification of `generate auth` costs a full
-build of the project (measured: MERGE-COST-PENDING on this machine with a warm build directory);
+build of the project (measured once by hand: about 6 s on this machine with a warm shared build directory — `repro-auth.log`, `generate auth` 15:39:38 → 15:39:44; a cold build directory costs the project's full build, the same cost `renvor new` pays);
 nothing merged, tagged, released, published, or deployed.
