@@ -1903,6 +1903,16 @@ mod tests {
                 "the refusal must say WHY: {}",
                 error.message
             );
+            // The machine-readable reason is the contract (C-2 details); a script keys on it, and
+            // a renamed reason would pass the prose assertion above.
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "reason" && v == "no_token_issuance_route"),
+                "{value}: {:?}",
+                error.details
+            );
         }
         // POSITIVE CONTROL: the two real values parse.
         assert_eq!(
