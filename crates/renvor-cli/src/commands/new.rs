@@ -20,7 +20,7 @@ use serde::Serialize;
 
 use crate::config::model::{Answers, Orm, ProjectConfiguration};
 use crate::config::prompts;
-use crate::exit::{CliError, Exit};
+use crate::exit::{CliError, Code, Exit};
 use crate::generate::manifest::FileManifest;
 use crate::generate::place::Staging;
 use crate::generate::render::Renderer;
@@ -133,6 +133,84 @@ struct Context {
     container_cache_data_dir: String,
     /// The health check as an inline YAML list.
     container_cache_healthcheck: String,
+
+    // ── PHASE 011: the auth starter, the capabilities, and the framework source ────────────
+    //
+    // Booleans and pre-rendered strings, like everything above. NONE CAN HOLD A SECRET: the keys
+    // the starter needs are read by the generated application from its environment, and the
+    // framework path is a directory the operator named, validated to carry no control character.
+    /// `none` or `session`, recorded under `[project]`.
+    auth: String,
+    /// Whether the session starter is generated.
+    auth_session: bool,
+    /// The canonical `--capabilities` value, for the README's equivalent command.
+    capabilities: String,
+    /// One boolean per capability, recorded under `[capabilities]` and selecting templates.
+    cap_cache: bool,
+    cap_jobs: bool,
+    cap_mail: bool,
+    cap_storage: bool,
+    cap_observability: bool,
+    /// Whether this is a framework-backed starter rather than the skeleton.
+    starter: bool,
+    /// The recorded source kind — `path` — or empty for the skeleton.
+    framework_source: String,
+    /// The framework checkout, forward-slashed, for prose.
+    framework_path: String,
+    /// The framework checkout as a quoted TOML basic string, for `renvor.toml` and `Cargo.toml`.
+    ///
+    /// Pre-rendered here rather than escaped in a template, for the reason every other composed
+    /// value gives: the allow-listed filter set escapes nothing, so a path with a `"` or a `\\`
+    /// (every Windows path) composed in a template would be an invalid manifest.
+    framework_path_toml: String,
+    /// Whether the generated application reads the container's cache service (I-22).
+    cache_wired: bool,
+    /// Whether any capability was selected: the `src/capabilities/` module root exists.
+    any_capability: bool,
+    /// The framework's `crates` directory, forward-slashed and escaped for a TOML basic string
+    /// (the surrounding quotes are in the template, so the path reads as a path there).
+    framework_crates: String,
+    /// The driver marker type the selected persistence row names, `sqlx::Postgres` or
+    /// `sqlx::MySql`; empty without a database.
+    sqlx_driver: String,
+    /// The driver's row type, for the SQLx repository.
+    sqlx_row: String,
+    /// The driver's pool-options type, for the generated test's reset.
+    sqlx_pool_options: String,
+    /// The adapter's database type alias, `PostgresDatabase` or `MySqlDatabase`.
+    database_type: String,
+    /// The `DatabaseKind` variant, `Postgres` or `MySql`.
+    db_kind_variant: String,
+    /// The module the item routes call: `persistence` (SQLx) or `repository` (SeaORM).
+    repository_module: String,
+    /// The engine's first and second bound-parameter placeholders, for the SQLx statements.
+    p1: String,
+    p2: String,
+    /// The engine's literal for the all-zero owner the seeds use.
+    zero_owner_literal: String,
+    /// The SeaORM seed runner for the engine, `run_postgres` or `run_mysql`.
+    seed_runner: String,
+    /// The engine's module in the adapters' `auth` and `jobs` modules: `postgres` or `mysql`.
+    auth_engine: String,
+    /// The path the generated test polls for readiness.
+    ready_path: String,
+}
+
+/// A path as a forward-slashed string.
+///
+/// Cargo accepts `/` in a path dependency on every platform, and a manifest that reads the same
+/// on each is a manifest whose digest a test can compare across the matrix legs.
+fn forward_slashed(path: &std::path::Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// A string as a quoted TOML basic string: `\` and `"` escaped, nothing else needed.
+///
+/// Control characters were refused by validation, so the only two characters TOML requires
+/// escaped in a basic string are the two handled here. Written once, in Rust, so no template
+/// composes a manifest value.
+fn toml_basic_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Renders a health-check command as an inline YAML list.
@@ -305,8 +383,190 @@ impl Context {
             container_cache_healthcheck: cache
                 .map(|(engine, _)| yaml_list(&engine.healthcheck()))
                 .unwrap_or_default(),
+
+            auth: configuration.auth().as_str().to_owned(),
+            auth_session: configuration.auth() == crate::config::model::AuthStarter::Session,
+            capabilities: configuration.capabilities().as_flag_value(),
+            cap_cache: configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Cache),
+            cap_jobs: configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Jobs),
+            cap_mail: configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Mail),
+            cap_storage: configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Storage),
+            cap_observability: configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Observability),
+            starter: configuration.is_starter(),
+            framework_source: configuration
+                .framework()
+                .map(|source| source.kind().to_owned())
+                .unwrap_or_default(),
+            framework_path: configuration
+                .framework()
+                .map(|source| forward_slashed(source.path()))
+                .unwrap_or_default(),
+            framework_path_toml: configuration
+                .framework()
+                .map(|source| toml_basic_string(&forward_slashed(source.path())))
+                .unwrap_or_default(),
+            cache_wired: configuration.cache_wired_into_application(),
+            any_capability: !configuration.capabilities().is_empty(),
+            framework_crates: configuration
+                .framework()
+                .map(|source| {
+                    let crates = forward_slashed(&source.path().join("crates"));
+                    // The template supplies the quotes; only the content is escaped.
+                    toml_basic_string(&crates).trim_matches('"').to_owned()
+                })
+                .unwrap_or_default(),
+            sqlx_driver: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "sqlx::Postgres",
+                    _ => "sqlx::MySql",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            sqlx_row: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "sqlx::postgres::PgRow",
+                    _ => "sqlx::mysql::MySqlRow",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            sqlx_pool_options: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "postgres::PgPoolOptions",
+                    _ => "mysql::MySqlPoolOptions",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            database_type: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "PostgresDatabase",
+                    _ => "MySqlDatabase",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            db_kind_variant: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "Postgres",
+                    _ => "MySql",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            repository_module: match configuration.orm() {
+                Some(Orm::Sqlx) => "persistence",
+                Some(Orm::SeaOrm) => "repository",
+                None => "",
+            }
+            .to_owned(),
+            p1: configuration
+                .database()
+                .map(|kind| kind.placeholder(1))
+                .unwrap_or_default(),
+            p2: configuration
+                .database()
+                .map(|kind| kind.placeholder(2))
+                .unwrap_or_default(),
+            zero_owner_literal: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => {
+                        "decode('00000000000000000000000000000000', 'hex')"
+                    }
+                    _ => "UNHEX('00000000000000000000000000000000')",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            seed_runner: configuration
+                .database()
+                .map(|kind| match kind {
+                    renvor_database::DatabaseKind::Postgres => "run_postgres",
+                    _ => "run_mysql",
+                })
+                .unwrap_or_default()
+                .to_owned(),
+            auth_engine: configuration
+                .database()
+                .map(|kind| kind.as_str().to_owned())
+                .unwrap_or_default(),
+            ready_path: if configuration
+                .capabilities()
+                .contains(crate::config::model::Capability::Observability)
+            {
+                "/readyz"
+            } else {
+                "/"
+            }
+            .to_owned(),
         }
     }
+}
+
+/// The largest framework `Cargo.lock` that will be copied into staging.
+///
+/// The framework's own lock is about 100 KiB; four megabytes leaves room for a workspace several
+/// times this size without leaving room for a file that is not a lockfile.
+const MAX_LOCKFILE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Copies the framework's `Cargo.lock` into staging as the starter's starting point (FR-006).
+///
+/// # Why a starter starts from the framework's lock
+///
+/// A starter depends on the framework by path, and on the crates the framework depends on by
+/// version. Resolved from nothing, `cargo build` in staging would update the registry index first
+/// — a network round trip inside `renvor new`, which is guaranteed to work offline. Resolved from
+/// this lock, every version cargo needs is one the framework already resolved and, on a machine
+/// that has built the framework, already holds in its registry cache. Cargo prunes the entries the
+/// starter does not use, so the file the project keeps describes the project.
+///
+/// # Errors
+///
+/// [`Code::StagingFailed`]: the lock could not be read within its bound or written into staging.
+/// Validation already refused a framework without one, so the read failing here means the
+/// checkout changed between validation and staging.
+fn seed_lockfile(staging: &cap_std::fs::Dir, framework: &std::path::Path) -> Result<(), CliError> {
+    use std::io::Read as _;
+    let failed = |why: String| {
+        CliError::new(
+            Code::StagingFailed,
+            format!("the framework's `Cargo.lock` could not be copied into staging: {why}"),
+        )
+        .with("stage", "staging")
+    };
+    let file = std::fs::File::open(framework.join("Cargo.lock"))
+        .map_err(|error| failed(error.to_string()))?;
+    if let Ok(metadata) = file.metadata()
+        && metadata.len() > MAX_LOCKFILE_BYTES
+    {
+        return Err(failed(format!(
+            "{} bytes, above the {MAX_LOCKFILE_BYTES}-byte bound",
+            metadata.len()
+        )));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_LOCKFILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| failed(error.to_string()))?;
+    if bytes.len() as u64 > MAX_LOCKFILE_BYTES {
+        return Err(failed(format!(
+            "grew past the {MAX_LOCKFILE_BYTES}-byte bound while being read"
+        )));
+    }
+    staging
+        .write("Cargo.lock", &bytes)
+        .map_err(|error| failed(error.to_string()))
 }
 
 /// The Compose service name for the database.
@@ -490,6 +750,12 @@ pub fn run(
         reporter.note("rendering…");
     }
     renderer.render_into(staging.dir(), &context)?;
+    // A STARTER starts from the framework's lockfile (FR-006), so the verification below resolves
+    // from versions the framework already pinned and the local cache already holds. The skeleton
+    // declares nothing and needs nothing.
+    if let Some(framework) = configuration.framework() {
+        seed_lockfile(staging.dir(), framework.path())?;
+    }
     crate::inject::fail_at("render")?;
 
     // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
@@ -513,7 +779,14 @@ pub fn run(
     // a CI log gets a silent indicator rather than a bar drawn into it.
     let staging_path = destination.parent_display().join(staging.name());
     let progress = Progress::start("verifying the generated project", reporter);
-    let verified = crate::generate::verify::in_staging(&staging_path, &progress);
+    // A skeleton is run bare and must exit; a starter is a server, so it is sent the route dump
+    // request `renvor routes` sends and must answer it before Boot — see `verify::Smoke`.
+    let smoke = if configuration.is_starter() {
+        crate::generate::verify::Smoke::AnswersDumpRequest
+    } else {
+        crate::generate::verify::Smoke::Exits
+    };
+    let verified = crate::generate::verify::in_staging(&staging_path, &progress, smoke);
     // Cleared BEFORE the error propagates, so a failure message is never written over a bar that
     // is still on screen. `Drop` would do this too, at the closing brace — this puts the ordering
     // where a reader can see it.
@@ -698,6 +971,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_framework_path_is_rendered_as_a_valid_toml_basic_string() {
+        // The two characters TOML requires escaped, and the one every Windows path carries.
+        assert_eq!(toml_basic_string("/a/b"), "\"/a/b\"");
+        assert_eq!(toml_basic_string(r#"C:\x\"y""#), r#""C:\\x\\\"y\"""#);
+        assert_eq!(
+            forward_slashed(std::path::Path::new(r"C:\Users\dev\renvor")),
+            "C:/Users/dev/renvor"
+        );
+        // And the rendering round-trips through the parser `renvor check` uses.
+        let table: toml::Table =
+            toml::from_str(&format!("path = {}\n", toml_basic_string(r#"C:\x\"y""#)))
+                .expect("parses");
+        assert_eq!(table["path"].as_str(), Some(r#"C:\x\"y""#));
+    }
+
     fn answers(destination: PathBuf) -> Answers {
         Answers {
             name: None,
@@ -717,6 +1006,9 @@ mod tests {
             database_port: None,
             container_cache: None,
             cache_port: None,
+            auth: None,
+            capabilities: None,
+            framework_path: None,
         }
     }
 
@@ -741,6 +1033,32 @@ mod tests {
         assert_eq!(module_block(false, false, None), "");
         assert_eq!(module_block(true, false, None), "\nmod domain;\n");
         assert_eq!(module_block(true, true, None), "\nmod domain;\nmod seed;\n");
+    }
+
+    #[test]
+    fn a_starter_is_seeded_with_the_frameworks_lockfile_before_verification() {
+        // Phase 011 (FR-006). The framework's `Cargo.lock` is copied into staging so the
+        // starter's resolution starts from versions already in the local registry cache — which
+        // is what lets `cargo build` in staging need no index update, and lets a starter generate
+        // offline on a machine that has built the framework.
+        let base = tempfile::tempdir().expect("tempdir");
+        let framework = base.path().join("framework");
+        std::fs::create_dir_all(&framework).expect("mkdir");
+        std::fs::write(framework.join("Cargo.lock"), b"# a lock\nversion = 4\n").expect("write");
+        let staging = base.path().join("staging");
+        std::fs::create_dir_all(&staging).expect("mkdir");
+        let dir = cap_std::fs::Dir::open_ambient_dir(&staging, cap_std::ambient_authority())
+            .expect("opens");
+        seed_lockfile(&dir, &framework).expect("seeds");
+        assert_eq!(
+            std::fs::read(staging.join("Cargo.lock")).expect("readable"),
+            b"# a lock\nversion = 4\n"
+        );
+        // A framework without a lockfile cannot seed one, and says so rather than staging a
+        // project whose resolution would then need the network.
+        std::fs::remove_file(framework.join("Cargo.lock")).expect("removed");
+        let error = seed_lockfile(&dir, &framework).expect_err("refused");
+        assert_eq!(error.code, crate::exit::Code::StagingFailed);
     }
 
     #[test]
@@ -855,6 +1173,8 @@ mod tests {
                 path: "a.txt",
                 body: "{{ absent }}",
             }],
+            verbatim: Vec::new(),
+            trim_blocks: false,
         };
         let renderer = Renderer::new(set).expect("builds");
         let staging = Staging::create(&destination).expect("stages");

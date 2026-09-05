@@ -1,7 +1,7 @@
 ---
 description: "Contract C-4 — template delivery, rendering bounds, and containment"
-version: "1.0.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-4 — Templates
@@ -52,6 +52,69 @@ Every bound has a documented value and a test that demonstrates it holds (FR-026
 
 Exceeding any bound produces `bound_exceeded` with `details.bound` and `details.limit`, exit `3`, and
 **an untouched destination** — the render is still inside the staging directory when it fails.
+
+## Verbatim files (Phase 011)
+
+A starter copies the framework's authentication and job-store migration sets into its
+`migrations/` directory. Those files are **SQL, not templates**: they are embedded in the crates
+that own them (`renvor_auth::migrations`, `renvor_jobs::migrations`, each proven equal to the
+files on disk by that crate's own test) and written **byte for byte**, never through the template
+engine — a `{{` in a SQL comment must not be a parse error, and an undefined name must not be a
+refusal. They obey every rule in this contract that a rendered entry obeys: the same path rules at
+load time, the same file and byte bounds, the same manifest entry.
+
+The generator still reads **nothing** from the framework checkout it was pointed at except two
+files it validates (`Cargo.toml`, to prove it is the Renvor workspace) and one it copies
+(`Cargo.lock`, so the starter resolves from the framework's own pins). It evaluates nothing.
+
+## Starter sets (Phase 011)
+
+A starter is rendered from template **groups** selected by the configuration, so the tree carries
+exactly what the selection needs and nothing inert:
+
+| Group | Present when | Carries |
+|---|---|---|
+| base | always | `Cargo.toml`, `src/main.rs`, `src/app.rs`, `src/config.rs`, `src/routes.rs`, `config/http.toml`, `.env.example`, `.gitignore`, `README.md`, `tests/starter.rs` |
+| database | a database is selected | `migrations/README.md`, so the directory the provider loads at Boot exists even before the first migration |
+| example domain | `--example-domain` | `src/domain.rs`, the item repository (`src/persistence.rs`, or `src/entity.rs` and `src/repository.rs` under SeaORM), and the item migration pair — a repository over no table would be an inert file |
+| seed data | `--seed-data` | `src/seed.rs`: the seeds and the provider that applies them at Boot, after the database and before the HTTP server |
+| auth | `--auth session` | `src/auth.rs`, `config/auth.toml`, and the framework's authentication migration set, verbatim |
+| capabilities | any capability | `src/capabilities/mod.rs`, then one module, one `config/<section>.toml`, and for `jobs` the job-store migration set, per selected capability |
+| container | `--container` | the container profile, minus the `.env.example` the base already carries |
+
+Starter groups render with block trimming (a line holding only a block tag leaves no line
+behind), so a conditional block costs no blank line. Three rules keep the rendered tree
+byte-stable and `rustfmt`-clean for **every** selection and **every** valid name:
+
+- **No Rust line's width depends on the project name.** The name is bound once per file
+  (`const NAME`) and used by reference; the generated test locates its binary beside itself
+  rather than through a `CARGO_BIN_EXE_<name>` literal. Names are bounded at 64 characters, and
+  every line that carries the literal fits at that bound.
+- **A construct that `rustfmt` lays out differently when a branch is absent is written once per
+  variant** — a signature that loses a parameter, a match arm that loses a statement, a list that
+  fits on one line — rather than assembled from fragments.
+- **No blanket allowance silences a lean variant.** A helper whose callers are all conditional is
+  emitted under the exact condition of its callers; an unused parameter is renamed, not allowed.
+
+## Snapshot stability policy (Phase 011)
+
+A generated tree's **manifest** — its sorted paths and digests — is the thing a snapshot pins,
+per template version, in `crates/renvor-cli/tests/snapshots/`. The policy:
+
+| Rule | Consequence |
+|---|---|
+| a snapshot changes **only** together with a `templates::VERSION` bump | a body edit that leaves the version alone fails the snapshot, and the failure names the version constant |
+| CI runs with `INSTA_UPDATE=no` and `INSTA_FORCE_PASS` unset | a drift fails; nothing rewrites a snapshot on a runner |
+| `cargo insta review` is the one update path | a reviewer sees the old and the new manifest side by side before either is accepted |
+| `Cargo.lock` is excluded from the pinned set | it is resolved, not rendered, and differs by machine |
+
+## The provenance record (Phase 011)
+
+Every generated project carries `.renvor/generated.toml`: the generator and template versions and,
+for every file generation produced, its path and SHA-256. It is itself generated and appears in the
+manifest. It exists so a later generator — `renvor generate`, or an upgrade — can tell an untouched
+file from one the user changed **without downloading or evaluating anything**, and it records
+digests only, never contents.
 
 ## Output paths
 

@@ -81,6 +81,18 @@ Options:
       --cache-port <1-65535>
           Published host port for the container cache. Bound to 127.0.0.1
 
+      --auth <none|session>
+          Authentication starter: `none` or `session`. `session` needs `--database` and the `mail`
+          capability
+
+      --capabilities <LIST>
+          Capabilities to wire, comma-separated: `cache`, `jobs`, `mail`, `storage`,
+          `observability`; or `none`
+
+      --framework-path <DIR>
+          Path to a Renvor framework checkout. Needed by `--auth session` and by any capability
+          until a crate is published
+
   -h, --help
           Print help (see a summary with '-h')
 

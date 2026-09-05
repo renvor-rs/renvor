@@ -766,8 +766,13 @@ fn a_confirmation_submits_on_the_keypress_and_n_declines() {
     // question, so the persistence gate is what comes next.
     terminal.expect("Generate database persistence?");
     terminal.key("n");
+    // Phase 011: two TEXT questions between the gates. Enter accepts their `none` defaults.
+    terminal.expect("Authentication starter");
+    terminal.enter();
     terminal.expect("Generate container development controls?");
     terminal.key("n");
+    terminal.expect("Capabilities");
+    terminal.enter();
     terminal.expect("Record that local HTTPS is wanted?");
     terminal.key("n");
     terminal.expect("Create this project?");
@@ -818,15 +823,17 @@ fn the_cursor_is_restored_after_a_successful_run() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
-    // SEVEN answers, not six: the six wizard questions and then the review screen. Answering six
-    // leaves the review waiting for an answer that never comes, which is a hang rather than a
-    // failure — and a hang is the one outcome a test suite reports as "still running".
+    // NINE answers, not eight: the eight wizard questions and then the review screen. Answering
+    // eight leaves the review waiting for an answer that never comes, which is a hang rather than
+    // a failure — and a hang is the one outcome a test suite reports as "still running".
     for prompt in [
         "Local development domain",
         "Generate the example domain module?",
         "Generate seed data for it?",
         "Generate database persistence?",
+        "Authentication starter",
         "Generate container development controls?",
+        "Capabilities",
         "Record that local HTTPS is wanted?",
     ] {
         terminal.enter();
@@ -872,7 +879,9 @@ fn the_cursor_is_restored_after_a_failure() {
     // is used here rather than waiting on each prompt by name because the destination's parent has
     // just been removed, so the run is racing toward a failure and the later prompts may not all
     // be drawn — what matters is only that the wizard is not left waiting for input.
-    for _ in 0..6 {
+    // EIGHT since Phase 011: the auth-starter and capabilities questions accept `none` on Enter,
+    // and with both at `none` the framework question is not asked.
+    for _ in 0..8 {
         terminal.enter();
     }
     let code = terminal.wait();
@@ -960,6 +969,13 @@ fn the_verification_step_names_each_check_as_it_runs() {
             "55432",
             "--container-cache",
             "none",
+            // Phase 011: both wizard questions answered here, so nothing is asked. On a terminal
+            // an unanswered question IS asked — which is what this pty would otherwise be waiting
+            // at, with nobody to answer it.
+            "--auth",
+            "none",
+            "--capabilities",
+            "none",
         ],
         root.path(),
         &[("TERM", "xterm-256color")],
@@ -1034,6 +1050,10 @@ fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
                 "55432",
                 "--container-cache",
                 "none",
+                "--auth",
+                "none",
+                "--capabilities",
+                "none",
             ],
             root.path(),
             &[("TERM", term)],
@@ -1083,6 +1103,13 @@ fn only_a_redrawable_terminal_gets_the_live_indicator() {
             "--database-port",
             "55432",
             "--container-cache",
+            "none",
+            // Phase 011: both wizard questions answered here, so nothing is asked. On a terminal
+            // an unanswered question IS asked — which is what this pty would otherwise be waiting
+            // at, with nobody to answer it.
+            "--auth",
+            "none",
+            "--capabilities",
             "none",
         ],
         root.path(),
@@ -1153,7 +1180,9 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         "Generate the example domain module?",
         "Generate seed data for it?",
         "Generate database persistence?",
+        "Authentication starter",
         "Generate container development controls?",
+        "Capabilities",
         "Record that local HTTPS is wanted?",
     ] {
         terminal.expect(prompt);

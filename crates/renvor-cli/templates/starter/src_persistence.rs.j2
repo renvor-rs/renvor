@@ -1,0 +1,182 @@
+//! Persistence for {{ name }}: the item repository over direct SQLx, against {{ database }}.
+//!
+//! # Every value is bound, every write is a transaction
+//!
+//! The statements are constants; the data arrives beside them as parameters. Writes run through a
+//! unit of work the caller can see begin and commit, and a failed write rolls back rather than
+//! leaving a half-applied change.
+//!
+//! # The pool comes from the provider, after Boot
+//!
+//! `Services::database()` answers `None` until the database provider has booted. Every function
+//! here maps that to `InternalError`: the HTTP server boots after the database, so a request can
+//! only arrive once the pool exists.
+
+use renvor::ApiErrorCode;
+use renvor_database::{Database as _, UnitOfWork as _};
+use sqlx::Row as _;
+
+use crate::app::Services;
+use crate::domain::{Item, SaveItem};
+{% if auth_session %}
+use renvor_auth::UserId;
+{% endif %}
+
+/// One row as an [`Item`].
+fn row_to_item(row: &{{ sqlx_row }}) -> Result<Item, ApiErrorCode> {
+    Ok(Item {
+        id: row.try_get("id").map_err(|_| ApiErrorCode::InternalError)?,
+        name: row
+            .try_get("name")
+            .map_err(|_| ApiErrorCode::InternalError)?,
+{% if auth_session %}
+        owner: {
+            let bytes: Vec<u8> = row
+                .try_get("owner_id")
+                .map_err(|_| ApiErrorCode::InternalError)?;
+            crate::auth::render_user_id(&bytes).ok_or(ApiErrorCode::InternalError)?
+        },
+{% endif %}
+    })
+}
+
+fn database(services: &Services) -> Result<&crate::app::Database, ApiErrorCode> {
+    services.database().ok_or(ApiErrorCode::InternalError)
+}
+
+/// Every item, by id.
+pub async fn list(services: &Services) -> Result<Vec<Item>, ApiErrorCode> {
+    let rows = sqlx::query("SELECT id, name{% if auth_session %}, owner_id{% endif %} FROM item ORDER BY id")
+        .fetch_all(database(services)?.pool())
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    rows.iter().map(row_to_item).collect()
+}
+
+/// One item, or `None`.
+pub async fn get(services: &Services, id: i64) -> Result<Option<Item>, ApiErrorCode> {
+    let row = sqlx::query("SELECT id, name{% if auth_session %}, owner_id{% endif %} FROM item WHERE id = {{ p1 }}")
+        .bind(id)
+        .fetch_optional(database(services)?.pool())
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    row.as_ref().map(row_to_item).transpose()
+}
+
+/// Inserts one item and reads it back.
+{% if auth_session %}
+pub async fn create(
+    services: &Services,
+    input: SaveItem,
+    owner: UserId,
+) -> Result<Item, ApiErrorCode> {
+{% else %}
+pub async fn create(services: &Services, input: SaveItem) -> Result<Item, ApiErrorCode> {
+{% endif %}
+    let mut unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+{% if database == "postgres" %}
+{% if auth_session %}
+    let inserted = sqlx::query(
+        "INSERT INTO item (name, owner_id) VALUES ($1, $2) RETURNING id, name, owner_id",
+    )
+    .bind(&input.name)
+    .bind(owner.as_bytes().to_vec())
+    .fetch_one(&mut **unit.inner())
+    .await;
+{% else %}
+    let inserted = sqlx::query("INSERT INTO item (name) VALUES ($1) RETURNING id, name")
+        .bind(&input.name)
+        .fetch_one(&mut **unit.inner())
+        .await;
+{% endif %}
+    let item = match inserted {
+        Ok(row) => row_to_item(&row),
+        Err(_) => Err(ApiErrorCode::InternalError),
+    };
+{% else %}
+    // MySQL has no `RETURNING`: insert, then read the row back by its generated key, in the same
+    // transaction so nothing can change it in between.
+    let inserted = sqlx::query("INSERT INTO item (name{% if auth_session %}, owner_id{% endif %}) VALUES (?{% if auth_session %}, ?{% endif %})")
+        .bind(&input.name)
+{% if auth_session %}
+        .bind(owner.as_bytes().to_vec())
+{% endif %}
+        .execute(&mut **unit.inner())
+        .await;
+    let item = match inserted {
+        Ok(done) => {
+            let id = i64::try_from(done.last_insert_id()).map_err(|_| ApiErrorCode::InternalError);
+            match id {
+                Ok(id) => sqlx::query("SELECT id, name{% if auth_session %}, owner_id{% endif %} FROM item WHERE id = ?")
+                    .bind(id)
+                    .fetch_one(&mut **unit.inner())
+                    .await
+                    .map_err(|_| ApiErrorCode::InternalError)
+                    .and_then(|row| row_to_item(&row)),
+                Err(code) => Err(code),
+            }
+        }
+        Err(_) => Err(ApiErrorCode::InternalError),
+    };
+{% endif %}
+    match item {
+        Ok(item) => {
+            unit.commit()
+                .await
+                .map_err(|_| ApiErrorCode::InternalError)?;
+            Ok(item)
+        }
+        Err(code) => {
+            let _ = unit.rollback().await;
+            Err(code)
+        }
+    }
+}
+
+/// Renames one item, or `None` when there is no such item.
+pub async fn replace(
+    services: &Services,
+    id: i64,
+    input: SaveItem,
+) -> Result<Option<Item>, ApiErrorCode> {
+    let mut unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    let affected = sqlx::query("UPDATE item SET name = {{ p1 }} WHERE id = {{ p2 }}")
+        .bind(&input.name)
+        .bind(id)
+        .execute(&mut **unit.inner())
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?
+        .rows_affected();
+    unit.commit()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    if affected == 0 {
+        return Ok(None);
+    }
+    get(services, id).await
+}
+
+/// Deletes one item, reporting whether a row was removed.
+pub async fn delete(services: &Services, id: i64) -> Result<bool, ApiErrorCode> {
+    let mut unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    let deleted = sqlx::query("DELETE FROM item WHERE id = {{ p1 }}")
+        .bind(id)
+        .execute(&mut **unit.inner())
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?
+        .rows_affected()
+        == 1;
+    unit.commit()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    Ok(deleted)
+}

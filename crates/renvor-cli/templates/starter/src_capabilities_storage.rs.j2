@@ -1,0 +1,104 @@
+//! The storage capability: objects on a filesystem root, from the `[storage]` section.
+//!
+//! The provider opens the root as a capability (`cap-std`) at Boot and writes and removes a
+//! probe file, so a root that is missing or unwritable fails Boot. Nothing it does can leave the
+//! root, even through a link; an object key that could traverse cannot be constructed.
+
+use std::sync::Arc;
+
+use renvor::{ProviderId, RouteRegistry};
+use renvor_storage::config::StorageSection;
+use renvor_storage::filesystem::FilesystemStore;
+use renvor_storage::{ContentType, ObjectKey, ObjectStore as _};
+
+use crate::routes::{problem, services};
+
+/// The provider type the kernel boots.
+pub type Provider = renvor_storage::StorageProvider<FilesystemStore>;
+
+/// Declares the provider and registers the `[storage]` section as a lifecycle source.
+pub fn provider(sources: &mut Vec<Arc<dyn renvor::ConfigSource>>) -> Provider {
+    let source = StorageSection::source("storage", crate::config::layers("storage"));
+    let handle = source.handle();
+    sources.push(Arc::new(source));
+    Provider::from_config(ProviderId::new("storage"), handle)
+}
+
+/// The routes that exercise the store.
+///
+/// # Errors
+///
+/// A path that does not validate — a defect here.
+pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    routes
+        .route(renvor::Method::Put, "/files/{name}", put)?
+        .describe(
+            renvor::OperationSpec::new()
+                .id("putFile")
+                .summary("Store the request body as an object")
+                .tag("files")
+                .response(204, "Stored", None)
+                .error(renvor::ApiErrorCode::ValidationFailed),
+        )?;
+    routes.get("/files/{name}", get)?.describe(
+        renvor::OperationSpec::new()
+            .id("getFile")
+            .summary("Read an object back")
+            .tag("files")
+            .response(200, "The object's bytes", None)
+            .error(renvor::ApiErrorCode::ResourceNotFound),
+    )?;
+    Ok(())
+}
+
+fn key(request: &renvor::Request) -> Option<ObjectKey> {
+    let name = request.path_param("name")?;
+    ObjectKey::new(&format!("uploads/{name}")).ok()
+}
+
+/// `PUT /files/{name}`{% if auth_session %} — a session is required{% endif %}.
+async fn put(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+{% if auth_session %}
+    if let Err(code) = crate::auth::require_session(services, &request).await {
+        return problem(&request, code);
+    }
+{% endif %}
+    let Some(store) = services.storage.store() else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let Some(key) = key(&request) else {
+        return problem(&request, renvor::ApiErrorCode::ValidationFailed);
+    };
+    let content_type = ContentType::new("application/octet-stream").ok();
+    match store.put(&key, request.body().to_vec(), content_type).await {
+        Ok(()) => renvor::Response::status(204).expect("204 is valid"),
+        Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
+    }
+}
+
+/// `GET /files/{name}`.
+async fn get(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    let Some(store) = services.storage.store() else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let Some(key) = key(&request) else {
+        return problem(&request, renvor::ApiErrorCode::ValidationFailed);
+    };
+    match store.get(&key).await {
+        Ok(Some(object)) => renvor::Response::status(200)
+            .expect("200 is valid")
+            .with_header("content-type", "application/octet-stream")
+            .expect("a fixed valid header")
+            .with_body(object.bytes),
+        Ok(None) => problem(&request, renvor::ApiErrorCode::ResourceNotFound),
+        Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
+    }
+}

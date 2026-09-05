@@ -1,0 +1,46 @@
+# Copy this file to `.env` and fill in the values. `.env` is git-ignored.
+#
+#     cp .env.example .env
+#     $EDITOR .env
+#
+# WHY renvor DOES NOT WRITE `.env` FOR YOU: doing so would mean inventing a credential and
+# persisting it, then either printing it or leaving it silently on disk. Every value below is
+# EMPTY on purpose, and every one is read by the application from the environment ONLY — none is
+# in a file this project ships, a manifest, a log line, or a URL.
+{% if database %}
+
+# The database connection string, credential included (framework limitation 010/L-15, retained in
+# Phase 011: the persistence layer takes a URL). Read once, by the database provider, at Boot;
+# never logged.
+RENVOR_DATABASE_URL=
+{% endif %}
+{% if auth_session %}
+
+# The two authentication keys: 32 bytes each, as 64 hexadecimal characters. Generate each with
+#     openssl rand -hex 32
+# and never reuse one across deployments. A missing or malformed key stops the application at
+# Validate, before any provider constructs.
+RENVOR_AUTH_CSRF_KEY=
+RENVOR_AUTH_ABUSE_KEY=
+{% endif %}
+{% if cap_cache %}
+
+# The cache server's password (`config/cache.toml` names the host and port).
+RENVOR_CACHE_PASSWORD=
+{% endif %}
+{% if cap_mail %}
+
+# The SMTP relay's password (`config/mail.toml` names the host, port, and user).
+RENVOR_MAIL_PASSWORD=
+{% endif %}
+{% if container %}
+
+# The container profile's database password (`compose.yaml`); also what `RENVOR_DATABASE_URL`
+# above carries when the application connects to the container.
+RENVOR_DATABASE_PASSWORD=
+{% endif %}
+{% if container_cache and not cap_cache %}
+
+# The container profile's cache password (`compose.yaml`).
+RENVOR_CACHE_PASSWORD=
+{% endif %}

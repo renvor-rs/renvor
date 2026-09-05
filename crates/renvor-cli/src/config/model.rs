@@ -10,7 +10,8 @@
 //! one. A value of this type **is** a validated configuration; there is no invalid state to
 //! forget to check. Data-model invariant I-1.
 
-use std::path::PathBuf;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use renvor_database::DatabaseKind;
 use serde::Serialize;
@@ -231,6 +232,480 @@ pub enum LocalHttps {
     Requested,
 }
 
+/// The authentication starter a generated project carries — constitution VII's "auth starter",
+/// honoured since Phase 011 (W-023).
+///
+/// # Two values, and why `api` and `full` are not among them
+///
+/// PLAN §9.1 lists *none, API, browser session, or full*. Phase 009 shipped the cookie-session
+/// flows in full and, for tokens, exactly one route — `POST /auth/token/refresh` — with issuance
+/// of the first pair left to application code. A generated `api` mode would therefore be a
+/// project that cannot mint its first credential, which is a mode invented to fill a list. Both
+/// are refused **by name, with the reason**, and not as `reserved_for_later_phase`: no phase is
+/// assigned to token issuance, and naming one would be a promise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthStarter {
+    /// No authentication is generated. The default.
+    None,
+    /// Cookie sessions: registration, login, logout, the current user, verification, and
+    /// password reset, on the selected persistence row, with mail through the `mail` capability.
+    Session,
+}
+
+impl AuthStarter {
+    /// Every supported value, for prompts and for messages.
+    pub const ALL: [Self; 2] = [Self::None, Self::Session];
+
+    /// The recorded spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Session => "session",
+        }
+    }
+
+    /// Parses an `--auth` value.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] naming both supported values — and, for `api` and `full`, the
+    /// reason they are not supported.
+    pub fn parse(value: &str) -> Result<Self, CliError> {
+        let supported = Self::ALL
+            .iter()
+            .map(|candidate| candidate.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        match value {
+            "none" => Ok(Self::None),
+            "session" => Ok(Self::Session),
+            "api" | "full" => Err(CliError::new(
+                Code::UnsupportedValue,
+                format!(
+                    "`--auth {value}` is not supported: the framework ships no route that issues \
+                     a first token pair (only `POST /auth/token/refresh`), so a generated \
+                     `{value}` starter could not authenticate anyone. The supported values are \
+                     {supported}"
+                ),
+            )
+            .with("flag", "--auth")
+            .with("value", value.to_owned())
+            .with("supported", supported)
+            .with("reason", "no_token_issuance_route")),
+            other => Err(CliError::new(
+                Code::UnsupportedValue,
+                format!(
+                    "`{other}` is not a supported authentication starter; the supported values \
+                     are {supported}"
+                ),
+            )
+            .with("flag", "--auth")
+            .with("value", other.to_owned())
+            .with("supported", supported)),
+        }
+    }
+}
+
+/// Serialised through [`AuthStarter::as_str`], for the reason [`Orm`]'s impl gives.
+impl Serialize for AuthStarter {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+/// One of the five capabilities Phase 010 shipped — constitution VII's "capabilities", honoured
+/// since Phase 011 (W-024).
+///
+/// Exactly five, because exactly five shipped. There is no `s3`, no broker, and no sixth name
+/// waiting for a later phase: an unshipped capability is refused as an unsupported value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Capability {
+    /// `renvor-cache` with the Valkey adapter.
+    Cache,
+    /// `renvor-jobs` with the durable store on the selected persistence row.
+    Jobs,
+    /// `renvor-mail` with the SMTP adapter.
+    Mail,
+    /// `renvor-storage` with the filesystem adapter.
+    Storage,
+    /// `renvor-observability`: JSON logs, metrics, health, trace context, OTLP.
+    Observability,
+}
+
+impl Capability {
+    /// Every supported capability, in the recorded order.
+    pub const ALL: [Self; 5] = [
+        Self::Cache,
+        Self::Jobs,
+        Self::Mail,
+        Self::Storage,
+        Self::Observability,
+    ];
+
+    /// The recorded spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cache => "cache",
+            Self::Jobs => "jobs",
+            Self::Mail => "mail",
+            Self::Storage => "storage",
+            Self::Observability => "observability",
+        }
+    }
+
+    /// The supported names, joined for a message.
+    fn supported() -> String {
+        Self::ALL
+            .iter()
+            .map(|candidate| candidate.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Parses one name.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] naming all five.
+    pub fn parse(name: &str) -> Result<Self, CliError> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.as_str() == name)
+            .ok_or_else(|| {
+                CliError::new(
+                    Code::UnsupportedValue,
+                    format!(
+                        "`{name}` is not a supported capability; the supported values are {}",
+                        Self::supported()
+                    ),
+                )
+                .with("flag", "--capabilities")
+                .with("value", name.to_owned())
+                .with("supported", Self::supported())
+            })
+    }
+}
+
+/// The selected capabilities: a set, so `cache,jobs` and `jobs,cache` are one selection.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Capabilities(BTreeSet<Capability>);
+
+impl Capabilities {
+    /// The explicit spelling of "none selected".
+    pub const NONE: &'static str = "none";
+
+    /// Parses a `--capabilities` value: a comma-separated list of names, or `none`.
+    ///
+    /// Whitespace around a name is ignored. A name given twice is refused rather than deduplicated
+    /// — a list that says one thing twice is a list somebody edited — and `none` beside a name is
+    /// refused as a contradiction.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] for an unknown or repeated name or an empty list;
+    /// [`Code::UnsupportedCombination`] for `none` with a name.
+    pub fn parse(list: &str) -> Result<Self, CliError> {
+        let names: Vec<&str> = list
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .collect();
+        if names.is_empty() {
+            return Err(CliError::new(
+                Code::UnsupportedValue,
+                format!(
+                    "`--capabilities` names nothing; give a comma-separated list of {} or `none`",
+                    Capability::supported()
+                ),
+            )
+            .with("flag", "--capabilities")
+            .with("value", list.to_owned())
+            .with("supported", Capability::supported()));
+        }
+        if names.contains(&Self::NONE) {
+            if names.len() == 1 {
+                return Ok(Self::default());
+            }
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                "`--capabilities` says `none` beside a capability name; a selection cannot be \
+                 both empty and non-empty",
+            )
+            .with("flags", "--capabilities")
+            .with("value", list.to_owned()));
+        }
+        let mut set = BTreeSet::new();
+        for name in names {
+            let capability = Capability::parse(name)?;
+            if !set.insert(capability) {
+                return Err(CliError::new(
+                    Code::UnsupportedValue,
+                    format!("`--capabilities` names `{name}` twice"),
+                )
+                .with("flag", "--capabilities")
+                .with("value", list.to_owned())
+                .with("supported", Capability::supported()));
+            }
+        }
+        Ok(Self(set))
+    }
+
+    /// Whether `capability` was selected.
+    #[must_use]
+    pub fn contains(&self, capability: Capability) -> bool {
+        self.0.contains(&capability)
+    }
+
+    /// Whether nothing was selected.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The canonical `--capabilities` value: sorted names, or `none`.
+    #[must_use]
+    pub fn as_flag_value(&self) -> String {
+        if self.0.is_empty() {
+            return Self::NONE.to_owned();
+        }
+        self.0
+            .iter()
+            .map(|capability| capability.as_str())
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+}
+
+/// Serialised as the five booleans `renvor.toml` records, in [`Capability::ALL`]'s order, so the
+/// JSON `configuration` and the manifest say the same thing the same way.
+impl Serialize for Capabilities {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut map = serializer.serialize_map(Some(Capability::ALL.len()))?;
+        for capability in Capability::ALL {
+            map.serialize_entry(capability.as_str(), &self.contains(capability))?;
+        }
+        map.end()
+    }
+}
+
+/// The largest framework `Cargo.toml` that will be read while validating a framework path.
+///
+/// FR-042 of Phase 003: every read is bounded. The workspace manifest is a few kilobytes.
+const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 64 * 1024;
+
+/// Where a generated starter's Renvor crates come from.
+///
+/// # One variant, and why it is an enum anyway
+///
+/// No Renvor crate is published (Phase 013), so the only source a generated `Cargo.toml` can
+/// name today is a **path** to a checkout. The enum exists so that publication adds a `Registry`
+/// variant beside this one without changing the shape of anything that records the source.
+///
+/// # This is local tooling, not a product choice
+///
+/// The path says *where the framework is*; it decides nothing about what the project does. It is
+/// asked for only when a selection needs the framework, recorded in `renvor.toml` beside the
+/// choices it enabled, and validated **before any write** by reading two files and evaluating
+/// nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameworkSource {
+    /// A checkout of the Renvor workspace, canonical and absolute.
+    Path(PathBuf),
+}
+
+impl FrameworkSource {
+    /// Validates `requested` as a Renvor workspace checkout.
+    ///
+    /// The rules, each named in `details.rule`:
+    ///
+    /// | Rule | Requirement |
+    /// |---|---|
+    /// | `framework_path_utf8` | the path is valid UTF-8 (it is written into `Cargo.toml`) |
+    /// | `framework_path_control_character` | no control character anywhere in it |
+    /// | `framework_directory` | it names an existing directory that resolves |
+    /// | `framework_manifest` | `Cargo.toml` exists there, is readable, and is under 64 KiB |
+    /// | `framework_workspace` | that manifest parses as TOML and declares `[workspace]` |
+    /// | `framework_facade` | `crates/renvor/Cargo.toml` exists and names package `renvor` |
+    /// | `framework_lockfile` | `Cargo.lock` exists there (the starter's resolution is seeded from it) |
+    ///
+    /// Two files are read. Nothing is executed or evaluated.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::UnsupportedValue`] with `details.flag = "--framework-path"` and `details.rule`.
+    pub fn validate_path(requested: &Path) -> Result<Self, CliError> {
+        let shown = crate::output::redact::path(requested);
+        let refuse = |rule: &str, why: String| {
+            CliError::new(
+                Code::UnsupportedValue,
+                format!("`--framework-path {shown}` {why}"),
+            )
+            .with("flag", "--framework-path")
+            .with("value", shown.clone())
+            .with("rule", rule.to_owned())
+        };
+
+        let Some(text) = requested.to_str() else {
+            return Err(refuse(
+                "framework_path_utf8",
+                "is not valid UTF-8, and the path is written into the generated `Cargo.toml`"
+                    .to_owned(),
+            ));
+        };
+        if text.chars().any(char::is_control) {
+            return Err(refuse(
+                "framework_path_control_character",
+                "contains a control character".to_owned(),
+            ));
+        }
+
+        let canonical = std::fs::canonicalize(requested).map_err(|error| {
+            refuse(
+                "framework_directory",
+                format!("does not resolve to an existing directory: {error}"),
+            )
+        })?;
+        if !canonical.is_dir() {
+            return Err(refuse(
+                "framework_directory",
+                "is not a directory".to_owned(),
+            ));
+        }
+        // Canonicalisation can introduce what the raw path did not have (a symlink target with a
+        // control character, or a non-UTF-8 component), so the two rules run again on the result.
+        let Some(canonical_text) = canonical.to_str() else {
+            return Err(refuse(
+                "framework_path_utf8",
+                "resolves to a path that is not valid UTF-8".to_owned(),
+            ));
+        };
+        if canonical_text.chars().any(char::is_control) {
+            return Err(refuse(
+                "framework_path_control_character",
+                "resolves to a path containing a control character".to_owned(),
+            ));
+        }
+
+        let manifest = read_bounded(&canonical.join("Cargo.toml")).map_err(|why| {
+            refuse(
+                "framework_manifest",
+                format!("has no readable `Cargo.toml`: {why}"),
+            )
+        })?;
+        // A DOCUMENT parse. `str::parse::<toml::Value>` reads one VALUE — `[workspace]` parsed as
+        // an array literal and then refused the rest of the file — which is the kind of wrong
+        // answer a fixture-backed test is for.
+        let parsed: toml::Table = toml::from_str(&manifest).map_err(|error| {
+            refuse(
+                "framework_workspace",
+                format!("has a `Cargo.toml` that is not valid TOML: {error}"),
+            )
+        })?;
+        if parsed.get("workspace").is_none() {
+            return Err(refuse(
+                "framework_workspace",
+                "is a package, not the Renvor workspace: its `Cargo.toml` declares no \
+                 `[workspace]`"
+                    .to_owned(),
+            ));
+        }
+
+        let facade = read_bounded(&canonical.join("crates").join("renvor").join("Cargo.toml"))
+            .map_err(|why| {
+                refuse(
+                    "framework_facade",
+                    format!("holds no `crates/renvor/Cargo.toml`: {why}"),
+                )
+            })?;
+        let facade: toml::Table = toml::from_str(&facade).map_err(|error| {
+            refuse(
+                "framework_facade",
+                format!("has a `crates/renvor/Cargo.toml` that is not valid TOML: {error}"),
+            )
+        })?;
+        let name = facade
+            .get("package")
+            .and_then(|package| package.get("name"))
+            .and_then(toml::Value::as_str);
+        if name != Some("renvor") {
+            return Err(refuse(
+                "framework_facade",
+                "holds a `crates/renvor/Cargo.toml` that does not name the package `renvor`"
+                    .to_owned(),
+            ));
+        }
+
+        // FR-006: the starter's resolution is seeded from this lockfile. A checkout without one
+        // cannot seed anything and its starters would need the network to resolve.
+        let lockfile = canonical.join("Cargo.lock");
+        if !lockfile.is_file() {
+            return Err(refuse(
+                "framework_lockfile",
+                "holds no `Cargo.lock`; a generated starter starts from the framework's lockfile \
+                 so that it resolves offline, and a checkout without one cannot supply it"
+                    .to_owned(),
+            ));
+        }
+
+        Ok(Self::Path(canonical))
+    }
+
+    /// The checkout.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Path(path) => path,
+        }
+    }
+
+    /// The recorded source kind.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Path(_) => "path",
+        }
+    }
+}
+
+/// Serialised as `{ "source": "path", "path": … }`, with the path through the redacting
+/// renderer every other displayed path goes through.
+impl Serialize for FrameworkSource {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut map = serializer.serialize_map(Some(2))?;
+        map.serialize_entry("source", self.kind())?;
+        map.serialize_entry("path", &crate::output::redact::path(self.path()))?;
+        map.end()
+    }
+}
+
+/// Reads a small file, refusing anything above [`MAX_FRAMEWORK_MANIFEST_BYTES`].
+fn read_bounded(path: &Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    if let Ok(metadata) = file.metadata()
+        && metadata.len() > MAX_FRAMEWORK_MANIFEST_BYTES
+    {
+        return Err(format!(
+            "{} bytes, above the {MAX_FRAMEWORK_MANIFEST_BYTES}-byte bound",
+            metadata.len()
+        ));
+    }
+    let mut text = String::new();
+    file.take(MAX_FRAMEWORK_MANIFEST_BYTES + 1)
+        .read_to_string(&mut text)
+        .map_err(|error| error.to_string())?;
+    if text.len() as u64 > MAX_FRAMEWORK_MANIFEST_BYTES {
+        return Err(format!(
+            "grew past the {MAX_FRAMEWORK_MANIFEST_BYTES}-byte bound while being read"
+        ));
+    }
+    Ok(text)
+}
+
 /// The single input to generation.
 ///
 /// Every field is private. Construct with [`ProjectConfiguration::resolve`].
@@ -263,6 +738,16 @@ pub struct ProjectConfiguration {
     database: Option<DatabaseKind>,
     /// `None` when container controls were not selected.
     container_settings: Option<ContainerSettings>,
+    /// The authentication starter. `None` is a recorded choice, not an absence.
+    auth: AuthStarter,
+    /// The selected capabilities. Empty is a recorded choice, not an absence.
+    capabilities: Capabilities,
+    /// Where the framework crates come from, or `None` for the dependency-free skeleton.
+    ///
+    /// **Not skipped**, unlike `destination`: the source is a recorded fact of the manifest and a
+    /// consumer scripting `renvor new` needs it back. Its path is serialised through the
+    /// redacting renderer.
+    framework: Option<FrameworkSource>,
 }
 
 /// The unvalidated answers, from either interface.
@@ -306,6 +791,12 @@ pub struct Answers {
     pub container_cache: Option<String>,
     /// `--cache-port` as typed.
     pub cache_port: Option<String>,
+    /// `--auth` as typed, or `None` for the default `none`.
+    pub auth: Option<String>,
+    /// `--capabilities` as typed, or `None` for the default `none`.
+    pub capabilities: Option<String>,
+    /// `--framework-path` as typed. Validated, never written, before anything is staged.
+    pub framework_path: Option<PathBuf>,
 }
 
 /// Resolves the container development controls, or refuses an incoherent combination.
@@ -328,6 +819,7 @@ fn resolve_container(
     container: bool,
     database: Option<DatabaseKind>,
     project_name: &str,
+    wants_cache: bool,
 ) -> Result<Option<ContainerSettings>, CliError> {
     // Listed rather than tested one at a time, so a flag added to `Answers` and forgotten here is
     // visible as a missing row rather than invisible as a missing branch — the same construction
@@ -401,9 +893,25 @@ fn resolve_container(
 
     // ── the cache service ───────────────────────────────────────────────────────────────
     let cache = match answers.container_cache.as_deref() {
-        Some(value) => CacheChoice::parse(value)?,
-        // `None`, and the default is deliberate: a cache container is infrastructure the project
-        // does not yet use, so it is opt-in.
+        Some(value) => {
+            let choice = CacheChoice::parse(value)?;
+            // A `cache` capability with `--container-cache none` is a contradiction, not an
+            // override: the application would read a service the Compose file does not run.
+            if wants_cache && choice.engine().is_none() {
+                return Err(CliError::new(
+                    Code::UnsupportedCombination,
+                    "`--container-cache none` contradicts the `cache` capability: the generated \
+                     application reads a cache, and `--container` was asked to run its local \
+                     services",
+                )
+                .with("flags", "--container-cache, --capabilities"));
+            }
+            choice
+        }
+        // The cache service follows the `cache` capability the way the database service follows
+        // `--database`: generated when the application will read it, opt-in otherwise. Recorded
+        // either way, so a reader of `renvor.toml` sees what was decided.
+        None if wants_cache => CacheChoice::Engine(container::CacheEngine::Valkey),
         None => CacheChoice::None,
     };
     let cache_port = match (cache.engine(), answers.cache_port.as_deref()) {
@@ -613,13 +1121,95 @@ impl ProjectConfiguration {
             }
         };
 
+        // ── THE AUTH STARTER AND THE CAPABILITIES (Phase 011, W-023 and W-024) ──────────
+        //
+        // Parsed, then checked against each other and against persistence, in ONE place for both
+        // interfaces. Every refusal names the flag that would complete the selection; nothing is
+        // defaulted into a state the generator could not honour.
+        let auth = match answers.auth.as_deref() {
+            Some(value) => AuthStarter::parse(value)?,
+            None => AuthStarter::None,
+        };
+        let capabilities = match answers.capabilities.as_deref() {
+            Some(value) => Capabilities::parse(value)?,
+            None => Capabilities::default(),
+        };
+        if auth == AuthStarter::Session && database.is_none() {
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                "`--auth session` needs `--database`: sessions, credentials, and tokens live in \
+                 the selected persistence row, and without one there is nowhere to keep them",
+            )
+            .with("flags", "--auth, --database")
+            .with("supported", "postgres, mysql"));
+        }
+        if auth == AuthStarter::Session && !capabilities.contains(Capability::Mail) {
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                "`--auth session` needs the `mail` capability: registration, verification, and \
+                 password reset send mail, and a starter whose mail went nowhere would be the \
+                 silent fallback the constitution forbids. Add `mail` to `--capabilities`",
+            )
+            .with("flags", "--auth, --capabilities"));
+        }
+        if capabilities.contains(Capability::Jobs) && database.is_none() {
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                "the `jobs` capability needs `--database`: the durable job store is the \
+                 application's own persistence row (ADR-0032), and without one there is no store",
+            )
+            .with("flags", "--capabilities, --database")
+            .with("supported", "postgres, mysql"));
+        }
+
+        // ── THE FRAMEWORK SOURCE ────────────────────────────────────────────────────────
+        //
+        // Validated before anything is staged: two files read, nothing evaluated. Required only
+        // when a selection needs the framework — and then REQUIRED, because recording a starter
+        // choice that no `Cargo.toml` could honour is exactly what W-023 and W-024 forbid.
+        let framework = match answers.framework_path.as_deref() {
+            Some(path) => Some(FrameworkSource::validate_path(path)?),
+            None => None,
+        };
+        let needs_framework = auth != AuthStarter::None || !capabilities.is_empty();
+        if needs_framework && framework.is_none() {
+            let asked = match (auth, capabilities.is_empty()) {
+                (AuthStarter::Session, true) => "`--auth session`".to_owned(),
+                (AuthStarter::Session, false) => {
+                    format!(
+                        "`--auth session` and `--capabilities {}`",
+                        capabilities.as_flag_value()
+                    )
+                }
+                (AuthStarter::None, _) => {
+                    format!("`--capabilities {}`", capabilities.as_flag_value())
+                }
+            };
+            return Err(CliError::new(
+                Code::UnsupportedCombination,
+                format!(
+                    "{asked} needs `--framework-path`: no Renvor crate is published, so a \
+                     generated project can depend on the framework only by a path to a checkout \
+                     of it. Without one the choice could not be honoured, and a choice the \
+                     generator cannot honour is refused rather than recorded"
+                ),
+            )
+            .with("flags", "--framework-path"));
+        }
+
         // ── CONTAINER CONTROLS ──────────────────────────────────────────────────────────
         //
         // Resolved through ONE path, reached identically by the wizard and by the flags. The
         // wizard fills `Answers` and calls this; it does not build a `ContainerSettings` of its
         // own. That is what makes "interactive and non-interactive resolve identically" a property
         // of the code rather than of two implementations that currently agree.
-        let container_settings = resolve_container(&answers, answers.container, database, &name)?;
+        let container_settings = resolve_container(
+            &answers,
+            answers.container,
+            database,
+            &name,
+            capabilities.contains(Capability::Cache),
+        )?;
 
         let configuration = Self {
             name,
@@ -638,6 +1228,9 @@ impl ProjectConfiguration {
             orm,
             database,
             container_settings,
+            auth,
+            capabilities,
+            framework,
         };
         Ok((configuration, destination))
     }
@@ -723,6 +1316,40 @@ impl ProjectConfiguration {
         self.target
     }
 
+    /// The authentication starter.
+    #[must_use]
+    pub const fn auth(&self) -> AuthStarter {
+        self.auth
+    }
+
+    /// The selected capabilities.
+    #[must_use]
+    pub const fn capabilities(&self) -> &Capabilities {
+        &self.capabilities
+    }
+
+    /// Where the framework crates come from, or `None` for the dependency-free skeleton.
+    #[must_use]
+    pub const fn framework(&self) -> Option<&FrameworkSource> {
+        self.framework.as_ref()
+    }
+
+    /// Whether this project is a framework-backed **starter** rather than the skeleton.
+    #[must_use]
+    pub const fn is_starter(&self) -> bool {
+        self.framework.is_some()
+    }
+
+    /// Whether the generated application reads the cache a `--container` cache service runs.
+    ///
+    /// `true` iff the `cache` capability was selected; the recorded
+    /// `cache_wired_into_application` follows this rather than being the constant `false` it was
+    /// through Phase 010.
+    #[must_use]
+    pub fn cache_wired_into_application(&self) -> bool {
+        self.capabilities.contains(Capability::Cache)
+    }
+
     /// The exact non-interactive command that reproduces this configuration.
     ///
     /// Printed on the review screen and when confirmation is declined, so the answers survive a
@@ -800,6 +1427,20 @@ impl ProjectConfiguration {
         }
         if let Some(orm) = self.orm {
             parts.push(format!("--orm {}", orm.as_str()));
+        }
+        // ── PHASE 011. Always spelled out, defaults included, for the reason the container
+        // block gives: a command that omitted a defaulted value reproduces this project only for
+        // as long as the default stays the same.
+        parts.push(format!("--auth {}", self.auth.as_str()));
+        parts.push(format!(
+            "--capabilities {}",
+            self.capabilities.as_flag_value()
+        ));
+        if let Some(framework) = &self.framework {
+            parts.push(format!(
+                "--framework-path {}",
+                shell_quote(&crate::output::redact::path(framework.path()))
+            ));
         }
         // ── CONTAINER CONTROLS ─────────────────────────────────────────────────────────
         //
@@ -934,6 +1575,9 @@ mod tests {
             database_port: None,
             container_cache: None,
             cache_port: None,
+            auth: None,
+            capabilities: None,
+            framework_path: None,
         }
     }
 
@@ -1149,7 +1793,23 @@ mod tests {
             // credential. There is deliberately no password field, and adding one would have to
             // pass this test.
             container_settings,
+            // Phase 011. A two-variant enum and a set of a five-variant enum: category 1. The
+            // keys the auth starter needs are read by the GENERATED application from its
+            // environment; there is no field here that could carry one, and adding one would
+            // have to pass this test.
+            auth: _,
+            capabilities: _,
+            // Phase 011. A path the operator typed, like `destination` — category 2, checked
+            // below. Validation refuses a control character anywhere in it, and the JSON
+            // rendering goes through the redacting path renderer.
+            framework,
         } = configuration.clone();
+
+        assert!(
+            framework.is_none(),
+            "this configuration selected no framework; the framework path is the one Phase 011 \
+             field redaction coverage must exercise, and `tests/redaction.rs` plants a value in it"
+        );
 
         // The identifier grammar admits ASCII letters, digits, and `_`. `=` and `:` are therefore
         // unrepresentable, which is the property that makes these inert rather than a filter.
@@ -1184,6 +1844,329 @@ mod tests {
             !destination.as_os_str().is_empty(),
             "the destination is the field redaction coverage must exercise"
         );
+    }
+
+    // ── Phase 011: the auth starter, the capabilities, and the framework source ──────────
+    //
+    // Every test below was written BEFORE the types existed (RED observed as a compile failure
+    // naming `AuthStarter`, `Capability`, `Capabilities`, and `FrameworkSource`), then made
+    // green by the implementation above. Recorded in `specs/011-…/evidence/batch-a.md`.
+
+    /// A directory shaped like a Renvor workspace, for the framework-path rules.
+    fn fake_framework(base: &std::path::Path) -> PathBuf {
+        let root = base.join("framework");
+        std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("crates/renvor/Cargo.toml"),
+            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write");
+        std::fs::write(root.join("Cargo.lock"), "# lock\nversion = 4\n").expect("write");
+        root
+    }
+
+    #[test]
+    fn auth_defaults_to_none_and_is_recorded() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let (configuration, _capability) =
+            ProjectConfiguration::resolve(answers(base.path().join("demo"))).expect("resolves");
+        assert_eq!(configuration.auth(), AuthStarter::None);
+        assert!(configuration.capabilities().is_empty());
+        assert!(configuration.framework().is_none());
+    }
+
+    #[test]
+    fn api_and_full_are_unsupported_values_not_reservations() {
+        // C-2 of the clarifications: Phase 009 shipped refresh, not issuance, so a generated
+        // `api` mode would be a project that cannot mint its first credential. Refused by name,
+        // and NOT as a later phase's — no phase is assigned to issuance and naming one is a
+        // promise.
+        for value in ["api", "full"] {
+            let error = AuthStarter::parse(value).expect_err("refused");
+            assert_eq!(error.code, Code::UnsupportedValue, "{value}");
+            assert_ne!(error.code, Code::ReservedForLaterPhase, "{value}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "supported" && v == "none, session"),
+                "{value}: {:?}",
+                error.details
+            );
+            assert!(
+                error.message.contains("issu"),
+                "the refusal must say WHY: {}",
+                error.message
+            );
+        }
+        // POSITIVE CONTROL: the two real values parse.
+        assert_eq!(
+            AuthStarter::parse("none").expect("parses"),
+            AuthStarter::None
+        );
+        assert_eq!(
+            AuthStarter::parse("session").expect("parses"),
+            AuthStarter::Session
+        );
+    }
+
+    #[test]
+    fn a_session_starter_without_a_database_is_refused() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut a = answers(base.path().join("demo"));
+        a.auth = Some("session".to_owned());
+        a.capabilities = Some("mail".to_owned());
+        a.framework_path = Some(fake_framework(base.path()));
+        let error = ProjectConfiguration::resolve(a).expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedCombination);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "flags" && v.contains("--database") && v.contains("--auth")),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_session_starter_without_the_mail_capability_is_refused() {
+        // C-3: a starter whose verification mail goes nowhere is the silent fallback the
+        // constitution forbids, so `session` needs `mail` and says so.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut a = answers(base.path().join("demo"));
+        a.auth = Some("session".to_owned());
+        a.database = Some("postgres".to_owned());
+        a.framework_path = Some(fake_framework(base.path()));
+        let error = ProjectConfiguration::resolve(a).expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedCombination);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "flags" && v.contains("--capabilities")),
+            "{:?}",
+            error.details
+        );
+        assert!(error.message.contains("mail"), "{}", error.message);
+    }
+
+    #[test]
+    fn jobs_without_a_database_is_refused() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let mut a = answers(base.path().join("demo"));
+        a.capabilities = Some("jobs".to_owned());
+        a.framework_path = Some(fake_framework(base.path()));
+        let error = ProjectConfiguration::resolve(a).expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedCombination);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "flags" && v.contains("--database")),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_selection_that_needs_the_framework_without_a_path_is_refused_not_recorded() {
+        // THE W-023 / W-024 CONTROL: an unsupported input keeps failing explicitly rather than
+        // being recorded as an inert choice. Without a framework path there is nothing a
+        // starter could depend on, so the choice cannot be honoured — and an unhonoured choice
+        // must not reach the manifest.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        for (auth, capabilities) in [
+            (Some("session"), Some("mail")),
+            (None, Some("cache")),
+            (None, Some("observability")),
+        ] {
+            let mut a = answers(base.path().join("demo"));
+            a.auth = auth.map(str::to_owned);
+            a.capabilities = capabilities.map(str::to_owned);
+            a.database = Some("postgres".to_owned());
+            let error = ProjectConfiguration::resolve(a).expect_err("refused");
+            assert_eq!(
+                error.code,
+                Code::UnsupportedCombination,
+                "{auth:?} {capabilities:?}"
+            );
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "flags" && v.contains("--framework-path")),
+                "{:?}",
+                error.details
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_capability_is_refused_naming_the_five() {
+        let error = Capabilities::parse("s3").expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        let supported = error
+            .details
+            .iter()
+            .find(|(k, _)| k == "supported")
+            .map(|(_, v)| v.clone())
+            .expect("names the supported set");
+        for name in ["cache", "jobs", "mail", "storage", "observability"] {
+            assert!(supported.contains(name), "{supported}");
+        }
+        assert!(!supported.contains("s3"));
+    }
+
+    #[test]
+    fn a_duplicate_capability_is_refused_and_none_with_a_name_is_refused() {
+        assert_eq!(
+            Capabilities::parse("cache,cache")
+                .expect_err("refused")
+                .code,
+            Code::UnsupportedValue
+        );
+        assert_eq!(
+            Capabilities::parse("none,cache").expect_err("refused").code,
+            Code::UnsupportedCombination
+        );
+        assert_eq!(
+            Capabilities::parse("").expect_err("refused").code,
+            Code::UnsupportedValue
+        );
+        // POSITIVE CONTROLS.
+        assert!(Capabilities::parse("none").expect("parses").is_empty());
+        let set = Capabilities::parse("storage, cache").expect("parses with a space");
+        assert!(set.contains(Capability::Cache) && set.contains(Capability::Storage));
+        assert!(!set.contains(Capability::Jobs));
+        assert_eq!(set.as_flag_value(), "cache,storage", "sorted, canonical");
+    }
+
+    #[test]
+    fn a_framework_path_that_is_not_a_workspace_is_refused_before_any_write() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        // A directory with no Cargo.toml.
+        let empty = base.path().join("empty");
+        std::fs::create_dir_all(&empty).expect("mkdir");
+        // A package that is not the Renvor workspace.
+        let other = base.path().join("other");
+        std::fs::create_dir_all(&other).expect("mkdir");
+        std::fs::write(
+            other.join("Cargo.toml"),
+            "[package]\nname = \"other\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("write");
+        // A workspace whose `crates/renvor` is missing.
+        let workspace = base.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("mkdir");
+        std::fs::write(workspace.join("Cargo.toml"), "[workspace]\nmembers = []\n").expect("write");
+
+        for (candidate, why) in [
+            (base.path().join("absent"), "absent"),
+            (empty, "no Cargo.toml"),
+            (other, "not a workspace"),
+            (workspace, "no crates/renvor"),
+        ] {
+            let mut a = answers(base.path().join("demo"));
+            a.database = Some("postgres".to_owned());
+            a.capabilities = Some("cache".to_owned());
+            a.framework_path = Some(candidate);
+            let error = ProjectConfiguration::resolve(a).expect_err(why);
+            assert_eq!(error.code, Code::UnsupportedValue, "{why}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "flag" && v == "--framework-path"),
+                "{why}: {:?}",
+                error.details
+            );
+            assert!(
+                !base.path().join("demo").exists(),
+                "{why}: the destination was created by a refused framework path"
+            );
+        }
+    }
+
+    #[test]
+    fn a_framework_without_a_lockfile_is_refused_before_any_write() {
+        // FR-006: the starter's resolution is seeded from the framework's `Cargo.lock`; a
+        // checkout without one cannot seed anything, so it is refused at validation with its own
+        // rule rather than discovered when staging tries to copy it.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        std::fs::remove_file(framework.join("Cargo.lock")).expect("removed");
+        let error = FrameworkSource::validate_path(&framework).expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "rule" && v == "framework_lockfile"),
+            "{:?}",
+            error.details
+        );
+    }
+
+    #[test]
+    fn a_valid_starter_selection_resolves_and_records_everything() {
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        let mut a = answers(base.path().join("demo"));
+        a.database = Some("mysql".to_owned());
+        a.auth = Some("session".to_owned());
+        a.capabilities = Some("mail,jobs".to_owned());
+        a.framework_path = Some(framework.clone());
+        let (configuration, _capability) = ProjectConfiguration::resolve(a).expect("resolves");
+        assert_eq!(configuration.auth(), AuthStarter::Session);
+        assert!(configuration.capabilities().contains(Capability::Mail));
+        assert!(configuration.capabilities().contains(Capability::Jobs));
+        assert!(!configuration.capabilities().contains(Capability::Cache));
+        let recorded = configuration.framework().expect("recorded");
+        assert_eq!(recorded.kind(), "path");
+        assert_eq!(
+            recorded.path(),
+            framework.canonicalize().expect("canonical").as_path(),
+            "the path is recorded canonical and absolute"
+        );
+
+        let command = configuration.equivalent_command();
+        assert!(command.contains("--auth session"), "{command}");
+        assert!(command.contains("--capabilities jobs,mail"), "{command}");
+        assert!(command.contains("--framework-path "), "{command}");
+    }
+
+    #[test]
+    fn the_cache_capability_with_containers_wires_the_container_cache() {
+        // The container database is generated whenever `--container` meets `--database`; the
+        // cache service follows the same rule when `--container` meets the `cache` capability,
+        // and an explicit `--container-cache none` beside it is a contradiction, not an override.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        let mut a = answers(base.path().join("demo"));
+        a.container = true;
+        a.capabilities = Some("cache".to_owned());
+        a.framework_path = Some(framework.clone());
+        let (configuration, _capability) = ProjectConfiguration::resolve(a).expect("resolves");
+        let settings = configuration.container_settings().expect("containers");
+        assert!(
+            settings.cache.engine().is_some(),
+            "the cache service is generated"
+        );
+        assert!(configuration.cache_wired_into_application());
+
+        let mut contradiction = answers(base.path().join("demo2"));
+        contradiction.container = true;
+        contradiction.capabilities = Some("cache".to_owned());
+        contradiction.container_cache = Some("none".to_owned());
+        contradiction.framework_path = Some(framework);
+        let error = ProjectConfiguration::resolve(contradiction).expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedCombination);
     }
 
     #[test]

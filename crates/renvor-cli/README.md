@@ -31,6 +31,35 @@ ships it. Until then it may change. The contracts are in
 Commands listed in `PLAN.md` §9.3 but not above are **absent, not stubbed**. A command that exits
 zero without doing the work reports success for something that did not happen.
 
+## Starters (Phase 011)
+
+`renvor new` generates one of two shapes. Without `--framework-path` it generates the dependency-free
+**skeleton** every earlier phase shipped. With `--framework-path <checkout>` it generates a
+**framework-backed starter**: a real Renvor application whose `Cargo.toml` declares `path`
+dependencies on exactly the crates the selection needs, whose `Cargo.lock` is seeded from the
+checkout's pins so it resolves offline, and whose every provider, route, migration, and
+configuration key is a file the user owns.
+
+| Flag | Values | What it changes |
+|---|---|---|
+| `--auth` | `none`, `session` | the Phase 009 session starter: registration, login, the current user, verification and password reset over the `mail` capability, CSRF-protected logout, ownership on the example domain; its migration set, copied byte for byte |
+| `--capabilities` | `none`, or a list of `cache`, `jobs`, `mail`, `storage`, `observability` | one module under `src/capabilities/`, one `config/<section>.toml`, one provider the kernel boots, and the routes that exercise it; an unselected capability appears nowhere |
+
+Every cross-choice rule is refused before anything is written, naming the flag: `session` needs
+a database and `mail`; `jobs` needs a database; any capability or `--auth session` needs
+`--framework-path`; `--auth api` and `--auth full` do not exist, because no token-issuing route
+does.
+
+Generation verifies a starter as it verifies a skeleton — `cargo fmt --check`, `clippy -D
+warnings`, `build`, `test` — in a **sealed environment** (what the toolchain needs; no `RENVOR_*`,
+no credential from the shell), and then sends it `--renvor-dump-routes`, the request `renvor
+routes` sends, which the starter answers from its route registry before Boot and without a
+database. The placed project's `tests/starter.rs` is its live proof: set `RENVOR_DATABASE_URL`
+and the capability secrets named in `.env.example`, and it migrates, seeds, starts, drives every
+selected flow over loopback, exports to a loopback OTLP receiver, and stops cleanly on the
+interrupt a terminal sends. The framework's gate runs that proof for every covering row
+(`crates/renvor-cli/tests/starter_matrix.rs`).
+
 ## Exit codes
 
 `0` success · `1` **internal defect — report it** · `2` usage · `3` validation · `4` cancelled ·

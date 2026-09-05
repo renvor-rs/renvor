@@ -2,9 +2,10 @@
 //!
 //! # The reserved flags are the interesting part
 //!
-//! `--transport`, `--orm`, `--database`, `--auth`, `--frontend`, `--styling`, `--render-mode`, and
-//! `--desktop` are **declared here and rejected in validation**, with exit `3` and a message naming
-//! the phase that will support them.
+//! `--frontend`, `--styling`, `--render-mode`, and `--desktop` are **declared here and rejected in
+//! validation**, with exit `3` and a message naming the phase that will support them.
+//! `--transport`, `--orm`, `--database`, and — since Phase 011 — `--auth` were reserved once and
+//! are honoured now; `--capabilities` and `--framework-path` arrived honoured.
 //!
 //! Two alternatives were available and both are worse. Omitting them makes clap report *"unexpected
 //! argument"*, which tells an operator their command is wrong without telling them it will be right
@@ -275,10 +276,21 @@ pub struct NewArgs {
     #[arg(long, value_name = "1-65535")]
     pub cache_port: Option<String>,
 
-    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
-    /// Reserved for a later phase.
-    #[arg(long, hide = true)]
+    // ── PHASE 011: the auth starter and the capabilities (W-023, W-024), and the framework
+    // source they need. VISIBLE, honoured, and validated by the one configuration model. `--auth`
+    // was a reserved flag from Phase 003 to Phase 010; it left the reserved table the day the
+    // generator could honour it, which is the rule constitution VII's fourth clause states.
+    /// Authentication starter: `none` or `session`. `session` needs `--database` and the `mail` capability
+    #[arg(long, value_name = "none|session")]
     pub auth: Option<String>,
+    /// Capabilities to wire, comma-separated: `cache`, `jobs`, `mail`, `storage`, `observability`; or `none`
+    #[arg(long, value_name = "LIST")]
+    pub capabilities: Option<String>,
+    /// Path to a Renvor framework checkout. Needed by `--auth session` and by any capability until a crate is published
+    #[arg(long, value_name = "DIR")]
+    pub framework_path: Option<PathBuf>,
+
+    // ── RESERVED. Parsed, then refused with exit 3. See the module header. ──────────────
     /// Reserved for a later phase.
     #[arg(long, hide = true)]
     pub frontend: Option<String>,
@@ -298,22 +310,13 @@ pub struct NewArgs {
 /// A table rather than a chain of `if let`s, so that adding a flag to [`NewArgs`] and forgetting to
 /// reject it is visible as a missing row rather than invisible as a missing branch. The test below
 /// asserts the table covers the struct.
-const RESERVED: [(&str, &str); 5] = [
+const RESERVED: [(&str, &str); 4] = [
     // `--orm` and `--database` left this table in Phase 006, which is when persistence shipped.
     //
-    // `--auth` named Phase 009 until Phase 009 itself corrected it, and the correction is the point
-    // of FR-085. **This flag does not turn authentication on — it generates a project that already
-    // has it.** Phase 009 ships the authentication *library*; a `renvor new --auth session` that
-    // scaffolds a working starter is generation, and PLAN.md assigns generation to Phase 011.
-    //
-    // So the flag was about to become *more* wrong at exactly the moment it looked right: with
-    // Phase 009 merged, an operator reading "reserved for Phase 009" would try the flag and find it
-    // still refused. It said Phase 013 before Phase 006 checked it against the roadmap; this is the
-    // second correction, and the drift test below is what makes it the last.
-    (
-        "--auth",
-        "Phase 011 (project generation and the authenticated starter)",
-    ),
+    // `--auth` left it in Phase 011, which is when the generator could honour it. It had named
+    // Phase 009 until Phase 009 corrected it and Phase 013 before Phase 006 checked it against the
+    // roadmap; the drift test below now pins the OTHER direction — that it is honoured everywhere
+    // it used to be reserved — so the flag cannot quietly become reserved again.
     ("--frontend", "Phase 019 (full-stack architecture)"),
     ("--styling", "Phase 019 (full-stack architecture)"),
     ("--render-mode", "Phase 019 (full-stack architecture)"),
@@ -332,8 +335,7 @@ impl NewArgs {
     /// [`Code::ReservedForLaterPhase`] with `details.flag` and `details.phase`, or
     /// [`Code::Usage`] when neither a name nor a path was supplied.
     pub fn into_answers(self) -> Result<Answers, CliError> {
-        let supplied: [(&str, bool); 5] = [
-            ("--auth", self.auth.is_some()),
+        let supplied: [(&str, bool); 4] = [
             ("--frontend", self.frontend.is_some()),
             ("--styling", self.styling.is_some()),
             ("--render-mode", self.render_mode.is_some()),
@@ -391,81 +393,86 @@ impl NewArgs {
             database_port: self.database_port,
             container_cache: self.container_cache,
             cache_port: self.cache_port,
+            auth: self.auth,
+            capabilities: self.capabilities,
+            framework_path: self.framework_path,
         })
     }
 }
 
 #[cfg(test)]
 mod tests {
-    /// FR-085 — the `--auth` message names the same phase in **all three** places that state it.
+    /// Phase 011 — `--auth` is HONOURED in every place that used to state its reservation.
     ///
-    /// # Why a drift test rather than a constant
+    /// # The same drift test, pointed the other way
     ///
-    /// The three statements live in three languages: a Rust table, a published Markdown contract,
-    /// and a JSON fixture that pins the CLI's machine-readable output. There is no type that spans
-    /// them, so nothing but this test notices when one is edited and the others are not.
+    /// Through Phases 006–010 this test pinned that the reserved `--auth` named Phase 011 in three
+    /// places: the table here, a JSON fixture, and the published contract. Phase 011 is the phase
+    /// that honours the flag, so the three statements changed together — and this now pins that
+    /// none of them can drift BACK. A reserved-flag paragraph that still listed `--auth` would tell
+    /// an operator a working flag is unsupported.
     ///
-    /// It has already been needed twice. The flag said **Phase 013** until Phase 006 checked it
-    /// against the roadmap, and **Phase 009** until Phase 009 itself did — the second time because
-    /// the message named the phase that delivers *authentication* rather than the phase that
-    /// delivers the *flag*. Merging Phase 009 would have made an operator read "reserved for
-    /// Phase 009", try `--auth`, and find it still refused.
-    ///
-    /// The table in this file is the single source; the other two are checked against it.
-    ///
-    /// # There is a fourth site, and it is deliberately not checked
-    ///
-    /// `tests/cmd/exit-codes.trycmd` also exercises `--auth`, but it wildcards both `message` and
-    /// `phase` with `[..]`. It is demonstrating the **exit code** for a reserved flag, not the text
-    /// — so it cannot drift, and asserting the text there would give the phase string a fourth
-    /// place to be edited for no additional guarantee. FR-085 names three, and three is right.
+    /// The JSON fixture that pinned the reserved shape now does so with `--frontend`, which is
+    /// still reserved (Phase 019), so the `reserved_for_later_phase` document shape stays covered.
     #[test]
-    fn the_reserved_auth_phase_is_stated_identically_everywhere() {
-        let table = RESERVED
-            .iter()
-            .find(|(flag, _)| *flag == "--auth")
-            .map(|(_, phase)| *phase)
-            .expect("`--auth` is a reserved flag");
-        assert_eq!(
-            table, "Phase 011 (project generation and the authenticated starter)",
-            "the reserved phase changed; update the contract and the fixture with it"
+    fn the_auth_starter_is_honoured_everywhere_it_used_to_be_reserved() {
+        assert!(
+            !RESERVED.iter().any(|(flag, _)| *flag == "--auth"),
+            "`--auth` is back in the reserved table; Phase 011 honours it"
         );
 
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..");
 
-        // SITE 2 — the JSON fixture, which pins the machine-readable output byte for byte.
-        let fixture =
-            std::fs::read_to_string(root.join("crates/renvor-cli/tests/json/reserved-auth.json"))
-                .expect("the reserved-auth fixture is readable");
+        // SITE 2 — the JSON fixture for the reserved shape now uses a flag that IS reserved.
         assert!(
-            fixture.contains(table),
-            "the JSON fixture does not state {table:?}"
+            !root
+                .join("crates/renvor-cli/tests/json/reserved-auth.json")
+                .exists(),
+            "the reserved-auth fixture still exists; it would pin a refusal the CLI no longer makes"
+        );
+        let fixture = std::fs::read_to_string(
+            root.join("crates/renvor-cli/tests/json/reserved-frontend.json"),
+        )
+        .expect("the reserved-frontend fixture is readable");
+        assert!(
+            fixture.contains("Phase 019 (full-stack architecture)"),
+            "the reserved-frontend fixture does not name Phase 019"
         );
         assert!(
-            !fixture.contains("Phase 009") && !fixture.contains("Phase 013"),
-            "the JSON fixture still names a superseded phase"
+            !fixture.contains("--auth"),
+            "the reserved fixture still names `--auth`"
         );
 
-        // SITE 3 — the published contract's prose.
+        // SITE 3 — the published contract's reserved-flag paragraph.
         let contract = std::fs::read_to_string(root.join("contracts/command-surface.md"))
             .expect("the command-surface contract is readable");
+        let reserved_section = contract
+            .split("## Reserved flags")
+            .nth(1)
+            .expect("the contract has a reserved-flags section")
+            .split("\n## ")
+            .next()
+            .expect("the section has a body");
         assert!(
-            contract.contains("not supported until Phase 011"),
-            "the contract's reserved-flag paragraph does not name Phase 011"
+            !reserved_section.contains("`--auth`"),
+            "the contract's reserved-flag section still lists `--auth`"
+        );
+        assert!(
+            contract.contains("## `--auth`"),
+            "the contract does not document `--auth` as an honoured flag"
         );
 
-        // POSITIVE CONTROL: both files were genuinely read and are the ones intended. Without
-        // this, a path typo would make every `contains` above pass vacuously on an empty string —
-        // which is the failure mode this repository has already been bitten by twice.
+        // POSITIVE CONTROLS: both files were genuinely read and are the ones intended.
         assert!(
             fixture.contains("reserved_for_later_phase"),
-            "the fixture read is not the reserved-flag fixture"
+            "the fixture read is not a reserved-flag fixture"
         );
         assert!(
-            contract.contains("## Reserved flags"),
-            "the contract read is not the command-surface contract"
+            reserved_section.contains("`--frontend`"),
+            "the reserved section does not list `--frontend`, so the section split found the \
+             wrong text"
         );
     }
 
@@ -599,7 +606,10 @@ mod tests {
             // statement of the same kind `--transport` stopped making in Phase 004. Their
             // replacement behaviour — an unsupported VALUE refused with the supported ones named,
             // and `--orm` without `--database` refused as a combination — is asserted below.
-            ("--auth", Some("session")),
+            // `--auth` is NO LONGER HERE. Phase 011 ships the auth starter, so reporting
+            // "reserved for Phase 011" from inside Phase 011 would be the false statement
+            // `--transport` and `--database` stopped making in their phases. Its honoured
+            // behaviour is asserted in `config::model`'s tests and by `every_governed_choice…`.
             ("--frontend", Some("react")),
             ("--styling", Some("tailwind")),
             ("--render-mode", Some("ssr")),
@@ -713,18 +723,30 @@ mod tests {
             // `database` has TWO supported values, so clause 2 does not apply: it is a real flag
             // the generator acts on, and the wizard therefore asks about it (FR-046).
             ("database", Honoured(&["--database"])),
-            ("auth starter", Reserved("--auth")),
+            // PHASE 011 MOVED THIS ROW (W-023). Two supported values, so it is asked, not
+            // defaulted; honoured by the generated starter's dependencies, migrations, routes,
+            // and wiring; recorded in `renvor.toml`.
+            ("auth starter", Honoured(&["--auth"])),
             ("frontend", Reserved("--frontend")),
             ("compatible render mode", Reserved("--render-mode")),
             ("styling profile where applicable", Reserved("--styling")),
             ("desktop option", Reserved("--desktop")),
+            // PHASE 011 (W-024): the five Phase 010 capabilities are a real, asked-about choice
+            // beside the three Phase 003 conveniences this row already carried.
             (
                 "capabilities",
-                Honoured(&["--example-domain", "--seed-data", "--container"]),
+                Honoured(&[
+                    "--capabilities",
+                    "--example-domain",
+                    "--seed-data",
+                    "--container",
+                ]),
             ),
+            // The framework path is where the framework IS, not what the project does: local
+            // tooling, asked only when a selection needs it.
             (
                 "local tooling",
-                Honoured(&["--local-domain", "--local-https"]),
+                Honoured(&["--local-domain", "--local-https", "--framework-path"]),
             ),
         ];
 
@@ -758,6 +780,12 @@ mod tests {
                         }
                         if *flag == "--database" {
                             argv.push("postgres");
+                        }
+                        if *flag == "--auth" || *flag == "--capabilities" {
+                            argv.push("none");
+                        }
+                        if *flag == "--framework-path" {
+                            argv.push("framework");
                         }
                         let cli = Cli::try_parse_from(&argv)
                             .unwrap_or_else(|error| panic!("`{flag}` must parse: {error}"));

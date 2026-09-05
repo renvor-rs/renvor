@@ -42,6 +42,15 @@ renvor-database = { path = "../renvor-database", version = "0.0.0" }
 renvor-core = { path = "../renvor-core", version = "0.0.0" }
 renvor-config = { path = "../renvor-config", version = "0.0.0" }
 
+# PHASE 011: the migration sets a starter copies come from the crates that own them, embedded
+# (`renvor_auth::migrations`, `renvor_jobs::migrations`), because contract C-4 says every template
+# is part of the executable and a generator must not read SQL from a checkout at generation time.
+# Neither crate resolves a database driver or a network client — `tests/capabilities.rs` walks the
+# closure to keep that true. Phase 009's boundary evidence used "the CLI cannot see the auth crate"
+# as proof that Phase 009 did not generate; Phase 011 is the phase that does.
+renvor-auth = { path = "../renvor-auth", version = "0.0.0" }
+renvor-jobs = { path = "../renvor-jobs", version = "0.0.0" }
+
 # The Phase 003 research record is a working artifact and is no longer tracked. It remains in
 # public Git history at:
 # https://github.com/renvor-rs/renvor/blob/01327b1ee61b73ebbd4f9198c04d651b38367ba8/specs/003-interactive-cli/research.md

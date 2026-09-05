@@ -102,6 +102,13 @@ rather than something the user discovers ten minutes later (FR-030).
 
 This is the step that makes SC-005 an assertion about the generator rather than about the templates.
 
+**The checks run in a sealed environment** (Phase 011). The staged project's `cargo` sees what
+the toolchain needs — `PATH`, `HOME`, `CARGO_HOME`, `RUSTUP_*`, `RUSTFLAGS`, proxy and certificate
+variables — and nothing else the operator's shell carries: no `RENVOR_*`, no credential. A
+`RENVOR_DATABASE_URL` in the shell must not let generation reach a database, and a gate's
+`RENVOR_TEST_REQUIRE_DATABASE=1` must not turn a staged project's skip into a failure. The build
+directory is `CARGO_TARGET_DIR` when set and absolute, else a temporary directory.
+
 ## Residue
 
 A process killed between steps 2 and 6 leaves a staging directory behind. That is unavoidable

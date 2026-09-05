@@ -1,0 +1,719 @@
+//! The proof that this project generates, formats, compiles, migrates{% if seed_data %}, seeds{% endif %}, starts,
+//! {% if auth_session %}authenticates, authorizes, {% endif %}answers, and shuts down cleanly — against the real services,
+//! the way the framework proves itself.
+//!
+//! # Skips honestly, fails loudly
+//!
+//! Without `RENVOR_DATABASE_URL` this test prints `SKIPPED` and passes, so `cargo test` works on
+//! a machine with no services. With `RENVOR_TEST_REQUIRE_DATABASE` set, a missing service is a
+//! **failure**: that is the rule the framework's own suites apply, and it is what keeps a green
+//! run from meaning "nothing ran".
+//!
+//! # It drives the real binary over a real socket
+//!
+//! The application is spawned as a child process with the same environment a deployment would
+//! set, waited on through `/readyz`, driven over loopback HTTP with the standard library alone,
+//! and then sent the interrupt a terminal would send. The exit status is the last assertion.
+
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::net::TcpStream;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+/// How long readiness may take, cold build included: `cargo test` builds the binary first, so
+/// this covers migrations and the backend probes only.
+const READY_WITHIN: Duration = Duration::from_secs(60);
+/// How long a clean shutdown may take. The kernel's drain budget is 30 s; this is above it.
+const STOP_WITHIN: Duration = Duration::from_secs(40);
+
+/// The application's name, which is also its binary's.
+const NAME: &str = "{{ name }}";
+{% if auth_session %}
+/// A password no response may echo.
+const PASSWORD: &str = "correct-horse-battery-staple-9f3a";
+{% endif %}
+
+/// The application binary cargo built beside this test: `target/<profile>/<name>`, two levels
+/// above the test executable in `target/<profile>/deps/`. `CARGO_BIN_EXE_<name>` names the same
+/// file, but only as a literal whose length follows the project name into rustfmt's wrapping
+/// decision, and this file is generated to format identically for every valid name.
+fn binary() -> std::path::PathBuf {
+    let test = std::env::current_exe().expect("the test executable has a path");
+    test.parent()
+        .and_then(std::path::Path::parent)
+        .expect("target/<profile>/deps/<test>")
+        .join(format!("{NAME}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// One HTTP response.
+struct Reply {
+    status: u16,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
+impl Reply {
+    fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
+}
+
+/// Sends one HTTP/1.1 request and reads the whole response. `Connection: close` keeps it simple.
+fn http(address: &str, method: &str, path: &str, extra: &[(&str, &str)], body: &str) -> Reply {
+    let mut stream = TcpStream::connect(address).expect("the application is listening");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("a read timeout");
+    let mut request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
+    );
+    if !body.is_empty() {
+        request.push_str("Content-Type: application/json\r\n");
+    }
+    for (name, value) in extra {
+        request.push_str(&format!("{name}: {value}\r\n"));
+    }
+    request.push_str("\r\n");
+    request.push_str(body);
+    stream
+        .write_all(request.as_bytes())
+        .expect("the request is written");
+    let mut reader = BufReader::new(stream);
+    let mut status_line = String::new();
+    reader
+        .read_line(&mut status_line)
+        .expect("a status line arrives");
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("not a status line: {status_line:?}"));
+    let mut headers = Vec::new();
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).expect("a header line");
+        let line = line.trim_end_matches(['\r', '\n']);
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':') {
+            headers.push((name.trim().to_owned(), value.trim().to_owned()));
+        }
+    }
+    let mut raw = Vec::new();
+    reader.read_to_end(&mut raw).expect("the body arrives");
+    let chunked = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("transfer-encoding")
+            && value.to_ascii_lowercase().contains("chunked")
+    });
+    let body = if chunked { dechunk(&raw) } else { raw };
+    Reply {
+        status,
+        headers,
+        body: String::from_utf8(body).expect("a UTF-8 body"),
+    }
+}
+
+/// Decodes a `Transfer-Encoding: chunked` body. Go's `net/http` chunks any response over two
+/// kilobytes whose handler set no length, and a mail sink's listing grows past that.
+fn dechunk(raw: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut rest = raw;
+    loop {
+        let Some(end) = rest.windows(2).position(|window| window == b"\r\n") else {
+            break;
+        };
+        let size_line = std::str::from_utf8(&rest[..end]).expect("a chunk size line");
+        let size = usize::from_str_radix(size_line.split(';').next().unwrap_or("0").trim(), 16)
+            .expect("a hexadecimal chunk size");
+        rest = &rest[end + 2..];
+        if size == 0 {
+            break;
+        }
+        out.extend_from_slice(&rest[..size]);
+        rest = &rest[size + 2..];
+    }
+    out
+}
+{% if cap_observability %}
+
+/// A loopback OTLP/HTTP receiver: records the request line of everything it is sent and
+/// answers `200`, so the export the observability capability performs at shutdown is observed
+/// rather than assumed. Standard library only; no collector is required to run this test.
+fn otlp_receiver() -> (String, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("the bound address").port();
+    let received = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let store = std::sync::Arc::clone(&received);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let store = std::sync::Arc::clone(&store);
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+                let mut reader = BufReader::new(stream.try_clone().expect("a clone"));
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() {
+                    return;
+                }
+                let mut length = 0_usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                }
+                let mut body = vec![0_u8; length];
+                let _ = reader.read_exact(&mut body);
+                store
+                    .lock()
+                    .expect("not poisoned")
+                    .push(request_line.trim().to_owned());
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+            });
+        }
+    });
+    (format!("http://127.0.0.1:{port}/v1/traces"), received)
+}
+{% endif %}
+
+/// The child, killed on drop so a failed assertion never leaves it running.
+struct Running(Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+    }
+}
+
+/// Sends the interrupt a terminal would and waits for the exit status, bounded.
+#[cfg(unix)]
+fn interrupt_and_wait(child: &mut Child) -> Option<std::process::ExitStatus> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    let pid = Pid::from_raw(i32::try_from(child.id()).expect("a pid fits"));
+    kill(pid, Signal::SIGINT).expect("the signal is sent");
+    let deadline = Instant::now() + STOP_WITHIN;
+    while Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+/// Windows has no SIGINT to send a child from a test; the shutdown path is exercised on the
+/// platforms that can send one, and stated rather than faked here.
+#[cfg(not(unix))]
+fn interrupt_and_wait(child: &mut Child) -> Option<std::process::ExitStatus> {
+    let _ = child.kill();
+    child.wait().ok()
+}
+
+/// A free loopback port, chosen by the kernel and released before the application binds it.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("a port")
+        .local_addr()
+        .expect("an address")
+        .port()
+}
+{% if database %}
+
+/// Resets this project's tables and the migration ledger, so the run is the run this test
+/// describes rather than the one before it. The application's own dependency does the work.
+async fn reset(url: &str) {
+    let pool = sqlx::{{ sqlx_pool_options }}::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .expect("the database answers");
+{% if auth_session %}
+    for table in [
+        "item",
+{% if cap_jobs %}
+        "rv_job",
+        "rv_job_queue",
+{% endif %}
+        "rv_auth_attempt",
+        "rv_auth_refresh",
+        "rv_auth_refresh_family",
+        "rv_auth_password_reset",
+        "rv_auth_verification",
+        "rv_auth_session",
+        "rv_auth_credential",
+        "rv_auth_user",
+        "_renvor_seeds",
+        "_sqlx_migrations",
+    ] {
+{% else %}
+    for table in ["item", {% if cap_jobs %}"rv_job", "rv_job_queue", {% endif %}"_renvor_seeds", "_sqlx_migrations"] {
+{% endif %}
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
+            .execute(&pool)
+            .await
+            .expect("the table is dropped");
+    }
+    pool.close().await;
+}
+{% endif %}
+
+#[tokio::test]
+async fn the_starter_starts_answers_and_stops_cleanly() {
+{% if database %}
+    let Ok(url) = std::env::var("RENVOR_DATABASE_URL") else {
+        assert!(
+            std::env::var("RENVOR_TEST_REQUIRE_DATABASE").is_err(),
+            "RENVOR_TEST_REQUIRE_DATABASE is set and RENVOR_DATABASE_URL is not"
+        );
+        println!("SKIPPED: set RENVOR_DATABASE_URL to run the starter test");
+        return;
+    };
+    reset(&url).await;
+{% endif %}
+{% if cap_storage %}
+    std::fs::create_dir_all("var/objects").expect("the storage root exists");
+{% endif %}
+{% if database or cap_storage %}
+
+{% endif %}
+    let port = free_port();
+    let address = format!("127.0.0.1:{port}");
+{% if cap_observability %}
+    let (otlp_endpoint, otlp_received) = otlp_receiver();
+{% endif %}
+    let mut command = Command::new(binary());
+    command
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("RENVOR_HTTP_ADDRESS", &address)
+{% if cap_observability %}
+        .env("RENVOR_OTLP_ENDPOINT", &otlp_endpoint)
+        .env("RENVOR_OTLP_SERVICE_NAME", NAME)
+{% endif %}
+{% if database %}
+        .env("RENVOR_DATABASE_URL", &url)
+{% endif %}
+{% if seed_data %}
+        .env("RENVOR_SEED_SCOPE", "development")
+{% endif %}
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = Running(command.spawn().expect("the application starts"));
+
+    // READINESS, polled: the application answers `/readyz` — or, without the observability
+    // capability, `/` — only once every provider has booted.
+    let deadline = Instant::now() + READY_WITHIN;
+    loop {
+        if let Ok(Some(status)) = child.0.try_wait() {
+            panic!("the application exited before it was ready: {status}");
+        }
+        if TcpStream::connect(&address).is_ok() {
+            let reply = http(&address, "GET", "{{ ready_path }}", &[], "");
+            if reply.status == 200 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the application was not ready within {READY_WITHIN:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    // ── 1. it names itself ──────────────────────────────────────────────────────────
+    let reply = http(&address, "GET", "/", &[], "");
+    assert_eq!(reply.status, 200);
+    assert!(reply.body.contains(NAME), "{}", reply.body);
+    assert!(
+        reply.header("content-type").is_some(),
+        "the answer declares its type"
+    );
+{% if example_domain %}
+
+    // ── 2. the example domain{% if seed_data %}, seeded{% endif %} ────────────────────────────────────
+    let reply = http(&address, "GET", "/items", &[], "");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+{% if seed_data %}
+    assert!(
+        reply.body.contains("\"first\"") && reply.body.contains("\"second\""),
+        "the development seeds did not reach the item table: {}",
+        reply.body
+    );
+{% endif %}
+{% endif %}
+{% if auth_session %}
+{% if example_domain %}
+
+    // ── 3. a write without a session is refused, and nothing was written ──────────
+    let reply = http(&address, "POST", "/items", &[], r#"{"name":"nobody's"}"#);
+    assert_eq!(reply.status, 401, "{}", reply.body);
+    let reply = http(&address, "GET", "/items", &[], "");
+    assert!(!reply.body.contains("nobody"), "{}", reply.body);
+{% endif %}
+
+    // ── 4. registration, a duplicate that answers identically, login ──────────────
+    let ada = "ada-9f3a@example.test";
+    let register = serde_json::json!({"email": ada, "password": PASSWORD}).to_string();
+    let first = http(&address, "POST", "/auth/register", &[], &register);
+    assert_eq!(first.status, 202, "{}", first.body);
+    let again = http(&address, "POST", "/auth/register", &[], &register);
+    assert_eq!(again.status, 202);
+    assert_eq!(
+        first.body, again.body,
+        "a duplicate registration is an enumeration oracle"
+    );
+
+    let wrong = http(
+        &address,
+        "POST",
+        "/auth/login",
+        &[],
+        &serde_json::json!({"email": ada, "password": "not-it"}).to_string(),
+    );
+    assert_eq!(wrong.status, 401);
+    let login = http(&address, "POST", "/auth/login", &[], &register);
+    assert_eq!(login.status, 200, "{}", login.body);
+    let cookie = login
+        .header("set-cookie")
+        .expect("a session cookie")
+        .split(';')
+        .next()
+        .expect("name=value")
+        .to_owned();
+    assert!(cookie.starts_with("__Host-rv_session="), "{cookie}");
+    let csrf = serde_json::from_str::<serde_json::Value>(&login.body).expect("json")["csrf_token"]
+        .as_str()
+        .expect("a csrf token")
+        .to_owned();
+    let session: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
+
+    // ── 5. the current user, with and without the cookie ───────────────────────────
+    let me = http(&address, "GET", "/auth/me", &session, "");
+    assert_eq!(me.status, 200, "{}", me.body);
+    assert!(me.body.contains(ada));
+    assert_eq!(http(&address, "GET", "/auth/me", &[], "").status, 401);
+{% if example_domain %}
+
+    // ── 6. ownership: the creator may delete, another user may not ─────────────────
+    let created = http(
+        &address,
+        "POST",
+        "/items",
+        &session,
+        r#"{"name":"ada's item"}"#,
+    );
+    assert_eq!(created.status, 201, "{}", created.body);
+    let id = serde_json::from_str::<serde_json::Value>(&created.body).expect("json")["id"]
+        .as_i64()
+        .expect("an id");
+    let bob = "bob-9f3a@example.test";
+    let bob_register = serde_json::json!({"email": bob, "password": PASSWORD}).to_string();
+    assert_eq!(
+        http(&address, "POST", "/auth/register", &[], &bob_register).status,
+        202
+    );
+    let bob_login = http(&address, "POST", "/auth/login", &[], &bob_register);
+    assert_eq!(bob_login.status, 200);
+    let bob_cookie = bob_login
+        .header("set-cookie")
+        .expect("a cookie")
+        .split(';')
+        .next()
+        .expect("name=value")
+        .to_owned();
+    let bob_session: Vec<(&str, &str)> = vec![("Cookie", bob_cookie.as_str())];
+    let forbidden = http(
+        &address,
+        "DELETE",
+        &format!("/items/{id}"),
+        &bob_session,
+        "",
+    );
+    assert_eq!(forbidden.status, 403, "{}", forbidden.body);
+    let still_there = http(&address, "GET", &format!("/items/{id}"), &[], "");
+    assert_eq!(still_there.status, 200);
+    let renamed = http(
+        &address,
+        "PUT",
+        &format!("/items/{id}"),
+        &session,
+        r#"{"name":"ada's renamed item"}"#,
+    );
+    assert_eq!(renamed.status, 200, "{}", renamed.body);
+    let deleted = http(&address, "DELETE", &format!("/items/{id}"), &session, "");
+    assert_eq!(deleted.status, 204, "{}", deleted.body);
+    assert_eq!(
+        http(&address, "GET", &format!("/items/{id}"), &[], "").status,
+        404
+    );
+{% endif %}
+
+    // ── 7. the mailed flows answer identically for a known and an unknown address ──
+    let known = http(
+        &address,
+        "POST",
+        "/auth/password/forgot",
+        &[],
+        &serde_json::json!({"email": ada}).to_string(),
+    );
+    let unknown = http(
+        &address,
+        "POST",
+        "/auth/password/forgot",
+        &[],
+        r#"{"email":"nobody-9f3a@example.test"}"#,
+    );
+    assert_eq!(known.status, 202);
+    assert_eq!(unknown.status, 202);
+    assert_eq!(known.body, unknown.body, "an enumeration oracle");
+
+    // ── 8. the verification mail is real: read back from the sink, then confirmed ──
+    if let Ok(api) = std::env::var("RENVOR_TEST_SMTP_API_URL") {
+        // Registration issues no mail of its own: verification is requested, through a flow
+        // that answers `202` identically whether or not the address is known (Phase 009).
+        let requested = http(
+            &address,
+            "POST",
+            "/auth/verification/resend",
+            &[],
+            &serde_json::json!({"email": ada}).to_string(),
+        );
+        assert_eq!(requested.status, 202, "{}", requested.body);
+        let token = verification_token_from_sink(&api, ada);
+        let confirmed = http(
+            &address,
+            "POST",
+            "/auth/verification/confirm",
+            &[],
+            &serde_json::json!({"token": token}).to_string(),
+        );
+        assert_eq!(confirmed.status, 200, "{}", confirmed.body);
+        let me = http(&address, "GET", "/auth/me", &session, "");
+        assert!(me.body.contains("\"email_verified\":true"), "{}", me.body);
+    } else {
+        println!("SKIPPED: set RENVOR_TEST_SMTP_API_URL to confirm the verification mail");
+    }
+
+    // ── 9. logout is CSRF-protected ───────────────────────────────────────────────
+    let refused = http(
+        &address,
+        "POST",
+        "/auth/logout",
+        &session,
+        r#"{"csrf_token":""}"#,
+    );
+    assert_eq!(refused.status, 403);
+    assert_eq!(
+        http(&address, "GET", "/auth/me", &session, "").status,
+        200,
+        "the session survived"
+    );
+    let out = http(
+        &address,
+        "POST",
+        "/auth/logout",
+        &session,
+        &serde_json::json!({"csrf_token": csrf}).to_string(),
+    );
+    assert_eq!(out.status, 200, "{}", out.body);
+    assert_eq!(http(&address, "GET", "/auth/me", &session, "").status, 401);
+
+    // ── 10. nothing secret came back ──────────────────────────────────────────────
+{% if example_domain %}
+    for reply in [
+        &first, &again, &login, &me, &created, &known, &unknown, &out,
+    ] {
+{% else %}
+    for reply in [&first, &again, &login, &me, &known, &unknown, &out] {
+{% endif %}
+        assert!(
+            !reply.body.contains(PASSWORD),
+            "a response echoed the password"
+        );
+        assert!(
+            !reply.body.contains(&csrf) || std::ptr::eq(reply, &login),
+            "a csrf token leaked"
+        );
+    }
+{% else %}
+{% if example_domain %}
+    let created = http(&address, "POST", "/items", &[], r#"{"name":"third"}"#);
+    assert_eq!(created.status, 201, "{}", created.body);
+{% endif %}
+{% endif %}
+{% if cap_cache %}
+
+    // ── cache: one round trip against the real server ─────────────────────────────
+    let reply = http(&address, "GET", "/cache/ping", &[], "");
+    assert_eq!(reply.status, 200, "{}", reply.body);
+{% endif %}
+{% if cap_storage %}
+
+    // ── storage: put, then get, through the real root ─────────────────────────────
+{% if auth_session %}
+    let carol = capability_session_cookie(&address);
+    let carol_session: Vec<(&str, &str)> = vec![("Cookie", carol.as_str())];
+    let put = http(&address, "PUT", "/files/hello.txt", &carol_session, "hello");
+{% else %}
+    let put = http(&address, "PUT", "/files/hello.txt", &[], "hello");
+{% endif %}
+    assert_eq!(put.status, 204, "{}", put.body);
+    let got = http(&address, "GET", "/files/hello.txt", &[], "");
+    assert_eq!(got.status, 200);
+    assert_eq!(got.body, "hello");
+{% endif %}
+{% if cap_jobs %}
+
+    // ── jobs: enqueue, then watch the worker complete it ──────────────────────────
+{% if auth_session %}
+    let carol = capability_session_cookie(&address);
+    let carol_session: Vec<(&str, &str)> = vec![("Cookie", carol.as_str())];
+    let enqueued = http(
+        &address,
+        "POST",
+        "/jobs",
+        &carol_session,
+        r#"{"key":"starter-1","message":"hello"}"#,
+    );
+{% else %}
+    let enqueued = http(&address, "POST", "/jobs", &[], r#"{"key":"starter-1","message":"hello"}"#);
+{% endif %}
+    assert_eq!(enqueued.status, 202, "{}", enqueued.body);
+    let job = serde_json::from_str::<serde_json::Value>(&enqueued.body).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let state = http(&address, "GET", &format!("/jobs/{job}"), &[], "");
+        assert_eq!(state.status, 200, "{}", state.body);
+        if state.body.contains("Completed") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the job did not complete: {}",
+            state.body
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+{% endif %}
+{% if cap_mail and not auth_session %}
+
+    // ── mail: one notice through the real transport ───────────────────────────────
+    let notice = http(
+        &address,
+        "POST",
+        "/mail/notice",
+        &[],
+        r#"{"to":"ada-9f3a@example.test","subject":"starter notice"}"#,
+    );
+    assert_eq!(notice.status, 202, "{}", notice.body);
+{% endif %}
+{% if cap_observability %}
+
+    // ── observability: the three documents ────────────────────────────────────────
+    assert_eq!(http(&address, "GET", "/healthz", &[], "").status, 200);
+    let ready = http(&address, "GET", "/readyz", &[], "");
+    assert_eq!(ready.status, 200, "{}", ready.body);
+    assert!(
+        ready.body.contains("\"status\":\"ready\""),
+        "{}",
+        ready.body
+    );
+    let metrics = http(&address, "GET", "/metrics", &[], "");
+    assert_eq!(metrics.status, 200);
+    assert!(metrics.body.contains("# TYPE"), "{}", metrics.body);
+{% endif %}
+
+    // ── finally: the interrupt a terminal sends, and a clean exit ─────────────────
+    let status =
+        interrupt_and_wait(&mut child.0).expect("the application stopped within the bound");
+    assert!(
+        status.success(),
+        "the application did not exit cleanly: {status}"
+    );
+{% if cap_observability %}
+
+    // ── observability: the exporter flushed to the receiver before the process ended ──
+    let exports = otlp_received.lock().expect("not poisoned");
+    assert!(
+        exports
+            .iter()
+            .any(|line| line.starts_with("POST /v1/traces")),
+        "no OTLP export reached the loopback receiver: {exports:?}"
+    );
+{% endif %}
+}
+{% if auth_session and (cap_storage or cap_jobs) %}
+
+/// A session cookie for the capability routes that require one. Registering the same address
+/// twice answers exactly like the first time, so every section may call this on its own.
+fn capability_session_cookie(address: &str) -> String {
+    let carol =
+        r#"{"email":"carol-9f3a@example.test","password":"correct-horse-battery-staple-9f3a"}"#;
+    assert_eq!(
+        http(address, "POST", "/auth/register", &[], carol).status,
+        202
+    );
+    let login = http(address, "POST", "/auth/login", &[], carol);
+    assert_eq!(login.status, 200);
+    login
+        .header("set-cookie")
+        .expect("a cookie")
+        .split(';')
+        .next()
+        .expect("name=value")
+        .to_owned()
+}
+{% endif %}
+{% if auth_session %}
+
+/// Reads the verification token out of the newest message the SMTP sink holds for `address`,
+/// through Mailpit's JSON API, with the standard library alone.
+fn verification_token_from_sink(api: &str, address: &str) -> String {
+    let api = api.trim_end_matches('/');
+    let host = api.trim_start_matches("http://");
+    let listing = http(
+        host,
+        "GET",
+        "/api/v1/search?query=to:%22ada-9f3a@example.test%22",
+        &[],
+        "",
+    );
+    assert_eq!(listing.status, 200, "{}", listing.body);
+    let listing: serde_json::Value = serde_json::from_str(&listing.body).expect("json");
+    let id = listing["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages.iter().find(|message| {
+                message["Subject"]
+                    .as_str()
+                    .is_some_and(|subject| subject.starts_with("Verify"))
+            })
+        })
+        .and_then(|message| message["ID"].as_str())
+        .unwrap_or_else(|| panic!("no verification mail for {address}: {listing}"))
+        .to_owned();
+    let message = http(host, "GET", &format!("/api/v1/message/{id}"), &[], "");
+    let message: serde_json::Value = serde_json::from_str(&message.body).expect("json");
+    let text = message["Text"].as_str().expect("a text body");
+    text.split_whitespace()
+        .find(|word| word.len() == 64 && word.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(str::to_owned)
+        .unwrap_or_else(|| panic!("no token in the verification mail:\n{text}"))
+}
+{% endif %}

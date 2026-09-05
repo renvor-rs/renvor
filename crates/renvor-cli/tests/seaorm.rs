@@ -14,7 +14,7 @@ use harness::renvor;
 ///
 /// One constant rather than a literal per assertion: a bump has to be a deliberate edit in one
 /// place, and two assertions that disagree about the version would let one of them rot silently.
-const TEMPLATE_VERSION: &str = "6";
+const TEMPLATE_VERSION: &str = "7";
 
 struct Generated {
     code: i32,

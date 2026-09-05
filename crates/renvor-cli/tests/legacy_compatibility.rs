@@ -206,3 +206,103 @@ fn a_version_3_project_is_not_silently_upgraded() {
     let after = std::fs::read_to_string(version_3_project().join("renvor.toml")).expect("readable");
     assert_eq!(before, after, "`renvor check` rewrote the manifest");
 }
+
+// ─────────────────────────────────────────── template version 6 → 7 (Phase 011 starters)
+
+/// The captured template-version-6 project.
+///
+/// Produced by running the version-6 generator at `6b9b70a`, the last commit before any Phase 011
+/// template changed, with a SeaORM database and a cache container — the configuration whose
+/// manifest carries every key version 7 made conditional. See its `PROVENANCE.md`.
+fn version_6_project() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("phase-010-v6-project")
+}
+
+#[test]
+fn the_fixture_really_is_a_version_6_manifest() {
+    // The same guard the earlier fixtures have. Regenerating this with the current binary would
+    // give it `auth`, `[capabilities]`, and possibly `[framework]`, and stop it testing anything.
+    let manifest =
+        std::fs::read_to_string(version_6_project().join("renvor.toml")).expect("readable");
+    assert!(
+        manifest.contains("template_version = \"6\""),
+        "the fixture is not template version 6:\n{manifest}"
+    );
+    for absent in ["auth", "[framework]", "[capabilities]"] {
+        assert!(
+            !manifest.contains(absent),
+            "the fixture already carries `{absent}`, so it is not a version-6 artifact:\n{manifest}"
+        );
+    }
+    // And it records the sentence version 7 made conditional, as a constant.
+    assert!(manifest.contains("cache_wired_into_application = false"));
+}
+
+#[test]
+fn a_version_6_project_still_validates() {
+    // Phase 011 added `project.auth`, `[framework]`, `[auth]`, and `[capabilities]`. Making any
+    // of them required would be the Phase 004 defect a third time.
+    let output = check(&version_6_project());
+    assert!(
+        output.status.success(),
+        "a template-version-6 project was rejected by the current CLI\n--- stdout ---\n{}\n\
+         --- stderr ---\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("check emits one JSON document");
+    assert_eq!(parsed["status"], "success");
+    // The absences are reported as absences, not invented.
+    assert!(parsed["result"]["auth"].is_null());
+    assert!(parsed["result"]["capabilities"].is_null());
+    assert!(parsed["result"]["framework"].is_null());
+}
+
+#[test]
+fn a_version_6_project_is_not_silently_upgraded() {
+    let before =
+        std::fs::read_to_string(version_6_project().join("renvor.toml")).expect("readable");
+    let _ = check(&version_6_project());
+    let after = std::fs::read_to_string(version_6_project().join("renvor.toml")).expect("readable");
+    assert_eq!(before, after, "`renvor check` rewrote the manifest");
+}
+
+#[test]
+fn a_version_7_skeleton_still_passes_check_and_records_the_two_new_choices() {
+    // POSITIVE CONTROL for the version-6 tests, and the compatibility promise from the other
+    // side: the skeleton the current generator produces records `auth = "none"` and a
+    // `[capabilities]` table of five declines, and validates.
+    let workspace = tempfile::tempdir().expect("tempdir");
+    let project = workspace.path().join("current-skeleton");
+    let generated = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .arg("new")
+        .arg("current-skeleton")
+        .arg("--path")
+        .arg(&project)
+        .arg("--yes")
+        .output()
+        .expect("the CLI runs");
+    assert!(
+        generated.status.success(),
+        "generation failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("readable");
+    assert!(manifest.contains("template_version = \"7\""), "{manifest}");
+    assert!(manifest.contains("auth = \"none\""), "{manifest}");
+    assert!(manifest.contains("[capabilities]"), "{manifest}");
+    assert!(
+        !manifest.contains("[framework]") && !manifest.contains("[auth]"),
+        "a skeleton must record no framework and no auth table:\n{manifest}"
+    );
+    let output = check(&project);
+    assert!(
+        output.status.success(),
+        "this version's own output failed its own check: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}

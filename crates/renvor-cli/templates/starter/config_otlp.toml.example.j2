@@ -1,0 +1,7 @@
+# The `[otlp]` section for {{ name }}. Copy this file to `config/otlp.toml` to export traces;
+# without it — and without `RENVOR_OTLP_ENDPOINT` — no exporter is built and nothing is exported.
+#
+# `http://` is accepted only to loopback; anything else needs `https://`. Header values are
+# secrets and arrive from the environment: `RENVOR_OTLP_HEADERS__<NAME>`.
+endpoint = "http://127.0.0.1:4318/v1/traces"
+service_name = "{{ name }}"

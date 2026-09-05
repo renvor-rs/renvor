@@ -91,6 +91,23 @@ pub struct TemplateEntry {
     pub body: &'static str,
 }
 
+/// One file written byte for byte, never rendered (Phase 011).
+///
+/// The migration sets `renvor-auth` and `renvor-jobs` embed are SQL, not templates: rendering them
+/// would hand SQL to the template engine, where a `{{` in a comment is a parse error and an
+/// undefined name is a refusal. They are copied into the tree under the same path rules and the
+/// same bounds as a rendered entry, and they appear in the manifest like any other file.
+///
+/// The path is owned rather than `'static` because it is composed at selection time from an
+/// engine's file name; every rule [`TemplateSet::validate`] applies to a literal path applies here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerbatimEntry {
+    /// Relative output path, forward-slashed.
+    pub path: String,
+    /// The bytes, exactly.
+    pub body: &'static str,
+}
+
 /// A versioned, embedded, inert set of templates.
 ///
 /// # Why `entries` is a `Vec` of `Copy` entries rather than a `&'static` slice
@@ -109,6 +126,22 @@ pub struct TemplateSet {
     pub version: &'static str,
     /// The entries, in declaration order.
     pub entries: Vec<TemplateEntry>,
+    /// Files copied byte for byte after the entries render (Phase 011). Empty for the skeleton.
+    pub verbatim: Vec<VerbatimEntry>,
+    /// Jinja's block trimming: a block tag on its own line leaves no line behind (Phase 011).
+    ///
+    /// The starter templates are whitespace-sensitive Rust with a conditional every few lines,
+    /// and MiniJinja's `-%}` strips the NEXT line's indentation along with the newline — which
+    /// `rustfmt` then refuses. `trim_blocks` removes exactly the newline after a block tag and
+    /// `lstrip_blocks` the indentation before it, so `    {% if x %}` on its own line vanishes
+    /// whole. **Off for the skeleton**, whose templates predate this and whose bytes a
+    /// compatibility promise pins.
+    pub trim_blocks: bool,
+}
+
+/// A path under validation, whichever list it came from.
+struct PathOnly<'a> {
+    path: &'a str,
 }
 
 impl TemplateSet {
@@ -135,7 +168,13 @@ impl TemplateSet {
         };
 
         let mut seen = BTreeSet::new();
-        for entry in &self.entries {
+        let paths = self
+            .entries
+            .iter()
+            .map(|entry| entry.path)
+            .chain(self.verbatim.iter().map(|entry| entry.path.as_str()));
+        for path in paths {
+            let entry = PathOnly { path };
             if entry.path.is_empty() {
                 return Err(defect(entry.path, "has an empty output path"));
             }
@@ -224,6 +263,12 @@ impl<'a> Renderer<'a> {
         // Found by running that criterion, not by reading the documentation.
         environment.set_keep_trailing_newline(true);
 
+        // Phase 011, starter sets only. See `TemplateSet::trim_blocks`.
+        if set.trim_blocks {
+            environment.set_trim_blocks(true);
+            environment.set_lstrip_blocks(true);
+        }
+
         // NO `set_debug` CALL, AND THAT IS THE POINT.
         //
         // MiniJinja's debug mode attaches the template source and the surrounding variables to
@@ -306,13 +351,13 @@ impl<'a> Renderer<'a> {
                 .with("limit", limit.to_string())
         };
 
-        if self.set.entries.len() > bounds::MAX_FILES {
+        let declared = self.set.entries.len() + self.set.verbatim.len();
+        if declared > bounds::MAX_FILES {
             return Err(exceeded(
                 "output_file_count",
                 bounds::MAX_FILES,
                 format!(
-                    "the template set declares {} files, above the limit of {}",
-                    self.set.entries.len(),
+                    "the template set declares {declared} files, above the limit of {}",
                     bounds::MAX_FILES
                 ),
             ));
@@ -385,6 +430,56 @@ impl<'a> Renderer<'a> {
                 })?;
         }
 
+        // The verbatim files, under the same bounds. Nothing here touches the template engine.
+        for entry in &self.set.verbatim {
+            if entry.body.len() > bounds::MAX_FILE_BYTES {
+                return Err(exceeded(
+                    "single_file_output_bytes",
+                    bounds::MAX_FILE_BYTES,
+                    format!(
+                        "`{}` is {} bytes, above the per-file limit of {}",
+                        entry.path,
+                        entry.body.len(),
+                        bounds::MAX_FILE_BYTES
+                    ),
+                ));
+            }
+            total = total.saturating_add(entry.body.len());
+            if total > bounds::MAX_TOTAL_BYTES {
+                return Err(exceeded(
+                    "total_output_bytes",
+                    bounds::MAX_TOTAL_BYTES,
+                    format!(
+                        "the render reached {total} bytes at `{}`, above the total limit of {}",
+                        entry.path,
+                        bounds::MAX_TOTAL_BYTES
+                    ),
+                ));
+            }
+            if let Some(parent) = Path::new(&entry.path).parent()
+                && !parent.as_os_str().is_empty()
+            {
+                root.create_dir_all(parent).map_err(|error| {
+                    CliError::new(
+                        Code::RenderFailed,
+                        format!(
+                            "could not create `{}` in staging: {error}",
+                            crate::output::redact::path(parent)
+                        ),
+                    )
+                    .with("entry", entry.path.clone())
+                })?;
+            }
+            root.write(&entry.path, entry.body.as_bytes())
+                .map_err(|error| {
+                    CliError::new(
+                        Code::RenderFailed,
+                        format!("could not write `{}` in staging: {error}", entry.path),
+                    )
+                    .with("entry", entry.path.clone())
+                })?;
+        }
+
         Ok(())
     }
 }
@@ -445,6 +540,8 @@ mod tests {
         TemplateSet {
             version: "test",
             entries: entries.to_vec(),
+            verbatim: Vec::new(),
+            trim_blocks: false,
         }
     }
 
@@ -835,6 +932,51 @@ mod tests {
         renderer
             .render_into(&root.dir, &ctx())
             .expect("exactly the limit is allowed");
+    }
+
+    #[test]
+    fn block_trimming_removes_the_tag_line_and_keeps_the_indentation() {
+        // The starter's whole reason for the option: an indented block tag on its own line must
+        // vanish entirely, and the content it guards must keep its own indentation. Without the
+        // option the same template keeps the tag's line as a blank one — asserted too, so the
+        // skeleton's rendering is pinned as unchanged.
+        #[derive(Serialize)]
+        struct Flag {
+            yes: bool,
+        }
+        let body =
+            "fn main() {\n    {% if yes %}\n    let a = 1;\n    {% endif %}\n    let b = 2;\n}\n";
+        let mut trimmed = set(&[TemplateEntry { path: "a.rs", body }]);
+        trimmed.trim_blocks = true;
+        let renderer = Renderer::new(trimmed).expect("builds");
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: true })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    let a = 1;\n    let b = 2;\n}\n"
+        );
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: false })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    let b = 2;\n}\n"
+        );
+
+        // CONTROL: the skeleton's environment leaves the lines where they were.
+        let untrimmed = set(&[TemplateEntry { path: "a.rs", body }]);
+        let renderer = Renderer::new(untrimmed).expect("builds");
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: true })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    \n    let a = 1;\n    \n    let b = 2;\n}\n"
+        );
     }
 
     #[test]

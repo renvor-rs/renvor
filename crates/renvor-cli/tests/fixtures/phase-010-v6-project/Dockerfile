@@ -1,0 +1,24 @@
+# Container development controls for v6-project.
+#
+# THE BUILDER IS PINNED; THE RUNTIME BASE CANNOT BE, AND THAT IS SAID RATHER THAN GLOSSED.
+#
+# `rust:1-slim` was a rolling tag. Two `renvor docker up --build` runs weeks apart used different
+# toolchains, and a regressed push to that tag was pulled silently. Not `:latest` literally;
+# identical in effect. It is now pinned to the version this project's `rust-toolchain.toml`
+# declares, so the image and the host build with the same compiler.
+#
+# `gcr.io/distroless/cc-debian12` publishes no stable version tag — only rolling names and
+# architecture-specific SHA-suffixed ones. The only real pin is a digest, and ADR-0019 records why
+# a digest is refused for the database images: architecture-specific, unreadable to a human
+# deciding whether to upgrade, and stale the first time upstream republishes a security rebuild.
+# The same reasoning applies here, so `nonroot` stays rolling and the limitation is stated here
+# instead of being hidden behind a pin that would rot.
+FROM docker.io/library/rust:1.94.0-slim AS build
+WORKDIR /src
+COPY . .
+RUN cargo build --release
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+COPY --from=build /src/target/release/v6-project /app
+USER nonroot:nonroot
+ENTRYPOINT ["/app"]
