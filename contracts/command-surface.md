@@ -19,7 +19,7 @@ status: "normative — public contract from the first release that ships it; not
 | `renvor routes` | Show the routes a project would serve | **Full.** The relay is implemented; it currently reaches no *generated* project — see below |
 | `renvor dev` | Run the local development loop | **Full** |
 | `renvor docker up\|down\|status\|logs` | Container development controls | **Full** |
-| `renvor generate migration <name>` / `--import auth\|jobs` | Add a reversible migration pair to an existing project, or copy the framework's auth or job-store set into it — rerun-safe, see §`renvor generate` | **Full** (Phase 011) |
+| `renvor generate migration\|resource\|auth` | Add to an existing project — a migration pair or an imported set, a resource, or the auth starter — rerun-safe, see §`renvor generate` | **Full** (Phase 011) |
 | `renvor tls trust` | The consent boundary for a trust-store change. **In this phase: consent only — it describes what would change, requires explicit consent, and then declines.** Non-interactive consent is `--i-understand-this-modifies-my-system-trust-store`; `--yes` does not grant it. |
 
 `PLAN.md` §9.3 lists further commands — `migrate`, `seed`, and the package-ecosystem surface.
@@ -50,6 +50,8 @@ and writes nothing; `--output json` carries `result.files[]` with each path's ac
 |---|---|---|
 | `migration <name>` | `migrations/<YYYYMMDDHHMMSS>_<name>.up.sql` and `.down.sql`, the version being the UTC instant; run again for the same name it finds the pair it wrote and leaves it, so a rerun never stacks a second pair | the project has no `[persistence]` (`unsupported_combination`, `details.reason = no_database`); the name is not a lowercase identifier of at most 64 characters (`unsupported_value`) |
 | `migration --import auth\|jobs` | the framework's embedded migration set for the project's engine, byte for byte — the same files a starter receives — so a project that adopts the auth starter or the jobs capability later composes both sets in its one directory (Phase 010 limitation L-7) | a set outside the two (`unsupported_value`, `details.flag = --import`) |
+| `resource <Name> [field:type …]` | into a **starter** with a database: `src/resources/<snake>.rs` (the type, its repository over the project's persistence model, five handlers, and their OpenAPI declarations), `migrations/<version>_create_<snake>.{up,down}.sql`, `tests/<snake>.rs`, the shared `tests/support/mod.rs` re-rendered, and **two marked edits** — `pub mod <snake>;` between the markers of `src/resources/mod.rs` and `crate::resources::<snake>::declare(&mut routes)?;` between the markers of `src/routes.rs`, which are edited whether or not the file was changed elsewhere. Types: `string`, `text`, `integer`, `boolean`, `float`. Rendered Rust is laid out by the toolchain's `rustfmt` before it is planned, so a user-named type or column never decides the formatting; a missing `rustfmt` is `tool_missing`. Writes need a session when the project has the auth starter | a skeleton (`transport_not_wired`, `details.reason = no_renvor_dependency`); no `[persistence]` (`unsupported_combination`); a name that is not PascalCase of at most 32 characters, a field outside the grammar, `id`, or a duplicate (`unsupported_value`) |
+| `auth` | the session authentication starter added to a starter that has none: every generator-owned file rendered again with `auth = "session"` — `renvor.toml`, `Cargo.toml`, `src/main.rs`, `src/app.rs`, `src/routes.rs`, `src/auth.rs`, `config/auth.toml`, the auth migration set, the generated test — with the marked blocks of `src/resources/mod.rs` and `src/routes.rs` carried over; a file the user changed is a `generation_conflict` | exactly what `renvor new --auth session` refuses: no database, no `mail` capability (`unsupported_combination` naming the flag); a skeleton (`transport_not_wired`) |
 
 `routes` **ships in Phase 004**, with the transport it inspects, and is held to the same rule.
 
@@ -189,7 +191,7 @@ are not using.
 project given `--framework-path` is a starter whose `Cargo.toml` declares path dependencies on
 exactly the crates the selection needs; the paragraph below describes the skeleton, which is
 unchanged.)* For the SeaORM path the reason is stronger than "the crate is unpublished". `sea-orm` *is* published, so it could be declared — but
-generation runs the staged project's own `cargo fmt`, `clippy`, `build`, `test` and `run` **before**
+generation runs the staged project's own `cargo fmt`, `clippy --all-targets`, `build`, `test` and `run` **before**
 placing it (a skeleton is run bare and must exit; a starter is sent `--renvor-dump-routes`, the
 request `renvor routes` sends, and must answer it before Boot, without a database), so a real dependency would make `renvor new` resolve and compile SeaORM and SQLx from
 the registry. Renvor guarantees offline generation. One ORM choice is not a reason to withdraw it.

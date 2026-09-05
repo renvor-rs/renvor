@@ -1,0 +1,63 @@
+//! `{{ type_name }}` end to end, generated with the resource: created, listed, read, replaced, and
+//! deleted over loopback HTTP against the real database{% if auth_session %}, with a session for the writes{% endif %}.
+
+mod support;
+
+use support::*;
+
+#[tokio::test]
+async fn {{ snake }}_is_created_read_replaced_and_deleted() {
+    let Ok(url) = std::env::var("RENVOR_DATABASE_URL") else {
+        assert!(
+            std::env::var("RENVOR_TEST_REQUIRE_DATABASE").is_err(),
+            "RENVOR_TEST_REQUIRE_DATABASE is set and RENVOR_DATABASE_URL is not"
+        );
+        println!("SKIPPED: set RENVOR_DATABASE_URL to run the {{ snake }} test");
+        return;
+    };
+    // The resource's own table first, so the reset's fresh migration run can create it again.
+    drop_tables(&url, &["{{ table }}"]).await;
+    reset(&url).await;
+
+    let mut app = start();
+    let address = app.address.clone();
+{% if auth_session %}
+    let cookie = session(&address, "{{ snake }}-editor-9f3a@example.test");
+    let writer: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
+
+    // A write without a session is refused, and nothing was written.
+    let refused = http(&address, "POST", "/{{ plural }}", &[], r#"{{ sample_a }}"#);
+    assert_eq!(refused.status, 401, "{}", refused.body);
+{% else %}
+    let writer: Vec<(&str, &str)> = Vec::new();
+{% endif %}
+
+    let created = http(&address, "POST", "/{{ plural }}", &writer, r#"{{ sample_a }}"#);
+    assert_eq!(created.status, 201, "{}", created.body);
+    let id = serde_json::from_str::<serde_json::Value>(&created.body).expect("json")["id"]
+        .as_i64()
+        .expect("an id");
+
+    let listed = http(&address, "GET", "/{{ plural }}", &[], "");
+    assert_eq!(listed.status, 200, "{}", listed.body);
+    assert!(listed.body.contains(&format!("\"id\":{id}")), "{}", listed.body);
+
+    let one = http(&address, "GET", &format!("/{{ plural }}/{id}"), &[], "");
+    assert_eq!(one.status, 200, "{}", one.body);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&one.body).expect("json"),
+        serde_json::from_str::<serde_json::Value>(&created.body).expect("json")
+    );
+
+    let replaced = http(&address, "PUT", &format!("/{{ plural }}/{id}"), &writer, r#"{{ sample_b }}"#);
+    assert_eq!(replaced.status, 200, "{}", replaced.body);
+    let after = http(&address, "GET", &format!("/{{ plural }}/{id}"), &[], "");
+    assert_ne!(after.body, one.body, "the replacement did not change the row");
+
+    let deleted = http(&address, "DELETE", &format!("/{{ plural }}/{id}"), &writer, "");
+    assert_eq!(deleted.status, 204, "{}", deleted.body);
+    assert_eq!(http(&address, "GET", &format!("/{{ plural }}/{id}"), &[], "").status, 404);
+
+    let status = app.stop();
+    assert!(status.success(), "the application did not exit cleanly: {status}");
+}

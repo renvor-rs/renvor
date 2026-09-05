@@ -35,7 +35,7 @@ use crate::templates;
 /// private field a template variable and every field rename a silent template break. This type is
 /// the contract between the two, and it is small enough to read.
 #[derive(Debug, Serialize)]
-struct Context {
+pub(crate) struct Context {
     name: String,
     target: String,
     transport: String,
@@ -235,7 +235,7 @@ impl Context {
     /// would have meant writing twenty-two of them twice. Two literals that must agree are two
     /// literals that eventually do not, and the one in the test is precisely the copy whose drift
     /// nothing would catch.
-    fn build(configuration: &ProjectConfiguration) -> Self {
+    pub(crate) fn build(configuration: &ProjectConfiguration) -> Self {
         let container = configuration.container_settings();
         let database = container.and_then(|settings| {
             settings.database_version.map(|version| {

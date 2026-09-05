@@ -32,6 +32,32 @@ pub struct Planned {
     pub path: String,
     /// The bytes it should hold.
     pub bytes: Vec<u8>,
+    /// An **edit** of a file that must already exist — the marked block of `src/routes.rs`, say —
+    /// which is written whether or not the user changed the file elsewhere, because the marked
+    /// block is the contract. Never a conflict; a missing file is a `render_failed`.
+    pub edit: bool,
+}
+
+impl Planned {
+    /// A file the generator owns.
+    #[must_use]
+    pub fn file(path: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            path: path.into(),
+            bytes,
+            edit: false,
+        }
+    }
+
+    /// An edit of an existing file's marked block.
+    #[must_use]
+    pub fn edit(path: impl Into<String>, bytes: Vec<u8>) -> Self {
+        Self {
+            path: path.into(),
+            bytes,
+            edit: true,
+        }
+    }
 }
 
 /// What the plan decided for one path.
@@ -43,6 +69,8 @@ pub enum Action {
     Unchanged,
     /// Present, different, and untouched since generation: it will be overwritten.
     Regenerate,
+    /// A marked block of an existing file will be edited.
+    Edit,
 }
 
 impl Action {
@@ -53,6 +81,7 @@ impl Action {
             Self::Write => "write",
             Self::Unchanged => "unchanged",
             Self::Regenerate => "regenerate",
+            Self::Edit => "edit",
         }
     }
 }
@@ -127,8 +156,19 @@ pub fn plan(project: &Dir, planned: Vec<Planned>) -> Result<Plan, CliError> {
             }
         };
         let action = match current {
+            None if item.edit => {
+                return Err(CliError::new(
+                    Code::RenderFailed,
+                    format!(
+                        "`{}` is missing, so its marked block cannot be edited; generate the \
+                         project again or restore the file",
+                        item.path
+                    ),
+                ));
+            }
             None => Action::Write,
             Some(bytes) if bytes == item.bytes => Action::Unchanged,
+            Some(_) if item.edit => Action::Edit,
             Some(bytes) => {
                 if recorded(&item.path) == Some(sha256_hex(&bytes).as_str()) {
                     Action::Regenerate
@@ -239,10 +279,30 @@ mod tests {
     }
 
     fn planned(path: &str, bytes: &[u8]) -> Planned {
-        Planned {
-            path: path.to_owned(),
-            bytes: bytes.to_vec(),
-        }
+        Planned::file(path, bytes.to_vec())
+    }
+
+    #[test]
+    fn an_edit_is_written_even_when_the_file_was_changed_and_needs_the_file_to_exist() {
+        let (_keep, dir) = project(&[("routes.rs", b"// begin\n// end\n")]);
+        let ok = plan(
+            &dir,
+            vec![Planned::edit(
+                "routes.rs",
+                b"// begin\nnew\n// end\n".to_vec(),
+            )],
+        )
+        .expect("an edit never conflicts");
+        assert_eq!(ok.summary(), vec![("routes.rs", Action::Edit)]);
+        let same = plan(
+            &dir,
+            vec![Planned::edit("routes.rs", b"// begin\n// end\n".to_vec())],
+        )
+        .expect("plans");
+        assert_eq!(same.summary(), vec![("routes.rs", Action::Unchanged)]);
+        let error = plan(&dir, vec![Planned::edit("missing.rs", b"x".to_vec())])
+            .expect_err("an edit needs its file");
+        assert_eq!(error.code, Code::RenderFailed);
     }
 
     #[test]

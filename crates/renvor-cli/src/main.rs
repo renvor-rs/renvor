@@ -506,6 +506,15 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
                 commands::generate::Action::Migration { name, import },
                 dry_run,
             ),
+            GenerateAction::Resource { name, fields, path } => commands::generate::run(
+                reporter,
+                &path,
+                commands::generate::Action::Resource { name, fields },
+                dry_run,
+            ),
+            GenerateAction::Auth { path } => {
+                commands::generate::run(reporter, &path, commands::generate::Action::Auth, dry_run)
+            }
         },
     }
 }

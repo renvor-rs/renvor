@@ -195,6 +195,11 @@ pub fn registry({% if auth_session or cap_observability %}services{% else %}_ser
 {% if cap_observability %}
     crate::capabilities::observability::declare(&mut routes, services)?;
 {% endif %}
+{% if database %}
+
+    // renvor:resources:begin — `renvor generate resource` adds one line per resource; keep both.
+    // renvor:resources:end
+{% endif %}
 
     Ok(routes)
 }

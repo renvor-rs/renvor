@@ -36,6 +36,9 @@ mod persistence;
 {% if example_domain and orm == "seaorm" %}
 mod repository;
 {% endif %}
+{% if database %}
+mod resources;
+{% endif %}
 mod routes;
 {% if seed_data %}
 mod seed;

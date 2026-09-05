@@ -186,6 +186,23 @@ pub enum GenerateAction {
         #[arg(long, default_value = ".")]
         path: PathBuf,
     },
+    /// Add a resource to a starter: a module, a migration pair, five routes, and a test
+    Resource {
+        /// The resource's type name, in PascalCase (`Post`)
+        name: String,
+        /// Its columns, as `name:type` with type one of string, text, integer, boolean, float
+        #[arg(value_name = "FIELD:TYPE")]
+        fields: Vec<String>,
+        /// The project directory
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
+    /// Add the session authentication starter to a starter that has a database and `mail`
+    Auth {
+        /// The project directory
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]

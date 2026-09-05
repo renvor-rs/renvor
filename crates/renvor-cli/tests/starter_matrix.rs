@@ -791,3 +791,244 @@ fn a_failure_after_verification_leaves_the_destination_absent() {
         "a failed generation left staging behind"
     );
 }
+
+/// Runs `renvor generate …` in a placed project and returns the envelope.
+fn generate_into(project: &Path, args: &[&str]) -> (Run, serde_json::Value) {
+    let mut full = vec!["generate"];
+    full.extend_from_slice(args);
+    full.extend_from_slice(&["--output", "json"]);
+    let outcome = run(env!("CARGO_BIN_EXE_renvor"), &full, project, &[]);
+    let document: serde_json::Value = serde_json::from_str(&outcome.output).unwrap_or_else(|_| {
+        panic!(
+            "not a JSON envelope for generate {args:?} [{}]:\n{}",
+            outcome.status, outcome.output
+        )
+    });
+    (outcome, document)
+}
+
+/// The placed project's own checks — the ones generation runs before placing a starter — after a
+/// generator wrote into it: it must still format, lint on every target, and pass its tests.
+fn checks_after_generation(project: &Path, test: &str, needs: &[Service]) -> bool {
+    for (args, what) in [
+        (vec!["fmt", "--check"], "cargo fmt --check"),
+        (
+            vec!["clippy", "--all-targets", "--", "-D", "warnings"],
+            "cargo clippy --all-targets -- -D warnings",
+        ),
+    ] {
+        let outcome = run("cargo", &args, project, &[]);
+        assert!(
+            outcome.succeeded,
+            "`{what}` failed after generation [{}]:\n{}",
+            outcome.status, outcome.output
+        );
+    }
+    let mut envs: Vec<(&str, String)> = Vec::new();
+    for needed in needs {
+        let Some(value) = service(*needed) else {
+            return false;
+        };
+        match needed {
+            Service::Postgres | Service::Mysql => envs.push(("RENVOR_DATABASE_URL", value)),
+            Service::Valkey => envs.push(("RENVOR_CACHE_PASSWORD", value)),
+            Service::Smtp => {
+                envs.push(("RENVOR_MAIL_PASSWORD", value));
+                if let Ok(api) = std::env::var("RENVOR_TEST_SMTP_API_URL") {
+                    envs.push(("RENVOR_TEST_SMTP_API_URL", api));
+                }
+            }
+        }
+    }
+    envs.push(("RENVOR_AUTH_CSRF_KEY", random_key()));
+    envs.push(("RENVOR_AUTH_ABUSE_KEY", random_key()));
+    envs.push(("RENVOR_TEST_REQUIRE_DATABASE", "1".to_owned()));
+    touch(project);
+    let outcome = run(
+        "cargo",
+        &["test", "--test", test, "--", "--nocapture"],
+        project,
+        &envs,
+    );
+    assert!(
+        outcome.succeeded && outcome.output.contains("test result: ok. 1 passed"),
+        "the generated test `{test}` did not pass [{}]:\n{}",
+        outcome.status,
+        outcome.output
+    );
+    true
+}
+
+macro_rules! resource_row {
+    ($test:ident, $row_name:literal, $database:literal, $orm:literal) => {
+        #[test]
+        fn $test() {
+            // FR-045 and FR-048. A resource generated into a placed starter compiles, lints on
+            // every target, and its own generated test drives it live; a rerun is a no-op; a
+            // file the user changed is a conflict that writes nothing.
+            let _serial = serial();
+            if !row_selected($row_name) {
+                return;
+            }
+            let row = Row {
+                name: $row_name,
+                database: Some($database),
+                orm: $orm,
+                flags: &[
+                    "--auth",
+                    "session",
+                    "--capabilities",
+                    "mail",
+                    "--example-domain",
+                ],
+                needs: if $database == "postgres" {
+                    &[Service::Postgres, Service::Smtp]
+                } else {
+                    &[Service::Mysql, Service::Smtp]
+                },
+            };
+            let base = tempfile::tempdir().expect("tempdir");
+            let (project, _) = generate(base.path(), &row);
+            let (outcome, document) = generate_into(
+                &project,
+                &[
+                    "resource",
+                    "Post",
+                    "title:string",
+                    "body:text",
+                    "published:boolean",
+                ],
+            );
+            assert!(outcome.succeeded, "{document}\n{}", outcome.output);
+            assert_eq!(document["result"]["written"], 6, "{document}");
+            assert!(project.join("src/resources/post.rs").is_file());
+            assert!(project.join("tests/post.rs").is_file());
+            let routes = std::fs::read_to_string(project.join("src/routes.rs")).expect("routes");
+            assert!(routes.contains("crate::resources::post::declare(&mut routes)?;"));
+
+            // A rerun is a no-op, and says so.
+            let (outcome, again) = generate_into(
+                &project,
+                &[
+                    "resource",
+                    "Post",
+                    "title:string",
+                    "body:text",
+                    "published:boolean",
+                ],
+            );
+            assert!(outcome.succeeded, "{again}");
+            assert_eq!(again["result"]["written"], 0, "{again}");
+
+            checks_after_generation(&project, "post", row.needs);
+
+            // The user changes the module; a rerun with a different shape is a conflict.
+            let module = project.join("src/resources/post.rs");
+            let mut text = std::fs::read_to_string(&module).expect("module");
+            text.push_str("\n// mine\n");
+            std::fs::write(&module, &text).expect("write");
+            let (outcome, refused) =
+                generate_into(&project, &["resource", "Post", "title:string", "body:text"]);
+            assert!(
+                !outcome.succeeded,
+                "a changed module was overwritten: {refused}"
+            );
+            assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+            assert_eq!(
+                std::fs::read_to_string(&module).expect("module"),
+                text,
+                "the user's module was touched"
+            );
+        }
+    };
+}
+
+resource_row!(
+    a_resource_generated_into_a_sqlx_starter_proves_itself,
+    "ressqlx",
+    "postgres",
+    "sqlx"
+);
+resource_row!(
+    a_resource_generated_into_a_seaorm_starter_proves_itself,
+    "ressea",
+    "mysql",
+    "seaorm"
+);
+
+#[test]
+fn the_auth_starter_added_to_a_starter_proves_itself() {
+    // FR-047. A starter generated without authentication gains the session starter later, by
+    // re-rendering its generator-owned files with the choice made; the regenerated test then
+    // drives registration, login, and the rest against the real services.
+    let _serial = serial();
+    if !row_selected("authadded") {
+        return;
+    }
+    let row = Row {
+        name: "authadded",
+        database: Some("postgres"),
+        orm: "sqlx",
+        flags: &["--capabilities", "mail", "--example-domain"],
+        needs: &[Service::Postgres, Service::Smtp],
+    };
+    let base = tempfile::tempdir().expect("tempdir");
+    let (project, _) = generate(base.path(), &row);
+    assert!(!project.join("src/auth.rs").exists());
+
+    let (outcome, document) = generate_into(&project, &["auth"]);
+    assert!(
+        outcome.succeeded,
+        "{document}
+{}",
+        outcome.output
+    );
+    assert!(project.join("src/auth.rs").is_file());
+    assert!(project.join("config/auth.toml").is_file());
+    let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("renvor.toml");
+    assert!(manifest.contains("auth = \"session\""), "{manifest}");
+    let files = document["result"]["files"].as_array().expect("files");
+    assert!(
+        files
+            .iter()
+            .any(|f| f["path"] == "src/main.rs" && f["action"] == "regenerate"),
+        "the untouched main.rs is regenerated: {document}"
+    );
+
+    let (outcome, again) = generate_into(&project, &["auth"]);
+    assert!(outcome.succeeded, "{again}");
+    assert_eq!(
+        again["result"]["written"], 0,
+        "a rerun wrote something: {again}"
+    );
+
+    checks_after_generation(&project, "starter", row.needs);
+}
+
+#[test]
+fn the_auth_starter_is_refused_where_new_would_refuse_it() {
+    // The same combination rules as `renvor new --auth session`: no `mail`, no starter.
+    let _serial = serial();
+    if !row_selected("authrefused") {
+        return;
+    }
+    let row = Row {
+        name: "authrefused",
+        database: Some("postgres"),
+        orm: "sqlx",
+        flags: &["--capabilities", "storage"],
+        needs: &[],
+    };
+    let base = tempfile::tempdir().expect("tempdir");
+    let (project, _) = generate(base.path(), &row);
+    let (outcome, refused) = generate_into(&project, &["auth"]);
+    assert!(!outcome.succeeded, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "unsupported_combination",
+        "{refused}"
+    );
+    assert!(
+        !project.join("src/auth.rs").exists(),
+        "a refusal wrote the starter"
+    );
+}

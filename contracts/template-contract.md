@@ -96,6 +96,17 @@ byte-stable and `rustfmt`-clean for **every** selection and **every** valid name
 - **No blanket allowance silences a lean variant.** A helper whose callers are all conditional is
   emitted under the exact condition of its callers; an unused parameter is renamed, not allowed.
 
+### Generated-on-demand files (`renvor generate`)
+
+A resource module, its migration pair, and its test are rendered from the `generate` templates
+with the user's names in the context, so their line widths are not the template author's to
+decide. Those Rust files are laid out by the toolchain's `rustfmt` **at generation**, before they
+are planned, and a missing `rustfmt` is `tool_missing`; the starter templates above stay
+hand-formatted, and `cargo fmt --check` at generation stays their proof. The generated
+`tests/support/mod.rs` is compiled into every test binary that declares it and each uses a
+subset, so it carries a reasoned `#![allow(dead_code)]` — the one allowance in a generated tree,
+stated in the file.
+
 ## Snapshot stability policy (Phase 011)
 
 A generated tree's **manifest** — its sorted paths and digests — is the thing a snapshot pins,

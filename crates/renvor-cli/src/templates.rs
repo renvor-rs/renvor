@@ -240,6 +240,10 @@ const STARTER_BASE: &[TemplateEntry] = &[
         path: "tests/starter.rs",
         body: include_str!("../templates/starter/tests_starter.rs.j2"),
     },
+    TemplateEntry {
+        path: "tests/support/mod.rs",
+        body: include_str!("../templates/starter/tests_support_mod.rs.j2"),
+    },
 ];
 
 /// The starter's example domain: the item type, its handlers, and — with `--seed-data` — seeds.
@@ -256,10 +260,16 @@ const STARTER_SEED_DATA: &[TemplateEntry] = &[TemplateEntry {
 /// The starter's item migration, which gains an owner column with the auth starter.
 /// With a database: the migration directory exists even when no set is copied into it, because
 /// the provider loads it at Boot and an absent directory is a Boot failure.
-const STARTER_DATABASE: &[TemplateEntry] = &[TemplateEntry {
-    path: "migrations/README.md",
-    body: include_str!("../templates/starter/migrations_README.md.j2"),
-}];
+const STARTER_DATABASE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "migrations/README.md",
+        body: include_str!("../templates/starter/migrations_README.md.j2"),
+    },
+    TemplateEntry {
+        path: "src/resources/mod.rs",
+        body: include_str!("../templates/starter/src_resources_mod.rs.j2"),
+    },
+];
 
 const STARTER_MIGRATIONS: &[TemplateEntry] = &[
     TemplateEntry {

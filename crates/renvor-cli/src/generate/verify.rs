@@ -63,9 +63,12 @@ const CHECKS: [(&str, &[&str], &str); 4] = [
     //
     // `-D warnings` because SC-005 says "0 warnings escalated to errors", which is only meaningful
     // if they are escalated.
+    // `--all-targets` since Phase 011: the generated tests are generated code too, and FR-041
+    // holds them to the same lints. Found by `renvor generate resource`'s proof running clippy
+    // over a placed project's tests, which the binary-only check had never linted.
     (
         "cargo",
-        &["clippy", "--", "-D", "warnings"],
+        &["clippy", "--all-targets", "--", "-D", "warnings"],
         "does not pass its own lints",
     ),
     ("cargo", &["build"], "does not compile"),

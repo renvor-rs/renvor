@@ -60,6 +60,15 @@ selected flow over loopback, exports to a loopback OTLP receiver, and stops clea
 interrupt a terminal sends. The framework's gate runs that proof for every covering row
 (`crates/renvor-cli/tests/starter_matrix.rs`).
 
+## Adding to a project: `renvor generate`
+
+`renvor generate migration <name>`, `migration --import auth|jobs`, `resource <Name> field:type…`,
+and `auth` write into an existing project without ever overwriting a file you changed: every
+target path is classified against the working tree and `.renvor/generated.toml` first — absent is
+written, identical is a no-op, untouched since generation is regenerated, changed is a
+`generation_conflict` that writes nothing. A rerun reports `unchanged`. See the command-surface
+contract's `renvor generate` section for each action's files and refusals.
+
 ## Exit codes
 
 `0` success · `1` **internal defect — report it** · `2` usage · `3` validation · `4` cancelled ·

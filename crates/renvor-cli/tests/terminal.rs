@@ -988,7 +988,7 @@ fn the_verification_step_names_each_check_as_it_runs() {
     );
     for check in [
         "cargo fmt --check",
-        "cargo clippy -- -D warnings",
+        "cargo clippy --all-targets -- -D warnings",
         "cargo build",
         "cargo test",
         "cargo run --quiet",
