@@ -267,6 +267,14 @@ mod tests {
         async fn find_by_id(&self, _id: UserId) -> Result<Option<UserRecord>, DatabaseError> {
             Ok(self.present.clone())
         }
+
+        async fn mark_email_verified(
+            &self,
+            _id: UserId,
+            _now: DateTime<Utc>,
+        ) -> Result<(), DatabaseError> {
+            unreachable!("read_account never verifies an address")
+        }
     }
 
     fn at() -> DateTime<Utc> {

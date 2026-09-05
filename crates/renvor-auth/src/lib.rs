@@ -27,6 +27,8 @@ pub mod cookie;
 pub mod csrf;
 pub mod error;
 pub mod mail;
+/// The migration set this crate ships, embedded so a generator can copy it (Phase 011).
+pub mod migrations;
 pub mod opaque;
 pub mod password;
 pub mod policy;

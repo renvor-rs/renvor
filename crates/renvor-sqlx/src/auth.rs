@@ -178,6 +178,29 @@ macro_rules! auth_repositories {
                             .map_err(|error| classify_error(&error))?;
                     row.map(into_user).transpose()
                 }
+
+                async fn mark_email_verified(
+                    &self,
+                    id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<(), DatabaseError> {
+                    // COALESCE keeps the first instant, in one statement both engines accept: a
+                    // second confirmation is not a second verification.
+                    let statement = format!(
+                        "UPDATE rv_auth_user SET email_verified_at = COALESCE(email_verified_at, {}), updated_at = {} WHERE id = {}",
+                        KIND.placeholder(1),
+                        KIND.placeholder(2),
+                        KIND.placeholder(3)
+                    );
+                    sqlx::query(sqlx::AssertSqlSafe(statement))
+                        .bind(now)
+                        .bind(now)
+                        .bind(id.as_bytes().as_slice())
+                        .execute(&self.pool)
+                        .await
+                        .map_err(|error| classify_error(&error))?;
+                    Ok(())
+                }
             }
 
             /// Reads and writes `rv_auth_credential`.

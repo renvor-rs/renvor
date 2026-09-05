@@ -251,6 +251,31 @@ macro_rules! auth_repositories {
                         .map_err(|error| classify_db_error(&error))?;
                     row.map(read_user).transpose()
                 }
+
+                async fn mark_email_verified(
+                    &self,
+                    id: UserId,
+                    now: DateTime<Utc>,
+                ) -> Result<(), DatabaseError> {
+                    // COALESCE keeps the first instant, in one statement both engines accept: a
+                    // second confirmation is not a second verification.
+                    let connection = self.database.acquire().await?;
+                    let statement = sea_orm::Statement::from_sql_and_values(
+                        connection.get_database_backend(),
+                        &format!(
+                            "UPDATE rv_auth_user SET email_verified_at = COALESCE(email_verified_at, {}), updated_at = {} WHERE id = {}",
+                            KIND.placeholder(1),
+                            KIND.placeholder(2),
+                            KIND.placeholder(3)
+                        ),
+                        [now.into(), now.into(), id.as_bytes().to_vec().into()],
+                    );
+                    connection
+                        .execute_raw(statement)
+                        .await
+                        .map_err(|error| classify_db_error(&error))?;
+                    Ok(())
+                }
             }
 
             /// Builds a `UserRecord` from a row.
