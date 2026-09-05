@@ -109,19 +109,10 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     );
     assert_eq!(wrong.status, 401);
     let login = http(&address, "POST", "/auth/login", &[], &register);
-    assert_eq!(login.status, 200, "{}", login.body);
-    let cookie = login
-        .header("set-cookie")
-        .expect("a session cookie")
-        .split(';')
-        .next()
-        .expect("name=value")
-        .to_owned();
-    assert!(cookie.starts_with("__Host-rv_session="), "{cookie}");
-    let csrf = serde_json::from_str::<serde_json::Value>(&login.body).expect("json")["csrf_token"]
-        .as_str()
-        .expect("a csrf token")
-        .to_owned();
+    assert_eq!(login.status, 200, "login answered {}", login.status);
+    // The credentials leave a failure message by position only: see `support::session_cookie_of`.
+    let cookie = session_cookie_of(&login);
+    let csrf = csrf_token_of(&login);
     let ada_session: Vec<(&str, &str)> = vec![("Cookie", cookie.as_str())];
 
     // ── 5. the current user, with and without the cookie ───────────────────────────
@@ -463,7 +454,11 @@ fn verification_token_from_sink(api: &str, address: &str) -> String {
         &[],
         "",
     );
-    assert_eq!(listing.status, 200, "{}", listing.body);
+    assert_eq!(
+        listing.status, 200,
+        "the sink's search answered {}",
+        listing.status
+    );
     let listing: serde_json::Value = serde_json::from_str(&listing.body).expect("json");
     let id = listing["messages"]
         .as_array()
@@ -475,14 +470,17 @@ fn verification_token_from_sink(api: &str, address: &str) -> String {
             })
         })
         .and_then(|message| message["ID"].as_str())
-        .unwrap_or_else(|| panic!("no verification mail for {address}: {listing}"))
+        .unwrap_or_else(|| {
+            panic!(
+                "no verification mail for the address among {} message(s) in the sink (listing \
+                 not printed)",
+                listing["messages"].as_array().map_or(0, Vec::len)
+            )
+        })
         .to_owned();
     let message = http(host, "GET", &format!("/api/v1/message/{id}"), &[], "");
     let message: serde_json::Value = serde_json::from_str(&message.body).expect("json");
     let text = message["Text"].as_str().expect("a text body");
-    text.split_whitespace()
-        .find(|word| word.len() == 64 && word.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(str::to_owned)
-        .unwrap_or_else(|| panic!("no token in the verification mail:\n{text}"))
+    token_in(text)
 }
 {% endif %}

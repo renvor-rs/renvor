@@ -343,14 +343,121 @@ pub fn session(address: &str, user: &UserDraft) -> String {
         202
     );
     let login = http(address, "POST", "/auth/login", &[], &credentials);
-    assert_eq!(login.status, 200);
-    login
-        .header("set-cookie")
-        .expect("a cookie")
-        .split(';')
-        .next()
-        .expect("name=value")
-        .to_owned()
+    assert_eq!(login.status, 200, "login answered {}", login.status);
+    session_cookie_of(&login)
+}
+
+// ── credentials leave a failure message only by position, never by value (SR-001) ─────────────
+//
+// Every extraction of a credential — the session cookie, the CSRF token, the mailed token — goes
+// through one of these, and each fails with a **static** label: a message that printed the value
+// it could not accept would put the credential into the test output the sweep below exists to
+// keep it out of. `a_failed_secret_extraction_names_nothing_secret` is the negative control.
+
+/// The session cookie a login answer set, as `name=value` for a `Cookie` header.
+///
+/// # Panics
+///
+/// With a static message when the answer set no cookie, or a cookie that is not the session
+/// cookie; the value is never printed.
+pub fn session_cookie_of(reply: &Reply) -> String {
+    let Some(header) = reply.header("set-cookie") else {
+        panic!("the login answer set no session cookie");
+    };
+    let cookie = header.split(';').next().unwrap_or("").to_owned();
+    assert!(
+        cookie.starts_with("__Host-rv_session="),
+        "the login answer's cookie is not the session cookie (name checked; value not printed)"
+    );
+    cookie
+}
+
+/// The CSRF token a login answer carried.
+///
+/// # Panics
+///
+/// With a static message when the body carries none; the body is never printed.
+pub fn csrf_token_of(reply: &Reply) -> String {
+    serde_json::from_str::<serde_json::Value>(&reply.body)
+        .ok()
+        .and_then(|body| body["csrf_token"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| panic!("the login answer carried no csrf token (body not printed)"))
+}
+
+/// The 64-hexadecimal-character token a mailed message carries.
+///
+/// # Panics
+///
+/// With a static message and the text's length when no token is present; the text is never
+/// printed.
+pub fn token_in(text: &str) -> String {
+    text.split_whitespace()
+        .find(|word| word.len() == 64 && word.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            panic!(
+                "no token in the mailed message ({} bytes; text not printed)",
+                text.len()
+            )
+        })
+}
+
+/// NEGATIVE CONTROL for the three helpers above: each is made to fail on an input that carries a
+/// canary, and the panic it raises must carry the canary in no rendering — raw, `Debug`-escaped,
+/// hexadecimal, or decimal.
+#[test]
+fn a_failed_secret_extraction_names_nothing_secret() {
+    fn message_of(failure: impl FnOnce() + std::panic::UnwindSafe) -> String {
+        let payload = std::panic::catch_unwind(failure).expect_err("the extraction must fail");
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|s| (*s).to_owned()))
+            .expect("a text panic")
+    }
+    let secret = "s3cr3t-canary-77aa";
+    let forms = renvor_testkit::every_rendering_of(secret);
+    // Built with `json!`, so no brace pair in this file reads as a template expression.
+    let wrong_cookie = Reply {
+        status: 200,
+        headers: vec![(
+            "set-cookie".to_owned(),
+            format!("not_the_session={secret}; Path=/"),
+        )],
+        body: serde_json::json!({"not_csrf": secret}).to_string(),
+    };
+    let no_cookie = Reply {
+        status: 200,
+        headers: Vec::new(),
+        body: serde_json::json!({"csrf_token": secret}).to_string(),
+    };
+    let text = format!("Verify your address with {secret}, which is not a 64-hex token.");
+    let messages = [
+        message_of(|| {
+            let _ = session_cookie_of(&wrong_cookie);
+        }),
+        message_of(|| {
+            let _ = session_cookie_of(&no_cookie);
+        }),
+        message_of(|| {
+            let _ = csrf_token_of(&wrong_cookie);
+        }),
+        message_of(|| {
+            let _ = token_in(&text);
+        }),
+    ];
+    for message in &messages {
+        for form in &forms {
+            assert!(
+                !message.contains(form),
+                "a failure message carries the secret in one of its renderings (not printed)"
+            );
+        }
+    }
+    // POSITIVE CONTROL for the control: the same check would see the secret in a message that
+    // printed it, so a green run above is not a check that matches nothing.
+    let leaking = format!("the cookie was {secret}");
+    assert!(forms.iter().any(|form| leaking.contains(form)));
 }
 
 /// Whether `secret` appears anywhere in the reply: in any header value or in the body.

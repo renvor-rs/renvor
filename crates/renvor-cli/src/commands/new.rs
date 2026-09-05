@@ -1385,6 +1385,64 @@ mod tests {
     }
 
     #[test]
+    fn the_generated_readme_states_the_windows_shutdown_limitation() {
+        // STANDARDS AXIS (P3). The generated README said the test "sends the interrupt a
+        // terminal would and requires a clean exit"; on Windows the support code ends the
+        // process, returns `None`, and skips that assertion (L-10). The README says both.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), None, "storage");
+        let readme = read("README.md");
+        assert!(
+            !readme.contains("and requires a clean exit."),
+            "the unqualified claim is still there:\n{readme}"
+        );
+        for phrase in ["on unix", "Windows", "SKIPPED", "clean exit"] {
+            assert!(
+                readme.contains(phrase),
+                "the README does not say `{phrase}`:\n{readme}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_generated_tests_fail_without_printing_a_credential() {
+        // STANDARDS AXIS (P1) and SR-001. The generated starter test printed the session cookie
+        // (`"{cookie}"`), the login body (which carries the CSRF token), and the verification
+        // mail's text (which carries the token) in its failure messages. Every extraction of a
+        // credential goes through a support helper whose failure is a static label, and the
+        // support module carries the negative control that proves the label carries nothing.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), Some("session"), "mail");
+        let test = read("tests/starter.rs");
+        for forbidden in [
+            "{cookie}",
+            "\"{}\", login.body",
+            "{text}",
+            "{listing}",
+            "{csrf}",
+            "{token}",
+            "{session_value}",
+        ] {
+            assert!(
+                !test.contains(forbidden),
+                "the generated test still prints `{forbidden}`:\n{test}"
+            );
+        }
+        let support = read("tests/support/mod.rs");
+        for helper in [
+            "pub fn session_cookie_of(",
+            "pub fn csrf_token_of(",
+            "pub fn token_in(",
+            "fn a_failed_secret_extraction_names_nothing_secret(",
+        ] {
+            assert!(
+                support.contains(helper),
+                "the support module lacks `{helper}`:\n{support}"
+            );
+        }
+    }
+
+    #[test]
     fn the_manifest_names_the_variables_the_starter_reads() {
         // Phase 011's first validation pass found the manifest's comments naming
         // `RENVOR_AUTH__CSRF_KEY` while the starter reads `RENVOR_AUTH_CSRF_KEY`: a comment nobody

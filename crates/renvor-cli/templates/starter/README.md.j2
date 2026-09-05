@@ -123,7 +123,10 @@ substitute never stands in.
 
 `tests/starter.rs` proves this project the way the framework proves itself: it resets the
 project's own tables{% if database %} and the migration ledger in the configured database{% endif %}, spawns the built binary, waits for readiness, drives it
-over loopback HTTP{% if auth_session %} — registration, login, ownership, CSRF-protected logout, the mailed flows read back from the SMTP sink —{% endif %} and then sends the interrupt a terminal would and requires a clean exit.
+over loopback HTTP{% if auth_session %} — registration, login, ownership, CSRF-protected logout, the mailed flows read back from the SMTP sink —{% endif %} and then, on unix, sends the interrupt a terminal would (`SIGINT`) and asserts a clean exit (status 0)
+within the drain bound. On Windows a test cannot send that interrupt to a child, so there the test
+ends the process and prints `SKIPPED:` for that one assertion rather than faking a clean exit
+(the framework records this as Phase 011 limitation L-10); every other assertion runs on every platform.
 
 ```
 {% if database %}RENVOR_DATABASE_URL=… {% endif %}{% if auth_session %}RENVOR_AUTH_CSRF_KEY=… RENVOR_AUTH_ABUSE_KEY=… RENVOR_MAIL_PASSWORD=… RENVOR_TEST_SMTP_API_URL=http://127.0.0.1:8025 {% endif %}cargo test
