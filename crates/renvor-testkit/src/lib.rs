@@ -15,9 +15,14 @@
 /// The bounded abuse-control contract. Needs `renvor-auth` but **not** its `tokens` half.
 #[cfg(feature = "auth")]
 pub mod abuse;
+/// The socket-free test application, behind `http` (Phase 011).
+#[cfg(feature = "http")]
+pub mod app;
 pub mod clock;
 pub mod concurrency;
 pub mod domain;
+/// Deterministic fixtures and factories (Phase 011). Driver-free.
+pub mod factory;
 pub mod harness;
 pub mod injection;
 /// The job-store contract, behind `jobs`. Runs against the memory substitute and all four rows.
@@ -33,9 +38,12 @@ pub mod portability;
 pub mod refresh;
 pub mod upgrade;
 
+#[cfg(feature = "http")]
+pub use app::{Dispatched, ShutdownOutcome, TestApplication};
 pub use clock::TestClock;
 pub use concurrency::{CONCURRENT_WRITERS, MAX_ATTEMPTS};
 pub use domain::{Widget, WidgetFixture};
+pub use factory::{Factory, ItemDraft, ItemFactory, Sequence, UserDraft, UserFactory};
 pub use harness::{Harness, HarnessRun, Outcome};
 pub use injection::{Behaviour, FailureInjectionPoint};
 pub use persistence::PersistenceFixture;

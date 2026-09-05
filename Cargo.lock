@@ -3329,6 +3329,7 @@ dependencies = [
  "renvor-auth",
  "renvor-core",
  "renvor-database",
+ "renvor-http",
  "renvor-jobs",
  "tokio",
  "tracing",
