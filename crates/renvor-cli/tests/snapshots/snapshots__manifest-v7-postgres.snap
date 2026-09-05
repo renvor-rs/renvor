@@ -8,11 +8,11 @@ description: "Template version 7, variant `postgres`. A change here is a change 
     "path": ".gitignore"
   },
   {
-    "digest": "b67193adaa8c4ad1d0aa507ff96ebfb2c3c4db9598523dcb53511ad38ad9a667",
+    "digest": null,
     "path": ".renvor/generated.toml"
   },
   {
-    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "digest": null,
     "path": "Cargo.lock"
   },
   {

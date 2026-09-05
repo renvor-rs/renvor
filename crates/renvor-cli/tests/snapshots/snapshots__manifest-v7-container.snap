@@ -16,11 +16,11 @@ description: "Template version 7, variant `container`. A change here is a change
     "path": ".gitignore"
   },
   {
-    "digest": "ba42d359c4244db936e59ef5f7f802316bda8f13600209cc96426928adaf0e23",
+    "digest": null,
     "path": ".renvor/generated.toml"
   },
   {
-    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "digest": null,
     "path": "Cargo.lock"
   },
   {

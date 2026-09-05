@@ -388,16 +388,34 @@ pub(crate) fn load(path: &std::path::Path) -> Result<Manifest, CliError> {
                 "must be `session`; it is the only starter that carries an `[auth]` table",
             ));
         }
-        if auth.migrations.is_empty() {
+        // FR-034: each value against the supported set, not merely non-empty. `renvor check`
+        // reporting `migrations = "garbage"` as valid described a project this generator could
+        // never have produced (found by the Codex review of Phase 011).
+        let expected_set = manifest
+            .persistence
+            .as_ref()
+            .map(|persistence| format!("renvor-auth/{}", persistence.database));
+        if expected_set.as_deref() != Some(auth.migrations.as_str()) {
             return Err(invalid(
                 "auth.migrations",
-                "must name the migration set that was copied",
+                &format!(
+                    "must be `renvor-auth/<engine>` for the recorded `[persistence].database`{}",
+                    expected_set
+                        .map(|set| format!(", which is `{set}`"))
+                        .unwrap_or_else(|| "; no database is recorded".to_owned())
+                ),
             ));
         }
-        if auth.session_cookie.is_empty() || auth.mail.is_empty() {
+        if auth.session_cookie != "__Host-rv_session" {
             return Err(invalid(
                 "auth.session_cookie",
-                "the cookie name and the mail transport must both be recorded",
+                "must be `__Host-rv_session`, the only cookie name the session starter sets",
+            ));
+        }
+        if auth.mail != "smtp" {
+            return Err(invalid(
+                "auth.mail",
+                "must be `smtp`, the only transport the session starter bridges",
             ));
         }
     }
@@ -756,6 +774,49 @@ observability = false
                 error.code,
                 Code::ManifestInvalid,
                 "an unknown key in {table} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_auth_table_holds_the_values_the_generator_writes_and_nothing_else() {
+        // FOUND BY THE CODEX REVIEW (P2). `migrations = "garbage"`, an arbitrary cookie name,
+        // or `mail = "anything"` passed, because the checks asked only for non-empty strings;
+        // `renvor check` reported as valid manifests this generator could never have produced.
+        // FR-034: every present value is validated against the supported set.
+        for (from, to, field) in [
+            (
+                "migrations = \"renvor-auth/postgres\"",
+                "migrations = \"garbage\"",
+                "auth.migrations",
+            ),
+            (
+                // The set must be the one for the project's engine, not merely a valid name.
+                "migrations = \"renvor-auth/postgres\"",
+                "migrations = \"renvor-auth/mysql\"",
+                "auth.migrations",
+            ),
+            (
+                "session_cookie = \"__Host-rv_session\"",
+                "session_cookie = \"sid\"",
+                "auth.session_cookie",
+            ),
+            ("mail = \"smtp\"", "mail = \"anything\"", "auth.mail"),
+        ] {
+            let manifest = VERSION_7_STARTER.replace(from, to);
+            assert_ne!(manifest, VERSION_7_STARTER, "the fixture must change: {to}");
+            let error = match run(&reporter(), write(&manifest).path()) {
+                Ok(_) => panic!("`{to}` was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, Code::ManifestInvalid, "{to}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "field" && v == field),
+                "`{to}` must be refused naming `{field}`: {:?}",
+                error.details
             );
         }
     }

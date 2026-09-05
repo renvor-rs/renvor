@@ -756,8 +756,6 @@ pub fn run(
     if let Some(framework) = configuration.framework() {
         seed_lockfile(staging.dir(), framework.path())?;
     }
-    // Last, so it lists the lockfile; before the manifest, so the manifest lists it.
-    crate::generate::record::write(staging.dir(), env!("CARGO_PKG_VERSION"), templates::VERSION)?;
     crate::inject::fail_at("render")?;
 
     // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
@@ -795,6 +793,16 @@ pub fn run(
     progress.finish();
     verified?;
     crate::inject::fail_at("verify")?;
+
+    // ── 4b. THE PROVENANCE RECORD ───────────────────────────────────────────────────
+    //
+    // AFTER verification, because verification is what resolves `Cargo.lock` — pruning the
+    // seeded framework lock to this project's closure, or creating the file for a skeleton —
+    // and the record must describe the tree that is placed. Written before verification, it
+    // digested a lockfile that no longer existed by the time the project did, so the first
+    // `renvor generate` read the lockfile as changed by the user (found by the Codex review of
+    // Phase 011). Before the manifest, so the manifest lists it.
+    crate::generate::record::write(staging.dir(), env!("CARGO_PKG_VERSION"), templates::VERSION)?;
 
     // ── 5. MANIFEST ─────────────────────────────────────────────────────────────────
     //
@@ -1215,6 +1223,165 @@ mod tests {
         .expect("write");
         std::fs::write(root.join("Cargo.lock"), "# lock\nversion = 4\n").expect("write");
         root
+    }
+
+    /// Renders a starter with these answers into a fresh directory and returns a reader.
+    fn render_starter(
+        base: &std::path::Path,
+        auth: Option<&str>,
+        capabilities: &str,
+    ) -> impl Fn(&str) -> String {
+        let mut a = answers(base.join(format!(
+            "starter-{}-{}",
+            auth.unwrap_or("none"),
+            capabilities.replace(',', "-")
+        )));
+        a.database = Some("postgres".to_owned());
+        a.example_domain = true;
+        a.capabilities = Some(capabilities.to_owned());
+        a.auth = auth.map(str::to_owned);
+        a.framework_path = Some(fake_framework(base));
+        let (configuration, destination) = ProjectConfiguration::resolve(a).expect("resolves");
+        let context = Context::build(&configuration);
+        let renderer = Renderer::new(templates::select(&configuration)).expect("builds");
+        let root = destination.display_path().to_path_buf();
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let dir =
+            cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).expect("opens");
+        renderer.render_into(&dir, &context).expect("renders");
+        move |path: &str| {
+            std::fs::read_to_string(root.join(path))
+                .unwrap_or_else(|error| panic!("`{path}` was not rendered: {error}"))
+        }
+    }
+
+    /// The body of the first `fn {name}(` in `source`, up to its closing brace at column zero.
+    fn function_body<'a>(source: &'a str, name: &str) -> &'a str {
+        let start = source
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("no `fn {name}` in:\n{source}"));
+        let end = source[start..]
+            .find("\n}\n")
+            .map_or(source.len(), |i| start + i);
+        &source[start..end]
+    }
+
+    #[test]
+    fn the_storage_read_route_requires_a_session_when_auth_is_on() {
+        // FOUND BY THE CODEX REVIEW (P1). `PUT /files/{name}` checked the session and
+        // `GET /files/{name}` did not, so anyone who could guess a name read the object without
+        // authenticating. FR-028: both routes are session-required when auth is on.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), Some("session"), "mail,storage");
+        let storage = read("src/capabilities/storage.rs");
+        assert!(
+            function_body(&storage, "get").contains("require_session"),
+            "GET reads without a session:\n{storage}"
+        );
+        assert!(function_body(&storage, "put").contains("require_session"));
+        // POSITIVE CONTROL: without auth neither route asks for one.
+        let read = render_starter(base.path(), None, "storage");
+        let storage = read("src/capabilities/storage.rs");
+        assert!(!storage.contains("require_session"), "{storage}");
+    }
+
+    #[test]
+    fn the_session_free_mail_notice_answers_the_loopback_peer_only() {
+        // FOUND BY THE CODEX REVIEW (P1). Without auth, `POST /mail/notice` had no caller check
+        // at all; the host policy validates the `Host` header, which any remote caller can
+        // supply, so a server bound beyond loopback would relay arbitrary recipients through
+        // the configured SMTP transport. FR-027 promises loopback-only: the peer identity is
+        // checked before anything else is read.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), None, "mail");
+        let mail = read("src/capabilities/mail.rs");
+        let notice = function_body(&mail, "notice");
+        assert!(
+            notice.contains("is_loopback()"),
+            "no loopback check on the notice route:\n{notice}"
+        );
+        let refusal = "if !loopback {\n        return problem(&request, renvor::ApiErrorCode::NotPermitted);\n    }";
+        let guard = notice
+            .find(refusal)
+            .unwrap_or_else(|| panic!("the check does not refuse:\n{notice}"));
+        let services = notice.find("services(&request)").expect("the state read");
+        assert!(
+            guard < services,
+            "the peer is checked before the services are read:\n{notice}"
+        );
+        assert!(
+            mail.contains("mod tests"),
+            "the generated module carries the test that forges a remote peer"
+        );
+    }
+
+    #[test]
+    fn the_auth_section_validates_its_numbers_at_validate() {
+        // FOUND BY THE CODEX REVIEW (P2). The `[auth]` validator checked the two keys only, so
+        // `sessions_per_user = 0` or a duration above the AAL2 ceilings passed Validate and
+        // failed while the auth provider was booting — after the database and mail providers
+        // had already come up. The numbers are checked where the keys are, naming the key.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), Some("session"), "mail");
+        let config = read("src/config.rs");
+        let check = function_body(&config, "check_auth_section");
+        for key in [
+            "sessions_per_user",
+            "session_idle_secs",
+            "session_absolute_secs",
+        ] {
+            assert!(check.contains(key), "`{key}` is not validated:\n{check}");
+        }
+        assert!(
+            check.contains("AAL2_INACTIVITY_CEILING") && check.contains("AAL2_OVERALL_CEILING"),
+            "the ceilings come from `SessionPolicy`, not from a copied number:\n{check}"
+        );
+        assert!(
+            function_body(&config, "auth_source").contains("check_auth_section("),
+            "the validator does not call the check"
+        );
+    }
+
+    #[test]
+    fn the_starter_reports_the_address_it_actually_bound() {
+        // FOUND BY THE CODEX REVIEW (P2). With `RENVOR_HTTP_ADDRESS=127.0.0.1:0` the provider
+        // binds an assigned port, but `main` printed the configured string — `http://127.0.0.1:0`
+        // — after Boot. The bound address is read from the provider that bound it.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), None, "none");
+        let app = read("src/app.rs");
+        assert!(
+            function_body(&app, "bound_address").contains("bound_address()"),
+            "`Services` does not ask the provider:\n{app}"
+        );
+        let main = read("src/main.rs");
+        assert!(
+            main.contains("bound_address()") && !main.contains("http_address()"),
+            "`main` prints the configured string, not the bound one:\n{main}"
+        );
+        let support = read("tests/support/mod.rs");
+        assert!(
+            support.contains("127.0.0.1:0"),
+            "the generated test binds port 0 and reads the address the application printed:\n{support}"
+        );
+    }
+
+    #[test]
+    fn the_cache_ping_uses_a_key_of_its_own_per_request() {
+        // FOUND BY THE CODEX REVIEW (P2). Every `/cache/ping` used the key `ping`, so two
+        // concurrent probes raced — one deleting what the other had just set — and a healthy
+        // cache answered 503. The key carries the request id.
+        let base = tempfile::tempdir().expect("tempdir");
+        let read = render_starter(base.path(), None, "cache");
+        let cache = read("src/capabilities/cache.rs");
+        let ping = function_body(&cache, "ping");
+        assert!(ping.contains("request_id()"), "the key is fixed:\n{ping}");
+        assert!(!ping.contains("CacheKey::new(\"ping\")"), "{ping}");
+        let test = read("tests/starter.rs");
+        assert!(
+            test.contains("/cache/ping") && test.contains("thread::spawn"),
+            "the generated test probes the cache concurrently:\n{test}"
+        );
     }
 
     #[test]

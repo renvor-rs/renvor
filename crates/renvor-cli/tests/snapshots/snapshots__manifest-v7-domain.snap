@@ -8,11 +8,11 @@ description: "Template version 7, variant `domain`. A change here is a change to
     "path": ".gitignore"
   },
   {
-    "digest": "b50c51067a7a612a3ceb204737c5e4fc7942eda146ef5c44b5b408b5b76c2f32",
+    "digest": null,
     "path": ".renvor/generated.toml"
   },
   {
-    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "digest": null,
     "path": "Cargo.lock"
   },
   {

@@ -8,11 +8,11 @@ description: "Template version 7, variant `seeded`. A change here is a change to
     "path": ".gitignore"
   },
   {
-    "digest": "96d9680ed91eaf9d1ab60405867382f47679a4442ee9b839317849f2d5d6c883",
+    "digest": null,
     "path": ".renvor/generated.toml"
   },
   {
-    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "digest": null,
     "path": "Cargo.lock"
   },
   {

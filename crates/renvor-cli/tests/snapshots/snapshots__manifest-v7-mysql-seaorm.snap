@@ -8,11 +8,11 @@ description: "Template version 7, variant `mysql-seaorm`. A change here is a cha
     "path": ".gitignore"
   },
   {
-    "digest": "f087bf45b85c740a25d4b37e9c7b1aeb2f8efc81185b890aff3e32bd27f9f46e",
+    "digest": null,
     "path": ".renvor/generated.toml"
   },
   {
-    "digest": "1701ca91c4a059fc96c7e907b3f21b14246c59615214e10eeb7f5ebe6c6426a6",
+    "digest": null,
     "path": "Cargo.lock"
   },
   {

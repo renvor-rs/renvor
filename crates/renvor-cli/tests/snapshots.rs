@@ -67,9 +67,16 @@ fn every_skeleton_manifest_is_pinned_per_template_version() {
             .iter()
             .filter(|entry| entry["kind"] == "file")
             .map(|entry| {
+                // `template-contract.md` §"Snapshot stability policy": `Cargo.lock` is resolved
+                // rather than rendered and is excluded from the pinned digests, and the
+                // provenance record lists the lockfile's digest, so it is excluded with it.
+                // Both PATHS are pinned — a variant that stopped producing either would fail —
+                // and a template drift still fails through the digest of the file that drifted.
+                let pinned =
+                    entry["path"] != "Cargo.lock" && entry["path"] != ".renvor/generated.toml";
                 serde_json::json!({
                     "path": entry["path"],
-                    "digest": entry["digest"],
+                    "digest": if pinned { entry["digest"].clone() } else { serde_json::Value::Null },
                 })
             })
             .collect();
