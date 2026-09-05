@@ -65,6 +65,15 @@ mirror of its decisions.
 | `renvor_testkit::client` (over `minreq`) | one signature shared by every generated test — `http(address, method, path, headers, body) -> Reply` — with the JSON content type and the zero-length body rule the starter's write routes expect |
 | `renvor_testkit::app::TestApplication` | socket-free dispatch through the registry with the caller's providers (FR-050); the shape `renvor-auth-http`'s suite hand-wrote in Phase 009 |
 
+## 4a. The correction round (2026-09-05): nothing added
+
+The seventeen Native Codex fixes added **no dependency**. The wizard's multi-select is
+`cliclack::MultiSelect`, from the prompt library already in the lock; the reserved-word table is a
+sorted `&[&str]` in `generate.rs` (a crate carrying the two engines' keyword lists was considered
+and rejected as a larger surface than a static table — `sqlparser` would bring a full SQL parser
+for one lookup); the merged-tree verification reuses `generate::verify`; the kernel's shared state
+is `std::sync::Arc`. `Cargo.lock` is unchanged by the round.
+
 ## 5. Advisory queries, with positive controls
 
 - **Query A — local clone of the RustSec advisory database**, HEAD `5a0ebedfe8bdd2e295b171f4162f8c977bcad9a5` (2026-09-02), by `ls crates/<name>/`. Positive controls returned: `chrono` → RUSTSEC-2020-0159; `time` → RUSTSEC-2020-0071, RUSTSEC-2026-0009. Candidates: `minreq`, `httparse`, `fake`, `rstest`, `factori`, `insta`, `expect-test`, `oneio`, `mockito`, `wiremock`, `httptest`, `signal-child`, `cliclack`, `minijinja` — **no directory**. Hits on evaluated names that do not affect the versions in use: `http` (RUSTSEC-2019-0033/-0034, patched ≥ 0.1.20; 1.5.0 unaffected), `tiny_http` (RUSTSEC-2020-0031, patched ≥ 0.8.0), `nix` (RUSTSEC-2021-0119, patched ≥ 0.23.0; 0.28.0 unaffected).

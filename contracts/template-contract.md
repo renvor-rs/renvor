@@ -1,7 +1,7 @@
 ---
 description: "Contract C-4 — template delivery, rendering bounds, and containment"
 version: "1.1.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-4 — Templates
@@ -117,7 +117,8 @@ per template version, in `crates/renvor-cli/tests/snapshots/`. The policy:
 | a snapshot changes **only** together with a `templates::VERSION` bump | a body edit that leaves the version alone fails the snapshot, and the failure names the version constant |
 | CI runs with `INSTA_UPDATE=no` and `INSTA_FORCE_PASS` unset | a drift fails; nothing rewrites a snapshot on a runner |
 | `cargo insta review` is the one update path | a reviewer sees the old and the new manifest side by side before either is accepted |
-| `Cargo.lock` is excluded from the pinned set | it is resolved, not rendered, and differs by machine |
+| `Cargo.lock`'s digest is excluded from the pinned set; its path is pinned | it is resolved, not rendered, and differs by machine |
+| `.renvor/generated.toml`'s digest is excluded from the pinned set; its path is pinned | the record lists `Cargo.lock`'s digest, so it differs by machine the way the lockfile does; a template drift still fails through the digest of the file that drifted (2026-09-05, Phase 011 correction round) |
 
 ## The provenance record (Phase 011)
 
@@ -126,6 +127,14 @@ for every file generation produced, its path and SHA-256. It is itself generated
 manifest. It exists so a later generator — `renvor generate`, or an upgrade — can tell an untouched
 file from one the user changed **without downloading or evaluating anything**, and it records
 digests only, never contents.
+
+Three rules were made explicit by the Phase 011 correction round (2026-09-05):
+
+| Rule | Why |
+|---|---|
+| The record is written **after** verification and before the manifest | verification resolves `Cargo.lock` — pruning a starter's seeded lock, creating a skeleton's — and the record must digest the lockfile that is placed |
+| For the two **marked** files (`src/resources/mod.rs`, `src/routes.rs`) the digest is taken over the file with the lines between its markers removed | the block is the generators' shared zone; a marker edit must not turn the user's lines outside it into generator-owned bytes, and a filled block must not read as a user change |
+| One `[[resource]]` per `renvor generate resource` run: `name` and `fields` exactly as given | a digest cannot say what a module was rendered from, and `renvor generate auth` renders every recorded resource again with the session guards |
 
 ## Output paths
 

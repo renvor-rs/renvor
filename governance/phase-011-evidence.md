@@ -221,6 +221,22 @@ regression in §5.
   --no-deps` was run by hand after the fix (06:05, green) and again by the second validation pass
   (07:07, green).
 
+- **Three defects the correction round's own proofs surfaced (2026-09-05), none of them a
+  Codex finding.** (1) The SeaORM repository template's `create` signature was split across lines
+  with a conditional `owner` parameter; without auth `rustfmt` joins it, and no earlier row had
+  rendered SeaORM without auth beside the example domain — the new `authaddedmysql` row did, and
+  generation refused its own output at the format check. (2) The generated `config.rs` test's
+  `assert_eq!(defaults["local_domain"].as_str(), Some("<name>.test"))` crossed rustfmt's call width
+  at a 14-character project name; every earlier row's name was at most 11 characters (limitation
+  L-16). (3) The generated `reset()` dropped only the tables the project had selected, so an
+  upgraded project booting **against the ledger its pre-auth run left** — the exact scenario the
+  review's first finding described, now step 6 of both auth-added rows — met `rv_auth_*` tables
+  left in the shared test database by an earlier auth row and failed its first auth migration;
+  a manual reproduction against a fresh database booted and applied the eleven pending migrations
+  forward, which is what isolated the cause to the shared database. The reset now drops every table
+  the framework's own sets create, selected or not. Each was found by a row, fixed in the template,
+  and re-proven by the row.
+
 ## 6. Testing discipline
 
 Every batch: the failing test first (quoted in the batch evidence), the minimal change, the green
@@ -306,3 +322,70 @@ Logs: `gate-1.94.0.log`, `gate-stable.log` (scratch, quoted here).
 **What is not claimed.** No independent human review; no merge, tag, release, publication, or
 deployment; W-023 and W-024 are closed by the ledger entries that cite the closure head, not by
 this paragraph; the phase is complete only when the final authority says so.
+
+## 11. The correction round (2026-09-05) — what changed after the Codex review, and how it is bound
+
+**What it answered.** The seventeen Native Codex findings of `phase-011-review-record.md` §3a,
+each reproduced before it was fixed, each fixed at the root with a regression test that failed
+first (§review §3a names every test and every red run). The Standards and Specification axes did
+not reach the correcting session (§review §3b, §3c).
+
+**What it changed in the product.** The apply engine commits a generation as one change or none
+and digests the two marked files without their block; the record carries each generated resource;
+`generate auth` keeps applied migrations byte-identical, adds the owner column by a forward
+migration, renders every recorded resource again with its guards, verifies the merged tree in a
+scratch copy, and writes the resolved lockfile; migration versions are allocated past the
+directory and an import cannot collide with a version another migration holds; a name beside
+`--import`, and a resource or field that is a bare SQL keyword, are refused; `renvor check`
+validates the auth table's values; the record is written after verification; the wizard asks the
+capabilities with a multi-select; the kernel shares its state map after Boot and the test
+application attaches it, one run id, and a chosen peer to every request; the generated starter
+requires the session for storage reads, refuses a mail notice from any peer but loopback, checks
+the session numbers at Validate, announces the address it bound, probes the cache under a key of
+its own, and resets every table the framework's sets create. Contracts: `command-surface.md`
+1.3.0, `template-contract.md` 1.2.0. No dependency was added (`phase-011-dependency-inventory.md`
+§4a). Three limitations were added (L-14, L-15, L-16).
+
+**The census, extended.** `ROW_EVIDENCE` went from 86 to **87**: the auth-added proof runs on
+MySQL with SeaORM as well (`the_auth_starter_added_to_a_mysql_seaorm_starter_proves_itself`),
+because the forward owner migration is engine-specific SQL. Both auth-added rows now: generate a
+resource before auth; run the pre-auth resource test (the ledger holds the item and resource
+migrations by checksum); make `generate auth` refuse a line the user added outside the markers of
+`src/routes.rs`; add auth and assert the applied migration untouched, the owner migration
+planned, the resource regenerated with its guards, the lockfile an `edit`; `cargo build --locked`;
+**boot the upgraded project against the ledger the pre-auth run left** and read an HTTP answer;
+then run the regenerated starter and resource tests. The resource rows refuse `Order`.
+
+**Rows re-run on this machine before the gates** (real services, `RENVOR_TEST_REQUIRE_DATABASE=1`,
+`RENVOR_TEST_REQUIRE_CAPABILITIES=1`, logs `row-<name>.log`):
+
+| Row | What it proves for the round | Result | Elapsed |
+|---|---|---|---|
+| `nodb` | port `0` and the announced address; `Shared` on a starter with no database | green | 15:29:38–15:30:27 |
+| `cacheonly` | the per-request cache key under eight concurrent probes | green | 15:30:27–15:30:58 |
+| `storageonly` | the storage routes without auth (unchanged behaviour) | green | 15:30:58–15:31:27 |
+| `mailonly` | the loopback guard: the generated module's forged-peer unit test, then the notice over loopback | green | 15:31:27–15:31:57 |
+| `ressqlx` | the record's `[[resource]]`; `Order` refused as a reserved identifier | green | 15:35:01–15:35:45 |
+| `authadded` (PostgreSQL, SQLx) | the seven-step upgrade: resource before auth, the pre-auth ledger, the marker conflict, the untouched item migration and the owner column forward, the resource regenerated with its guards, `Cargo.lock` as an `edit`, `cargo build --locked`, boot against the existing ledger, both regenerated tests | green | 15:43:32–15:45:18 |
+| `authaddedmysql` (MySQL, SeaORM) | the same seven steps on the other engine and persistence model | green | 15:45:18–15:47:14 |
+| `pgsqlx` | the anonymous storage read refused with `401`; the concurrent cache probes; port `0`; every capability beside auth | green | 15:47:14–15:48:05 |
+
+Earlier attempts of the same rows failed on the three template defects §5 records (a doubled
+blank line, the SeaORM `create` signature, the name-width assertion) and on the shared-database
+reset; each failure is in the logs and each fix was re-proven by the row. The rows not re-run here
+(`mysqlx`, `pgsea`, `mysea`, `authonly`, `observeonly`, `ressea`, `authrefused`, the determinism
+proofs, parity) are proven by the gate legs' census below.
+
+**Mutations.** Batch G, 21 runs, 21 killed, two first forms survived and were re-targeted
+(`phase-011-mutation-ledger.md` §Batch G). Totals for the phase: MUT-TOTALS-PENDING.
+
+**Gates on the final source head.** GATES-PENDING
+
+**Heads.** HEADS-PENDING
+
+**Pull request and CI.** CI-PENDING
+
+**Not done, not claimed.** No independent human review; the Standards and Specification findings
+were not received and are open; the merged-tree verification of `generate auth` costs a full
+build of the project (measured: MERGE-COST-PENDING on this machine with a warm build directory);
+nothing merged, tagged, released, published, or deployed.
