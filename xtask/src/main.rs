@@ -2273,7 +2273,10 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// This pair is also why the census invocation carries `tokens`: see `the_four_rows_all_ran`.
 /// # The starter matrix, added in Phase 011
 ///
-/// **Sixty-seven became eighty-six.** The eighteen rows of `renvor-cli`'s `starter_matrix` and
+/// **Sixty-seven became eighty-six, then eighty-seven.** The correction round of Phase 011 added
+/// the auth-added proof on MySQL with SeaORM: the forward owner migration `renvor generate auth`
+/// writes is engine-specific SQL, and one engine cannot prove the other's. The eighteen — now
+/// nineteen — rows of `renvor-cli`'s `starter_matrix` and
 /// the starter parity row of its `parity` binary are the removal-plan controls of W-023 and
 /// W-024: each covering row generates a framework-backed starter and runs the placed project's
 /// own test against the real services, and the parity row drives the wizard through a real
@@ -2288,7 +2291,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
 /// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
 /// extra — it is an error, and the census would have failed to run rather than failed to find.
-const ROW_EVIDENCE: [(&str, &str, &str, &str); 86] = [
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 87] = [
     // THE STARTER MATRIX (Phase 011, W-023 and W-024). Fourteen rows in one binary — the ten
     // covering rows, each generating a framework-backed starter and running its own live proof,
     // the refusals, and the three determinism proofs — and the wizard-versus-flags parity of a
@@ -2402,6 +2405,12 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 86] = [
         "renvor-cli",
         "starter_matrix",
         "the_auth_starter_added_to_a_starter_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_auth_starter_added_to_a_mysql_seaorm_starter_proves_itself",
         "",
     ),
     (
@@ -3136,7 +3145,7 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             "all {} required suites reported in (12 tests on each direct-SQLx row, 11 on each \
              SeaORM row, the refresh-rotation, abuse-control, and job-store \
              contracts on every row, the end-to-end test application, and the \
-             nineteen starter rows: ten covering starters, the refusals, the \
+             twenty starter rows: ten covering starters, the refusals, the \
              determinism proofs, the generator proofs, and the wizard parity of a starter)",
             ROW_EVIDENCE.len()
         ),

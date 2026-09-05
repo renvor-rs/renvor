@@ -55,9 +55,12 @@
 
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher as _, Hasher as _};
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock, PoisonError};
+use std::time::{Duration, Instant};
 
 /// A service a row's live proof needs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -975,6 +978,26 @@ macro_rules! resource_row {
             assert!(project.join("tests/post.rs").is_file());
             let routes = std::fs::read_to_string(project.join("src/routes.rs")).expect("routes");
             assert!(routes.contains("crate::resources::post::declare(&mut routes)?;"));
+            let record =
+                std::fs::read_to_string(project.join(".renvor/generated.toml")).expect("record");
+            assert!(
+                record.contains("[[resource]]") && record.contains("name = \"Post\""),
+                "the record carries the resource's definition:\n{record}"
+            );
+
+            // A name that would be a bare SQL keyword is refused before anything is planned.
+            let (outcome, refused) =
+                generate_into(&project, &["resource", "Order", "title:string"]);
+            assert!(
+                !outcome.succeeded,
+                "a reserved word was accepted: {refused}"
+            );
+            assert_eq!(refused["error"]["code"], "unsupported_value", "{refused}");
+            assert_eq!(
+                refused["error"]["details"]["reason"], "reserved_identifier",
+                "{refused}"
+            );
+            assert!(!project.join("src/resources/order.rs").exists());
 
             // A rerun is a no-op, and says so.
             let (outcome, again) = generate_into(
@@ -1026,44 +1049,234 @@ resource_row!(
     "seaorm"
 );
 
-#[test]
-fn the_auth_starter_added_to_a_starter_proves_itself() {
-    // FR-047. A starter generated without authentication gains the session starter later, by
-    // re-rendering its generator-owned files with the choice made; the regenerated test then
-    // drives registration, login, and the rest against the real services.
+/// Whether `address` answers HTTP at all — the HTTP provider starts last, so any status line
+/// means every provider booted.
+fn answers_http(address: &str) -> bool {
+    let Ok(mut stream) = TcpStream::connect(address) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let request = format!("GET / HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut reply = String::new();
+    let _ = stream.read_to_string(&mut reply);
+    reply.starts_with("HTTP/1.1 ")
+}
+
+/// Starts the placed project's binary against the services **without resetting anything**,
+/// waits until it answers over HTTP, and ends it. What it proves: every migration the ledger
+/// already holds is accepted — its checksum unchanged — and every migration added since applies
+/// forward. `false` means skipped for a missing service.
+fn boots_against_the_existing_ledger(project: &Path, needs: &[Service]) -> bool {
+    let mut envs: Vec<(&str, String)> = Vec::new();
+    for needed in needs {
+        let Some(value) = service(*needed) else {
+            return false;
+        };
+        match needed {
+            Service::Postgres | Service::Mysql => envs.push(("RENVOR_DATABASE_URL", value)),
+            Service::Valkey => envs.push(("RENVOR_CACHE_PASSWORD", value)),
+            Service::Smtp => envs.push(("RENVOR_MAIL_PASSWORD", value)),
+        }
+    }
+    envs.push(("RENVOR_AUTH_CSRF_KEY", random_key()));
+    envs.push(("RENVOR_AUTH_ABUSE_KEY", random_key()));
+    envs.push(("RENVOR_HTTP_ADDRESS", "127.0.0.1:0".to_owned()));
+    let mut command = Command::new("cargo");
+    command
+        .args(["run", "--quiet"])
+        .current_dir(project)
+        .env("CARGO_TARGET_DIR", target_dir())
+        .env("CARGO_INCREMENTAL", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    for (name, value) in &envs {
+        command.env(name, value);
+    }
+    let mut child = command.spawn().expect("cargo run starts");
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let (announce, announced) = std::sync::mpsc::channel::<Option<String>>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = announce.send(None);
+                    return;
+                }
+                Ok(_) => {
+                    if let Some(address) = line.trim().split(" is listening at http://").nth(1) {
+                        let _ = announce.send(Some(address.to_owned()));
+                    }
+                }
+            }
+        }
+    });
+    let diagnostics = std::thread::spawn(move || {
+        let mut text = String::new();
+        let _ = BufReader::new(stderr).read_to_string(&mut text);
+        text
+    });
+    // Generous: `cargo run` may compile first.
+    let address = match announced.recv_timeout(Duration::from_secs(900)) {
+        Ok(Some(address)) => address,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let stderr = diagnostics.join().unwrap_or_default();
+            let tail: Vec<&str> = stderr.lines().rev().take(40).collect::<Vec<_>>();
+            panic!(
+                "the project exited before it announced its address: it must accept the ledger \
+                 it already applied and add the new migrations forward (last lines):\n{}",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+            );
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the project did not announce its address within the bound");
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if answers_http(&address) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the project announced {address} but never answered on it"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    true
+}
+
+/// FR-047, with the proofs the correction round of Phase 011 added: a starter generated without
+/// authentication gains the session starter later — **after** it has booted and migrated, after a
+/// resource was generated into it, and beside a line the user wrote outside the markers of
+/// `src/routes.rs`. The applied migrations stay byte-identical and the owner column arrives
+/// forward; the resource is rendered again with its guards; the lockfile is resolved for the new
+/// dependencies; the user's line is a conflict that writes nothing.
+fn the_auth_starter_added_later(row_name: &'static str, database: &'static str, orm: &'static str) {
     let _serial = serial();
-    if !row_selected("authadded") {
+    if !row_selected(row_name) {
         return;
     }
+    let needs: &[Service] = if database == "postgres" {
+        &[Service::Postgres, Service::Smtp]
+    } else {
+        &[Service::Mysql, Service::Smtp]
+    };
     let row = Row {
-        name: "authadded",
-        database: Some("postgres"),
-        orm: "sqlx",
+        name: row_name,
+        database: Some(database),
+        orm,
         flags: &["--capabilities", "mail", "--example-domain"],
-        needs: &[Service::Postgres, Service::Smtp],
+        needs,
     };
     let base = tempfile::tempdir().expect("tempdir");
     let (project, _) = generate(base.path(), &row);
     assert!(!project.join("src/auth.rs").exists());
 
-    let (outcome, document) = generate_into(&project, &["auth"]);
+    // 1. A resource before auth: its writes are public, as the manifest says.
+    let (outcome, document) = generate_into(&project, &["resource", "Post", "title:string"]);
+    assert!(outcome.succeeded, "{document}\n{}", outcome.output);
+    let module = project.join("src/resources/post.rs");
+    let post_before = std::fs::read_to_string(&module).expect("module");
+    assert!(!post_before.contains("require_session"), "{post_before}");
+
+    // 2. The project boots and migrates: the ledger now holds the item and post migrations by
+    //    their checksums. Skipped without the services, and everything below that needs the
+    //    ledger is skipped with it.
+    let migrated = checks_after_generation(&project, "post", row.needs);
+
+    // 3. A line of the user's own outside the markers makes the auth generator refuse — nothing
+    //    written — and is put back for the run that succeeds.
+    let routes = project.join("src/routes.rs");
+    let original = std::fs::read_to_string(&routes).expect("routes");
+    std::fs::write(
+        &routes,
+        format!("{original}\n// the user's own registration lives here\n"),
+    )
+    .expect("write");
+    let (outcome, refused) = generate_into(&project, &["auth"]);
     assert!(
-        outcome.succeeded,
-        "{document}
-{}",
-        outcome.output
+        !outcome.succeeded,
+        "the user's line was overwritten: {refused}"
     );
+    assert_eq!(refused["error"]["code"], "generation_conflict", "{refused}");
+    assert!(
+        refused["error"]["details"]["paths"]
+            .as_str()
+            .is_some_and(|paths| paths.contains("src/routes.rs")),
+        "{refused}"
+    );
+    assert!(
+        !project.join("src/auth.rs").exists(),
+        "a conflict wrote the starter"
+    );
+    std::fs::write(&routes, &original).expect("restore");
+
+    // 4. The auth starter, added.
+    let item_up = project.join("migrations/0001_create_item.up.sql");
+    let item_up_before = std::fs::read_to_string(&item_up).expect("the item migration");
+    let (outcome, document) = generate_into(&project, &["auth"]);
+    assert!(outcome.succeeded, "{document}\n{}", outcome.output);
     assert!(project.join("src/auth.rs").is_file());
     assert!(project.join("config/auth.toml").is_file());
     let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("renvor.toml");
     assert!(manifest.contains("auth = \"session\""), "{manifest}");
     let files = document["result"]["files"].as_array().expect("files");
-    assert!(
+    let action_of = |path: &str| {
         files
             .iter()
-            .any(|f| f["path"] == "src/main.rs" && f["action"] == "regenerate"),
+            .find(|f| f["path"] == path)
+            .map(|f| f["action"].as_str().unwrap_or("").to_owned())
+    };
+    assert_eq!(
+        action_of("src/main.rs").as_deref(),
+        Some("regenerate"),
         "the untouched main.rs is regenerated: {document}"
     );
+    assert_eq!(
+        action_of("Cargo.lock").as_deref(),
+        Some("edit"),
+        "the lockfile is resolved for the auth dependencies: {document}"
+    );
+    assert!(
+        files.iter().all(|f| !f["path"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("migrations/0001_")),
+        "an applied migration was planned again: {document}"
+    );
+    assert!(
+        files.iter().any(|f| f["path"]
+            .as_str()
+            .unwrap_or("")
+            .ends_with("_add_item_owner.up.sql")),
+        "no forward migration adds the owner column: {document}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&item_up).expect("still there"),
+        item_up_before,
+        "the applied item migration was rewritten"
+    );
+    assert_eq!(
+        action_of("src/resources/post.rs").as_deref(),
+        Some("regenerate"),
+        "the resource is rendered again with its guards: {document}"
+    );
+    let post_after = std::fs::read_to_string(&module).expect("module");
+    assert!(post_after.contains("require_session"), "{post_after}");
 
     let (outcome, again) = generate_into(&project, &["auth"]);
     assert!(outcome.succeeded, "{again}");
@@ -1072,7 +1285,36 @@ fn the_auth_starter_added_to_a_starter_proves_itself() {
         "a rerun wrote something: {again}"
     );
 
+    // 5. The lockfile the command wrote is the one the build resolves.
+    let locked = run("cargo", &["build", "--locked"], &project, &[]);
+    assert!(
+        locked.succeeded,
+        "`cargo build --locked` failed after the auth starter was added [{}]:\n{}",
+        locked.status, locked.output
+    );
+
+    // 6. Against the ledger the pre-auth run left: the item migration's checksum is unchanged,
+    //    and the auth set and the owner column apply forward.
+    if migrated {
+        assert!(boots_against_the_existing_ledger(&project, row.needs));
+    }
+
+    // 7. The regenerated tests: the starter's, and the resource's, which now refuses a write
+    //    without a session.
     checks_after_generation(&project, "starter", row.needs);
+    checks_after_generation(&project, "post", row.needs);
+}
+
+#[test]
+fn the_auth_starter_added_to_a_starter_proves_itself() {
+    the_auth_starter_added_later("authadded", "postgres", "sqlx");
+}
+
+#[test]
+fn the_auth_starter_added_to_a_mysql_seaorm_starter_proves_itself() {
+    // The forward owner migration is engine-specific SQL, so the upgrade is proven on the
+    // other engine — with the other persistence model — as well.
+    the_auth_starter_added_later("authaddedmysql", "mysql", "seaorm");
 }
 
 #[test]
