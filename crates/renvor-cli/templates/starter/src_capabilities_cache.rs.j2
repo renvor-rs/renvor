@@ -61,7 +61,11 @@ async fn ping(request: renvor::Request) -> renvor::Response {
         return crate::routes::problem(&request, renvor::ApiErrorCode::Unavailable);
     };
     let bounds = CacheBounds::new();
-    let key = CacheKey::new("ping").expect("a fixed valid key");
+    // A key of this request's own: two concurrent probes under one key raced — one deleting
+    // what the other had just set — and a healthy cache answered 503. The request id is sixteen
+    // hexadecimal characters, so the key is valid by construction.
+    let key = CacheKey::new(&format!("ping:{}", request.context().request_id()))
+        .expect("a hexadecimal request id is a valid key");
     let stored = cache
         .set(
             &key,

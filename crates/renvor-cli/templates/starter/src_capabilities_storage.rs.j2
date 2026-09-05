@@ -38,6 +38,9 @@ pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Err
                 .summary("Store the request body as an object")
                 .tag("files")
                 .response(204, "Stored", None)
+{% if auth_session %}
+                .error(renvor::ApiErrorCode::AuthenticationRequired)
+{% endif %}
                 .error(renvor::ApiErrorCode::ValidationFailed),
         )?;
     routes.get("/files/{name}", get)?.describe(
@@ -46,6 +49,9 @@ pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Err
             .summary("Read an object back")
             .tag("files")
             .response(200, "The object's bytes", None)
+{% if auth_session %}
+            .error(renvor::ApiErrorCode::AuthenticationRequired)
+{% endif %}
             .error(renvor::ApiErrorCode::ResourceNotFound),
     )?;
     Ok(())
@@ -80,12 +86,18 @@ async fn put(request: renvor::Request) -> renvor::Response {
     }
 }
 
-/// `GET /files/{name}`.
+/// `GET /files/{name}`{% if auth_session %} — a session is required, as for the write: an object
+/// a signed-in user stored is not readable by whoever guesses its name{% endif %}.
 async fn get(request: renvor::Request) -> renvor::Response {
     let services = match services(&request) {
         Ok(services) => services,
         Err(response) => return response,
     };
+{% if auth_session %}
+    if let Err(code) = crate::auth::require_session(services, &request).await {
+        return problem(&request, code);
+    }
+{% endif %}
     let Some(store) = services.storage.store() else {
         return problem(&request, renvor::ApiErrorCode::Unavailable);
     };

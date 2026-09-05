@@ -319,6 +319,16 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     // ── cache: one round trip against the real server ─────────────────────────────
     let reply = http(&address, "GET", "/cache/ping", &[], "");
     assert_eq!(reply.status, 200, "{}", reply.body);
+    // Concurrent probes do not interfere: each round trip uses a key of its own.
+    let probes: Vec<_> = (0..8)
+        .map(|_| {
+            let address = address.clone();
+            std::thread::spawn(move || http(&address, "GET", "/cache/ping", &[], "").status)
+        })
+        .collect();
+    for probe in probes {
+        assert_eq!(probe.join().expect("the probe thread finished"), 200);
+    }
 {% endif %}
 {% if cap_storage %}
 
@@ -327,11 +337,16 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     let carol = session(&address, &users.build(&mut sequence));
     let carol_session: Vec<(&str, &str)> = vec![("Cookie", carol.as_str())];
     let put = http(&address, "PUT", "/files/hello.txt", &carol_session, "hello");
+    assert_eq!(put.status, 204, "{}", put.body);
+    // Reading needs the session too: the object is not readable by whoever guesses its name.
+    let anonymous = http(&address, "GET", "/files/hello.txt", &[], "");
+    assert_eq!(anonymous.status, 401, "{}", anonymous.body);
+    let got = http(&address, "GET", "/files/hello.txt", &carol_session, "");
 {% else %}
     let put = http(&address, "PUT", "/files/hello.txt", &[], "hello");
-{% endif %}
     assert_eq!(put.status, 204, "{}", put.body);
     let got = http(&address, "GET", "/files/hello.txt", &[], "");
+{% endif %}
     assert_eq!(got.status, 200);
     assert_eq!(got.body, "hello");
 {% endif %}

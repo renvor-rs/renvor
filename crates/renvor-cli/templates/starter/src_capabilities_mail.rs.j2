@@ -40,6 +40,11 @@ pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Err
             .summary("Send one notice to the configured sender's own domain")
             .tag("mail")
             .response(202, "The relay accepted the message", None)
+{% if auth_session %}
+            .error(renvor::ApiErrorCode::AuthenticationRequired)
+{% else %}
+            .error(renvor::ApiErrorCode::NotPermitted)
+{% endif %}
             .error(renvor::ApiErrorCode::Unavailable),
     )?;
     Ok(())
@@ -54,8 +59,21 @@ struct Notice {
     subject: String,
 }
 
-/// `POST /mail/notice` — one message through the real transport{% if auth_session %}, from a signed-in user{% endif %}.
+/// `POST /mail/notice` — one message through the real transport{% if auth_session %}, from a signed-in user{% else %}, from the loopback peer only{% endif %}.
 async fn notice(request: renvor::Request) -> renvor::Response {
+{% if not auth_session %}
+    // Session-free, so the caller is the loopback peer or nobody. The host policy admits the
+    // local domain by its `Host` header, which any remote caller can supply once the server is
+    // bound beyond loopback or fronted by a proxy; the peer address is what a remote caller
+    // cannot supply. Checked before anything else is read, so a refused caller learns nothing.
+    let loopback = matches!(
+        request.context().client(),
+        renvor::ClientIdentity::DirectPeer(peer) if peer.is_loopback()
+    );
+    if !loopback {
+        return problem(&request, renvor::ApiErrorCode::NotPermitted);
+    }
+{% endif %}
     let services = match services(&request) {
         Ok(services) => services,
         Err(response) => return response,
@@ -101,3 +119,29 @@ async fn notice(request: renvor::Request) -> renvor::Response {
         Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
     }
 }
+{% if not auth_session %}
+
+#[cfg(test)]
+mod tests {
+    use renvor::{Method, RouteRegistry};
+    use renvor_testkit::app::TestApplication;
+
+    #[tokio::test]
+    async fn a_notice_from_beyond_loopback_is_refused_before_anything_is_read() {
+        let mut routes = RouteRegistry::new();
+        super::declare(&mut routes).expect("the routes declare");
+        let app = TestApplication::new(routes);
+        let body = br#"{"to":"someone@example.test","subject":"probe"}"#.to_vec();
+        let remote: std::net::IpAddr = "203.0.113.9".parse().expect("an address");
+        let request = app.request_from(renvor::ClientIdentity::DirectPeer(remote), body.clone());
+        let refused = app.dispatch(Method::Post, "/mail/notice", request).await;
+        assert_eq!(refused.status, 403, "{}", refused.body);
+
+        // POSITIVE CONTROL: the loopback peer gets past the guard — to the services lookup,
+        // which this socket-free application has no state for, so it answers 500, not 403.
+        let request = app.request(body);
+        let local = app.dispatch(Method::Post, "/mail/notice", request).await;
+        assert_ne!(local.status, 403, "{}", local.body);
+    }
+}
+{% endif %}

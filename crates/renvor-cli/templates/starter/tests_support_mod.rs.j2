@@ -8,6 +8,8 @@
 
 {% if cap_observability %}
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+{% else %}
+use std::io::{BufRead as _, BufReader};
 {% endif %}
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
@@ -134,15 +136,6 @@ pub fn interrupt_and_wait(child: &mut Child) -> Option<std::process::ExitStatus>
     let _ = child.kill();
     child.wait().ok()
 }
-
-/// A free loopback port, chosen by the kernel and released before the application binds it.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("a port")
-        .local_addr()
-        .expect("an address")
-        .port()
-}
 {% if database %}
 
 /// Drops `tables` if they exist, through the application's own dependency.
@@ -163,15 +156,16 @@ pub async fn drop_tables(url: &str, tables: &[&str]) {
 
 /// Resets this project's tables and the migration ledger, so the run is the run this test
 /// describes rather than the one before it.
+///
+/// Every table the framework's own migration sets create is dropped **whether or not this
+/// project selected the set**: a shared test database can hold another configuration's tables
+/// — the same project after `renvor generate auth`, or a neighbour in a matrix — and a set
+/// applied later must find the ground clear. `IF EXISTS` makes the absent ones free.
 pub async fn reset(url: &str) {
-{% if auth_session or cap_jobs %}
     let tables = [
         "item",
-{% if cap_jobs %}
         "rv_job",
         "rv_job_queue",
-{% endif %}
-{% if auth_session %}
         "rv_auth_attempt",
         "rv_auth_refresh",
         "rv_auth_refresh_family",
@@ -180,13 +174,9 @@ pub async fn reset(url: &str) {
         "rv_auth_session",
         "rv_auth_credential",
         "rv_auth_user",
-{% endif %}
         "_renvor_seeds",
         "_sqlx_migrations",
     ];
-{% else %}
-    let tables = ["item", "_renvor_seeds", "_sqlx_migrations"];
-{% endif %}
     drop_tables(url, &tables).await;
 }
 
@@ -255,15 +245,16 @@ impl Application {
 /// on top of this process's own, and waits until it answers `{{ ready_path }}` — which it does
 /// only once every provider has booted.
 pub fn start() -> Application {
-    let port = free_port();
-    let address = format!("127.0.0.1:{port}");
 {% if cap_observability %}
     let (otlp_endpoint, otlp) = otlp_receiver();
 {% endif %}
     let mut command = Command::new(binary());
     command
         .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("RENVOR_HTTP_ADDRESS", &address)
+        // Port 0: the kernel assigns a free port, and the application announces the one it
+        // bound — which is the only party that knows it. Choosing a port here and releasing it
+        // would leave a window in which something else could take it.
+        .env("RENVOR_HTTP_ADDRESS", "127.0.0.1:0")
 {% if cap_observability %}
         .env("RENVOR_OTLP_ENDPOINT", &otlp_endpoint)
         .env("RENVOR_OTLP_SERVICE_NAME", NAME)
@@ -276,9 +267,44 @@ pub fn start() -> Application {
         .stderr(Stdio::inherit());
     let mut child = Running(command.spawn().expect("the application starts"));
 
+    // THE BOUND ADDRESS, from the line the application prints once Boot has completed. The
+    // reader keeps draining stdout afterwards, so the pipe never fills.
+    let stdout = child.0.stdout.take().expect("stdout is piped");
+    let (announce, announced) = std::sync::mpsc::channel::<Option<String>>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = announce.send(None);
+                    return;
+                }
+                Ok(_) => {
+                    if let Some(address) = line
+                        .trim()
+                        .strip_prefix(&format!("{NAME} is listening at http://"))
+                    {
+                        let _ = announce.send(Some(address.to_owned()));
+                    }
+                }
+            }
+        }
+    });
+    let deadline = Instant::now() + READY_WITHIN;
+    let address = match announced.recv_timeout(READY_WITHIN) {
+        Ok(Some(address)) => address,
+        Ok(None) => panic!("the application exited before it announced its address"),
+        Err(_) => panic!("the application did not announce its address within {READY_WITHIN:?}"),
+    };
+    assert!(
+        !address.ends_with(":0"),
+        "the application announced the configured port, not the bound one: {address}"
+    );
+
     // READINESS, polled: the application answers `{{ ready_path }}` only once every provider has
     // booted; an exit before that is reported as such rather than as a connection refused.
-    let deadline = Instant::now() + READY_WITHIN;
     loop {
         if let Ok(Some(status)) = child.0.try_wait() {
             panic!("the application exited before it was ready: {status}");

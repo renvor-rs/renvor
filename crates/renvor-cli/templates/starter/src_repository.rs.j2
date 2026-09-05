@@ -76,13 +76,15 @@ pub async fn get(services: &Services, id: i64) -> Result<Option<Item>, ApiErrorC
 }
 
 /// Inserts one item and returns it, primary key included.
+{% if auth_session %}
 pub async fn create(
     services: &Services,
     input: SaveItem,
-{% if auth_session %}
     owner: UserId,
-{% endif %}
 ) -> Result<Item, ApiErrorCode> {
+{% else %}
+pub async fn create(services: &Services, input: SaveItem) -> Result<Item, ApiErrorCode> {
+{% endif %}
     let unit = database(services)?
         .begin()
         .await

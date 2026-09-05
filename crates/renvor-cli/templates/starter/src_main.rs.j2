@@ -77,7 +77,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut application = app::build(&services, registry)?.boot().await?;
 
-    let address = services.http_address()?;
+    // The address the provider bound — not the configured string, which may say port `0`.
+    let address = services
+        .bound_address()
+        .ok_or("the HTTP provider reported no bound address after Boot")?;
     println!("{NAME} is listening at http://{address}");
     tokio::signal::ctrl_c().await?;
 

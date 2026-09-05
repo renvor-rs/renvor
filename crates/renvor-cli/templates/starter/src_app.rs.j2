@@ -21,9 +21,7 @@ use std::sync::OnceLock;
 {% endif %}
 
 use renvor::{ApplicationBuilder, RouteRegistry};
-{% if database or auth_session or cap_cache or cap_jobs or cap_mail or cap_storage %}
 use renvor::{CapabilityId, InitContext, Provider, ProviderFuture, ProviderId};
-{% endif %}
 use renvor::{HostPolicy, HttpServerConfig, HttpServerProvider, TypedStateMap};
 use renvor_config::ConfigHandle;
 
@@ -145,9 +143,9 @@ impl Provider for DatabaseProvider {
     }
 }
 {% endif %}
-{% if database or auth_session or cap_cache or cap_jobs or cap_mail or cap_storage %}
 
-/// A provider the kernel owns and handlers share.
+/// A provider the kernel owns and handlers share — every starter has at least the HTTP
+/// provider, which `main` asks for the address it bound.
 pub struct Shared<P>(pub Arc<P>);
 
 impl<P: Provider> Provider for Shared<P> {
@@ -171,13 +169,15 @@ impl<P: Provider> Provider for Shared<P> {
         self.0.stop()
     }
 }
-{% endif %}
 
 /// Everything a handler can reach, and everything the kernel boots.
 #[derive(Clone)]
 pub struct Services {
     /// The `[http]` section, resolved at Validate.
     pub http: ConfigHandle<HttpSection>,
+    /// The HTTP provider, set by [`build`] so [`Services::bound_address`] can ask it what it
+    /// bound: port `0` asks the kernel for a port, and only the provider knows which it got.
+    pub http_server: Arc<std::sync::OnceLock<Arc<HttpServerProvider>>>,
 {% if database %}
     /// The database provider; `database()` answers after Boot.
     pub database: Arc<DatabaseProvider>,
@@ -270,6 +270,7 @@ impl Services {
 
         Self {
             http,
+            http_server: Arc::new(std::sync::OnceLock::new()),
 {% if database %}
             database,
 {% endif %}
@@ -299,15 +300,15 @@ impl Services {
         }
     }
 
-    /// The address the HTTP provider binds, as configured.
+    /// The address the HTTP provider actually bound, or `None` before Boot.
     ///
-    /// # Errors
-    ///
-    /// Asked before the kernel resolved the `[http]` section — which is to say before Boot.
-    pub fn http_address(&self) -> Result<String, Box<dyn std::error::Error>> {
-        Ok(self
-            .http
-            .with(|resolved| resolved.value().address.clone())?)
+    /// Not the configured string: with `RENVOR_HTTP_ADDRESS=127.0.0.1:0` the configured string
+    /// says `:0` and the provider bound an assigned port, and a caller told the configured
+    /// string would be talking to a different server.
+    pub fn bound_address(&self) -> Option<std::net::SocketAddr> {
+        self.http_server
+            .get()
+            .and_then(|provider| provider.bound_address())
     }
 {% if example_domain %}
 
@@ -404,7 +405,9 @@ pub fn build(
 {% if cap_jobs %}
     builder = builder.with_provider(Box::new(Shared(Arc::clone(&services.jobs))));
 {% endif %}
-    builder = builder.with_provider(Box::new(http));
+    let http = Arc::new(http);
+    let _ = services.http_server.set(Arc::clone(&http));
+    builder = builder.with_provider(Box::new(Shared(http)));
     let application = builder.build()?;
 {% if cap_observability %}
     // The kernel owns the health state; the health routes read it through the cell.

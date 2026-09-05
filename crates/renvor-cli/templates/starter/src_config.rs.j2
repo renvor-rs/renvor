@@ -163,8 +163,42 @@ fn auth_defaults() -> Table {
         .expect("the defaults are valid TOML")
 }
 
-/// The `[auth]` source. Both keys are validated here, so a bad key stops the application before
-/// any provider constructs.
+/// The numbers the session policy refuses, checked here so they stop the application at
+/// Validate — naming the key — rather than while the auth provider boots, after the database and
+/// mail providers have already come up. The ceilings are `SessionPolicy`'s own.
+///
+/// # Errors
+///
+/// The offending key and its constraint.
+pub fn check_auth_section(section: &AuthSection) -> Result<(), (&'static str, &'static str)> {
+    use renvor_auth::session::SessionPolicy;
+    let idle_ceiling =
+        u64::try_from(SessionPolicy::AAL2_INACTIVITY_CEILING.num_seconds()).unwrap_or(u64::MAX);
+    let absolute_ceiling =
+        u64::try_from(SessionPolicy::AAL2_OVERALL_CEILING.num_seconds()).unwrap_or(u64::MAX);
+    if section.sessions_per_user == 0 {
+        return Err(("sessions_per_user", "at least 1"));
+    }
+    if section.session_idle_secs == 0 || section.session_idle_secs > idle_ceiling {
+        return Err((
+            "session_idle_secs",
+            "1 to 3600 seconds: positive, within the AAL2 inactivity ceiling",
+        ));
+    }
+    if section.session_absolute_secs == 0 || section.session_absolute_secs > absolute_ceiling {
+        return Err((
+            "session_absolute_secs",
+            "1 to 86400 seconds: positive, within the AAL2 overall ceiling",
+        ));
+    }
+    if section.session_idle_secs > section.session_absolute_secs {
+        return Err(("session_idle_secs", "at most session_absolute_secs"));
+    }
+    Ok(())
+}
+
+/// The `[auth]` source. The keys and the session numbers are validated here, so a bad value
+/// stops the application before any provider constructs.
 pub fn auth_source() -> SchemaSource<AuthSection> {
     let resolver = layers("auth")
         .with_defaults(auth_defaults())
@@ -185,6 +219,14 @@ pub fn auth_source() -> SchemaSource<AuthSection> {
                 ));
             }
         }
+        if let Err((name, constraint)) = check_auth_section(section) {
+            return Err(configuration(
+                name,
+                renvor_config::layer_of(resolved, name).as_str(),
+                constraint,
+                &Constraint::Rule("refused by the session policy"),
+            ));
+        }
         Ok(())
     })
 }
@@ -196,8 +238,10 @@ mod tests {
 
     #[test]
     fn the_http_defaults_parse_and_name_the_local_domain() {
+        // Bound to a name first so the line's width does not depend on the project's name.
+        let expected = "{{ local_domain }}";
         let defaults = http_defaults();
-        assert_eq!(defaults["local_domain"].as_str(), Some("{{ local_domain }}"));
+        assert_eq!(defaults["local_domain"].as_str(), Some(expected));
     }
 {% if auth_session %}
 
@@ -209,6 +253,41 @@ mod tests {
         assert!(decode_key(&"ab".repeat(33)).is_err(), "too long");
         assert!(decode_key(&"zz".repeat(32)).is_err(), "not hex");
         assert!(decode_key("").is_err(), "empty");
+    }
+
+    #[test]
+    fn the_session_numbers_are_checked_at_validate_naming_the_key() {
+        let section = |idle: u64, absolute: u64, per_user: u32| AuthSection {
+            session_idle_secs: idle,
+            session_absolute_secs: absolute,
+            sessions_per_user: per_user,
+            csrf_key: "ab".repeat(32),
+            abuse_key: "ab".repeat(32),
+        };
+        assert!(check_auth_section(&section(1800, 28800, 5)).is_ok());
+        let key = |idle, absolute, per_user| {
+            check_auth_section(&section(idle, absolute, per_user))
+                .expect_err("refused")
+                .0
+        };
+        assert_eq!(key(1800, 28800, 0), "sessions_per_user");
+        assert_eq!(key(0, 28800, 5), "session_idle_secs");
+        assert_eq!(
+            key(3601, 28800, 5),
+            "session_idle_secs",
+            "above the inactivity ceiling"
+        );
+        assert_eq!(key(1800, 0, 5), "session_absolute_secs");
+        assert_eq!(
+            key(1800, 86401, 5),
+            "session_absolute_secs",
+            "above the overall ceiling"
+        );
+        assert_eq!(
+            key(3600, 1800, 5),
+            "session_idle_secs",
+            "idle beyond absolute"
+        );
     }
 
     #[test]
