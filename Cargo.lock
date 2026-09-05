@@ -2278,6 +2278,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "minreq"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "659579df697b372ef9e36f02fcbb41f6d6f157dcec7db9c9618fa0f23cf0fc20"
+
+[[package]]
 name = "mio"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3327,6 +3333,7 @@ name = "renvor-testkit"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "minreq",
  "renvor-auth",
  "renvor-core",
  "renvor-database",

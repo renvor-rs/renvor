@@ -4,9 +4,9 @@
 //! build a request with a loopback identity and dispatch it to the declared route without a
 //! socket, and a sweep of every response so a test can assert that no secret came back. This is
 //! that shape, once, for every test in every crate — with the optional kernel beside it: a
-//! [`TestApplication`] can boot an [`ApplicationBuilder`] with the caller's providers, so a test
-//! whose routes read providers gets them booted, and it shuts the application down with the
-//! report the kernel produced.
+//! [`TestApplication`] can boot an [`ApplicationBuilder`](renvor_core::ApplicationBuilder) with
+//! the caller's providers, so a test whose routes read providers gets them booted, and it shuts
+//! the application down with the report the kernel produced.
 //!
 //! # What "socket-free" buys
 //!

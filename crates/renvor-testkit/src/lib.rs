@@ -2,7 +2,9 @@
 //!
 //! Lets a test start a real application, inject a failure at a chosen lifecycle phase, and assert
 //! on the order that actually happened — with no HTTP client, no port, and no database. Deadlines
-//! and drain budgets are exercised without real elapsed time.
+//! and drain budgets are exercised without real elapsed time. Phase 011 adds deterministic
+//! factories, a socket-free test application (behind `http`), and — only behind `client`, for a
+//! test that spawns a real binary — a blocking loopback HTTP client.
 //!
 //! Add this crate under `[dev-dependencies]`. Nothing in `renvor`, `renvor-core`, or
 //! `renvor-config` depends on it, which is what keeps its time-control machinery out of a
@@ -18,6 +20,9 @@ pub mod abuse;
 /// The socket-free test application, behind `http` (Phase 011).
 #[cfg(feature = "http")]
 pub mod app;
+/// The blocking loopback client for tests that spawn a binary, behind `client` (Phase 011).
+#[cfg(feature = "client")]
+pub mod client;
 pub mod clock;
 pub mod concurrency;
 pub mod domain;

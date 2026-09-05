@@ -5,7 +5,8 @@
 //! A factory draws every value from a [`Sequence`] the test owns. Two runs with the same seed
 //! produce the same emails, names, and passwords, so a failure reproduces; two factories sharing
 //! one sequence never collide, so a test that registers "the next user" twice registers two users.
-//! The sequence can be seeded from a literal, or from an injected [`EntropySource`], which is the
+//! The sequence can be seeded from a literal, or from an injected
+//! [`EntropySource`](renvor_core::observe::entropy::EntropySource),, which is the
 //! same source the application under test draws from.
 //!
 //! Nothing here names a driver, a transport, or a table: a draft is plain data the caller sends

@@ -715,7 +715,7 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 40] = [
+    let checks: [IsolationCheck<'_>; 42] = [
         // ---- API TOKEN MODE (FR-035, SC-011) ----------------------------------------------
         //
         // Added in batch G2, and the reason is that this property was TRUE and UNASSERTED. Batch G
@@ -784,6 +784,31 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             &["-p", "renvor-testkit", "--features", "tokens"],
             &[],
             &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "renvor-auth"],
+        ),
+        // PHASE 011. `http` hosts the socket-free test application and may reach the transport
+        // crate — and nothing else from the token half; `client` is the loopback client for a
+        // test that spawns a binary: `minreq` alone, never a TLS backend (the workspace pins the
+        // single `ring` provider and bans `native-tls`), and never the transport.
+        (
+            "renvor-testkit (--features http)",
+            &["-p", "renvor-testkit", "--features", "http"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "minreq"],
+            &["renvor-http"],
+        ),
+        (
+            "renvor-testkit (--features client)",
+            &["-p", "renvor-testkit", "--features", "client"],
+            &[
+                "renvor-http",
+                "reqwest",
+                "hyper",
+                "native-tls",
+                "openssl",
+                "rustls",
+                "webpki-roots",
+                "aws-lc-rs",
+            ],
+            &["minreq"],
         ),
         (
             "renvor-sqlx + db-postgres (no tokens)",
