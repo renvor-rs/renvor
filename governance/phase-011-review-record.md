@@ -253,8 +253,8 @@ it: the module comment of both resource templates (`resource_sqlx.rs.j2`, `resou
 lines 3–4, "the generator regenerates it only while its digest still matches …") and the crate
 README's `renvor generate` section ("untouched since generation is regenerated"), found by the
 seventh validation pass. Both templates and the README now state the flag; the rendered module
-changed, so the rows that render one (`ressqlx`, `ressea`, `authadded`, `authaddedmysql`) and
-both gate legs were run again on the corrected source head, recorded below. The migrations
+changed, so the rows that render one (`ressqlx`, `ressea`, `authadded`, `authaddedmysql`) were
+run again and both gate legs launched again on the corrected source head, recorded below. The migrations
 README, the routes marker comment, and the support module's comment name the generators without
 describing overwrite behaviour and were left alone.
 
@@ -341,14 +341,21 @@ release-only attestation skipped by design, both Windows legs and CodeQL among t
 workflow at its first attempt; the evidence §13 lists them with their durations. The eighth
 validation pass is recorded by the commit after the one that carries this paragraph.
 
-**The seventh validation pass** (on `d5e78fc`, 23:33–23:3x) found the code, the nine cases, the
+**The seventh validation pass** (on `d5e78fc`, 23:33–23:34 for its runs) found the code, the nine cases, the
 mutations, the gates, the commits, the contracts, and the specification edits holding, and
 returned NEEDS_FIXES on requirement 5: the two resource templates' module comment and the crate
 README stated the old rule, and this section had claimed no template did (both corrected above,
 in `61a43af`); it also read requirement 3 as asking a refused dry run to list what would have been
 created, regenerated, or edited (taken, above), and asked that "`--test cli` 4" not be read as a
-fifth test (reworded). Its verdict on `61a43af` and the records over it is the eighth pass's, in
-the ledger (task #107) and in the round's final report.
+fifth test (reworded).
+
+**The eighth validation pass** (on `2841b55`, 01:49–01:52) found all five resolved, the
+listing, the Windows fixes, the gates on `3025cc0`, the records, the commits, and the
+specification holding, and returned VALIDATED (task #107 `validated`) with three wording notes,
+corrected in the commit that carries this paragraph: leg B on `ac6062d` stopped after step 6,
+not before step 5; the seventh pass's time above was half-written; the evidence's 2b3e4a8
+paragraph now says its total is the total at that head. Nothing after that pass changes source,
+tests, contracts, or the specification.
 
 ## 4. What this record does not claim
 

@@ -585,8 +585,9 @@ legs below ran on the committed head. Their step 4 now refuses `generate auth` w
 
 **Mutations.** Batch I (`phase-011-mutation-ledger.md`): ten scripted mutations on the committed
 head, ten killed by the test named in advance — each kill checked to be that test failing, not a
-compile error (M-I1's first form was a compile error and was replaced). Phase totals: 62 scripted
-mutations, 62 killed; one by history.
+compile error (M-I1's first form was a compile error and was replaced). Phase totals at that
+head: 62 scripted mutations, 62 killed; one by history — 64 and 64 after the two mutations the
+second source commit added, below.
 
 **Gates, heads.** Both legs, one after the other, on the source head, the same machine,
 services, variables, and clean tree as §10–§12; the logs are new files so the earlier legs'
@@ -667,9 +668,9 @@ macOS with it, run in the side target directory. The fix is
 one signed subject-only commit: `test(cli): compare generate snapshots by forward-slash paths on
 every platform`), **the final source head**. The gate run on `ac6062d` (`gate-*-fr048c.log`)
 was stopped by hand at 00:56 after both legs' census steps had passed — leg A green throughout,
-9/9, 2209 / 0 / 5, 87/87, 00:12:30–00:34:20; leg B's tests 2209 / 0 / 5 and census 87/87, then
-stopped before its steps 5–9 — because that head was no longer final; it is not claimed as a
-gate result.
+9/9, 2209 / 0 / 5, 87/87, 00:12:30–00:34:20; leg B's tests 2209 / 0 / 5 and census 87/87, its
+steps 5 and 6 passed, then stopped after step 6, before steps 7–9 — because that head was no
+longer final; it is not claimed as a gate result.
 
 **Gates on `3025cc0`.** Both legs, the same way, new log files.
 
@@ -708,6 +709,14 @@ verify without publishing (2m46s) — started 21:57:03 UTC, the last complete at
 (01:44:58 local), every workflow at attempt 1. The two heads before it were the round's Windows
 lessons: on `61a43af` both Windows platform legs failed on the help snapshot's missing `[EXE]`
 marker, on `ac6062d` both failed on the test's backslash paths; `3025cc0` passes both. Open
-code-scanning alerts: 0; open Dependabot alerts: 0. The eighth validation pass is recorded by
-the commit that follows this one. **Kept unmerged**; nothing tagged, released, published, or
-deployed.
+code-scanning alerts: 0; open Dependabot alerts: 0.
+
+**The eighth validation pass** (on `2841b55`, 01:49–01:52) found the seventh pass's five items
+resolved, the refusal's listing implemented, tested, mutated (M-I9, M-I10), and stated in both
+contracts, the two Windows fixes exact against the CI logs, both gate legs on `3025cc0` bound
+and summed as stated here, every number in this section and the review record matching the logs
+and `gh api`, seven signed subject-only commits over `a9f873e` with no tag, the specification
+stating the flag, and no secret — VALIDATED, task #107 `validated`. Its three wording notes are
+corrected by the commit that carries this paragraph: leg B on `ac6062d` stopped after step 6
+(above), a pass time left half-written in the review record, and the 2b3e4a8 paragraph's phase
+total read alone. **Kept unmerged**; nothing tagged, released, published, or deployed.
