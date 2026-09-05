@@ -86,6 +86,7 @@ fn seaorm_generates_exactly_its_file_set() {
     let generated = generate_ok(&["--orm", "seaorm", "--database", "postgres"]);
     let mut expected = vec![
         ".gitignore",
+        ".renvor/generated.toml",
         "Cargo.lock",
         "Cargo.toml",
         "README.md",
@@ -295,7 +296,8 @@ fn a_database_without_an_orm_still_means_sqlx() {
 
 /// **FR-043.** The direct-SQLx tree is byte-identical to the one Phase 006 generated, module
 /// declarations and all — apart from `renvor.toml`, which records the template version and, since
-/// version 6, names its persistence file conditionally.
+/// version 6, names its persistence file conditionally, and apart from `.renvor/generated.toml`,
+/// the provenance record every generated project carries since Phase 011.
 ///
 /// `README.md` is the one other file the version-6 split could have disturbed, and
 /// `the_sqlx_readme_is_unchanged_by_the_seaorm_split` compares its **persistence section** byte for
@@ -305,6 +307,7 @@ fn the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version() {
     let generated = generate_ok(&["--database", "postgres", "--example-domain", "--seed-data"]);
     let mut expected = vec![
         ".gitignore",
+        ".renvor/generated.toml",
         "Cargo.lock",
         "Cargo.toml",
         "README.md",
