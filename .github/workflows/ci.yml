@@ -215,7 +215,7 @@ jobs:
           # PostgreSQL got LOOSER, because `pg_isready` defaults to `--timeout 3`, so a
           # five-second cap allows each attempt two seconds more than it used to. A fully
           # failing block therefore gives up somewhere north of 120s, as it always could,
-          # with `timeout-minutes: 45` as the real outer bound. Tightening it to a true
+          # with `timeout-minutes: 75` as the real outer bound. Tightening it to a true
           # 120s deadline is deliberately NOT done here: main has never enforced one, and
           # inventing a stricter limit inside a flake fix is how you trade one flake for
           # another on a slow runner.

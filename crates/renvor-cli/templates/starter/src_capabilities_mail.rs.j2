@@ -71,10 +71,14 @@ async fn notice(request: renvor::Request) -> renvor::Response {
     let Ok(notice) = serde_json::from_slice::<Notice>(request.body()) else {
         return problem(&request, renvor::ApiErrorCode::MalformedBody);
     };
-    let local_domain = services
+    // The sender's domain is the configured one or nothing: a route that invented one would
+    // send mail nobody configured.
+    let Ok(local_domain) = services
         .http
         .with(|resolved| resolved.value().local_domain.clone())
-        .unwrap_or_else(|_| "localhost".to_owned());
+    else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
     let message = (|| -> Result<Message, renvor_mail::MailError> {
         let sender = Mailbox::new(Address::new(&format!("no-reply@{local_domain}"))?)
             .with_display_name(NAME)?;

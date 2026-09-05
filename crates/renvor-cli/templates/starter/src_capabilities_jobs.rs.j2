@@ -217,11 +217,15 @@ async fn enqueue(request: renvor::Request) -> renvor::Response {
     let Ok(body) = serde_json::from_slice::<Enqueue>(request.body()) else {
         return problem(&request, renvor::ApiErrorCode::MalformedBody);
     };
-    let queue = services
+    // The queue is the configured one or nothing: a route that invented one would enqueue
+    // where no worker listens.
+    let Ok(queue) = services
         .jobs
         .section
         .with(|resolved| resolved.value().queue.clone())
-        .unwrap_or_else(|_| "default".to_owned());
+    else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
     let job = (|| -> Result<NewJob, renvor_jobs::JobError> {
         let bounds = renvor_jobs::JobBounds::new();
         Ok(NewJob::new(

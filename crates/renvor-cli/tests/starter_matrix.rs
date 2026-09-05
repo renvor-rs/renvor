@@ -347,6 +347,52 @@ fn selected(row: &Row) -> Vec<&'static str> {
         .unwrap_or_default()
 }
 
+/// The package names the application reaches in the project's `Cargo.lock`: the closure of
+/// `[dependencies]` — what the binary links, dependencies of dependencies included — and not of
+/// `[dev-dependencies]`, whose closure is the test's (the testkit and its own graph). The lock's
+/// `dependencies` lists do not distinguish edge kinds, so the walk starts from the manifest's
+/// runtime roots rather than from the package. A lock entry is `name`, `name version`, or
+/// `name version (source)`; the name is the first word.
+fn lock_closure(project: &Path) -> std::collections::BTreeSet<String> {
+    let manifest = std::fs::read_to_string(project.join("Cargo.toml")).expect("Cargo.toml");
+    let manifest: toml::Value = toml::from_str(&manifest).expect("a manifest");
+    let roots: Vec<String> = manifest["dependencies"]
+        .as_table()
+        .expect("[dependencies]")
+        .keys()
+        .cloned()
+        .collect();
+    let lock = std::fs::read_to_string(project.join("Cargo.lock")).expect("Cargo.lock");
+    let lock: toml::Value = toml::from_str(&lock).expect("a lockfile");
+    let mut edges: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for package in lock["package"].as_array().expect("packages") {
+        let name = package["name"].as_str().expect("a name").to_owned();
+        let dependencies = package
+            .get("dependencies")
+            .and_then(toml::Value::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(toml::Value::as_str)
+                    .filter_map(|entry| entry.split_whitespace().next())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        edges.entry(name).or_default().extend(dependencies);
+    }
+    for root in &roots {
+        assert!(edges.contains_key(root), "the lock names {root}");
+    }
+    let mut reached = std::collections::BTreeSet::new();
+    let mut pending = roots;
+    while let Some(name) = pending.pop() {
+        if reached.insert(name.clone()) {
+            pending.extend(edges.get(&name).into_iter().flatten().cloned());
+        }
+    }
+    reached
+}
+
 /// Every selected choice is recorded and wired; every unselected one appears nowhere.
 fn assert_recorded(project: &Path, row: &Row) {
     let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("renvor.toml");
@@ -361,8 +407,17 @@ fn assert_recorded(project: &Path, row: &Row) {
         "renvor.toml must record the auth starter exactly as chosen:\n{manifest}"
     );
     assert!(manifest.contains("source = \"path\""), "{manifest}");
+    // FR-024: `Cargo.toml` text and file presence are the declaration; the lock closure walked
+    // from this project's package is what cargo actually resolved, and an unselected capability
+    // must be absent from it, not merely undeclared.
+    let closure = lock_closure(project);
     for capability in ["cache", "jobs", "mail", "storage", "observability"] {
         let chosen = selected(row).contains(&capability);
+        assert_eq!(
+            closure.contains(format!("renvor-{capability}").as_str()),
+            chosen,
+            "the lock closure must reach renvor-{capability} exactly when it is selected: {closure:?}"
+        );
         assert!(
             manifest.contains(&format!("{capability} = {chosen}")),
             "renvor.toml must record `{capability} = {chosen}`:\n{manifest}"
@@ -403,6 +458,16 @@ fn assert_recorded(project: &Path, row: &Row) {
     }
     assert_eq!(project.join("src/auth.rs").is_file(), auth);
     assert_eq!(cargo.contains("renvor-auth"), auth);
+    // `renvor-auth` rides with either persistence adapter (each implements its repositories),
+    // so it is in every database-backed starter's graph whether or not the auth starter was
+    // chosen; the crate that follows the choice is `renvor-auth-http`, the routes
+    // (phase-011-limitations.md).
+    assert_eq!(closure.contains("renvor-auth-http"), auth, "{closure:?}");
+    assert_eq!(
+        closure.contains("renvor-auth"),
+        auth || row.database.is_some(),
+        "{closure:?}"
+    );
     assert_eq!(
         project.join("src/capabilities/mod.rs").is_file(),
         !selected(row).is_empty()
@@ -477,6 +542,11 @@ fn live(row: &Row, project: &Path) -> bool {
     if row.database.is_some() {
         // The generated test skips without a database; the gate must never see a skip here.
         envs.push(("RENVOR_TEST_REQUIRE_DATABASE", "1".to_owned()));
+    }
+    if std::env::var("RENVOR_TEST_REQUIRE_CAPABILITIES").is_ok() {
+        // Likewise the verification mail: with the gate's requirement forwarded, a missing sink
+        // fails the generated test instead of printing SKIPPED under a green census.
+        envs.push(("RENVOR_TEST_REQUIRE_CAPABILITIES", "1".to_owned()));
     }
     touch(project);
     let outcome = run(

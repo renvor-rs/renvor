@@ -44,6 +44,16 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
 {% endif %}
     let mut app = start();
     let address = app.address.clone();
+{% if database %}
+
+    // ── 0. the ledger holds one row per shipped migration ───────────────────────────
+    let applied = applied_migrations(&url).await;
+    assert_eq!(
+        applied.len(),
+        shipped_migrations(),
+        "the ledger must hold one row per shipped migration: {applied:?}"
+    );
+{% endif %}
 
     // ── 1. it names itself ──────────────────────────────────────────────────────────
     let reply = http(&address, "GET", "/", &[], "");
@@ -224,7 +234,18 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
         assert_eq!(confirmed.status, 200, "{}", confirmed.body);
         let me = http(&address, "GET", "/auth/me", &ada_session, "");
         assert!(me.body.contains("\"email_verified\":true"), "{}", me.body);
+        // The mailed token went to the sink and nowhere else.
+        for reply in [&requested, &confirmed, &me] {
+            assert!(
+                !leaks(reply, &token),
+                "a mailed token came back in a response"
+            );
+        }
     } else {
+        assert!(
+            std::env::var("RENVOR_TEST_REQUIRE_CAPABILITIES").is_err(),
+            "RENVOR_TEST_REQUIRE_CAPABILITIES is set and RENVOR_TEST_SMTP_API_URL is not"
+        );
         println!("SKIPPED: set RENVOR_TEST_SMTP_API_URL to confirm the verification mail");
     }
 
@@ -256,6 +277,17 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     );
 
     // ── 10. nothing secret came back ──────────────────────────────────────────────
+    // POSITIVE CONTROL: the sweep sees a secret in a header, not only in a body.
+    let planted = Reply {
+        status: 200,
+        headers: vec![("X-Debug".to_owned(), ada.password.clone())],
+        body: String::new(),
+    };
+    assert!(
+        leaks(&planted, &ada.password),
+        "the sweep must see a header"
+    );
+    let session_value = cookie.split_once('=').map_or("", |(_, value)| value);
 {% if example_domain %}
     for reply in [
         &first, &again, &login, &me, &created, &known, &unknown, &out,
@@ -264,12 +296,16 @@ async fn the_starter_starts_answers_and_stops_cleanly() {
     for reply in [&first, &again, &login, &me, &known, &unknown, &out] {
 {% endif %}
         assert!(
-            !reply.body.contains(&ada.password),
+            !leaks(reply, &ada.password),
             "a response echoed the password"
         );
         assert!(
-            !reply.body.contains(&csrf) || std::ptr::eq(reply, &login),
+            !leaks(reply, &csrf) || std::ptr::eq(reply, &login),
             "a csrf token leaked"
+        );
+        assert!(
+            !reply.body.contains(session_value),
+            "a session cookie value appeared in a body"
         );
     }
 {% else %}

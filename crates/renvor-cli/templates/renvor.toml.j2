@@ -41,8 +41,8 @@ driver_feature = "{{ driver_feature }}"
 [auth]
 # Recorded because generation ACTED on it: `src/auth.rs`, the auth migration set under
 # `migrations/`, and the `/auth` routes exist. NO KEY IS RECORDED HERE, and none can be: the CSRF
-# and abuse keys are read by the application from `RENVOR_AUTH__CSRF_KEY` and
-# `RENVOR_AUTH__ABUSE_KEY`, named in `.env.example`, and refused at Validate when absent.
+# and abuse keys are read by the application from `RENVOR_AUTH_CSRF_KEY` and
+# `RENVOR_AUTH_ABUSE_KEY`, named in `.env.example`, and refused at Validate when absent.
 starter = "{{ auth }}"
 migrations = "renvor-auth/{{ database }}"
 session_cookie = "__Host-rv_session"
@@ -76,7 +76,7 @@ database_port = {{ container_database_port }}
 cache_version = "{{ container_cache_version }}"
 cache_port = {{ container_cache_port }}
 {% if cache_wired %}# The generated application READS this service: the `cache` capability was selected, so
-# `src/capabilities/cache.rs` connects to it at Boot with the password from `RENVOR_CACHE__PASSWORD`.
+# `src/capabilities/cache.rs` connects to it at Boot with the password from `RENVOR_CACHE_PASSWORD`.
 cache_wired_into_application = true
 {% else %}# The cache container is optional local infrastructure. Renvor's cache capability exists
 # (`renvor-cache`, behind `capability-cache`); this generated project does not wire it — select

@@ -13,10 +13,11 @@ use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-pub use renvor_testkit::client::http;
 {% if auth_session %}
+pub use renvor_testkit::client::{Reply, http};
 pub use renvor_testkit::{Factory as _, Sequence, UserDraft, UserFactory};
 {% else %}
+pub use renvor_testkit::client::http;
 pub use renvor_testkit::{Factory as _, Sequence, UserFactory};
 {% endif %}
 
@@ -188,6 +189,33 @@ pub async fn reset(url: &str) {
 {% endif %}
     drop_tables(url, &tables).await;
 }
+
+/// The number of `*.up.sql` files under `migrations/`, read at run time from the project root
+/// (`cargo test` runs a test there), never baked in at compile time.
+pub fn shipped_migrations() -> usize {
+    std::fs::read_dir("migrations")
+        .expect("the migrations directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".up.sql"))
+        .count()
+}
+
+/// The versions the migration ledger holds, ascending — read through the application's own
+/// dependency, so what the test counts is what the application applied.
+pub async fn applied_migrations(url: &str) -> Vec<i64> {
+    let pool = sqlx::{{ sqlx_pool_options }}::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .expect("the database answers");
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+    pool.close().await;
+    versions
+}
 {% endif %}
 
 /// A running application: the child, the address it listens on{% if cap_observability %}, and the OTLP receiver it
@@ -284,5 +312,14 @@ pub fn session(address: &str, user: &UserDraft) -> String {
         .next()
         .expect("name=value")
         .to_owned()
+}
+
+/// Whether `secret` appears anywhere in the reply: in any header value or in the body.
+pub fn leaks(reply: &Reply, secret: &str) -> bool {
+    let in_header = reply
+        .headers
+        .iter()
+        .any(|(_, value)| value.contains(secret));
+    !secret.is_empty() && (reply.body.contains(secret) || in_header)
 }
 {% endif %}
