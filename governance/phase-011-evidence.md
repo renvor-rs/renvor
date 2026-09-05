@@ -237,6 +237,19 @@ regression in §5.
   the framework's own sets create, selected or not. Each was found by a row, fixed in the template,
   and re-proven by the row.
 
+- **Three of the round's own tests were refused by gates of this repository, and each refusal
+  was right.** The first leg of the continuation's gate run failed the presentation scan: the
+  proxy control's build script — a string literal in `verify.rs` — carried a print macro, and
+  the scan reads shipped source, fixtures included; the script moved beside the test harness
+  (`cdf5e50`). The second failed the kernel's diagnostics gate, which now classified `verify.rs`
+  as a credential-handling file (it names proxy credentials) and refused **eleven** interpolated
+  assertion messages — nine written by this round and two older ones — because a failure that
+  printed its operands would put a credential into the test log on exactly the regression it
+  guards; every message became a fixed label, with indices where a case must be named
+  (`8c72414`). The third was the same gate reading the `{}` of `fn main() {}` inside a literal
+  as an interpolation; the control asserts on rustfmt's diff header instead (`0d62313`). The
+  Standards axis's S1 rule, applied by the repository to the tests written to satisfy it.
+
 ## 6. Testing discipline
 
 Every batch: the failing test first (quoted in the batch evidence), the minimal change, the green
@@ -327,8 +340,8 @@ this paragraph; the phase is complete only when the final authority says so.
 
 **What it answered.** The seventeen Native Codex findings of `phase-011-review-record.md` §3a,
 each reproduced before it was fixed, each fixed at the root with a regression test that failed
-first (§review §3a names every test and every red run). The Standards and Specification axes did
-not reach the correcting session (§review §3b, §3c).
+first (§review §3a names every test and every red run). The Standards and Specification axes
+arrived after this section's work was pushed and are answered in §12 (§review §3b, §3c).
 
 **What it changed in the product.** The apply engine commits a generation as one change or none
 and digests the two marked files without their block; the record carries each generated resource;
@@ -376,8 +389,11 @@ reset; each failure is in the logs and each fix was re-proven by the row. The ro
 (`mysqlx`, `pgsea`, `mysea`, `authonly`, `observeonly`, `ressea`, `authrefused`, the determinism
 proofs, parity) are proven by the gate legs' census below.
 
-**Mutations.** Batch G, 21 runs, 21 killed, two first forms survived and were re-targeted
-(`phase-011-mutation-ledger.md` §Batch G). Totals for the phase: 45 mutations across batches A, B, D, E/F, and G, 45 killed (M-A1 and M-G10 after their tests were strengthened, M-G15 after it was re-targeted), plus the three census controls of batch C, all fired.
+**Mutations.** Batch G, 22 runs of 20 distinct mutations, 20 killed, two first forms survived
+(one strengthened and killed, one abandoned as unreachable and re-targeted) —
+`phase-011-mutation-ledger.md` §Batch G. Totals for the phase at this point: 44 distinct mutations
+across batches A, B, D, E/F, and G, 44 killed, plus the three census controls of batch C, all
+fired.
 
 **Gates on the final source head.** Both legs, one after the other, on this machine,
 `CARGO_INCREMENTAL=0`, real services (rv-postgres 17.11, rv-mysql 8.4.11, rv-valkey 9.1.1,
@@ -419,7 +435,7 @@ rerun. The commit that adds this paragraph is documents-only; its own run is the
 final state. **Kept unmerged**; nothing tagged, released, published, or deployed.
 
 **Not done, not claimed.** No independent human review; the Standards and Specification findings
-were not received and are open; the merged-tree verification of `generate auth` costs a full
+arrived later and are answered in §12, with one Specification finding open for a decision; the merged-tree verification of `generate auth` costs a full
 build of the project (measured once by hand: about 6 s on this machine with a warm shared build directory — `repro-auth.log`, `generate auth` 15:39:38 → 15:39:44; a cold build directory costs the project's full build, the same cost `renvor new` pays);
 nothing merged, tagged, released, published, or deployed.
 
@@ -447,9 +463,9 @@ enters the lock (L-3 closed). `generation-transaction.md` 1.1.0 states the seal'
 | Claim | Measured by | Result |
 |---|---|---|
 | a failed sweep prints no canary in any rendering | `renvor_testkit::app::tests::a_failed_sweep_names_the_canary_by_index_and_never_by_value` (red on `f6305a7`) | green |
-| the generated tests' failures print no credential | render scan `the_generated_tests_fail_without_printing_a_credential` (red on `f6305a7`); the generated `a_failed_secret_extraction_names_nothing_secret`, run inside `renvor new`'s verification of every auth starter | green; live: the generated control ran green inside the `authonly`, `ressqlx`, `ressea`, `authadded`, and `pgsqlx` rows (see below) |
+| the generated tests' failures print no credential | render scan `the_generated_tests_fail_without_printing_a_credential` (red on `f6305a7`); the generated `a_failed_secret_extraction_names_nothing_secret`, run inside `renvor new`'s verification of every auth starter | green; live: the `authonly`, `ressqlx`, `ressea`, `authadded`, and `pgsqlx` rows passed with the control compiled into their test binaries (a green row prints no inner test name; the 18:16 failure transcript of `row-authonly.log` shows the control's own `ok` line, and M-H8 shows it fires) |
 | no proxy credential reaches a build script; none is reported | `a_proxy_credential_never_reaches_the_sealed_environment`, `a_build_script_cannot_observe_or_print_a_proxy_credential` (both red on `f6305a7`), `a_childs_output_is_reported_without_url_credentials_or_control_characters` | green |
-| a failure at every placement boundary leaves the project byte-identical | `tests/generate.rs::a_failure_at_every_placement_boundary_leaves_the_project_byte_identical`: 5 boundaries of a two-file plan and 33 of a sixteen-file plan, the whole tree compared each time (red on `f6305a7`: the boundaries did not exist) | green, 38 boundaries |
+| a failure at every placement boundary leaves the project byte-identical | `tests/generate.rs::a_failure_at_every_placement_boundary_leaves_the_project_byte_identical`: 5 boundaries of a two-file plan and 33 of a sixteen-file plan, the whole tree compared each time (red on `f6305a7`: the boundaries did not exist). Both plans are all `write` actions: the rollback that restores previous bytes is reached only by the direct unit test (L-14) | green, 38 boundaries |
 | migration versions: same second, import collision, pairs, nothing written or recorded after a refusal | `two_names_generated_within_a_second_get_distinct_versions`, `an_import_refuses_a_version_another_migration_already_holds` | green |
 | the generated README states both platforms | `the_generated_readme_states_the_windows_shutdown_limitation` (red on `f6305a7`) | green |
 | FR-006: a starter generates offline from an empty cache filled by the framework's fetch | `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — red on `f6305a7` (`red-offline.log`: `no matching package named signal-hook-registry`) | green after the fix (`green-offline.log`, 41 s) |
@@ -463,7 +479,9 @@ the starter test binary now carries the negative control too); `ressqlx` 18:23:0
 green. Every row that failed on the way did so on a rustfmt width in a generated line, fixed in
 the template and re-proven by the row.
 
-**Mutations.** Batch H (`phase-011-mutation-ledger.md`): nine, nine killed — seven by unit tests in the isolated copy, one (M-H8, the generated helper printing the cookie) by the generated negative control refusing `renvor new`'s own verification, one (M-H9) by the offline case's red run on the unfixed tree. Phase totals: 54 mutations, 54 killed, plus the three census controls.
+**Mutations.** Batch H (`phase-011-mutation-ledger.md`): eight scripted mutations, eight killed — seven by unit tests in the isolated copy, one (M-H8, the generated helper printing the cookie) by the generated negative control refusing `renvor new`'s own verification, after two attempts that failed earlier on a rustfmt width in the same template and are recorded as inconclusive — plus M-H9, which is the offline case's own red run on the unfixed tree rather than a scripted edit. Phase totals: 52 scripted mutations, 52 killed; one by history; three census controls, all fired. The validation agent's third pass re-applied 16 and added V-11, V-13, and V-15b, all killed.
+
+**One log is mislabelled and is not cited as green.** `green-axes-unit.log` (18:11) holds the CLI unit run that failed on the template brace defect §5 records; the green runs of the CLI unit suite for the continuation are the gate legs' own step 4 (`gate-*.log`) and the validation agent's runs. It is kept under its name so the citation trail stays true.
 
 **Open for the maintainer, not closed here.** Specification P2 (FR-048 / SR-009 / the data
 model's `--overwrite-unchanged`): the shipped `Regenerate` classification overwrites a
@@ -473,4 +491,28 @@ in the review record §3c. FR-006's "when the framework has been built" is measu
 whole lockfile closure in the cache; whether a subset build counts is a reading of the
 requirement, reported there too.
 
-**Gates, heads, CI.** CONT-GATES-PENDING
+**Gates, heads, CI.** Both legs, one after the other, on the continuation's source head, the
+same machine, services, variables, and clean tree as §10 and §11.
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `0d6231306f1414eabc8fe20995f3510525c88f7c` | `0d6231306f1414eabc8fe20995f3510525c88f7c` |
+| Tree | `dd18ea63645ca50757f02708cbd5fe30bd122955` | `dd18ea63645ca50757f02708cbd5fe30bd122955` |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2204 passed, 0 failed, 5 ignored (145 `test result` lines) | 2204 passed, 0 failed, 5 ignored (145 lines) |
+| Census | 87/87 rows reported in (`renvor-cli` 13m 19s) | 87/87 rows reported in (`renvor-cli` 13m 21s) |
+| Elapsed | 18:55:42–19:18:31 (step 4 general run 7m 31s) | 19:18:31–20:02:59 (step 4 general run 8m 48s) |
+
+Logs: `gate-1.94.0.log`, `gate-stable.log`, `gates.log` (scratch, quoted here; the first round's
+legs are kept as `gate-*-round1.log`).
+
+| Head | Tree | What it is |
+|---|---|---|
+| `f6305a7fcc6c7b7ffab3da80f6718545a3e2b04f` | `b6f0cbfa9ba14768b1b2b372a9dd58f54b7b7274` | the Native axis's source head (§11) |
+| `0d6231306f1414eabc8fe20995f3510525c88f7c` | `dd18ea63645ca50757f02708cbd5fe30bd122955` | **the final source head of the whole round**: ten signed commits `d5ca258` … `0d62313` (the testkit sweep, the seal, the boundary sweep, the generated tests and README, the facade's interrupt wait and the lockfile, the pty proofs, the records, and three corrections the first legs forced: the proxy control's fixture moved out of shipped source, the sealed-environment controls' messages made fixed labels, and the formatting control asserting on the diff header — each a gate of this repository refusing a test of this round, recorded in §5); both gate legs green here |
+| the commit that adds this paragraph | — | documents only: the gate table above and the pull request's CI, added after the legs ran on the head they name |
+
+CONT-CI-PENDING
