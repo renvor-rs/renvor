@@ -16,7 +16,9 @@
 //! as it was. That is enforced by [`place::Staging`]'s `Drop`, so it holds on paths nobody wrote
 //! a cleanup for — including a panic.
 
+pub mod apply;
 pub mod manifest;
 pub mod place;
+pub mod record;
 pub mod render;
 pub mod verify;

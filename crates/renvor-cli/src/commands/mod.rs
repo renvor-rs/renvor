@@ -13,6 +13,7 @@ pub mod check;
 pub mod dev;
 pub mod docker;
 pub mod doctor;
+pub mod generate;
 pub mod new;
 pub mod openapi;
 pub mod relay;

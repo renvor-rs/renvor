@@ -19,11 +19,37 @@ status: "normative — public contract from the first release that ships it; not
 | `renvor routes` | Show the routes a project would serve | **Full.** The relay is implemented; it currently reaches no *generated* project — see below |
 | `renvor dev` | Run the local development loop | **Full** |
 | `renvor docker up\|down\|status\|logs` | Container development controls | **Full** |
+| `renvor generate migration <name>` / `--import auth\|jobs` | Add a reversible migration pair to an existing project, or copy the framework's auth or job-store set into it — rerun-safe, see §`renvor generate` | **Full** (Phase 011) |
 | `renvor tls trust` | The consent boundary for a trust-store change. **In this phase: consent only — it describes what would change, requires explicit consent, and then declines.** Non-interactive consent is `--i-understand-this-modifies-my-system-trust-store`; `--yes` does not grant it. |
 
-`PLAN.md` §9.3 lists further commands — `generate`, `migrate`, `seed`, `openapi`, and the
-package-ecosystem surface. **They are not implemented here and are not stubbed.** A stub that exits
-zero is worse than an absent command, because it reports success for work that did not happen.
+`PLAN.md` §9.3 lists further commands — `migrate`, `seed`, and the package-ecosystem surface.
+**They are not implemented here and are not stubbed.** A stub that exits zero is worse than an
+absent command, because it reports success for work that did not happen. `generate` ships in
+Phase 011 with the actions listed below and no other; an action it does not list is a `usage`
+refusal from the argument parser.
+
+### `renvor generate` — into an existing project, rerun-safe
+
+Every `generate` action classifies each target path **before** writing anything, against the
+working tree and the project's provenance record `.renvor/generated.toml`
+([`template-contract.md`](template-contract.md) §"The provenance record"):
+
+| The target path is | Effect |
+|---|---|
+| absent | written |
+| present and byte-identical to the render | nothing (`unchanged`) |
+| present, different, and untouched since generation — its digest equals the recorded one | overwritten (`regenerate`): the generator owns it |
+| present, different, and changed since generation, or never generated | **`generation_conflict`, exit 3, and nothing at all is written**; `details.paths` names every such path |
+
+Files are committed one at a time through a temporary sibling and a rename after the whole plan
+has passed, and the record is rewritten last with the new digests. `--dry-run` reports the plan
+and writes nothing; `--output json` carries `result.files[]` with each path's action and
+`result.written`. A rerun of a command whose files are in place reports `unchanged` and exit `0`.
+
+| Action | What it writes | Refused when |
+|---|---|---|
+| `migration <name>` | `migrations/<YYYYMMDDHHMMSS>_<name>.up.sql` and `.down.sql`, the version being the UTC instant; run again for the same name it finds the pair it wrote and leaves it, so a rerun never stacks a second pair | the project has no `[persistence]` (`unsupported_combination`, `details.reason = no_database`); the name is not a lowercase identifier of at most 64 characters (`unsupported_value`) |
+| `migration --import auth\|jobs` | the framework's embedded migration set for the project's engine, byte for byte — the same files a starter receives — so a project that adopts the auth starter or the jobs capability later composes both sets in its one directory (Phase 010 limitation L-7) | a set outside the two (`unsupported_value`, `details.flag = --import`) |
 
 `routes` **ships in Phase 004**, with the transport it inspects, and is held to the same rule.
 

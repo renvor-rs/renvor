@@ -101,17 +101,17 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
 /// makes every typo permanent and invisible.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RenvorTable {
-    generator_version: String,
-    template_version: String,
+pub(crate) struct RenvorTable {
+    pub(crate) generator_version: String,
+    pub(crate) template_version: String,
 }
 
 /// The `[project]` table — **every key the generator writes**, not merely the validated ones.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ProjectTable {
-    name: String,
-    target: String,
+pub(crate) struct ProjectTable {
+    pub(crate) name: String,
+    pub(crate) target: String,
     /// Added in Phase 004, when the transport capability shipped and `transport` moved from a
     /// reserved input to a defaulted-and-recorded choice.
     ///
@@ -125,13 +125,13 @@ struct ProjectTable {
     /// `None` therefore means "written before the transport was recorded", which is a fact about
     /// the manifest rather than an error in it.
     #[serde(default)]
-    transport: Option<String>,
+    pub(crate) transport: Option<String>,
     /// Added in Phase 011, when the auth starter shipped and `--auth` moved from a reserved input
     /// to an honoured choice. Optional for the reason `transport` is: a version-6 manifest has no
     /// such key, and `None` means "written before the starter was recorded".
     #[serde(default)]
-    auth: Option<String>,
-    local_domain: String,
+    pub(crate) auth: Option<String>,
+    pub(crate) local_domain: String,
     // ── EVERY KEY THE GENERATOR WRITES MUST BE DECLARED HERE ────────────────────────────
     //
     // `deny_unknown_fields` turns an undeclared key into a rejection, so this struct is no longer
@@ -143,10 +143,10 @@ struct ProjectTable {
     //
     // These five are recorded rather than validated: they describe honoured choices, and the
     // generator has already acted on them.
-    container: bool,
-    local_https: String,
-    example_domain: bool,
-    seed_data: bool,
+    pub(crate) container: bool,
+    pub(crate) local_https: String,
+    pub(crate) example_domain: bool,
+    pub(crate) seed_data: bool,
 }
 
 /// The `[persistence]` table — present only when a database was chosen.
@@ -163,10 +163,10 @@ struct ProjectTable {
 /// honoured choice.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct PersistenceTable {
-    database: String,
-    orm: String,
-    driver_feature: String,
+pub(crate) struct PersistenceTable {
+    pub(crate) database: String,
+    pub(crate) orm: String,
+    pub(crate) driver_feature: String,
 }
 
 /// The `[container]` section a project generated with `--container` carries.
@@ -185,30 +185,30 @@ struct PersistenceTable {
 /// project that grew a credential in its committed manifest fails its own validation.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ContainerTable {
+pub(crate) struct ContainerTable {
     #[serde(default)]
-    database_service: Option<String>,
+    pub(crate) database_service: Option<String>,
     #[serde(default)]
-    database_image: Option<String>,
+    pub(crate) database_image: Option<String>,
     #[serde(default)]
-    database_version: Option<String>,
+    pub(crate) database_version: Option<String>,
     #[serde(default)]
-    database_name: Option<String>,
+    pub(crate) database_name: Option<String>,
     #[serde(default)]
-    database_user: Option<String>,
+    pub(crate) database_user: Option<String>,
     #[serde(default)]
-    database_port: Option<u16>,
-    cache: String,
+    pub(crate) database_port: Option<u16>,
+    pub(crate) cache: String,
     #[serde(default)]
-    cache_image: Option<String>,
+    pub(crate) cache_image: Option<String>,
     #[serde(default)]
-    cache_version: Option<String>,
+    pub(crate) cache_version: Option<String>,
     #[serde(default)]
-    cache_port: Option<u16>,
+    pub(crate) cache_port: Option<u16>,
     /// Always `false` in this phase. Recorded so the manifest states the limitation rather than
     /// leaving a reader to infer it from the absence of a cache adapter.
     #[serde(default)]
-    cache_wired_into_application: Option<bool>,
+    pub(crate) cache_wired_into_application: Option<bool>,
 }
 
 /// The `[framework]` table — present only on a framework-backed **starter** (Phase 011).
@@ -218,9 +218,9 @@ struct ContainerTable {
 /// one.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct FrameworkTable {
-    source: String,
-    path: String,
+pub(crate) struct FrameworkTable {
+    pub(crate) source: String,
+    pub(crate) path: String,
 }
 
 /// The `[auth]` table — present only when the session starter was generated (Phase 011).
@@ -230,11 +230,11 @@ struct FrameworkTable {
 /// environment, and `deny_unknown_fields` refuses a manifest that grew one.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct AuthTable {
-    starter: String,
-    migrations: String,
-    session_cookie: String,
-    mail: String,
+pub(crate) struct AuthTable {
+    pub(crate) starter: String,
+    pub(crate) migrations: String,
+    pub(crate) session_cookie: String,
+    pub(crate) mail: String,
 }
 
 /// The `[capabilities]` table — written on every version-7 manifest, optional on read.
@@ -243,22 +243,22 @@ struct AuthTable {
 /// `true` means the dependency, the configuration section, the provider, and the wiring exist.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct CapabilitiesTable {
-    cache: bool,
-    jobs: bool,
-    mail: bool,
-    storage: bool,
-    observability: bool,
+pub(crate) struct CapabilitiesTable {
+    pub(crate) cache: bool,
+    pub(crate) jobs: bool,
+    pub(crate) mail: bool,
+    pub(crate) storage: bool,
+    pub(crate) observability: bool,
 }
 
 impl CapabilitiesTable {
     /// Whether anything was selected.
-    fn any(&self) -> bool {
+    pub(crate) fn any(&self) -> bool {
         self.cache || self.jobs || self.mail || self.storage || self.observability
     }
 
     /// The selected names, in the recorded order.
-    fn selected(&self) -> Vec<&'static str> {
+    pub(crate) fn selected(&self) -> Vec<&'static str> {
         [
             ("cache", self.cache),
             ("jobs", self.jobs),
@@ -275,21 +275,21 @@ impl CapabilitiesTable {
 /// A generated `renvor.toml`.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
-    renvor: RenvorTable,
-    project: ProjectTable,
+pub(crate) struct Manifest {
+    pub(crate) renvor: RenvorTable,
+    pub(crate) project: ProjectTable,
     /// `None` means the project is the dependency-free skeleton, or was written before version 7.
     #[serde(default)]
-    framework: Option<FrameworkTable>,
+    pub(crate) framework: Option<FrameworkTable>,
     /// `None` means no session starter was generated, or the manifest predates version 7.
     #[serde(default)]
-    auth: Option<AuthTable>,
+    pub(crate) auth: Option<AuthTable>,
     /// `None` means the manifest predates version 7; a version-7 manifest always carries it.
     #[serde(default)]
-    capabilities: Option<CapabilitiesTable>,
+    pub(crate) capabilities: Option<CapabilitiesTable>,
     /// `None` means the project was generated without persistence, which is not an error.
     #[serde(default)]
-    persistence: Option<PersistenceTable>,
+    pub(crate) persistence: Option<PersistenceTable>,
     /// `None` means the project was generated without container controls, which is not an error.
     ///
     /// # Backward compatibility
@@ -298,15 +298,16 @@ struct Manifest {
     /// `#[serde(default)]` is what lets `renvor check` keep reading it. The compatibility contract
     /// is that an older manifest stays valid; it is not that an older manifest gains fields.
     #[serde(default)]
-    container: Option<ContainerTable>,
+    pub(crate) container: Option<ContainerTable>,
 }
 
-/// Runs the command against a project directory.
+/// Reads and validates a project's `renvor.toml`, for this command and for `renvor generate`,
+/// which must know a project's shape before it writes into it.
 ///
 /// # Errors
 ///
-/// [`Code::ManifestInvalid`] with `details.field` and `details.constraint`.
-pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
+/// As [`run`]: [`Code::ManifestInvalid`] naming the field and the constraint.
+pub(crate) fn load(path: &std::path::Path) -> Result<Manifest, CliError> {
     let manifest_path = path.join("renvor.toml");
     let text = read_bounded(&manifest_path)?;
 
@@ -429,6 +430,16 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
         ));
     }
 
+    Ok(manifest)
+}
+
+/// `renvor check`.
+///
+/// # Errors
+///
+/// [`Code::ManifestInvalid`] naming the field and the constraint.
+pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
+    let manifest = load(path)?;
     let human = crate::output::layout::Report::new()
         .status(
             crate::output::layout::Status::Done,

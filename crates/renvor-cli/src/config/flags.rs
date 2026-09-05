@@ -160,12 +160,34 @@ pub enum Command {
         #[command(subcommand)]
         action: TlsAction,
     },
+    /// Add to an existing project, rerun-safe: a file you changed is never overwritten
+    Generate {
+        #[command(subcommand)]
+        action: GenerateAction,
+    },
 }
 
 /// `renvor tls <action>`.
 ///
 /// One action, deliberately. A `tls status` or `tls untrust` would have to report on, or undo,
 /// something this phase never creates.
+/// What `renvor generate` can add.
+#[derive(Debug, Subcommand)]
+pub enum GenerateAction {
+    /// Write a reversible migration pair, or import the framework's `auth` or `jobs` set
+    Migration {
+        /// The migration's name: lowercase letters, digits, and `_`, starting with a letter
+        #[arg(required_unless_present = "import")]
+        name: Option<String>,
+        /// Copy the framework's migration set for this project's engine: `auth` or `jobs`
+        #[arg(long, value_name = "auth|jobs")]
+        import: Option<String>,
+        /// The project directory
+        #[arg(long, default_value = ".")]
+        path: PathBuf,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum TlsAction {
     /// Install a local certificate authority into the system trust store.

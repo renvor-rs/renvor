@@ -3081,8 +3081,9 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         &format!(
             "all {} required suites reported in (12 tests on each direct-SQLx row, 11 on each \
              SeaORM row, the refresh-rotation, abuse-control, and job-store \
-         contracts on every row, and the \
-             end-to-end test application)",
+             contracts on every row, the end-to-end test application, and the \
+             fifteen starter rows: ten covering starters, the refusals, the \
+             determinism proofs, and the wizard parity of a starter)",
             ROW_EVIDENCE.len()
         ),
     );

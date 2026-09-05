@@ -756,6 +756,8 @@ pub fn run(
     if let Some(framework) = configuration.framework() {
         seed_lockfile(staging.dir(), framework.path())?;
     }
+    // Last, so it lists the lockfile; before the manifest, so the manifest lists it.
+    crate::generate::record::write(staging.dir(), env!("CARGO_PKG_VERSION"), templates::VERSION)?;
     crate::inject::fail_at("render")?;
 
     // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
