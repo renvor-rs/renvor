@@ -145,7 +145,7 @@ Native finding — and dispositioned here independently.
 | # | Finding | Sev. | Reproduced by | Disposition |
 |---|---|---|---|---|
 | P1 | Keep caught secrets out of test diagnostics (SR-001) | P1 | the same two failing tests as S1, read against SR-001's list — "a log line … a fixture" — the test output is a log the sweep's own failure wrote a credential into | **fixed with S1**, dispositioned separately: SR-001 is satisfied by construction for the three credentials the generated test handles, and the negative control is in the generated project, so every consumer's copy of the test carries its own proof |
-| P2 | Do not regenerate a differing file automatically (FR-048, SR-009, `data-model.md`) | P2 | **reproduced, not fixed — a product decision.** On `f6305a7` a file that differs from the render but matches its recorded digest is classified `Regenerate` and overwritten (`apply::tests::absent_identical_untouched_and_modified_are_the_four_cases`, `untouched.txt`; the `authadded` row's `src/main.rs` is `regenerate`). The six scenarios asked for: (a) differs-from-render, digest matches → **overwritten** (the disputed case); (b) a user edit outside a marker → conflict, nothing written (`a_marker_edit_never_claims_the_rest_of_the_file`, the rows' step 3); (c) a user edit inside a marker → carried verbatim, never overwritten (`carry_marked_block`, `insert_before_marker`'s idempotence); (d) a generator-owned marker update → an `edit`, never a conflict; (e) repeated generation → `unchanged`; (f) a failure → the whole project unchanged (S3). | **open for the maintainer.** FR-048 and SR-009 say a differing file is a conflict and is never overwritten; `data-model.md` says a digest-matching differing file is "regenerable (reported, still not overwritten unless `--overwrite-unchanged`, a later decision)". `command-surface.md` 1.2.0 wrote the opposite — "overwritten (`regenerate`): the generator owns it" — and `generate auth` (FR-047) depends on it: every generator-owned file the auth starter changes (`src/main.rs`, `src/app.rs`, `Cargo.toml`, `renvor.toml`, …) differs from the project's copy, so under FR-048 as written `renvor generate auth` cannot complete on any starter until `--overwrite-unchanged` exists. The specification was not amended. The choices are the maintainer's: (1) implement FR-048 literally — `regenerable` reported, nothing written, `generate auth` refused until the flag exists; (2) implement `--overwrite-unchanged` now as the explicit opt-in the data model reserves; (3) keep the shipped behaviour and amend FR-048/SR-009/`data-model.md`. Nothing here is closed |
+| P2 | Do not regenerate a differing file automatically (FR-048, SR-009, `data-model.md`) | P2 | **reproduced, not fixed — a product decision.** On `f6305a7` a file that differs from the render but matches its recorded digest is classified `Regenerate` and overwritten (`apply::tests::absent_identical_untouched_and_modified_are_the_four_cases`, `untouched.txt`; the `authadded` row's `src/main.rs` is `regenerate`). The six scenarios asked for: (a) differs-from-render, digest matches → **overwritten** (the disputed case); (b) a user edit outside a marker → conflict, nothing written (`a_marker_edit_never_claims_the_rest_of_the_file`, the rows' step 3); (c) a user edit inside a marker → carried verbatim, never overwritten (`carry_marked_block`, `insert_before_marker`'s idempotence); (d) a generator-owned marker update → an `edit`, never a conflict; (e) repeated generation → `unchanged`; (f) a failure → the whole project unchanged (S3). | **decided by the maintainer on 2026-09-05 (option 3) and fixed in `2b3e4a8`**: regeneration is gated behind the explicit `--overwrite-unchanged` flag the data model reserved — a digest-matching differing file is *regenerable*, reported, and replaced only under the flag; without it the run is refused naming the flag; a changed file is refused with or without it; a dry run classifies identically. §3g records the round. The specification was edited to state the flag (FR-048, SR-009, `data-model.md` §4) and **not** to permit an implicit overwrite; `command-surface.md` 1.4.0 and `json-output.md`'s `generation_conflict` row say the same. `generate auth` needs the flag on every placed starter, by design |
 | P3 | The offline starter guarantee was not satisfied (FR-006) | P2 | `tests/offline.rs` had **no** starter case at all, so FR-006 had never been measured; the new case `a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — an **empty** `CARGO_HOME`, the framework's lockfile closure fetched into it (`cargo fetch --locked`), then `CARGO_NET_OFFLINE=true` generation of a starter — failed on `f6305a7`: `no matching package named signal-hook-registry found … offline mode` (`red-offline.log`) | **fixed: the guarantee is made true.** The facade offers `renvor::shutdown_signal()` (Tokio's `signal`, optional, under `transport-rest`, which every starter enables), the starter waits on it instead of enabling `signal` itself, and `signal-hook-registry` 1.4.8 enters the framework's `Cargo.lock` — the one package the seeded lock was short of (L-3, closed). The case is green after the fix: 41 s, `green-offline.log`. **Stated, not assumed:** the precondition the test realises is "the framework's lockfile closure is in the registry cache", which a `cargo fetch` or the verification gate's all-feature build leaves; a build of a feature subset (`cargo build -p renvor-cli`) leaves less, and FR-006's "has been built" does not say which. That reading is reported for the maintainer, not decided here |
 | P4 | Reject migration-version collisions (FR-046) | P2 | as S4, read against FR-046's "refusing a version already present" | **fixed with Native 6 and S4**, dispositioned separately: FR-046's refusal is `generation_conflict` with `reason = version_present` naming the versions, nothing written, the record unchanged |
 | P5 | Implement the specified capabilities multi-select (FR-021), verified through the real pty | P2 | the Native fix was a source scan plus the existing pty suites pressing Enter. New pty tests on `f6305a7`: `the_capabilities_question_offers_exactly_the_five`, `selecting_no_capability_is_the_explicit_none`, `cancelling_at_the_capabilities_question_writes_nothing` passed; the multi-selection case needs a framework whose verification can build, so it lives in `tests/parity.rs` | **verified.** Through the real terminal: exactly five choices and no sixth (`none` is what an empty selection means); an empty selection serialises to `none`; Escape at the question exits 4 with nothing written and no staging left; the parity starter case toggles `storage` then `cache` — the reverse of canonical order — beside the pre-selected `mail`, the review's equivalent command reads `--capabilities cache,mail,storage`, and the wizard's tree equals the flags' tree byte for byte with all three recorded. Parity green after the fixes: `green-parity.log`, 30 s (the flag run also exercised the generated negative control during its own verification). |
@@ -209,14 +209,104 @@ round's final report.
 ### 3f. What the round did not do
 
 - It did not have the Standards or Specification findings until after the Native axis had been
-  answered and pushed; §3b and §3c answer them once received, with one (Specification P2) open
-  for the maintainer.
+  answered and pushed; §3b and §3c answer them once received, with one (Specification P2) left
+  to the maintainer, who decided it after the sixth validation pass (§3g).
 - It did not make the rename-failure branch of `apply::commit` reachable by a test: a rename after
   a successful stage in the same directory fails only on a cross-device move. The rollback
   function that branch calls is tested directly, and the injected-failure branch beside it is
   tested end to end (L-14).
 - It did not quote table and column identifiers; it refuses reserved words instead, from a
   curated list that a future engine keyword could fall outside of (L-15).
+
+### 3g. The FR-048 decision round — `--overwrite-unchanged` (2026-09-05, after the sixth pass)
+
+**The decision.** With PR #62 validated and unmerged, the maintainer chose the third of the
+choices §3c listed: gate regeneration behind the explicit `--overwrite-unchanged` flag. The
+semantics as given, verbatim in substance: without the flag, an existing target that differs from
+the render is never written — one whose current digest (complete, or with its managed marker
+block removed for a marked file) matches its recorded provenance is classified and reported
+*regenerable* and requires the flag, and any conflict fails the whole operation without changing
+the project; with the flag, only targets whose digest matches their recorded provenance are
+regenerated — never user-edited content, unknown ownership, missing provenance, conflicting marker
+content, or a file outside the generator's ownership — and the flag waives neither validation nor
+a conflict; `--dry-run` uses exactly the same classification, reports what would be written,
+regenerated, edited, or refused, and writes nothing; the behaviour applies to every
+existing-project generator; FR-048, SR-009, `data-model.md`, `command-surface.md`, the help text,
+and generated documentation are updated consistently and the specification is not changed to
+permit implicit overwrites.
+
+**What changed — source head `2b3e4a8`, one signed subject-only commit.**
+
+| Where | What |
+|---|---|
+| `crates/renvor-cli/src/generate/apply.rs` | `plan(project, planned, overwrite_unchanged)`; a new `Refusal { Changed, OverwriteRequired }`; `OVERWRITE_FLAG`; the refusal is built by `refused()` from the refusing paths in plan order — `details.reason` (`changed_since_generation` whenever a changed path is among them, else `overwrite_required`), `count`, `paths` (both kinds), `changed`, `regenerable`, and `flag` (present whenever a regenerable path is among them); the message names paths and the flag, never contents. An `Edit` — a marked block, or the lockfile the merged build resolves — needs no flag, because it touches the managed region only |
+| `crates/renvor-cli/src/config/flags.rs` | `--overwrite-unchanged` on each of `migration`, `resource`, `auth`; `auth`'s help says it needs the flag |
+| `crates/renvor-cli/src/commands/generate.rs` | `parts()` hands path, action, and the flag to `run(…, dry_run, overwrite_unchanged)` from one place; `main.rs` calls it |
+| `crates/renvor-cli/src/exit.rs` | `GenerationConflict`'s doc names both kinds and the details |
+| `crates/renvor-cli/tests/cmd/help-generate.trycmd` | `renvor generate --help` and `renvor generate auth --help` pinned byte for byte, the flag among the options |
+| `contracts/command-surface.md` 1.4.0, `contracts/json-output.md` | the classification table with the two refusals, the flag row, `auth`'s row, the `generation_conflict` row's details |
+| `governance/phase-011-limitations.md` L-6 | states the flag |
+| `specs/011-…/spec.md` FR-048 and SR-009, `data-model.md` §4 | state the flag and the refusal; untracked under `specs/` (gitignored), edited in place on this machine |
+
+Generated documentation was checked and left alone: no template states the old rule. The
+migrations README says only that `renvor generate migration <name>` writes a pair; the routes
+marker comment and the support module's comment name the generators without describing overwrite
+behaviour.
+
+**Red, then green.** The two binary tests were written before the implementation and run against
+the reviewed head: `red-fr048.log` is `a9f873e` exported to a scratch directory with the new
+`tests/generate.rs` copied over it, its own target directory, 22:37:49–22:38:07 —
+`a_regenerable_file_is_refused_without_the_flag_and_replaced_only_with_it` FAILED at its first
+assertion (`a regenerable file was replaced without the flag`, the envelope showing
+`"action":"regenerate"` and `"written":1`), and
+`a_changed_file_is_refused_with_the_flag_and_a_mixed_plan_writes_nothing` FAILED because the
+refusal carried no `reason`. The same two failures were seen on the worktree before the change
+(22:2x, the first run of the tests), the second then for a wrong reason of the test's own — half a
+migration pair removed trips the version check first — corrected before the red run above.
+
+| Required case | Test |
+|---|---|
+| regenerable file without the flag → refused, zero writes | the regenerable binary test (first half); `apply::tests::absent_identical_untouched_and_modified_are_the_four_cases`; `auth_tests::adding_auth_needs_the_flag_and_replaces_only_what_the_generator_owns`; the `authadded`/`authaddedmysql` rows' step 4 |
+| the same file with the flag → regenerated | the regenerable binary test (`written == 1`, the file equals the render, only it and the record moved); the same unit tests; the rows' step 4 |
+| user-edited file with the flag → still refused | the mixed-plan binary test; `absent_identical_…` (both flags); `a_line_outside_the_markers_survives_an_edit_and_refuses_a_re_render_with_the_flag` |
+| edit outside a managed marker → refused / preserved | `a_line_outside_the_markers_…` (the resource's marker edit keeps the line; the auth re-render refuses, flag or no flag); `apply::tests::a_marker_edit_never_claims_the_rest_of_the_file` |
+| unchanged managed marker with the flag → only its owned region changes | `adding_auth_needs_the_flag_…` (the resources block is byte-identical across the re-render while the file changes) |
+| mixed create / regenerate / conflict plan → zero writes | the mixed-plan binary test (two absent, one regenerable, one changed; the whole tree byte-identical after every refusal, the absent pair still absent) |
+| dry-run classification equals the real plan | the regenerable binary test (`dry["error"] == refused["error"]` without the flag; `dry.files == done.files` with it) |
+| repeated successful execution is idempotent | the regenerable binary test (again with the flag, again without: `written == 0`, every action `unchanged`, the tree identical) |
+| JSON and human output identify the flag without exposing contents | the regenerable binary test (`details.flag`, the human exit 3 naming `--overwrite-unchanged` and the path; neither stream carries a line of either version of the file); the mixed-plan test's canary is absent from both streams |
+| unknown ownership / missing provenance never regenerates | `apply::tests::a_file_never_generated_is_a_conflict_even_without_a_record` (both flags, `reason = changed_since_generation`) |
+| the flag reaches every action | `commands::generate::tests::every_generate_action_carries_the_overwrite_flag_and_it_is_off_by_default` |
+
+**Suites on the source head.** `cargo test -p renvor-cli --bin renvor` 313 passed, 0 failed, 1
+ignored (310 before: the three new tests); `--test generate` 11 passed (9 before); `--test cli` 4
+(the new help snapshot among them); `--test presentation` 17; `--test snapshots` 1;
+`renvor-core --test diagnostics` 2; `xtask` 36; `cargo clippy -p renvor-cli --all-targets -D
+warnings` clean; `cargo fmt --all --check` clean. The two rows that add the auth starter,
+`authadded` (22:28:48–22:30:35) and `authaddedmysql` (22:30:35–22:32:36), passed with the new
+step — refused without the flag, added with it, a rerun writing nothing — on the working tree
+that became `2b3e4a8` (`row-authadded.log`, `row-authaddedmysql.log`, `rows-summary.log`); the
+gate legs below run both again as part of the census.
+
+**Mutations, batch I** (`phase-011-mutation-ledger.md`): ten scripted mutations on the committed
+head, ten killed by the test named in advance — the flag not required, the flag waiving a changed
+file, a dry run classifying with the flag on, the refusal without its flag detail, the regenerable
+list dropped, the primary reason ignoring changed paths, `parts` dropping the flag for `auth`, and
+an unrecorded file treated as owned. M-I1's first form was a compile error (a `match` made
+non-exhaustive), which kills nothing worth recording; it was replaced by a compiling form (the
+`(true, _)` arm) and killed by the behavioural test. One defect of the round's own tooling is
+recorded in the evidence §5: the batch script's per-run `git checkout` of the two mutated files
+reverted the not-yet-committed implementation on its first launch; the edits were re-applied from
+the same scripts, the suites re-run green, the implementation committed, and the script now refuses
+to run over uncommitted work.
+
+**Gates.** Both legs on `2b3e4a8` (tree `488ca17`), clean tree, one after the other:
+`cargo +1.94.0 xtask verify` 22:40:13–23:03:27 and `cargo +stable xtask verify`
+23:03:27–23:25:56, 9/9 steps and exit 0 each, 2209 passed / 0 failed / 5 ignored each (the five
+over the continuation's 2204 are this round's tests), census 87/87 each — the evidence §13 has
+the table and the log names. The source head was pushed fast-forward at 23:27; the pull
+request's checks and the seventh validation pass are recorded by the commit after the one that
+carries this section.
 
 ## 4. What this record does not claim
 

@@ -2,9 +2,11 @@
 
 **Companion to**: [`phase-011-evidence.md`](phase-011-evidence.md)
 **Phase**: 011 — Generators, the auth starter, and the testing kit
-**Total**: **52 scripted mutations, 52 killed by a named test**, plus one by history (M-H9, the
-offline case's red run on the unfixed tree), across batches A, B, D, E/F, G, and H (2026-09-05,
-the correction round's continuation included). **Three survived their first form**: M-A1 (the
+**Total**: **62 scripted mutations, 62 killed by a named test**, plus one by history (M-H9, the
+offline case's red run on the unfixed tree), across batches A, B, D, E/F, G, H, and I (2026-09-05,
+the correction round's continuation and the FR-048 decision round included). **Four did not
+kill in their first form**: M-I1 (a `match` made non-exhaustive — a compile error, not a kill;
+replaced by a compiling form, killed), M-A1 (the
 test asserted the code, the `supported` detail, and the prose, but not the machine-readable
 `reason`; strengthened, re-applied, killed), M-G10 (the render assertion asked for a token, not
 the refusal; strengthened, killed), and M-G15 (its first edit mutated a branch no test reaches;
@@ -30,6 +32,7 @@ tracked.
 | D — the two entry findings | 2 | 2 | 0 | README count; the `cfg`-gated variant |
 | E/F — L-17, the testkit client, the apply engine, the record, verification, the generators, the manifest comment, the Windows path | 11 | 11 | 0 | M-F1 … M-F11; F3–F9 run on head `d8e3a44` by `mutate-f.py`, final pristine run 288 passed; F10 on the closure head; F11 on `f95ab6b` |
 | G — the correction round (every Native Codex fix, the transactional commit) | 20 distinct (22 runs) | 20 | 2 in their first form: M-G10 killed after the control was strengthened; M-G15's first edit abandoned as unreachable and re-targeted (M-G15, M-G15b) | run by `mutations-g.py` in an isolated copy of the working tree (`mutsrc`, its own build directory) so the census rows compiling beside it could not pick up a mutation; logs `mutations-g.log`, `mutations-g-<id>.out` |
+| I — the FR-048 decision: `--overwrite-unchanged` (2026-09-05, on the committed head `2b3e4a8`, in the worktree) | 10 | 10 | 1 first form (M-I1 was a compile error, replaced by a compiling edit and killed) | `mutations-i.sh` (scratch); `mutations-i.log`, `mutations-i-<id>.out`; every kill is a named test failing, none a compile error — checked per output |
 | H — the Standards and Specification fixes (the continuation of the round) | 8 scripted + 1 by history | 8 + 1 | 0 (M-H8 needed three attempts; the first two are logged only as `SURVIVED-or-UNKNOWN exit=3` — inconclusive, not survivals — and their cause is not evidenced, because the script overwrote each attempt's output) | `mutations-h.py` and `mutations-h8.sh` in the same isolated copy; M-H8 is killed by the **generated** negative control while `renvor new` verifies the staged starter, so its kill is a refused generation; M-H9 is the offline case's own red run on the unfixed tree (`red-offline.log`), which is the mutation "the facade offers no interrupt wait and the starter enables `signal` itself" applied by history rather than by script |
 
 ## The entries worth reading
@@ -169,3 +172,24 @@ log files keep their names.
 | M-H7 | starter test template: `"{cookie}"` printed again after the helper | `commands::new::tests::the_generated_tests_fail_without_printing_a_credential` |
 | M-H8 | support template: `session_cookie_of` prints the cookie's value in its panic | the generated `a_failed_secret_extraction_names_nothing_secret`, run by `cargo test` inside `renvor new`'s verification of an auth starter: generation was **refused** (`mutations-h-M-H8.out`, exit 3, "does not pass its own tests"). Two earlier attempts (`mutations-h.log`: "SURVIVED-or-UNKNOWN exit=3") are inconclusive rather than survivals; their cause is **not evidenced** — `mutations-h8.sh` overwrote each attempt's output, so only the third's survives — and is not claimed |
 | M-H9 | the facade's `shutdown_signal` absent and the starter enabling Tokio `signal` itself (the tree before the fix) | `tests/offline.rs::a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves` — `red-offline.log`: `no matching package named signal-hook-registry found` |
+
+### Batch I — the FR-048 decision, `--overwrite-unchanged` (2026-09-05, the committed head `2b3e4a8`, in the worktree)
+
+The script restores the two files from git before each mutation, so it runs only on a committed
+tree (its first launch, before the commit, reverted the uncommitted implementation and mutated
+nothing; recorded in the evidence §5). Each kill was checked to be the named test failing, not a
+compile error; M-I1's first form (`(true, false) if false =>`, a non-exhaustive `match`) was a
+compile error and is not counted.
+
+| ID | Edit (`crates/renvor-cli/src/generate/apply.rs` unless said) | Killed by |
+|---|---|---|
+| M-I1 | `(true, true) => Action::Regenerate` → `(true, _)`: a regenerable path regenerates without the flag | `apply::tests::absent_identical_untouched_and_modified_are_the_four_cases` |
+| M-I1b | the same edit | `tests/generate.rs::a_regenerable_file_is_refused_without_the_flag_and_replaced_only_with_it` |
+| M-I2 | `(true, true) => Action::Regenerate` → `(_, true)`: the flag waives a changed file | `tests/generate.rs::a_changed_file_is_refused_with_the_flag_and_a_mixed_plan_writes_nothing` |
+| M-I2b | the same edit | `apply::tests::absent_identical_untouched_and_modified_are_the_four_cases` |
+| M-I3 | `commands/generate.rs`: `apply::plan(&project, planned, overwrite_unchanged || dry_run)` — a dry run classifies with the flag on | `tests/generate.rs::a_regenerable_file_is_refused_…` (the dry run's refusal must equal the real run's) |
+| M-I4 | the refusal built without `.with("flag", OVERWRITE_FLAG)` | `tests/generate.rs::a_regenerable_file_is_refused_…` (`details.flag`) |
+| M-I5 | `details.regenerable` set to the empty string | `apply::tests::absent_identical_untouched_and_modified_are_the_four_cases` |
+| M-I6 | `reason` chosen by `if true` — `overwrite_required` even with changed paths | `tests/generate.rs::a_changed_file_is_refused_with_the_flag_…` |
+| M-I7 | `commands/generate.rs`: `parts()` hands `false` for `auth` | `commands::generate::tests::every_generate_action_carries_the_overwrite_flag_and_it_is_off_by_default` |
+| M-I8 | an unrecorded path counts as unchanged since generation (`is_none_or`) | `apply::tests::a_file_never_generated_is_a_conflict_even_without_a_record` |

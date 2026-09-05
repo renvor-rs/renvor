@@ -257,6 +257,7 @@ regression in §5.
   (`8c72414`). The third was the same gate reading the `{}` of `fn main() {}` inside a literal
   as an interpolation; the control asserts on rustfmt's diff header instead (`0d62313`). The
   Standards axis's S1 rule, applied by the repository to the tests written to satisfy it.
+- **The FR-048 round's mutation script reverted the uncommitted implementation on its first launch.** `mutations-i.sh` restores the two mutated files with `git checkout` before every mutation; run before the implementation was committed, its first `git checkout` reverted `apply.rs` and `generate.rs` to the reviewed head, and every mutation reported `ANCHOR-MISSING` because there was nothing to mutate. Nothing was lost: the edits were re-applied from the same scripts, `cargo fmt`, every fast suite re-run green (313 / 11 / 4 / 17 / 1 / 2 / 36), and the implementation committed as `2b3e4a8` before the batch ran again. The script now refuses to run when either file has uncommitted changes. The two auth-added rows had already run on the working tree at 22:28, before the revert; the gate legs on `2b3e4a8` are what bind them.
 
 ## 6. Testing discipline
 
@@ -491,13 +492,13 @@ the template and re-proven by the row.
 
 **One log is mislabelled and is not cited as green.** `green-axes-unit.log` (18:11) holds the CLI unit run in which every starter render failed on the template syntax defect §5 records (`syntax error: unexpected character (in tests/support/mod.rs:423)`); the green runs of the CLI unit suite for the continuation are the gate legs' own step 4 (`gate-*.log`) and the validation agent's runs. It is kept under its name so the citation trail stays true.
 
-**Open for the maintainer, not closed here.** Specification P2 (FR-048 / SR-009 / the data
-model's `--overwrite-unchanged`): the shipped `Regenerate` classification overwrites a
-generator-owned file that differs from the render and matches its recorded digest; the
-specification says it must not, and `generate auth` cannot complete without it. The choices are
-in the review record §3c. FR-006's "when the framework has been built" is measured against the
-whole lockfile closure in the cache; whether a subset build counts is a reading of the
-requirement, reported there too.
+**Open for the maintainer when this section was written; decided after it.** Specification P2
+(FR-048 / SR-009 / the data model's `--overwrite-unchanged`): the `Regenerate` classification this
+section measured overwrote a generator-owned file that differs from the render and matches its
+recorded digest; the specification says it must not, and `generate auth` could not complete
+without it. The maintainer chose the flag; §13 records the round. FR-006's "when the framework
+has been built" is measured against the whole lockfile closure in the cache; whether a subset
+build counts is a reading of the requirement, reported in the review record.
 
 **Gates, heads, CI.** Both legs, one after the other, on the continuation's source head, the
 same machine, services, variables, and clean tree as §10 and §11.
@@ -536,3 +537,82 @@ security (2m40s), dependency-review (6s), Analyze (rust) (7m36s), Analyze (actio
 17:50:59 UTC. No check needed a rerun. The commit that adds this paragraph — and the fourth
 validation pass's seven record corrections — is documents-only; its own run is the pull request's
 final state. **Kept unmerged**; nothing tagged, released, published, or deployed.
+
+## 13. The FR-048 decision round — `--overwrite-unchanged` (2026-09-05, after the sixth validation pass)
+
+**What was decided and by whom.** With the pull request validated and unmerged, the maintainer
+chose the third choice §12 and the review record §3c had left open: gate regeneration behind
+the explicit `--overwrite-unchanged` flag the data model reserved. The semantics are in the
+review record §3g, sentence by sentence; nothing in the specification was changed to permit an
+implicit overwrite — FR-048, SR-009, and `data-model.md` §4 now state the flag and the two
+refusals, and they live under `specs/`, which is gitignored, so the edit is on this machine only.
+
+**Source head.** `2b3e4a8fdf5bf53f9187d2cd221a18de96eede6e`, tree
+`488ca176fcc887aab2ffc3c1933e40e2d6c0cffc`, one signed subject-only commit over `a9f873e`
+(`feat(cli): gate regeneration of unchanged files behind --overwrite-unchanged`): the classifier,
+the flag on every `generate` action, the dispatch, the help snapshot, the two contracts, the
+limitation, and the tests; 10 tracked files, 915 insertions and 115 deletions before the
+formatter's reflow.
+
+**Red before green.** `red-fr048.log`: `a9f873e` exported to a scratch directory with the new
+`tests/generate.rs` copied over it and its own target directory, 22:37:49–22:38:07, both new
+binary tests FAILED — the regenerable one at its first assertion (the reviewed head replaced the
+file: `"action":"regenerate"`, `"written":1`), the mixed-plan one because the refusal carried no
+`reason`. The first run of the tests on the worktree, before the implementation, failed the same
+way, the mixed-plan test then also for a reason of its own (half a migration pair removed trips
+the version check first), which was corrected before the export above.
+
+**Suites on the source head** (worktree, `CARGO_INCREMENTAL=0`, before the commit and again after
+the re-application §5 records):
+
+| Suite | Result |
+|---|---|
+| `cargo test -p renvor-cli --bin renvor` | 313 passed, 0 failed, 1 ignored (310 before; the three new tests) |
+| `cargo test -p renvor-cli --test generate` | 11 passed (9 before; the two new tests) |
+| `cargo test -p renvor-cli --test cli` | 4 passed (the new `help-generate.trycmd` among them) |
+| `--test presentation`, `--test snapshots` | 17 passed; 1 passed |
+| `cargo test -p renvor-core --test diagnostics` | 2 passed |
+| `cargo test -p xtask` | 36 passed |
+| `cargo clippy -p renvor-cli --all-targets -- -D warnings`, `cargo fmt --all --check` | clean |
+| `authadded` row (`row-authadded.log`) | 22:28:48–22:30:35, exit 0, 19 passed |
+| `authaddedmysql` row (`row-authaddedmysql.log`) | 22:30:35–22:32:36, exit 0, 19 passed |
+
+The two rows ran on the working tree before the commit; both are part of the census the gate
+legs below ran on the committed head. Their step 4 now refuses `generate auth` without the flag
+(`reason = overwrite_required`, `details.flag`, `src/auth.rs` absent) and adds the starter with it.
+
+**Mutations.** Batch I (`phase-011-mutation-ledger.md`): ten scripted mutations on the committed
+head, ten killed by the test named in advance — each kill checked to be that test failing, not a
+compile error (M-I1's first form was a compile error and was replaced). Phase totals: 62 scripted
+mutations, 62 killed; one by history.
+
+**Gates, heads.** Both legs, one after the other, on the source head, the same machine,
+services, variables, and clean tree as §10–§12; the logs are new files so the earlier legs'
+logs cited above are untouched.
+
+| | leg A | leg B |
+|---|---|---|
+| Command | `cargo +1.94.0 xtask verify` | `cargo +stable xtask verify` |
+| Toolchain | rustc 1.94.0 (4a4ef493e 2026-03-02) | rustc 1.97.1 (8bab26f4f 2026-07-14) |
+| Head | `2b3e4a8fdf5bf53f9187d2cd221a18de96eede6e` | `2b3e4a8fdf5bf53f9187d2cd221a18de96eede6e` |
+| Tree | `488ca176fcc887aab2ffc3c1933e40e2d6c0cffc` | `488ca176fcc887aab2ffc3c1933e40e2d6c0cffc` |
+| Dirty tracked files at start | 0 | 0 |
+| Steps | 9/9 ok | 9/9 ok |
+| Exit | 0 | 0 |
+| Tests | 2209 passed, 0 failed, 5 ignored (145 `test result` lines) | 2209 passed, 0 failed, 5 ignored (145 lines) |
+| Census | 87/87 rows reported in (`renvor-cli` 13m 29s) | 87/87 rows reported in (`renvor-cli` 13m 29s) |
+| Elapsed | 22:40:13–23:03:27 | 23:03:27–23:25:56 |
+
+Logs: `gate-1.94.0-fr048.log`, `gate-stable-fr048.log`, `gates-fr048.log` (scratch, quoted
+here). The five tests over §12's 2204 are the three unit tests and the two binary tests this
+round added.
+
+| Head | Tree | What it is |
+|---|---|---|
+| `a9f873e259842cc6dae9d6034c0b664eb09dc27a` | `aa542f475dd5181e30894306a1b799392631c82b` | the head the sixth validation pass validated; the round's reviewed head |
+| `2b3e4a8fdf5bf53f9187d2cd221a18de96eede6e` | `488ca176fcc887aab2ffc3c1933e40e2d6c0cffc` | **the source head of the decision round**; both gate legs green here; pushed fast-forward 23:27 |
+| the commit that adds this section | — | documents only: this section, the review record §3g, the ledger's batch I |
+
+**Pull request and CI.** The pull request's checks on `2b3e4a8` and the seventh validation pass
+are recorded by the commit that follows this one, after both have reported. **Kept unmerged**;
+nothing tagged, released, published, or deployed.
