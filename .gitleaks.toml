@@ -179,3 +179,37 @@ regexTarget = "match"
 description = "FP-004: the 'hunter2CanaryDoNotLeak' redaction canary in renvor-observability, which every test at those sites requires to be redacted"
 regexes = ['''hunter2CanaryDoNotLeak''']
 regexTarget = "match"
+
+# ---------------------------------------------------------------------------
+# FP-005 — a superseded fixture password in the generated starter test's template
+# ---------------------------------------------------------------------------
+# Rule        : generic-api-key
+# Location    : crates/renvor-cli/templates/starter/tests_starter.rs.j2 line 667 at commit
+#               9dd5bc418ccd2d6c4252bf9a9b5ecd280feb8d65 (Phase 011, batch B) — history only
+# Entropy     : 3.75
+#
+# The flagged value is the made-up password of the example user `carol-9f3a@example.test`
+# that the generated `tests/starter.rs` registered to prove authorization refusal. It is a
+# JSON fixture in a test template: it authenticates nobody against anything, and the account
+# it names exists only inside a test database the same test creates and drops. The rule keys
+# off the `password` key followed by a high-entropy value.
+#
+# The literal is gone from the working tree: batch F (`afab721`) replaced every fixed user
+# in the generated tests with values drawn from `renvor_testkit::factory`, precisely so no
+# password sits in a template. `gitleaks dir .` reports nothing; `gitleaks git .` re-reads
+# the commit that carried it on every run, and this repository does not rewrite history.
+#
+# Scope: the fixture LINE only, matched by the example address and the `password` key that
+# precede the value — the value itself is deliberately not written here. Deliberately no
+# `paths` and no `commits` entry, for the reason FP-001 records: either would skip real
+# content before scanning it.
+#
+# Verification, performed 2026-09-05, to be repeated after any edit to this file: with this
+# entry active both scans report zero findings, and a canary `api_key` placed in a scratch
+# file beside a copy of the allowlisted line IS still reported by `gitleaks dir`.
+#
+# Removable when: the commit carrying the literal has left the scanned history.
+[[allowlists]]
+description = "FP-005: the superseded 'carol-9f3a@example.test' fixture password line in the starter test template (commit 9dd5bc4), replaced by factory-drawn users in afab721"
+regexes = ['''"email":"carol-9f3a@example\.test","password":"''']
+regexTarget = "line"
