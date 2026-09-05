@@ -149,7 +149,14 @@ env:
   #
   # Listed below in PUBLICATION order (see RELEASING.md). The comparison does not require it — it
   # sorts both sides — but it makes the line readable as the thing it describes.
-  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-jobs renvor-cache renvor-storage renvor-auth renvor-mail renvor-testkit renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor-auth-http renvor-observability renvor"
+  #
+  # PHASE 011: `renvor-testkit` moved from before the adapters to after `renvor-http`. The testkit
+  # gained an optional dependency on `renvor-http` (its socket-free test application, feature
+  # `http`), and `--dry-run` resolves every optional dependency regardless of its feature, so the
+  # transport — and `renvor-openapi` under it — must be published first. Nothing publishable
+  # depends on the testkit except as a dev-dependency, so the later position is valid;
+  # `publication_order_is_topological` in `xtask` is what refused the old one.
+  CRATES: "renvor-core renvor-error renvor-config renvor-validation renvor-database renvor-jobs renvor-cache renvor-storage renvor-auth renvor-mail renvor-sqlx renvor-seaorm renvor-openapi renvor-http renvor-testkit renvor-auth-http renvor-observability renvor"
   # The facade, still named separately: it is the crate whose SBOM is the meaningful one for a
   # consumer, because it is the package users actually depend on.
   FACADE: renvor

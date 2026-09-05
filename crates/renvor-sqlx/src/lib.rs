@@ -48,11 +48,30 @@ pub use migrate::Migrations;
 ///
 /// Generic over the driver so that PostgreSQL and MySQL share one implementation. Two copies of
 /// this logic would be two places for the contract to drift.
+/// `Clone` shares the ONE pool (a `sqlx::Pool` is a reference-counted handle), so a repository
+/// can own its copy while the provider that opened the pool keeps its own; `close` on any copy
+/// closes the pool for all of them, which is the provider's Stop and nobody else's business.
+/// Added in Phase 011 for the generated starter's repositories.
 #[derive(Debug)]
 pub struct SqlxDatabase<DB: sqlx::Database> {
     pool: sqlx::Pool<DB>,
     kind: DatabaseKind,
     close_timeout: Duration,
+}
+
+/// Written by hand rather than derived: a derive would demand `DB: Clone`, and the driver marker
+/// types are not. Every field is cloneable on its own — the pool is a reference-counted handle,
+/// so the clone shares the ONE pool with the original (Phase 011, for a generated starter's
+/// repositories). `close` on any copy closes the pool for all of them, which is the provider's
+/// Stop and nobody else's business.
+impl<DB: sqlx::Database> Clone for SqlxDatabase<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            kind: self.kind,
+            close_timeout: self.close_timeout,
+        }
+    }
 }
 
 impl<DB: sqlx::Database> SqlxDatabase<DB> {
@@ -568,5 +587,23 @@ mod tests {
         // behaviour a metrics path needs.
         let odd = PoolStatus { size: 1, idle: 5 };
         assert_eq!(odd.in_use(), 0);
+    }
+}
+
+#[cfg(test)]
+mod handle_tests {
+    //! Phase 011: a generated starter's repositories hold a database handle each, and the
+    //! provider that opened the pool hands out a reference — so the handle must be cloneable,
+    //! sharing the one pool, for a repository to own its copy. RED before the derive existed:
+    //! this module did not compile.
+
+    fn assert_clone<T: Clone>() {}
+
+    #[test]
+    fn the_database_handle_is_cloneable_so_repositories_can_share_the_pool() {
+        #[cfg(feature = "db-postgres")]
+        assert_clone::<super::SqlxDatabase<sqlx::Postgres>>();
+        #[cfg(feature = "db-mysql")]
+        assert_clone::<super::SqlxDatabase<sqlx::MySql>>();
     }
 }

@@ -1,0 +1,8 @@
+# The `[auth]` section for {{ name }}: session bounds. `SessionPolicy` refuses values above the
+# AAL2 ceilings, so raising these past them stops the application at Validate.
+#
+# THE TWO KEYS ARE NOT HERE AND MUST NEVER BE. `RENVOR_AUTH_CSRF_KEY` and `RENVOR_AUTH_ABUSE_KEY`
+# arrive from the environment as 64 hexadecimal characters each — see `.env.example`.
+session_idle_secs = 1800
+session_absolute_secs = 28800
+sessions_per_user = 5

@@ -1,0 +1,128 @@
+//! The cache capability: Valkey, from the `[cache]` section, read through for items.
+//!
+//! The provider connects and pings at Boot and fails Boot — rolling back what booted before it —
+//! when the server does not answer. Plaintext to loopback is a double opt-in written explicitly
+//! in `config/cache.toml` (`tls = false` **and** `allow_insecure_loopback = true`); the password
+//! arrives from `RENVOR_CACHE_PASSWORD` and never from a URL.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use renvor::{ProviderId, RouteRegistry};
+use renvor_cache::config::CacheSection;
+use renvor_cache::valkey::{ValkeyCache, ValkeyProvider};
+use renvor_cache::{Cache as _, CacheBounds, CacheKey, CacheValue, Ttl};
+
+use crate::app::Services;
+use crate::routes::{json, services};
+
+/// The provider type the kernel boots.
+pub type Provider = ValkeyProvider;
+
+/// How long a cached item lives.
+const ITEM_TTL: Duration = Duration::from_secs(60);
+
+/// Declares the provider and registers the `[cache]` section as a lifecycle source.
+pub fn provider(sources: &mut Vec<Arc<dyn renvor::ConfigSource>>) -> Provider {
+    let source = CacheSection::source("cache", crate::config::layers("cache"));
+    let handle = source.handle();
+    sources.push(Arc::new(source));
+    ValkeyProvider::from_config(ProviderId::new("cache"), handle)
+}
+
+/// The routes that exercise the cache.
+///
+/// # Errors
+///
+/// A path that does not validate — a defect here.
+pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    routes.get("/cache/ping", ping)?.describe(
+        renvor::OperationSpec::new()
+            .id("cachePing")
+            .summary("Round-trip the cache")
+            .tag("cache")
+            .response(200, "The cache answered", None)
+            .error(renvor::ApiErrorCode::Unavailable),
+    )?;
+    Ok(())
+}
+
+fn cache(services: &Services) -> Option<Arc<ValkeyCache>> {
+    services.cache.cache()
+}
+
+/// `GET /cache/ping` — one set, one get, one delete against the real server.
+async fn ping(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    let Some(cache) = cache(services) else {
+        return crate::routes::problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let bounds = CacheBounds::new();
+    // A key of this request's own: two concurrent probes under one key raced — one deleting
+    // what the other had just set — and a healthy cache answered 503. The request id is sixteen
+    // hexadecimal characters, so the key is valid by construction.
+    let key = CacheKey::new(&format!("ping:{}", request.context().request_id()))
+        .expect("a hexadecimal request id is a valid key");
+    let stored = cache
+        .set(
+            &key,
+            CacheValue::within(b"pong".to_vec(), &bounds).expect("within the bound"),
+            Ttl::within(Duration::from_secs(5), &bounds).expect("within the bound"),
+        )
+        .await
+        .is_ok();
+    let read = cache
+        .get(&key)
+        .await
+        .ok()
+        .flatten()
+        .map(|value| value.as_bytes() == b"pong")
+        .unwrap_or(false);
+    let _ = cache.delete(&key).await;
+    if stored && read {
+        json(200, &serde_json::json!({"cache": "ready"}))
+    } else {
+        crate::routes::problem(&request, renvor::ApiErrorCode::Unavailable)
+    }
+}
+{% if example_domain %}
+
+fn item_key(id: i64) -> CacheKey {
+    CacheKey::new(&format!("item:{id}")).expect("a fixed valid key")
+}
+
+/// The cached rendering of an item, if it is cached.
+pub async fn cached_item(services: &Services, id: i64) -> Option<crate::domain::Item> {
+    let cache = cache(services)?;
+    let value = cache.get(&item_key(id)).await.ok().flatten()?;
+    serde_json::from_slice(value.as_bytes()).ok()
+}
+
+/// Caches an item for [`ITEM_TTL`]. A cache failure is not a request failure.
+pub async fn remember_item(services: &Services, item: &crate::domain::Item) {
+    let Some(cache) = cache(services) else {
+        return;
+    };
+    let bounds = CacheBounds::new();
+    let Ok(bytes) = serde_json::to_vec(item) else {
+        return;
+    };
+    let (Ok(value), Ok(ttl)) = (
+        CacheValue::within(bytes, &bounds),
+        Ttl::within(ITEM_TTL, &bounds),
+    ) else {
+        return;
+    };
+    let _ = cache.set(&item_key(item.id), value, ttl).await;
+}
+
+/// Invalidates a cached item after a write.
+pub async fn forget_item(services: &Services, id: i64) {
+    if let Some(cache) = cache(services) {
+        let _ = cache.delete(&item_key(id)).await;
+    }
+}
+{% endif %}

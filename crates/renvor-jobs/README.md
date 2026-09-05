@@ -8,8 +8,13 @@ Durable background jobs for the [Renvor](https://github.com/renvor-rs/renvor) fr
 
 The durable stores live in `renvor-sqlx` and `renvor-seaorm` behind their `jobs` features; this
 crate ships the schema they share, as one SQLx-format migration set per engine under
-`migrations/postgres` and `migrations/mysql` (four `up`/`down` pairs, one statement per file,
-versions `20260904000001`–`20260904000004`).
+`migrations/postgres` and `migrations/mysql` (five `up`/`down` pairs, one statement per file,
+versions `20260904000001`–`20260904000005`; the fifth creates the `rv_job_queue` lock row,
+contract C-J10).
+
+*Corrected 2026-09-05: this paragraph said "four" from 2026-09-04, when the fifth pair was added
+for the depth-bound lock row and the prose was not. `tests/migration_set.rs` now compares this
+sentence with the directory.*
 
 An application has **one** migration set and one ledger. Copy the files for your engine into your
 own migration directory beside your other migrations; do not point a second `Migrations::load` at

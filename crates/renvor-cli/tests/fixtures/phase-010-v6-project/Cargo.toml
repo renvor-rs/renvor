@@ -1,0 +1,35 @@
+[package]
+name = "v6-project"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# PERSISTENCE IS SELECTED, AND THIS SECTION IS STILL EMPTY. That is deliberate, and for
+# `--orm seaorm` the reason is stronger than "the crate is unpublished".
+#
+# `renvor-seaorm` is unpublished, so naming it would emit a project that does not resolve. But
+# `sea-orm` IS published — and declaring it would still be wrong here, because generation runs the
+# generated project's own `cargo fmt`, `clippy`, `build`, `test` and `run` BEFORE placing it. A real
+# dependency therefore makes generation resolve and compile SeaORM and SQLx from the registry, which
+# would cost minutes and, more importantly, would need the network. Renvor guarantees that
+# `renvor new` works offline. One ORM choice is not a reason to withdraw that.
+#
+# `src/entity.rs` and `src/repository.rs` are generated in full and are idiomatic SeaORM 2.0. They
+# are not declared as modules in `src/main.rs`, so nothing compiles them yet. To use them, add:
+#
+#   sea-orm       = { version = "2.0.2", default-features = false, features = [
+#                       "macros", "runtime-tokio", "sqlx-postgres" ] }
+#   renvor        = { version = "<published>", features = ["transport-rest"] }
+#   renvor-seaorm = { version = "<published>", features = ["db-postgres"] }
+#   tokio         = { version = "1", features = ["rt-multi-thread", "macros"] }
+#
+# then declare `mod entity;` and `mod repository;` in `src/main.rs`.
+#
+# TWO NAMES, ONE ENGINE: `renvor-seaorm` takes `db-postgres`, `sea-orm` takes
+# `sqlx-postgres`. Each resolves the postgres driver and ONLY that driver.
+#
+# NO TLS FEATURE IS LISTED, which is right for a local development database over loopback and wrong
+# for anything else. `runtime-tokio-rustls` is the obvious name and resolves `webpki-roots`; Renvor
+# itself uses SQLx's `tls-rustls-ring-native-roots` instead, on licence grounds.
+

@@ -109,6 +109,10 @@ fn generate_ok(label: &[&str]) -> Generated {
 fn each_selection_generates_exactly_its_file_set() {
     let base = [
         ".gitignore",
+        // PHASE 011: the provenance record every generated project carries — generator version,
+        // template version, and one digest per generated file — so `renvor generate` can tell
+        // an untouched file from an author's edit. Digests, never contents (SR-008).
+        ".renvor/generated.toml",
         "Cargo.lock",
         "Cargo.toml",
         "README.md",

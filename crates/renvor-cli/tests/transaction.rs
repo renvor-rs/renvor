@@ -38,13 +38,18 @@ use harness::{Terminal, renvor};
 /// This list is **asserted against a real transcript** by `the_wizard_asks_exactly_these_prompts`,
 /// so it cannot silently fall out of date — which is what makes the parameterised cancellation
 /// coverage below actually cover every prompt rather than every prompt somebody remembered.
-const PROMPTS: [&str; 8] = [
+const PROMPTS: [&str; 10] = [
     "Project name",
     "Local development domain",
     "Generate the example domain module?",
     "Generate seed data for it?",
     "Generate database persistence?",
+    // Phase 011: asked with every default, so the framework-path question — asked only when a
+    // selection needs the framework — is NOT in this list, and cancellation coverage of it lives
+    // with the starter tests.
+    "Authentication starter",
     "Generate container development controls?",
+    "Capabilities",
     "Record that local HTTPS is wanted? (nothing is issued and no trust store is touched)",
     "Create this project?",
 ];

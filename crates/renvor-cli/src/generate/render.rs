@@ -91,6 +91,23 @@ pub struct TemplateEntry {
     pub body: &'static str,
 }
 
+/// One file written byte for byte, never rendered (Phase 011).
+///
+/// The migration sets `renvor-auth` and `renvor-jobs` embed are SQL, not templates: rendering them
+/// would hand SQL to the template engine, where a `{{` in a comment is a parse error and an
+/// undefined name is a refusal. They are copied into the tree under the same path rules and the
+/// same bounds as a rendered entry, and they appear in the manifest like any other file.
+///
+/// The path is owned rather than `'static` because it is composed at selection time from an
+/// engine's file name; every rule [`TemplateSet::validate`] applies to a literal path applies here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerbatimEntry {
+    /// Relative output path, forward-slashed.
+    pub path: String,
+    /// The bytes, exactly.
+    pub body: &'static str,
+}
+
 /// A versioned, embedded, inert set of templates.
 ///
 /// # Why `entries` is a `Vec` of `Copy` entries rather than a `&'static` slice
@@ -109,6 +126,22 @@ pub struct TemplateSet {
     pub version: &'static str,
     /// The entries, in declaration order.
     pub entries: Vec<TemplateEntry>,
+    /// Files copied byte for byte after the entries render (Phase 011). Empty for the skeleton.
+    pub verbatim: Vec<VerbatimEntry>,
+    /// Jinja's block trimming: a block tag on its own line leaves no line behind (Phase 011).
+    ///
+    /// The starter templates are whitespace-sensitive Rust with a conditional every few lines,
+    /// and MiniJinja's `-%}` strips the NEXT line's indentation along with the newline — which
+    /// `rustfmt` then refuses. `trim_blocks` removes exactly the newline after a block tag and
+    /// `lstrip_blocks` the indentation before it, so `    {% if x %}` on its own line vanishes
+    /// whole. **Off for the skeleton**, whose templates predate this and whose bytes a
+    /// compatibility promise pins.
+    pub trim_blocks: bool,
+}
+
+/// A path under validation, whichever list it came from.
+struct PathOnly<'a> {
+    path: &'a str,
 }
 
 impl TemplateSet {
@@ -135,7 +168,13 @@ impl TemplateSet {
         };
 
         let mut seen = BTreeSet::new();
-        for entry in &self.entries {
+        let paths = self
+            .entries
+            .iter()
+            .map(|entry| entry.path)
+            .chain(self.verbatim.iter().map(|entry| entry.path.as_str()));
+        for path in paths {
+            let entry = PathOnly { path };
             if entry.path.is_empty() {
                 return Err(defect(entry.path, "has an empty output path"));
             }
@@ -192,6 +231,112 @@ impl std::fmt::Debug for Renderer<'_> {
     }
 }
 
+/// The rendering environment every template shares: empty of built-ins, strict on undefined
+/// names, fuelled and depth-bounded, with the allow-listed filters and nothing else.
+fn environment(trim_blocks: bool) -> Environment<'static> {
+    let mut environment = Environment::empty();
+
+    // FR-028. `Strict` fails on printing, iterating, attribute access, and truthiness of an
+    // undefined value. `SemiStrict` would allow `{% if missing %}` to quietly take the false
+    // branch, which is exactly the silent-empty-rendering failure FR-028 exists to prevent.
+    environment.set_undefined_behavior(UndefinedBehavior::Strict);
+
+    // FR-026, the expansion bound. Requires the `fuel` feature, which is why `Cargo.toml`
+    // enables it explicitly.
+    environment.set_fuel(Some(bounds::FUEL));
+    environment.set_recursion_limit(bounds::RECURSION_DEPTH);
+
+    // KEEP THE FILE'S FINAL NEWLINE.
+    //
+    // MiniJinja defaults this to `false`, which strips the trailing newline from every rendered
+    // template. For a web page that is invisible; for a source file it means the generated
+    // project fails `cargo fmt --check` on its first run — which is exactly the "generated
+    // skeleton formats, compiles, tests, and starts" acceptance criterion.
+    //
+    // Found by running that criterion, not by reading the documentation.
+    environment.set_keep_trailing_newline(true);
+
+    // Phase 011, starter sets only. See `TemplateSet::trim_blocks`.
+    if trim_blocks {
+        environment.set_trim_blocks(true);
+        environment.set_lstrip_blocks(true);
+    }
+
+    // NO `set_debug` CALL, AND THAT IS THE POINT.
+    //
+    // MiniJinja's debug mode attaches the template source and the surrounding variables to
+    // every error. Those variables are the project configuration, and FR-018 requires that no
+    // secret reach any output mode.
+    //
+    // `set_debug` does not exist here: `debug` is a **Cargo feature**, and `Cargo.toml`
+    // declares `default-features = false` with `builtins`, `fuel`, and `serde` only. So the
+    // machinery is not compiled into the binary rather than switched off inside it — absent
+    // rather than disabled, which is the same distinction this module's header draws about
+    // filesystem and network access. A later edit cannot flip a switch that is not there; it
+    // would have to change a dependency declaration, which is visible in review.
+
+    // THE COMPLETE ALLOW-LIST. `Environment::empty()` installed nothing; everything a template
+    // can call is on the next few lines.
+    //
+    // Each is pure, total, and operates only on values already in the context. None can reach
+    // the filesystem, spawn a process, or open a socket, because no such function is here to
+    // be reached.
+    environment.add_filter("upper", |value: String| value.to_uppercase());
+    environment.add_filter("lower", |value: String| value.to_lowercase());
+    environment.add_filter("replace", |value: String, from: String, to: String| {
+        value.replace(&from, &to)
+    });
+    // `crate_name` is the one project-specific transform: Cargo package names allow `-`, Rust
+    // identifiers do not, and a generated `use my-app::…` would not compile.
+    environment.add_filter("crate_name", |value: String| value.replace('-', "_"));
+    // `toml_bool` EXISTS BECAUSE OF A REAL DEFECT, not for symmetry.
+    //
+    // MiniJinja renders a boolean as `True` / `False` — Python's spelling. TOML's booleans are
+    // lowercase, so `{{ container }}` in a `.toml` template produced `container = True`, which
+    // is **invalid TOML**: every generated project that set any flag had a manifest that would
+    // not parse, and `renvor check` would have rejected renvor's own output.
+    //
+    // Found by an outside-in acceptance test, not by reading the rendered file — which is the
+    // argument for having the test.
+    environment.add_filter(
+        "toml_bool",
+        |value: bool| if value { "true" } else { "false" },
+    );
+
+    environment
+}
+
+/// Renders one template body to a string under the same environment, bounds, and filters as a
+/// template set — for `renvor generate`, whose output paths carry the user's names and so cannot
+/// be static entries.
+///
+/// # Errors
+///
+/// [`Code::Internal`] for a body that does not compile (a defect in renvor) and
+/// [`Code::RenderFailed`] for a render that fails.
+pub fn render_body<S: serde::Serialize>(
+    body: &str,
+    context: &S,
+    trim_blocks: bool,
+) -> Result<String, CliError> {
+    let environment = environment(trim_blocks);
+    let template = environment.template_from_str(body).map_err(|error| {
+        CliError::new(
+            Code::Internal,
+            format!(
+                "an embedded generator template does not compile: {error}; this is a defect in \
+                 renvor itself"
+            ),
+        )
+    })?;
+    template.render(context).map_err(|error| {
+        CliError::new(
+            Code::RenderFailed,
+            format!("a generator template could not be rendered: {error}"),
+        )
+    })
+}
+
 impl<'a> Renderer<'a> {
     /// Builds the environment and registers every template.
     ///
@@ -202,68 +347,7 @@ impl<'a> Renderer<'a> {
     pub fn new(set: TemplateSet) -> Result<Self, CliError> {
         set.validate()?;
 
-        let mut environment = Environment::empty();
-
-        // FR-028. `Strict` fails on printing, iterating, attribute access, and truthiness of an
-        // undefined value. `SemiStrict` would allow `{% if missing %}` to quietly take the false
-        // branch, which is exactly the silent-empty-rendering failure FR-028 exists to prevent.
-        environment.set_undefined_behavior(UndefinedBehavior::Strict);
-
-        // FR-026, the expansion bound. Requires the `fuel` feature, which is why `Cargo.toml`
-        // enables it explicitly.
-        environment.set_fuel(Some(bounds::FUEL));
-        environment.set_recursion_limit(bounds::RECURSION_DEPTH);
-
-        // KEEP THE FILE'S FINAL NEWLINE.
-        //
-        // MiniJinja defaults this to `false`, which strips the trailing newline from every rendered
-        // template. For a web page that is invisible; for a source file it means the generated
-        // project fails `cargo fmt --check` on its first run — which is exactly the "generated
-        // skeleton formats, compiles, tests, and starts" acceptance criterion.
-        //
-        // Found by running that criterion, not by reading the documentation.
-        environment.set_keep_trailing_newline(true);
-
-        // NO `set_debug` CALL, AND THAT IS THE POINT.
-        //
-        // MiniJinja's debug mode attaches the template source and the surrounding variables to
-        // every error. Those variables are the project configuration, and FR-018 requires that no
-        // secret reach any output mode.
-        //
-        // `set_debug` does not exist here: `debug` is a **Cargo feature**, and `Cargo.toml`
-        // declares `default-features = false` with `builtins`, `fuel`, and `serde` only. So the
-        // machinery is not compiled into the binary rather than switched off inside it — absent
-        // rather than disabled, which is the same distinction this module's header draws about
-        // filesystem and network access. A later edit cannot flip a switch that is not there; it
-        // would have to change a dependency declaration, which is visible in review.
-
-        // THE COMPLETE ALLOW-LIST. `Environment::empty()` installed nothing; everything a template
-        // can call is on the next few lines.
-        //
-        // Each is pure, total, and operates only on values already in the context. None can reach
-        // the filesystem, spawn a process, or open a socket, because no such function is here to
-        // be reached.
-        environment.add_filter("upper", |value: String| value.to_uppercase());
-        environment.add_filter("lower", |value: String| value.to_lowercase());
-        environment.add_filter("replace", |value: String, from: String, to: String| {
-            value.replace(&from, &to)
-        });
-        // `crate_name` is the one project-specific transform: Cargo package names allow `-`, Rust
-        // identifiers do not, and a generated `use my-app::…` would not compile.
-        environment.add_filter("crate_name", |value: String| value.replace('-', "_"));
-        // `toml_bool` EXISTS BECAUSE OF A REAL DEFECT, not for symmetry.
-        //
-        // MiniJinja renders a boolean as `True` / `False` — Python's spelling. TOML's booleans are
-        // lowercase, so `{{ container }}` in a `.toml` template produced `container = True`, which
-        // is **invalid TOML**: every generated project that set any flag had a manifest that would
-        // not parse, and `renvor check` would have rejected renvor's own output.
-        //
-        // Found by an outside-in acceptance test, not by reading the rendered file — which is the
-        // argument for having the test.
-        environment.add_filter(
-            "toml_bool",
-            |value: bool| if value { "true" } else { "false" },
-        );
+        let mut environment = environment(set.trim_blocks);
 
         for entry in &set.entries {
             environment
@@ -306,13 +390,13 @@ impl<'a> Renderer<'a> {
                 .with("limit", limit.to_string())
         };
 
-        if self.set.entries.len() > bounds::MAX_FILES {
+        let declared = self.set.entries.len() + self.set.verbatim.len();
+        if declared > bounds::MAX_FILES {
             return Err(exceeded(
                 "output_file_count",
                 bounds::MAX_FILES,
                 format!(
-                    "the template set declares {} files, above the limit of {}",
-                    self.set.entries.len(),
+                    "the template set declares {declared} files, above the limit of {}",
                     bounds::MAX_FILES
                 ),
             ));
@@ -385,6 +469,56 @@ impl<'a> Renderer<'a> {
                 })?;
         }
 
+        // The verbatim files, under the same bounds. Nothing here touches the template engine.
+        for entry in &self.set.verbatim {
+            if entry.body.len() > bounds::MAX_FILE_BYTES {
+                return Err(exceeded(
+                    "single_file_output_bytes",
+                    bounds::MAX_FILE_BYTES,
+                    format!(
+                        "`{}` is {} bytes, above the per-file limit of {}",
+                        entry.path,
+                        entry.body.len(),
+                        bounds::MAX_FILE_BYTES
+                    ),
+                ));
+            }
+            total = total.saturating_add(entry.body.len());
+            if total > bounds::MAX_TOTAL_BYTES {
+                return Err(exceeded(
+                    "total_output_bytes",
+                    bounds::MAX_TOTAL_BYTES,
+                    format!(
+                        "the render reached {total} bytes at `{}`, above the total limit of {}",
+                        entry.path,
+                        bounds::MAX_TOTAL_BYTES
+                    ),
+                ));
+            }
+            if let Some(parent) = Path::new(&entry.path).parent()
+                && !parent.as_os_str().is_empty()
+            {
+                root.create_dir_all(parent).map_err(|error| {
+                    CliError::new(
+                        Code::RenderFailed,
+                        format!(
+                            "could not create `{}` in staging: {error}",
+                            crate::output::redact::path(parent)
+                        ),
+                    )
+                    .with("entry", entry.path.clone())
+                })?;
+            }
+            root.write(&entry.path, entry.body.as_bytes())
+                .map_err(|error| {
+                    CliError::new(
+                        Code::RenderFailed,
+                        format!("could not write `{}` in staging: {error}", entry.path),
+                    )
+                    .with("entry", entry.path.clone())
+                })?;
+        }
+
         Ok(())
     }
 }
@@ -445,6 +579,8 @@ mod tests {
         TemplateSet {
             version: "test",
             entries: entries.to_vec(),
+            verbatim: Vec::new(),
+            trim_blocks: false,
         }
     }
 
@@ -835,6 +971,51 @@ mod tests {
         renderer
             .render_into(&root.dir, &ctx())
             .expect("exactly the limit is allowed");
+    }
+
+    #[test]
+    fn block_trimming_removes_the_tag_line_and_keeps_the_indentation() {
+        // The starter's whole reason for the option: an indented block tag on its own line must
+        // vanish entirely, and the content it guards must keep its own indentation. Without the
+        // option the same template keeps the tag's line as a blank one — asserted too, so the
+        // skeleton's rendering is pinned as unchanged.
+        #[derive(Serialize)]
+        struct Flag {
+            yes: bool,
+        }
+        let body =
+            "fn main() {\n    {% if yes %}\n    let a = 1;\n    {% endif %}\n    let b = 2;\n}\n";
+        let mut trimmed = set(&[TemplateEntry { path: "a.rs", body }]);
+        trimmed.trim_blocks = true;
+        let renderer = Renderer::new(trimmed).expect("builds");
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: true })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    let a = 1;\n    let b = 2;\n}\n"
+        );
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: false })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    let b = 2;\n}\n"
+        );
+
+        // CONTROL: the skeleton's environment leaves the lines where they were.
+        let untrimmed = set(&[TemplateEntry { path: "a.rs", body }]);
+        let renderer = Renderer::new(untrimmed).expect("builds");
+        let root = staged();
+        renderer
+            .render_into(&root.dir, &Flag { yes: true })
+            .expect("renders");
+        assert_eq!(
+            root.dir.read_to_string("a.rs").expect("read"),
+            "fn main() {\n    \n    let a = 1;\n    \n    let b = 2;\n}\n"
+        );
     }
 
     #[test]

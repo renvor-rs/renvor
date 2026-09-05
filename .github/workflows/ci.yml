@@ -30,7 +30,11 @@ jobs:
     # previously skipping add roughly two minutes of test time on top of pulling two images. The
     # old ceiling would probably have held; a timeout is an expensive and uninformative way to find
     # out that it did not, and it matches what the `platform` job already allows.
-    timeout-minutes: 45
+    #
+    # 75 since Phase 011: step 4's census runs the starter matrix, which generates and builds ten
+    # framework-backed starters. With no build cache action (see below) the first row compiles
+    # the framework's dependencies cold into `target/starter-matrix`, once per leg.
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       # ONE DIMENSION, AND IT STAYS ONE DIMENSION.
@@ -211,7 +215,7 @@ jobs:
           # PostgreSQL got LOOSER, because `pg_isready` defaults to `--timeout 3`, so a
           # five-second cap allows each attempt two seconds more than it used to. A fully
           # failing block therefore gives up somewhere north of 120s, as it always could,
-          # with `timeout-minutes: 45` as the real outer bound. Tightening it to a true
+          # with `timeout-minutes: 75` as the real outer bound. Tightening it to a true
           # 120s deadline is deliberately NOT done here: main has never enforced one, and
           # inventing a stricter limit inside a flake fix is how you trade one flake for
           # another on a slow runner.
@@ -377,8 +381,15 @@ jobs:
       #
       # Said plainly: **this job does not verify the database adapter on macOS or Windows, and
       # `SUPPORT.md` should not be read as claiming it does.**
+      # ONE STARTER, NOT TEN. The starter matrix generates and builds a project per row; this
+      # job has no services, so the rows with a database or a capability backend would only
+      # skip. `nodb` needs nothing and proves the platform-sensitive half: generation, the sealed
+      # verification, the placed project's own test spawning its binary, and the interrupt.
       - name: Workspace tests
         run: cargo test --workspace --all-features -- --test-threads=1
+        env:
+          RENVOR_TEST_STARTER_ROWS: nodb
+          INSTA_UPDATE: "no"
 
       # FR-034: the facade must build with no default features on every claimed platform, not
       # only on the one where the feature graph was designed.

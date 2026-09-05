@@ -1,0 +1,19 @@
+/target
+
+# NEVER COMMIT `.env`. It holds every credential this application reads.
+#
+# The example is committed and the real file is not — that is the whole arrangement, and the
+# negation below is what keeps `.env.example` from being swept up by the pattern above it.
+.env
+.env.*
+!.env.example
+{% if cap_storage %}
+
+# The storage capability's local root (`config/storage.toml`).
+/var/
+{% endif %}
+{% if cap_observability %}
+
+# An OTLP section is a deployment's, not the repository's; the example is committed instead.
+/config/otlp.toml
+{% endif %}

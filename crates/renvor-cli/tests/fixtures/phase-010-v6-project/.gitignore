@@ -1,0 +1,9 @@
+/target
+
+# NEVER COMMIT `.env`. It holds the database and cache passwords.
+#
+# The example is committed and the real file is not — that is the whole arrangement, and the
+# negation below is what keeps `.env.example` from being swept up by the pattern above it.
+.env
+.env.*
+!.env.example

@@ -1,0 +1,283 @@
+//! The jobs capability: a durable queue on this project's own database row, from the `[jobs]`
+//! section, with one worker and one example handler.
+//!
+//! # Built at Boot, after the database
+//!
+//! The store is the database's own pool, so the worker cannot exist before the database
+//! provider has booted. This provider depends on the database, builds the store, the client, and
+//! the worker in its own `initialise`, and hands the worker to the framework's
+//! `JobsWorkerProvider`, which it then drives through Boot and Stop. The client the routes use
+//! lives in a cell filled at the same moment.
+
+use std::sync::{Arc, OnceLock};
+
+use renvor::kernel::observe::metrics::Registry;
+use renvor::{CapabilityId, InitContext, ProviderFuture, ProviderId, RouteRegistry};
+use renvor_config::ConfigHandle;
+use renvor_jobs::config::JobsSection;
+use renvor_jobs::{
+    HandlerFuture, IdempotencyKey, Job, JobHandler, JobId, JobKind, JobPayload, JobStore as _,
+    JobsClient, JobsWorkerProvider, NewJob, Worker,
+};
+{% if orm == "sqlx" %}
+use renvor_sqlx::jobs::{{ auth_engine }}::SqlxJobStore as Store;
+{% else %}
+use renvor_seaorm::jobs::{{ auth_engine }}::SeaOrmJobStore as Store;
+{% endif %}
+
+use crate::app::DatabaseProvider;
+use crate::routes::{json, problem, services};
+
+/// The kind of job the example handler runs.
+pub const ECHO: &str = "starter.echo";
+
+/// A handler that logs the payload it was given. Replace it with real work; keep its shape.
+#[derive(Debug, Default)]
+pub struct EchoHandler;
+
+impl JobHandler for EchoHandler {
+    fn handle(&self, job: Job, _cancel: renvor::CancelScope) -> HandlerFuture<'_> {
+        Box::pin(async move {
+            tracing::info!(
+                target: "{{ name }}.jobs",
+                job = %job.id,
+                bytes = job.payload.as_bytes().len(),
+                "echo job ran"
+            );
+            Ok(())
+        })
+    }
+}
+
+/// The provider: the jobs section, the database it depends on, and the worker it builds at Boot.
+pub struct Provider {
+    id: ProviderId,
+    provides: Vec<CapabilityId>,
+    dependencies: Vec<CapabilityId>,
+    section: ConfigHandle<JobsSection>,
+    database: Arc<DatabaseProvider>,
+    metrics: Arc<Registry>,
+    inner: OnceLock<JobsWorkerProvider<Store>>,
+    client: OnceLock<JobsClient<Store>>,
+}
+
+/// Declares the provider and registers the `[jobs]` section as a lifecycle source.
+pub fn provider(
+    sources: &mut Vec<Arc<dyn renvor::ConfigSource>>,
+    database: Arc<DatabaseProvider>,
+    metrics: Arc<Registry>,
+) -> Provider {
+    let source = JobsSection::source("jobs", crate::config::layers("jobs"));
+    let handle = source.handle();
+    sources.push(Arc::new(source));
+    Provider {
+        id: ProviderId::new("jobs"),
+        provides: vec![renvor_jobs::jobs_capability()],
+        dependencies: vec![CapabilityId::new(crate::app::DATABASE)],
+        section: handle,
+        database,
+        metrics,
+        inner: OnceLock::new(),
+        client: OnceLock::new(),
+    }
+}
+
+impl Provider {
+    /// The client, once Boot has built it.
+    pub fn client(&self) -> Option<&JobsClient<Store>> {
+        self.client.get()
+    }
+
+    fn build(
+        &self,
+    ) -> Result<
+        (JobsWorkerProvider<Store>, JobsClient<Store>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        let database = self
+            .database
+            .database()
+            .ok_or("the database provider has not booted")?;
+        let settings = self.section.with(JobsSection::worker_from)??;
+        let entropy: Arc<dyn renvor::EntropySource> = Arc::new(renvor::OsEntropy);
+        let clock: Arc<dyn renvor::kernel::Clock> = Arc::new(renvor::kernel::SystemClock);
+{% if orm == "sqlx" %}
+        let store = Arc::new(Store::new(
+            database.pool().clone(),
+            settings.bounds,
+            Arc::clone(&entropy),
+        ));
+{% else %}
+        let store = Arc::new(Store::new(
+            Arc::new(database.clone()),
+            settings.bounds,
+            Arc::clone(&entropy),
+        ));
+{% endif %}
+        let worker = Worker::new(
+            Arc::clone(&store),
+            settings.worker,
+            Arc::clone(&clock),
+            entropy,
+            &self.metrics,
+        )?
+        .register(JobKind::new(ECHO)?, Arc::new(EchoHandler));
+        let client = JobsClient::new(
+            store,
+            clock,
+            renvor_jobs::JobMetrics::register(&self.metrics)?,
+        );
+        let inner = JobsWorkerProvider::new(ProviderId::new("jobs-worker"), worker)
+            .depends_on(CapabilityId::new(crate::app::DATABASE));
+        Ok((inner, client))
+    }
+}
+
+impl renvor::Provider for Provider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    fn provides(&self) -> &[CapabilityId] {
+        &self.provides
+    }
+
+    fn dependencies(&self) -> &[CapabilityId] {
+        &self.dependencies
+    }
+
+    fn initialise<'a>(&'a self, context: &'a mut InitContext<'_>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let (inner, client) = self.build()?;
+            let _ = self.client.set(client);
+            let _ = self.inner.set(inner);
+            let inner = self.inner.get().ok_or("the worker was not stored")?;
+            inner.initialise(context).await
+        })
+    }
+
+    fn stop(&self) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            match self.inner.get() {
+                Some(inner) => inner.stop().await,
+                None => Ok(()),
+            }
+        })
+    }
+}
+
+/// The routes that exercise the queue.
+///
+/// # Errors
+///
+/// A path that does not validate — a defect here.
+pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    routes.post("/jobs", enqueue)?.describe(
+        renvor::OperationSpec::new()
+            .id("enqueueJob")
+            .summary("Enqueue one echo job")
+            .tag("jobs")
+            .response(202, "The job's identifier", None)
+            .error(renvor::ApiErrorCode::ValidationFailed),
+    )?;
+    routes.get("/jobs/{id}", read)?.describe(
+        renvor::OperationSpec::new()
+            .id("readJob")
+            .summary("Read a job's state")
+            .tag("jobs")
+            .response(200, "The job's state", None)
+            .error(renvor::ApiErrorCode::ResourceNotFound),
+    )?;
+    Ok(())
+}
+
+/// The body of `POST /jobs`.
+#[derive(serde::Deserialize)]
+struct Enqueue {
+    /// The idempotency key: the same key enqueues once.
+    key: String,
+    /// The payload the handler receives.
+    message: String,
+}
+
+/// `POST /jobs`{% if auth_session %} — a session is required{% endif %}.
+async fn enqueue(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+{% if auth_session %}
+    if let Err(code) = crate::auth::require_session(services, &request).await {
+        return problem(&request, code);
+    }
+{% endif %}
+    let Some(client) = services.jobs.client() else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let Ok(body) = serde_json::from_slice::<Enqueue>(request.body()) else {
+        return problem(&request, renvor::ApiErrorCode::MalformedBody);
+    };
+    // The queue is the configured one or nothing: a route that invented one would enqueue
+    // where no worker listens.
+    let Ok(queue) = services
+        .jobs
+        .section
+        .with(|resolved| resolved.value().queue.clone())
+    else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let job = (|| -> Result<NewJob, renvor_jobs::JobError> {
+        let bounds = renvor_jobs::JobBounds::new();
+        Ok(NewJob::new(
+            renvor_jobs::QueueName::new(&queue)?,
+            JobKind::new(ECHO)?,
+            JobPayload::within(body.message.into_bytes(), &bounds)?,
+        )
+        .with_idempotency_key(IdempotencyKey::new(&body.key)?))
+    })();
+    let Ok(job) = job else {
+        return problem(&request, renvor::ApiErrorCode::ValidationFailed);
+    };
+    match client.enqueue(job).await {
+        Ok(enqueued) => json(202, &serde_json::json!({"id": enqueued.id().to_string()})),
+        Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
+    }
+}
+
+/// `GET /jobs/{id}`.
+async fn read(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    let Some(client) = services.jobs.client() else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let Some(id) = request.path_param("id").and_then(parse_job_id) else {
+        return problem(&request, renvor::ApiErrorCode::ValidationFailed);
+    };
+    match client.store().read(&id).await {
+        Ok(Some(job)) => json(
+            200,
+            &serde_json::json!({
+                "id": job.id.to_string(),
+                "state": format!("{:?}", job.state),
+                "attempts": job.attempts,
+            }),
+        ),
+        Ok(None) => problem(&request, renvor::ApiErrorCode::ResourceNotFound),
+        Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
+    }
+}
+
+/// Parses the 32-hex-character rendering `JobId` produces.
+fn parse_job_id(text: &str) -> Option<JobId> {
+    if text.len() != 32 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut bytes = [0_u8; 16];
+    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
+        bytes[index] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(JobId::from_bytes(bytes))
+}

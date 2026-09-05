@@ -1,0 +1,147 @@
+//! The mail capability: SMTP submission, from the `[mail]` section.
+//!
+//! The provider builds the transport at Boot and verifies the relay (`EHLO`/`NOOP` after
+//! authentication), so a relay that does not answer fails Boot rather than queueing mail nowhere.
+//! TLS is the default; plaintext is a double opt-in to loopback only, written explicitly in
+//! `config/mail.toml`. The password arrives from `RENVOR_MAIL_PASSWORD` and never from a URL.
+
+use std::sync::Arc;
+
+use renvor::{ProviderId, RouteRegistry};
+use renvor_mail::config::MailSection;
+use renvor_mail::smtp::SmtpMailer;
+use renvor_mail::{Address, Mailbox, Mailer as _, Message};
+
+use crate::routes::{json, problem, services};
+
+/// The application's name, as the sender shows it.
+const NAME: &str = "{{ name }}";
+
+/// The provider type the kernel boots.
+pub type Provider = renvor_mail::MailProvider<SmtpMailer>;
+
+/// Declares the provider and registers the `[mail]` section as a lifecycle source.
+pub fn provider(sources: &mut Vec<Arc<dyn renvor::ConfigSource>>) -> Provider {
+    let source = MailSection::source("mail", crate::config::layers("mail"));
+    let handle = source.handle();
+    sources.push(Arc::new(source));
+    Provider::from_config(ProviderId::new("mail"), handle, Arc::new(renvor::OsEntropy))
+}
+
+/// The routes that exercise the mailer.
+///
+/// # Errors
+///
+/// A path that does not validate — a defect here.
+pub fn declare(routes: &mut RouteRegistry) -> Result<(), Box<dyn std::error::Error>> {
+    routes.post("/mail/notice", notice)?.describe(
+        renvor::OperationSpec::new()
+            .id("mailNotice")
+            .summary("Send one notice to the configured sender's own domain")
+            .tag("mail")
+            .response(202, "The relay accepted the message", None)
+{% if auth_session %}
+            .error(renvor::ApiErrorCode::AuthenticationRequired)
+{% else %}
+            .error(renvor::ApiErrorCode::NotPermitted)
+{% endif %}
+            .error(renvor::ApiErrorCode::Unavailable),
+    )?;
+    Ok(())
+}
+
+/// The body of `POST /mail/notice`.
+#[derive(serde::Deserialize)]
+struct Notice {
+    /// The recipient. Bounded and validated by `Address::new`.
+    to: String,
+    /// The subject line. Bounded by the message builder.
+    subject: String,
+}
+
+/// `POST /mail/notice` — one message through the real transport{% if auth_session %}, from a signed-in user{% else %}, from the loopback peer only{% endif %}.
+async fn notice(request: renvor::Request) -> renvor::Response {
+{% if not auth_session %}
+    // Session-free, so the caller is the loopback peer or nobody. The host policy admits the
+    // local domain by its `Host` header, which any remote caller can supply once the server is
+    // bound beyond loopback or fronted by a proxy; the peer address is what a remote caller
+    // cannot supply. Checked before anything else is read, so a refused caller learns nothing.
+    let loopback = matches!(
+        request.context().client(),
+        renvor::ClientIdentity::DirectPeer(peer) if peer.is_loopback()
+    );
+    if !loopback {
+        return problem(&request, renvor::ApiErrorCode::NotPermitted);
+    }
+{% endif %}
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+{% if auth_session %}
+    if let Err(code) = crate::auth::require_session(services, &request).await {
+        return problem(&request, code);
+    }
+{% endif %}
+    let Some(mailer) = services.mail.mailer() else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let Ok(notice) = serde_json::from_slice::<Notice>(request.body()) else {
+        return problem(&request, renvor::ApiErrorCode::MalformedBody);
+    };
+    // The sender's domain is the configured one or nothing: a route that invented one would
+    // send mail nobody configured.
+    let Ok(local_domain) = services
+        .http
+        .with(|resolved| resolved.value().local_domain.clone())
+    else {
+        return problem(&request, renvor::ApiErrorCode::Unavailable);
+    };
+    let message = (|| -> Result<Message, renvor_mail::MailError> {
+        let sender = Mailbox::new(Address::new(&format!("no-reply@{local_domain}"))?)
+            .with_display_name(NAME)?;
+        Message::builder(sender)
+            .to(Mailbox::new(Address::new(&notice.to)?))
+            .subject(&notice.subject)
+            .text(format!(
+                "This notice was sent by {NAME}'s mail capability.\n"
+            ))
+            .build()
+    })();
+    let Ok(message) = message else {
+        return problem(&request, renvor::ApiErrorCode::ValidationFailed);
+    };
+    match mailer.send(message).await {
+        Ok(receipt) => json(
+            202,
+            &serde_json::json!({"accepted": true, "message_id": receipt.id().as_str()}),
+        ),
+        Err(_) => problem(&request, renvor::ApiErrorCode::Unavailable),
+    }
+}
+{% if not auth_session %}
+
+#[cfg(test)]
+mod tests {
+    use renvor::{Method, RouteRegistry};
+    use renvor_testkit::app::TestApplication;
+
+    #[tokio::test]
+    async fn a_notice_from_beyond_loopback_is_refused_before_anything_is_read() {
+        let mut routes = RouteRegistry::new();
+        super::declare(&mut routes).expect("the routes declare");
+        let app = TestApplication::new(routes);
+        let body = br#"{"to":"someone@example.test","subject":"probe"}"#.to_vec();
+        let remote: std::net::IpAddr = "203.0.113.9".parse().expect("an address");
+        let request = app.request_from(renvor::ClientIdentity::DirectPeer(remote), body.clone());
+        let refused = app.dispatch(Method::Post, "/mail/notice", request).await;
+        assert_eq!(refused.status, 403, "{}", refused.body);
+
+        // POSITIVE CONTROL: the loopback peer gets past the guard — to the services lookup,
+        // which this socket-free application has no state for, so it answers 500, not 403.
+        let request = app.request(body);
+        let local = app.dispatch(Method::Post, "/mail/notice", request).await;
+        assert_ne!(local.status, 403, "{}", local.body);
+    }
+}
+{% endif %}

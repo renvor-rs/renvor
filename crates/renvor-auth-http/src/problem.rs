@@ -162,6 +162,21 @@ pub fn render(
     invalid_params: Vec<InvalidParam>,
 ) -> Response {
     let (code, status) = classify(error);
+    render_code(code, status, correlation, invalid_params)
+}
+
+/// Renders a problem document for a code and status decided by the caller.
+///
+/// The one caller that is not a `ServiceError` is the deferred route group's *not yet serving*
+/// answer (Phase 011): `503` with `unavailable`, which no service error classifies to — a storage
+/// failure is an outage of a running service and answers `500`.
+#[must_use]
+pub fn render_code(
+    code: ApiErrorCode,
+    status: u16,
+    correlation: CorrelationId,
+    invalid_params: Vec<InvalidParam>,
+) -> Response {
     let problem =
         ProblemDetails::new(code, status, correlation.encode()).with_invalid_params(invalid_params);
 

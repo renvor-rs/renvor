@@ -205,6 +205,22 @@ pub use renvor_http::{
     RouteRegistry, Scheme, TrustedProxies,
 };
 
+/// Resolves when the process receives the interrupt a terminal sends (`SIGINT`, Ctrl-C) — the
+/// signal a generated starter waits on before it drains and stops.
+///
+/// Offered by the framework rather than reached for through Tokio directly so that every package
+/// a starter resolves is in the framework's own lockfile: `signal` was the one Tokio feature no
+/// workspace crate enabled, and a starter that enabled it itself needed one package the seeded
+/// lockfile did not carry, which broke offline generation (FR-006 of Phase 011).
+///
+/// # Errors
+///
+/// The operating system refused to register the handler.
+#[cfg(feature = "transport-rest")]
+pub async fn shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
+}
+
 /// The public API error registry and RFC 9457 Problem Details.
 ///
 /// Transport-independent: nothing in it names an HTTP type. It is behind `transport-rest` because

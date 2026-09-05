@@ -26,7 +26,7 @@ use std::io::IsTerminal;
 use clap::Parser;
 use clap::error::ErrorKind;
 
-use config::flags::{Cli, Command, DockerAction, TlsAction};
+use config::flags::{Cli, Command, DockerAction, GenerateAction, TlsAction};
 use exit::{CliError, Code, Exit};
 use output::{Format, Reporter};
 
@@ -434,6 +434,7 @@ fn main() {
         Command::Dev => "dev",
         Command::Docker { .. } => "docker",
         Command::Tls { .. } => "tls",
+        Command::Generate { .. } => "generate",
     };
 
     set_panic_context(format, command_name);
@@ -496,6 +497,23 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
             // deliberately not consulted here.
             TlsAction::Trust { consent } => {
                 commands::tls::trust(reporter, consent, std::io::stdin().is_terminal(), dry_run)
+            }
+        },
+        Command::Generate { action } => match action {
+            GenerateAction::Migration { name, import, path } => commands::generate::run(
+                reporter,
+                &path,
+                commands::generate::Action::Migration { name, import },
+                dry_run,
+            ),
+            GenerateAction::Resource { name, fields, path } => commands::generate::run(
+                reporter,
+                &path,
+                commands::generate::Action::Resource { name, fields },
+                dry_run,
+            ),
+            GenerateAction::Auth { path } => {
+                commands::generate::run(reporter, &path, commands::generate::Action::Auth, dry_run)
             }
         },
     }

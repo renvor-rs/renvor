@@ -1,0 +1,11 @@
+# The `[cache]` section for {{ name }}: a local Valkey over plaintext loopback.
+#
+# PLAINTEXT IS A DOUBLE OPT-IN. `tls = false` alone is refused; it is accepted only with
+# `allow_insecure_loopback = true` AND a loopback host, and refused at Validate otherwise. For any
+# other host set `tls = true` (the default) and drop `allow_insecure_loopback`.
+# The password arrives from `RENVOR_CACHE_PASSWORD`, never from a URL.
+host = "127.0.0.1"
+port = 6379
+tls = false
+allow_insecure_loopback = true
+namespace = "{{ name | crate_name }}"

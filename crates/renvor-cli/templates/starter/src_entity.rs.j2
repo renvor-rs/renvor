@@ -1,0 +1,31 @@
+//! The `item` entity for {{ name }}, in SeaORM 2.0 dense style.
+//!
+//! `DeriveEntityModel` generates `Entity`, `Column`, `PrimaryKey`, and `ActiveModel` from this one
+//! struct. The table name is stated rather than inferred, so a rename cannot silently change the
+//! SQL.
+
+use sea_orm::entity::prelude::*;
+
+/// One row of `item`.
+#[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+#[sea_orm(table_name = "item")]
+pub struct Model {
+    /// The primary key, assigned by the database.
+    #[sea_orm(primary_key)]
+    pub id: i64,
+    /// The name. `VARCHAR(200)` in the migration; the length is declared here too so an over-long
+    /// value is refused by the database rather than truncated by it.
+    #[sea_orm(column_type = "String(StringLen::N(200))")]
+    pub name: String,
+{% if auth_session %}
+    /// The owner's user identifier, 16 bytes, exactly as `rv_auth_user.id` stores it.
+    #[sea_orm(column_type = "Binary(16)")]
+    pub owner_id: Vec<u8>,
+{% endif %}
+}
+
+/// `item` has no relations yet. Required by the derive; deliberately empty rather than absent.
+#[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+pub enum Relation {}
+
+impl ActiveModelBehavior for ActiveModel {}

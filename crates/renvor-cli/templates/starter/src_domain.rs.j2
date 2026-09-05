@@ -1,0 +1,255 @@
+//! The example domain: an item with a name{% if auth_session %} and an owner{% endif %}.
+//!
+//! The type, its JSON shapes, and the HTTP handlers over the repository. The repository itself
+//! is in {% if orm == "sqlx" %}`src/persistence.rs`{% else %}`src/repository.rs`{% endif %}; nothing in this file names a database.
+
+use renvor::ApiErrorCode;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// One item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Item {
+    /// Its identifier, assigned by the database.
+    pub id: i64,
+    /// Its name.
+    pub name: String,
+{% if auth_session %}
+    /// The user who created it, as the auth starter's user identifier renders it.
+    pub owner: String,
+{% endif %}
+}
+
+/// The body of `POST /items` and `PUT /items/{id}`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, JsonSchema)]
+pub struct SaveItem {
+    /// The name. 1 to 200 characters, matching the column.
+    #[schemars(length(min = 1, max = 200))]
+    pub name: String,
+}
+
+impl SaveItem {
+    /// Validates the body against the column's bound.
+    pub fn validate(&self) -> Result<(), ApiErrorCode> {
+        let length = self.name.chars().count();
+        if length == 0 || length > 200 {
+            return Err(ApiErrorCode::ValidationFailed);
+        }
+        Ok(())
+    }
+}
+{% if auth_session %}
+
+/// A stored item, as the ownership policy sees it.
+impl renvor_auth::Owned for Item {
+    fn owner(&self) -> renvor_auth::UserId {
+        crate::auth::user_id_from_rendered(&self.owner)
+    }
+}
+{% endif %}
+
+/// The HTTP handlers.
+pub mod routes {
+    use super::SaveItem;
+    use crate::routes::{json, problem, services};
+    use renvor::{ApiErrorCode, Request, Response};
+
+    fn id_from(request: &Request) -> Option<i64> {
+        request.path_param("id")?.parse().ok()
+    }
+
+    fn body(request: &Request) -> Result<SaveItem, Response> {
+        let input: SaveItem = serde_json::from_slice(request.body())
+            .map_err(|_| problem(request, ApiErrorCode::MalformedBody))?;
+        input.validate().map_err(|code| problem(request, code))?;
+        Ok(input)
+    }
+
+    /// `GET /items`.
+    pub async fn list(request: Request) -> Response {
+        let services = match services(&request) {
+            Ok(services) => services,
+            Err(response) => return response,
+        };
+        match crate::{{ repository_module }}::list(services).await {
+            Ok(items) => json(200, &items),
+            Err(code) => problem(&request, code),
+        }
+    }
+
+    /// `GET /items/{id}`{% if cap_cache %}, read through the cache{% endif %}.
+    pub async fn get(request: Request) -> Response {
+        let Some(id) = id_from(&request) else {
+            return problem(&request, ApiErrorCode::ValidationFailed);
+        };
+        let services = match services(&request) {
+            Ok(services) => services,
+            Err(response) => return response,
+        };
+{% if cap_cache %}
+        if let Some(item) = crate::capabilities::cache::cached_item(services, id).await {
+            return json(200, &item);
+        }
+{% endif %}
+        match crate::{{ repository_module }}::get(services, id).await {
+{% if cap_cache %}
+            Ok(Some(item)) => {
+                crate::capabilities::cache::remember_item(services, &item).await;
+                json(200, &item)
+            }
+{% else %}
+            Ok(Some(item)) => json(200, &item),
+{% endif %}
+            Ok(None) => problem(&request, ApiErrorCode::ResourceNotFound),
+            Err(code) => problem(&request, code),
+        }
+    }
+
+    /// `POST /items`{% if auth_session %} — a session is required; the item belongs to its creator{% endif %}.
+    pub async fn create(request: Request) -> Response {
+        let services = match services(&request) {
+            Ok(services) => services,
+            Err(response) => return response,
+        };
+{% if auth_session %}
+        let subject = match crate::auth::require_session(services, &request).await {
+            Ok(subject) => subject,
+            Err(code) => return problem(&request, code),
+        };
+{% endif %}
+        let input = match body(&request) {
+            Ok(input) => input,
+            Err(response) => return response,
+        };
+        match crate::{{ repository_module }}::create(services, input{% if auth_session %}, subject.user_id(){% endif %}).await {
+            Ok(item) => json(201, &item),
+            Err(code) => problem(&request, code),
+        }
+    }
+
+    /// `PUT /items/{id}`{% if auth_session %} — the owner only, deny by default{% endif %}.
+    pub async fn replace(request: Request) -> Response {
+        let Some(id) = id_from(&request) else {
+            return problem(&request, ApiErrorCode::ValidationFailed);
+        };
+        let services = match services(&request) {
+            Ok(services) => services,
+            Err(response) => return response,
+        };
+{% if auth_session %}
+        let subject = match crate::auth::require_session(services, &request).await {
+            Ok(subject) => subject,
+            Err(code) => return problem(&request, code),
+        };
+{% endif %}
+        let input = match body(&request) {
+            Ok(input) => input,
+            Err(response) => return response,
+        };
+{% if auth_session %}
+        // AUTHORIZATION INSIDE THE OPERATION. The existing item is read, the policy decides,
+        // and only an `Authorized<Item>` reaches the write — there is no path to the write that
+        // skips the decision, and a missing item, an anonymous caller, and another user's item
+        // are one refusal.
+        let existing = match crate::{{ repository_module }}::get(services, id).await {
+            Ok(existing) => existing,
+            Err(code) => return problem(&request, code),
+        };
+        let Ok(authorized) = renvor_auth::authorize(
+            &renvor_auth::OwnedBySubject,
+            &renvor_auth::Subject::Authenticated(subject),
+            existing,
+        ) else {
+            return problem(&request, ApiErrorCode::NotPermitted);
+        };
+        let target = authorized.into_resource();
+        match crate::{{ repository_module }}::replace(services, target.id, input).await {
+{% else %}
+        match crate::{{ repository_module }}::replace(services, id, input).await {
+{% endif %}
+{% if cap_cache %}
+            Ok(Some(item)) => {
+                crate::capabilities::cache::forget_item(services, item.id).await;
+                json(200, &item)
+            }
+{% else %}
+            Ok(Some(item)) => json(200, &item),
+{% endif %}
+            Ok(None) => problem(&request, ApiErrorCode::ResourceNotFound),
+            Err(code) => problem(&request, code),
+        }
+    }
+
+    /// `DELETE /items/{id}`{% if auth_session %} — the owner only, deny by default{% endif %}.
+    pub async fn delete(request: Request) -> Response {
+        let Some(id) = id_from(&request) else {
+            return problem(&request, ApiErrorCode::ValidationFailed);
+        };
+        let services = match services(&request) {
+            Ok(services) => services,
+            Err(response) => return response,
+        };
+{% if auth_session %}
+        let subject = match crate::auth::require_session(services, &request).await {
+            Ok(subject) => subject,
+            Err(code) => return problem(&request, code),
+        };
+        let existing = match crate::{{ repository_module }}::get(services, id).await {
+            Ok(existing) => existing,
+            Err(code) => return problem(&request, code),
+        };
+        let Ok(authorized) = renvor_auth::authorize(
+            &renvor_auth::OwnedBySubject,
+            &renvor_auth::Subject::Authenticated(subject),
+            existing,
+        ) else {
+            return problem(&request, ApiErrorCode::NotPermitted);
+        };
+        let target = authorized.into_resource();
+        match crate::{{ repository_module }}::delete(services, target.id).await {
+{% else %}
+        match crate::{{ repository_module }}::delete(services, id).await {
+{% endif %}
+{% if cap_cache %}
+            Ok(true) => {
+                crate::capabilities::cache::forget_item(services, id).await;
+                Response::status(204).expect("204 is valid")
+            }
+{% else %}
+            Ok(true) => Response::status(204).expect("204 is valid"),
+{% endif %}
+            Ok(false) => problem(&request, ApiErrorCode::ResourceNotFound),
+            Err(code) => problem(&request, code),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SaveItem;
+
+    #[test]
+    fn a_name_is_bounded_like_its_column() {
+        assert!(
+            SaveItem {
+                name: "a".repeat(200)
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            SaveItem {
+                name: "a".repeat(201)
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            SaveItem {
+                name: String::new()
+            }
+            .validate()
+            .is_err()
+        );
+    }
+}

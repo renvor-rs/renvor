@@ -1,0 +1,15 @@
+-- add_item_owner: the owner column the session starter reads, added to an item table that
+-- already existed — and may already hold rows — when `renvor generate auth` ran.
+--
+-- The item migration that created the table is applied and recorded by its checksum, so it is
+-- never rewritten; the column arrives here, forward. Rows created before authentication belong
+-- to nobody: the all-zero identifier, which no registered user holds, exactly as the development
+-- seeds mark theirs. The ownership policy refuses every caller for such a row.
+{% if database == "postgres" %}
+ALTER TABLE item ADD COLUMN owner_id BYTEA NOT NULL DEFAULT decode('00000000000000000000000000000000', 'hex');
+ALTER TABLE item ALTER COLUMN owner_id DROP DEFAULT;
+{% else %}
+-- One statement: MySQL fills a new `NOT NULL` binary column with zero bytes for the rows that
+-- exist, and the column is declared exactly as a fresh session starter declares it.
+ALTER TABLE item ADD COLUMN owner_id BINARY(16) NOT NULL;
+{% endif %}

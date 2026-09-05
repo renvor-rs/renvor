@@ -1,7 +1,7 @@
 ---
 description: "Contract C-5 — the generation transaction and its destination-safety guarantees"
-version: "1.0.0"
-status: "normative — the safety core of the generator. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "normative — the safety core of the generator. 1.1.0 (2026-09-05, Phase 011 correction round): the sealed environment strips proxy credentials and a check's output is redacted before it is reported. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-5 — The generation transaction
@@ -101,6 +101,26 @@ not build is therefore a **generation failure**, reported as such, with nothing 
 rather than something the user discovers ten minutes later (FR-030).
 
 This is the step that makes SC-005 an assertion about the generator rather than about the templates.
+
+**The checks run in a sealed environment** (Phase 011). The staged project's `cargo` sees what
+the toolchain needs — `PATH`, `HOME`, `CARGO_HOME`, `RUSTUP_*`, `RUSTFLAGS`, proxy and certificate
+variables — and nothing else the operator's shell carries: no `RENVOR_*`, no credential. A
+`RENVOR_DATABASE_URL` in the shell must not let generation reach a database, and a gate's
+`RENVOR_TEST_REQUIRE_DATABASE=1` must not turn a staged project's skip into a failure. The build
+directory is `CARGO_TARGET_DIR` when set and absolute, else a temporary directory.
+
+**"No credential" includes the proxy variables** (1.1.0, 2026-09-05, the Standards review of
+Phase 011). `CARGO_HTTP_PROXY`, `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, and `https_proxy` pass
+through with any `user:password@` **removed** — the scheme, host, port, and path survive, so a
+proxy that needs no credential still routes; a value that is not text is dropped. Verification
+needs no registry update (the framework's lockfile seeds resolution), so an authenticated proxy is
+not something the checks have to be able to use, and a credential the seal let through would
+reach every build script and dependency the staged project compiles.
+
+**A child's output is reported redacted, never raw.** When a check fails, the message carries
+the tool's stdout and stderr after every URL credential is replaced, every credential the seal
+removed is replaced, and every control character is escaped — a build script cannot put a
+credential or a terminal sequence into the operator's error.
 
 ## Residue
 

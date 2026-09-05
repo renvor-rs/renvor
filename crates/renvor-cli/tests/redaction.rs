@@ -480,3 +480,44 @@ fn a_control_character_from_argv_never_reaches_a_prompt_as_a_control_character()
         "the sequence was removed rather than shown as text"
     );
 }
+
+#[test]
+fn a_credential_shaped_framework_path_is_refused_and_redacted_in_every_mode() {
+    // Phase 011. `--framework-path` is the one new field an operator can type anything into, and
+    // its refusal echoes the path back — through the same redacting renderer the destination
+    // refusal uses. Planted as a directory that does not exist, so the refusal is the
+    // `framework_directory` rule and the message carries the value.
+    let base = tempfile::tempdir().expect("tempdir");
+    for (position, mode) in ["human", "json"].into_iter().enumerate() {
+        let (code, stdout, stderr) = renvor(
+            &[
+                "new",
+                "demo",
+                "--yes",
+                "--capabilities",
+                "cache",
+                "--framework-path",
+                "password=hunter2",
+                "--output",
+                mode,
+            ],
+            base.path(),
+        );
+        assert_eq!(
+            code, 3,
+            "a refused framework path exits 3 (position {position})"
+        );
+        assert!(
+            !stdout.contains(PLANTED) && !stderr.contains(PLANTED),
+            "the credential survived on the framework-path refusal (position {position})"
+        );
+        assert!(
+            format!("{stdout}{stderr}").contains("[redacted]"),
+            "nothing was redacted (position {position}), so the assertion above proved nothing"
+        );
+        assert!(
+            !base.path().join("demo").exists(),
+            "a refused framework path still created the destination (position {position})"
+        );
+    }
+}

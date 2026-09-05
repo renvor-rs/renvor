@@ -1,0 +1,357 @@
+//! The authentication starter: the framework's session flows, wired to this project's database
+//! and mail, and the ownership policy the item routes enforce.
+//!
+//! # Built at Boot, declared before it
+//!
+//! `AuthEndpoints` holds repositories, and every repository holds the pool the database provider
+//! opens at Boot. So this provider depends on the database (and on mail, whose transport the
+//! verification and reset flows send through), builds the endpoints in its own `initialise`, and
+//! sets them into a cell the routes were declared over (`renvor_auth_http::routes_deferred`).
+//! The startup order is real: the kernel boots the database, then mail, then this, then HTTP.
+//!
+//! # What is production-capable here, and what is not
+//!
+//! The services, the Argon2id password hashing, the cookie policy, the CSRF and abuse keys, and
+//! the repositories are the framework's own and are production-capable. The audit sink below
+//! writes structured `tracing` events, which is a real sink and not a recording one. What you
+//! still owe a deployment: real key management for the two keys (they arrive from the
+//! environment), a relay for the mail capability, and the retained limitations the README lists.
+
+use std::sync::{Arc, OnceLock};
+
+use chrono::Duration;
+use renvor::{CapabilityId, InitContext, Provider, ProviderFuture, ProviderId};
+use renvor_auth::abuse::{AbuseContract, AbuseGuard, AttemptBuckets, AttemptKeyring};
+use renvor_auth::audit::{AuditError, AuditEvent, AuditSink};
+use renvor_auth::cookie::CookiePolicy;
+use renvor_auth::password::{PasswordPolicy, PasswordService, StaticBlocklist};
+use renvor_auth::service::{AuthenticationService, TokenLifetime};
+use renvor_auth::session::{SessionOutcome, SessionPolicy, SessionService};
+{% if example_domain %}
+use renvor_auth::{AuthenticatedSubject, CsrfKey, SystemClock, UserId};
+{% else %}
+use renvor_auth::{AuthenticatedSubject, CsrfKey, SystemClock};
+{% endif %}
+use renvor_auth_http::{AuthEndpoints, DeferredEndpoints};
+use renvor_config::ConfigHandle;
+use renvor_mail::auth::{AuthMailBridge, AuthMailSettings};
+use renvor_mail::smtp::SmtpMailer;
+use renvor_mail::{Address, Mailbox};
+{% if orm == "sqlx" %}
+use renvor_sqlx::auth::TokenTable;
+use renvor_sqlx::auth::{{ auth_engine }}::{
+    SqlxAttemptRepository as AttemptRepository, SqlxCredentialRepository as CredentialRepository,
+    SqlxSessionRepository as SessionRepository,
+    SqlxSingleUseTokenRepository as SingleUseTokenRepository, SqlxUserRepository as UserRepository,
+};
+{% else %}
+use renvor_seaorm::auth::TokenTable;
+use renvor_seaorm::auth::{{ auth_engine }}::{
+    SeaOrmAttemptRepository as AttemptRepository,
+    SeaOrmCredentialRepository as CredentialRepository,
+    SeaOrmSessionRepository as SessionRepository,
+    SeaOrmSingleUseTokenRepository as SingleUseTokenRepository,
+    SeaOrmUserRepository as UserRepository,
+};
+{% endif %}
+
+use crate::app::{DatabaseProvider, Services};
+
+/// The application's name, as mail and audit events show it.
+const NAME: &str = "{{ name }}";
+use crate::config::{self, AuthSection, HttpSection};
+
+/// The capability this provider offers; the HTTP provider requires it.
+pub const CAPABILITY: &str = "auth";
+
+/// The endpoints, with this project's concrete repositories, mail bridge, and audit sink.
+pub type Endpoints = AuthEndpoints<
+    UserRepository,
+    CredentialRepository,
+    StaticBlocklist,
+    SessionRepository,
+    SingleUseTokenRepository,
+    Arc<AuthMailBridge<SmtpMailer>>,
+    AttemptRepository,
+    TracingAuditSink,
+>;
+
+/// An audit sink that writes one structured event per audit record on the `renvor.auth.audit`
+/// target. The event carries the action, the outcome, the correlation identifier, and the
+/// subject's identifier — never an address, a credential, or a token.
+#[derive(Debug, Default)]
+pub struct TracingAuditSink;
+
+impl AuditSink for TracingAuditSink {
+    async fn record(&self, event: AuditEvent) -> Result<(), AuditError> {
+        tracing::info!(
+            target: "renvor.auth.audit",
+            action = ?event.action(),
+            outcome = ?event.outcome(),
+            correlation = %event.correlation(),
+            subject = ?event.subject(),
+            at = %event.at(),
+            "audit"
+        );
+        Ok(())
+    }
+}
+
+/// The provider that builds the endpoints at Boot.
+pub struct AuthProvider {
+    id: ProviderId,
+    provides: Vec<CapabilityId>,
+    dependencies: Vec<CapabilityId>,
+    endpoints: DeferredEndpoints<
+        UserRepository,
+        CredentialRepository,
+        StaticBlocklist,
+        SessionRepository,
+        SingleUseTokenRepository,
+        Arc<AuthMailBridge<SmtpMailer>>,
+        AttemptRepository,
+        TracingAuditSink,
+    >,
+    section: ConfigHandle<AuthSection>,
+    http: ConfigHandle<HttpSection>,
+    database: Arc<DatabaseProvider>,
+    mail: Arc<crate::capabilities::mail::Provider>,
+}
+
+impl AuthProvider {
+    /// Declares the provider and registers its `[auth]` section as a lifecycle source.
+    pub fn new(
+        sources: &mut Vec<Arc<dyn renvor::ConfigSource>>,
+        database: Arc<DatabaseProvider>,
+        mail: Arc<crate::capabilities::mail::Provider>,
+        http: &ConfigHandle<HttpSection>,
+    ) -> Self {
+        let source = config::auth_source();
+        let section = source.handle();
+        sources.push(Arc::new(source));
+        Self {
+            id: ProviderId::new(CAPABILITY),
+            provides: vec![CapabilityId::new(CAPABILITY)],
+            dependencies: vec![
+                CapabilityId::new(crate::app::DATABASE),
+                renvor_mail::mail_capability(),
+            ],
+            endpoints: Arc::new(OnceLock::new()),
+            section,
+            http: http.clone(),
+            database,
+            mail,
+        }
+    }
+
+    /// The cell the routes were declared over.
+    pub fn endpoints(
+        &self,
+    ) -> DeferredEndpoints<
+        UserRepository,
+        CredentialRepository,
+        StaticBlocklist,
+        SessionRepository,
+        SingleUseTokenRepository,
+        Arc<AuthMailBridge<SmtpMailer>>,
+        AttemptRepository,
+        TracingAuditSink,
+    > {
+        Arc::clone(&self.endpoints)
+    }
+
+    /// Builds the endpoints from the booted database and mail providers.
+    fn build(&self) -> Result<Endpoints, Box<dyn std::error::Error + Send + Sync>> {
+        let database = self
+            .database
+            .database()
+            .ok_or("the database provider has not booted")?;
+        let mailer = self
+            .mail
+            .mailer()
+            .ok_or("the mail provider has not booted")?;
+        let (idle, absolute, per_user, csrf_key, abuse_key) = self.section.with(|resolved| {
+            let section = resolved.value();
+            (
+                section.session_idle_secs,
+                section.session_absolute_secs,
+                section.sessions_per_user,
+                section.csrf_key(),
+                section.abuse_key(),
+            )
+        })?;
+        let local_domain = self
+            .http
+            .with(|resolved| resolved.value().local_domain.clone())?;
+        let csrf_key = csrf_key?;
+        let abuse_key = abuse_key?;
+
+{% if orm == "sqlx" %}
+        let pool = database.pool().clone();
+        let users = UserRepository::new(pool.clone());
+        let credentials = CredentialRepository::new(pool.clone());
+        let sessions = SessionRepository::new(pool.clone());
+        let verifications = SingleUseTokenRepository::new(pool.clone(), TokenTable::Verification);
+        let resets = SingleUseTokenRepository::new(pool.clone(), TokenTable::PasswordReset);
+        let attempts = AttemptRepository::new(pool);
+{% else %}
+        let handle = Arc::new(database.clone());
+        let users = UserRepository::new(Arc::clone(&handle));
+        let credentials = CredentialRepository::new(Arc::clone(&handle));
+        let sessions = SessionRepository::new(Arc::clone(&handle));
+        let verifications =
+            SingleUseTokenRepository::new(Arc::clone(&handle), TokenTable::Verification);
+        let resets = SingleUseTokenRepository::new(Arc::clone(&handle), TokenTable::PasswordReset);
+        let attempts = AttemptRepository::new(handle);
+{% endif %}
+
+        let entropy: Arc<dyn renvor::EntropySource + Send + Sync> = Arc::new(renvor::OsEntropy);
+        let sender = Mailbox::new(Address::new(&format!("no-reply@{local_domain}"))?)
+            .with_display_name(NAME)?;
+        let bridge = AuthMailBridge::new(
+            mailer,
+            AuthMailSettings::new(&format!("https://{local_domain}/"), sender, NAME)?,
+        );
+
+        Ok(AuthEndpoints {
+            authentication: AuthenticationService::new(
+                users,
+                credentials,
+                // Replace with a real compromised-password list before real users register.
+                StaticBlocklist::new(["password123456789".to_owned()]),
+                PasswordService::default(),
+                PasswordPolicy::default(),
+                Arc::clone(&entropy),
+            )?,
+            sessions: SessionService::new(
+                sessions,
+                SessionPolicy::new(
+                    Duration::seconds(i64::try_from(idle)?),
+                    Duration::seconds(i64::try_from(absolute)?),
+                    std::num::NonZeroU32::new(per_user)
+                        .ok_or("sessions_per_user must be positive")?,
+                )?,
+                CookiePolicy::default(),
+                Arc::clone(&entropy),
+            ),
+            // TWO STORES, TWO TABLES. One store serving both flows destroyed the user's
+            // outstanding password-reset token on every verification resend.
+            verifications,
+            resets,
+            mail: Arc::new(bridge),
+            abuse: AbuseGuard::new(
+                attempts,
+                AttemptKeyring::from_bytes(abuse_key, AttemptBuckets::default()),
+                AbuseContract::default(),
+                TracingAuditSink,
+            ),
+            csrf: CsrfKey::from_bytes(csrf_key),
+            entropy,
+            token_lifetime: TokenLifetime::default(),
+            clock: Arc::new(SystemClock),
+        })
+    }
+}
+
+impl Provider for AuthProvider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    fn provides(&self) -> &[CapabilityId] {
+        &self.provides
+    }
+
+    fn dependencies(&self) -> &[CapabilityId] {
+        &self.dependencies
+    }
+
+    fn initialise<'a>(&'a self, _context: &'a mut InitContext<'_>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            let endpoints = self.build()?;
+            self.endpoints
+                .set(endpoints)
+                .map_err(|_| "the auth endpoints were already built")?;
+            Ok(())
+        })
+    }
+}
+
+/// Authenticates a request from its session cookie, for the item routes.
+///
+/// `401` (`authentication_required`) for an absent, malformed, expired, or revoked cookie — one
+/// answer for every reason, so a dead cookie learns nothing; `500` for a storage failure.
+pub async fn require_session(
+    services: &Services,
+    request: &renvor::Request,
+) -> Result<AuthenticatedSubject, renvor::ApiErrorCode> {
+    let endpoints = services.auth.endpoints.get().cloned_or_missing()?;
+    let now = renvor_auth::Clock::now(&SystemClock);
+    match endpoints
+        .sessions
+        .authenticate(request.credentials().cookie(), now)
+        .await
+    {
+        Ok(SessionOutcome::Live(subject)) => Ok(subject),
+        Ok(SessionOutcome::Rejected(_)) => Err(renvor::ApiErrorCode::AuthenticationRequired),
+        Err(_) => Err(renvor::ApiErrorCode::InternalError),
+    }
+}
+
+/// A small extension so the cell's absence is one error rather than a match at every call.
+trait ClonedOrMissing<T> {
+    fn cloned_or_missing(self) -> Result<T, renvor::ApiErrorCode>;
+}
+
+impl<'a> ClonedOrMissing<&'a Endpoints> for Option<&'a Endpoints> {
+    fn cloned_or_missing(self) -> Result<&'a Endpoints, renvor::ApiErrorCode> {
+        self.ok_or(renvor::ApiErrorCode::InternalError)
+    }
+}
+{% if example_domain %}
+
+/// Renders a stored 16-byte owner identifier the way `UserId` displays itself.
+pub fn render_user_id(bytes: &[u8]) -> Option<String> {
+    let bytes: [u8; 16] = bytes.try_into().ok()?;
+    Some(UserId::from_bytes(bytes).to_string())
+}
+
+/// Parses a rendered owner identifier back into a `UserId`, for the ownership policy.
+///
+/// A rendering that does not parse — which only a corrupted row could produce — becomes the
+/// all-zero identifier, which no registered user holds, so the policy refuses rather than
+/// matching anyone.
+pub fn user_id_from_rendered(rendered: &str) -> UserId {
+    let mut bytes = [0_u8; 16];
+    let digits: Vec<u8> = rendered.bytes().filter(u8::is_ascii_hexdigit).collect();
+    if digits.len() == 32 {
+        for (index, pair) in digits.chunks(2).enumerate() {
+            let value = u8::from_str_radix(std::str::from_utf8(pair).unwrap_or("00"), 16);
+            bytes[index] = value.unwrap_or(0);
+        }
+    }
+    UserId::from_bytes(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_user_id, user_id_from_rendered};
+    use renvor_auth::UserId;
+
+    #[test]
+    fn a_rendered_user_id_round_trips() {
+        let id = UserId::from_bytes([7_u8; 16]);
+        let rendered = render_user_id(id.as_bytes()).expect("16 bytes render");
+        assert_eq!(user_id_from_rendered(&rendered), id);
+        assert!(render_user_id(&[1, 2, 3]).is_none(), "not 16 bytes");
+    }
+
+    #[test]
+    fn a_corrupt_rendering_becomes_the_owner_nobody_holds() {
+        assert_eq!(
+            user_id_from_rendered("not-an-id"),
+            UserId::from_bytes([0_u8; 16])
+        );
+    }
+}
+{% endif %}

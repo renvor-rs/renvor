@@ -1,0 +1,23 @@
+//! The selected capabilities, one module each.
+//!
+//! Each module owns three things: the provider the kernel boots (constructed from the
+//! capability's typed configuration section, registered as a lifecycle source), the routes that
+//! exercise it, and the helpers the rest of the application calls. An unselected capability has
+//! no module here, no dependency in `Cargo.toml`, and no section under `config/` — `renvor.toml`
+//! records which is which.
+
+{% if cap_cache %}
+pub mod cache;
+{% endif %}
+{% if cap_jobs %}
+pub mod jobs;
+{% endif %}
+{% if cap_mail %}
+pub mod mail;
+{% endif %}
+{% if cap_observability %}
+pub mod observability;
+{% endif %}
+{% if cap_storage %}
+pub mod storage;
+{% endif %}

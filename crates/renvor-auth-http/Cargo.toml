@@ -88,6 +88,9 @@ workspace = true
 # A dev-dependency, so this edge reaches no consumer's graph — the same argument this crate's
 # `renvor-auth` dev-edge in `renvor-http` makes.
 renvor-sqlx = { path = "../renvor-sqlx", version = "0.0.0", features = ["db-postgres"] }
+# Phase 011: the socket-free test application, so this crate's end-to-end proof is the shape
+# every other crate's can be rather than a hand-written copy of it.
+renvor-testkit = { path = "../renvor-testkit", version = "0.0.0", features = ["http"] }
 
 # The persistence PORTS, for `MigrationSettings` and `PoolSettings`. Dev-only: this crate's own
 # surface names no database.

@@ -11,12 +11,23 @@ template_version = "{{ template_version }}"
 name = "{{ name }}"
 target = "{{ target }}"
 transport = "{{ transport }}"
+# The authentication starter (Phase 011). `none` is a recorded decision, not an absence: the
+# choice became mandatory the day the starter shipped, and this line says what was decided.
+auth = "{{ auth }}"
 local_domain = "{{ local_domain }}"
 container = {{ container | toml_bool }}
 local_https = "{{ local_https }}"
 example_domain = {{ example_domain | toml_bool }}
 seed_data = {{ seed_data | toml_bool }}
-{% if database %}
+{% if starter %}
+[framework]
+# WHERE THE FRAMEWORK CRATES COME FROM. No Renvor crate is published yet, so this project depends
+# on a checkout by path — the one recorded here, which `Cargo.toml` names crate by crate. This is
+# local tooling: it says where the framework is, and decides nothing about what the project does.
+# When the crates are published, `source = "registry"` replaces this and the path goes away.
+source = "{{ framework_source }}"
+path = {{ framework_path_toml }}
+{% endif %}{% if database %}
 [persistence]
 # Recorded because generation ACTED on it. WHICH files it acted on depends on the ORM, so this
 # comment does too: a fixed sentence here would name a file the other tree does not contain.
@@ -26,6 +37,26 @@ seed_data = {{ seed_data | toml_bool }}
 orm = "{{ orm }}"
 driver_feature = "{{ driver_feature }}"
 {% endif %}
+{% if auth_session %}
+[auth]
+# Recorded because generation ACTED on it: `src/auth.rs`, the auth migration set under
+# `migrations/`, and the `/auth` routes exist. NO KEY IS RECORDED HERE, and none can be: the CSRF
+# and abuse keys are read by the application from `RENVOR_AUTH_CSRF_KEY` and
+# `RENVOR_AUTH_ABUSE_KEY`, named in `.env.example`, and refused at Validate when absent.
+starter = "{{ auth }}"
+migrations = "renvor-auth/{{ database }}"
+session_cookie = "__Host-rv_session"
+mail = "smtp"
+{% endif %}
+[capabilities]
+# The five capabilities Phase 010 shipped, each recorded whether or not it was selected: a
+# mandatory choice is recorded as decided, and `false` here means "asked, declined". A `true`
+# means the dependency, the configuration section, the provider, and the wiring exist.
+cache = {{ cap_cache | toml_bool }}
+jobs = {{ cap_jobs | toml_bool }}
+mail = {{ cap_mail | toml_bool }}
+storage = {{ cap_storage | toml_bool }}
+observability = {{ cap_observability | toml_bool }}
 {% if container %}
 [container]
 # Local DEVELOPMENT container controls. Recorded because generation ACTED on them: `compose.yaml`,
@@ -44,7 +75,11 @@ database_port = {{ container_database_port }}
 {% if container_cache %}cache_image = "{{ container_cache_image }}"
 cache_version = "{{ container_cache_version }}"
 cache_port = {{ container_cache_port }}
-# The cache container is optional local infrastructure. Renvor's cache capability exists
-# (`renvor-cache`, behind `capability-cache`); this generated project does not wire it.
+{% if cache_wired %}# The generated application READS this service: the `cache` capability was selected, so
+# `src/capabilities/cache.rs` connects to it at Boot with the password from `RENVOR_CACHE_PASSWORD`.
+cache_wired_into_application = true
+{% else %}# The cache container is optional local infrastructure. Renvor's cache capability exists
+# (`renvor-cache`, behind `capability-cache`); this generated project does not wire it — select
+# the `cache` capability to have it wired.
 cache_wired_into_application = false
-{% endif %}{% endif %}
+{% endif %}{% endif %}{% endif %}

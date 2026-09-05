@@ -1,0 +1,125 @@
+//! Development seeds for {{ name }}: declared, scoped, idempotent, and recorded.
+//!
+//! Applied when `RENVOR_SEED_SCOPE=development` is set at start, through the adapter's own
+//! runner, which records each seed in `_renvor_seeds` so a rerun skips it. There is no production
+//! scope: `SeedScope` deliberately has none, so a seed cannot be run where it was not declared.
+//!
+//! # Applied at Boot, before the server serves
+//!
+//! [`SeedProvider`] requires the database capability and the HTTP provider requires it, so the
+//! seeds are in place before the first request can arrive. Applying them after `boot()` instead
+//! would leave a window in which the server answers from an unseeded table — the generated test
+//! caught exactly that window on one row.
+
+use renvor_database::{
+    DatabaseError, Idempotence, SeedDeclaration, SeedReport, SeedScope, SqlSeed,
+};
+
+use std::sync::Arc;
+
+use renvor::{CapabilityId, InitContext, Provider, ProviderFuture, ProviderId};
+
+use crate::app::DatabaseProvider;
+
+/// The capability the seed provider offers, and the HTTP provider requires.
+pub const CAPABILITY: &str = "seeds";
+
+/// The seeds, in the order they run.
+pub fn seeds() -> Vec<SqlSeed> {
+    vec![SqlSeed::new(
+        SeedDeclaration::new("example_items", SeedScope::Development, Idempotence::RunOnce),
+        vec![
+{% if auth_session %}
+            // Seeded items belong to nobody yet: `owner_id` is the all-zero identifier, which no
+            // registered user can hold, so no session may edit or delete them.
+            "INSERT INTO item (name, owner_id) VALUES ('first', {{ zero_owner_literal }})".to_owned(),
+            "INSERT INTO item (name, owner_id) VALUES ('second', {{ zero_owner_literal }})".to_owned(),
+{% else %}
+            "INSERT INTO item (name) VALUES ('first')".to_owned(),
+            "INSERT INTO item (name) VALUES ('second')".to_owned(),
+{% endif %}
+        ],
+    )]
+}
+
+/// Applies the development seeds through the booted database.
+///
+/// # Errors
+///
+/// The database has not booted, or a seed's statement was rejected.
+pub async fn apply(provider: &DatabaseProvider) -> Result<SeedReport, DatabaseError> {
+    let database = provider
+        .database()
+        .ok_or_else(|| DatabaseError::new(renvor_database::DatabaseErrorKind::ConnectFailed))?;
+{% if orm == "sqlx" %}
+    renvor_sqlx::seed::run(database, SeedScope::Development, &seeds()).await
+{% else %}
+    renvor_seaorm::seed::{{ seed_runner }}(database, SeedScope::Development, &seeds()).await
+{% endif %}
+}
+
+/// Applies the development seeds at Boot, when `RENVOR_SEED_SCOPE=development` is set.
+pub struct SeedProvider {
+    id: ProviderId,
+    provides: [CapabilityId; 1],
+    requires: [CapabilityId; 1],
+    database: Arc<DatabaseProvider>,
+}
+
+impl SeedProvider {
+    /// Declares the provider over the database it seeds.
+    pub fn new(database: Arc<DatabaseProvider>) -> Self {
+        Self {
+            id: ProviderId::new(CAPABILITY),
+            provides: [CapabilityId::new(CAPABILITY)],
+            requires: [CapabilityId::new(crate::app::DATABASE)],
+            database,
+        }
+    }
+}
+
+impl std::fmt::Debug for SeedProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SeedProvider")
+            .field("id", &self.id)
+            .finish()
+    }
+}
+
+impl Provider for SeedProvider {
+    fn id(&self) -> &ProviderId {
+        &self.id
+    }
+
+    fn provides(&self) -> &[CapabilityId] {
+        &self.provides
+    }
+
+    fn dependencies(&self) -> &[CapabilityId] {
+        &self.requires
+    }
+
+    fn initialise<'a>(&'a self, _context: &'a mut InitContext<'_>) -> ProviderFuture<'a> {
+        Box::pin(async move {
+            if std::env::var("RENVOR_SEED_SCOPE").as_deref() != Ok("development") {
+                return Ok(());
+            }
+            let report = apply(&self.database).await?;
+            println!("applied {} development seed(s)", report.applied().len());
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_seed_is_declared_for_development_only() {
+        for seed in super::seeds() {
+            assert_eq!(
+                seed.declaration().scope(),
+                renvor_database::SeedScope::Development
+            );
+        }
+    }
+}

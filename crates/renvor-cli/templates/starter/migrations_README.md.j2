@@ -1,0 +1,23 @@
+# Migrations for {{ name }}
+
+Applied **on Boot** by the database provider, in version order, each checksummed and recorded in
+`_sqlx_migrations`; an edited migration fails closed rather than diverging silently. Every file
+here is `<version>_<name>.up.sql` with its `.down.sql` beside it.
+
+What this directory holds is exactly what the selection needs:
+{% if example_domain %}
+- `0001_item` — the example domain's table.
+{% endif %}
+{% if auth_session %}
+- the framework's authentication set (`20260901…`), copied byte for byte from `renvor-auth`.
+{% endif %}
+{% if cap_jobs %}
+- the job store's set (`20260904…`), copied byte for byte from `renvor-jobs`.
+{% endif %}
+{% if not example_domain and not auth_session and not cap_jobs %}
+- nothing yet: the directory is here so the provider finds it, and the first migration you add
+  is applied on the next start.
+{% endif %}
+
+Add a migration as a new pair with a higher version. `renvor generate migration <name>` writes
+the pair for you.

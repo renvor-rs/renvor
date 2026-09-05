@@ -189,6 +189,7 @@ fn main() -> std::process::ExitCode {
     let task = env::args().nth(1);
     match task.as_deref() {
         Some("verify") => std::process::ExitCode::from(verify() as u8),
+        Some("census") => std::process::ExitCode::from(census() as u8),
         Some(other) => {
             eprintln!("error: unknown task `{other}`");
             usage();
@@ -202,13 +203,41 @@ fn main() -> std::process::ExitCode {
 }
 
 fn usage() {
-    eprintln!("usage: cargo xtask verify");
+    eprintln!("usage: cargo xtask verify | cargo xtask census");
     eprintln!();
-    eprintln!("Runs the full verification sequence. Exit codes:");
+    eprintln!("`verify` runs the full verification sequence; `census` runs step 1 and step 4's");
+    eprintln!(
+        "row census alone, for a change to the census rows or a negative control. Exit codes:"
+    );
     eprintln!("  0  every step ran and passed");
     eprintln!("  1  a step ran and failed");
     eprintln!("  2  a required tool or the database environment is missing; no steps ran");
     eprintln!("  3  the working tree was dirty after a successful run");
+}
+
+/// Runs step 1 and the step 4 row census alone, and returns the process exit code.
+///
+/// Phase 011. The census gained fourteen rows that each generate and build a starter, so a
+/// change to the rows — or the negative control that renames, deletes, or compiles one out and
+/// expects the census to say so — no longer has to pay the whole sequence to be observed.
+fn census() -> i32 {
+    let root = workspace_root();
+    let environment = |name: &str| std::env::var_os(name);
+    let missing_tools = probe_tooling();
+    let missing_databases = missing_database_prerequisites(&environment);
+    if let Some(code) = prerequisites_gate(&missing_tools, &missing_databases) {
+        report_missing(&missing_tools, &missing_databases);
+        return code;
+    }
+    step_ok(
+        1,
+        "prerequisite probe",
+        "all required tooling present, and the four-row database environment is set",
+    );
+    if !the_four_rows_all_ran(&root, &environment) {
+        return EXIT_STEP_FAILED;
+    }
+    EXIT_OK
 }
 
 /// Runs the sequence and returns the process exit code.
@@ -261,13 +290,20 @@ fn verify() -> i32 {
     ) {
         return EXIT_STEP_FAILED;
     }
+    // The starter matrix (`crates/renvor-cli/tests/starter_matrix.rs`) generates and builds a
+    // project per row. It runs ONCE, in the census below, against a persistent build directory;
+    // here its rows skip by name (the test says so on stdout), and the census refuses the same
+    // variable so a skipped row can never stand in for a run one.
     if !run(
         4,
         "tests",
         "cargo",
         &["test", "--workspace", "--all-features"],
         &root,
-        &[],
+        // `INSTA_UPDATE=no`: the manifest snapshots (`renvor-cli/tests/snapshots.rs`) fail on a
+        // drift rather than write a `.snap.new` beside the pinned one — which would also dirty
+        // the tree step 9 requires clean. `cargo insta review` is the one path that accepts one.
+        &[("RENVOR_TEST_STARTER_ROWS", "none"), ("INSTA_UPDATE", "no")],
     ) {
         return EXIT_STEP_FAILED;
     }
@@ -601,6 +637,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
     if !adapters_compile_per_driver(root) {
         return false;
     }
+    if !port_crates_are_warning_free_without_features(root) {
+        return false;
+    }
 
     if !lean_facade_compiles(root) {
         return false;
@@ -624,9 +663,9 @@ fn architecture_invariants(root: &std::path::Path) -> bool {
         7,
         "architecture invariants",
         "crate DAG, transport, persistence and capability isolation, per-driver adapter \
-         compiles, facade isolation, lean compile, one rustls crypto provider, \
-         publishable dependencies, required package metadata, instability wording, and the \
-         executable name all hold, each with a control",
+         compiles, warning-free feature-off port crates, facade isolation, lean compile, one \
+         rustls crypto provider, publishable dependencies, required package metadata, \
+         instability wording, and the executable name all hold, each with a control",
     );
     true
 }
@@ -676,7 +715,7 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
     }
 
     // Each row: the tree to build, then what must be absent, then the control that must be present.
-    let checks: [IsolationCheck<'_>; 40] = [
+    let checks: [IsolationCheck<'_>; 42] = [
         // ---- API TOKEN MODE (FR-035, SC-011) ----------------------------------------------
         //
         // Added in batch G2, and the reason is that this property was TRUE and UNASSERTED. Batch G
@@ -745,6 +784,31 @@ fn persistence_isolation_holds(root: &std::path::Path) -> bool {
             &["-p", "renvor-testkit", "--features", "tokens"],
             &[],
             &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "renvor-auth"],
+        ),
+        // PHASE 011. `http` hosts the socket-free test application and may reach the transport
+        // crate — and nothing else from the token half; `client` is the loopback client for a
+        // test that spawns a binary: `minreq` alone, never a TLS backend (the workspace pins the
+        // single `ring` provider and bans `native-tls`), and never the transport.
+        (
+            "renvor-testkit (--features http)",
+            &["-p", "renvor-testkit", "--features", "http"],
+            &["jsonwebtoken", "aws-lc-rs", "aws-lc-sys", "minreq"],
+            &["renvor-http"],
+        ),
+        (
+            "renvor-testkit (--features client)",
+            &["-p", "renvor-testkit", "--features", "client"],
+            &[
+                "renvor-http",
+                "reqwest",
+                "hyper",
+                "native-tls",
+                "openssl",
+                "rustls",
+                "webpki-roots",
+                "aws-lc-rs",
+            ],
+            &["minreq"],
         ),
         (
             "renvor-sqlx + db-postgres (no tokens)",
@@ -1385,6 +1449,105 @@ fn cargo_succeeds(root: &std::path::Path, args: &[&str]) -> bool {
         started.elapsed(),
     );
     succeeded
+}
+
+/// Step 7: every capability port crate builds with **no feature enabled** and reports **zero
+/// warnings**.
+///
+/// # The defect this exists for
+///
+/// `renvor-mail` without `smtp` and `renvor-storage` without `filesystem` each emitted
+/// `variant \`Configured\` is never constructed`: the variant is built only by `from_config`, which
+/// those features gate, so the feature-off build carried a variant nothing could reach. Step 3
+/// runs clippy with `--all-features`, where the variant IS constructed, so the gate never saw the
+/// warning; a consumer enabling only the capability feature did — first noticed while building the
+/// facade examples for the Phase 010 cheat sheet (2026-09-05).
+///
+/// A warning is not an error, and that is exactly why it needs its own row: `-D warnings` runs
+/// only under the feature set step 3 chooses, and every other feature set is a build somebody
+/// else sees first.
+///
+/// # Why `--message-format=short` rather than `-D warnings`
+///
+/// `RUSTFLAGS=-D warnings` changes every dependency's fingerprint and rebuilds the graph twice —
+/// once here and once for the next ordinary build. Reading the diagnostics back does not. Cargo
+/// replays a fresh crate's cached warnings, so the answer is the same whether or not anything
+/// recompiles.
+fn port_crates_are_warning_free_without_features(root: &std::path::Path) -> bool {
+    const PORT_CRATES: [&str; 5] = [
+        "renvor-cache",
+        "renvor-jobs",
+        "renvor-mail",
+        "renvor-storage",
+        "renvor-observability",
+    ];
+
+    for package in PORT_CRATES {
+        match warnings_without_features(root, package) {
+            Ok(warnings) if warnings.is_empty() => {}
+            Ok(warnings) => {
+                step_fail(
+                    7,
+                    "architecture invariants",
+                    &format!(
+                        "`cargo check -p {package} --no-default-features --lib` reports {} \
+                         warning(s). A capability crate built with only the feature a consumer \
+                         asked for must build clean; clippy under `--all-features` cannot see \
+                         this because the feature that constructs the offending item is on \
+                         there:\n{}",
+                        warnings.len(),
+                        warnings.join("\n")
+                    ),
+                );
+                return false;
+            }
+            Err(reason) => {
+                step_fail(7, "architecture invariants", &reason);
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// The warning lines `cargo check --message-format=short` reports for `package` built as a
+/// library with no feature, or why the check could not run.
+///
+/// Every line of the form `path:line:col: warning: …` is one warning. The `generated N warning(s)`
+/// summary line carries no colon-warning-colon and is not counted, so a package with one warning
+/// reports one line rather than two.
+fn warnings_without_features(root: &std::path::Path, package: &str) -> Result<Vec<String>, String> {
+    let started = Instant::now();
+    let output = std::process::Command::new("cargo")
+        .args([
+            "check",
+            "--locked",
+            "-p",
+            package,
+            "--no-default-features",
+            "--lib",
+            "--message-format=short",
+        ])
+        .current_dir(root)
+        .env("CARGO_TERM_COLOR", "never")
+        .output()
+        .map_err(|error| format!("`cargo check -p {package}` could not be run: {error}"))?;
+    timing(
+        &format!("step 7 probe `cargo check -p {package} --no-default-features --lib`"),
+        started.elapsed(),
+    );
+    let stderr = without_ansi(&String::from_utf8_lossy(&output.stderr));
+    if !output.status.success() {
+        return Err(format!(
+            "`cargo check --locked -p {package} --no-default-features --lib` FAILED; a \
+             capability crate must build with no feature at all:\n{stderr}"
+        ));
+    }
+    Ok(stderr
+        .lines()
+        .filter(|line| line.contains(": warning:"))
+        .map(str::to_owned)
+        .collect())
 }
 
 /// T111: the facade **compiles** without default features, for every target.
@@ -2108,6 +2271,17 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// cannot see inside the function it names.
 ///
 /// This pair is also why the census invocation carries `tokens`: see `the_four_rows_all_ran`.
+/// # The starter matrix, added in Phase 011
+///
+/// **Sixty-seven became eighty-six, then eighty-seven.** The correction round of Phase 011 added
+/// the auth-added proof on MySQL with SeaORM: the forward owner migration `renvor generate auth`
+/// writes is engine-specific SQL, and one engine cannot prove the other's. The eighteen — now
+/// nineteen — rows of `renvor-cli`'s `starter_matrix` and
+/// the starter parity row of its `parity` binary are the removal-plan controls of W-023 and
+/// W-024: each covering row generates a framework-backed starter and runs the placed project's
+/// own test against the real services, and the parity row drives the wizard through a real
+/// terminal. They carry an empty feature string because the package has no database feature.
+///
 /// The database-backed suites that must report in, with the features each needs.
 ///
 /// # The feature string moved from the invocation to the row, and the reason is `renvor-auth-http`
@@ -2117,7 +2291,134 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
 /// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
 /// extra — it is an error, and the census would have failed to run rather than failed to find.
-const ROW_EVIDENCE: [(&str, &str, &str, &str); 67] = [
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 87] = [
+    // THE STARTER MATRIX (Phase 011, W-023 and W-024). Fourteen rows in one binary — the ten
+    // covering rows, each generating a framework-backed starter and running its own live proof,
+    // the refusals, and the three determinism proofs — and the wizard-versus-flags parity of a
+    // starter through the real terminal, in `parity`. `renvor-cli` has no database feature; the
+    // rows reach the services through the same `RENVOR_TEST_*` variables as every suite above.
+    (
+        "renvor-cli",
+        "parity",
+        "a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "sqlx_postgres_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "sqlx_mysql_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "seaorm_postgres_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "seaorm_mysql_with_everything_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "authentication_with_only_its_mail_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_cache_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "storage_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "mail_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "observability_alone_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_starter_without_a_database_generates_and_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "every_invalid_combination_is_refused_before_any_write",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_dry_run_of_a_starter_matches_the_real_run_and_writes_nothing",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_starter_generated_twice_is_byte_identical_and_a_rerun_changes_nothing",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_failure_after_verification_leaves_the_destination_absent",
+        "",
+    ),
+    // `renvor generate` into a placed starter (Phase 011 batch F): a resource on each
+    // persistence model, the auth starter added later, and its refusal.
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_resource_generated_into_a_sqlx_starter_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "a_resource_generated_into_a_seaorm_starter_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_auth_starter_added_to_a_starter_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_auth_starter_added_to_a_mysql_seaorm_starter_proves_itself",
+        "",
+    ),
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "the_auth_starter_is_refused_where_new_would_refuse_it",
+        "",
+    ),
     // THE TEST APPLICATION (FR-083). Not a four-row entry — it exercises the ROUTES, and the thing
     // that varies by engine is the adapter, which the four-row suites already measure. It reaches
     // PostgreSQL through a dev-dependency, so it takes NO database feature of its own; passing one
@@ -2668,6 +2969,20 @@ fn ambiguous_rows_in_group<'a>(package: &str, features: &str) -> Vec<&'a str> {
 fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsString>) -> bool {
     const TITLE: &str = "tests (four-row persistence census)";
 
+    // Phase 011. The starter-matrix rows honour `RENVOR_TEST_STARTER_ROWS` so the general test run
+    // and the platform job can skip them by name. The census is where they must RUN, so an
+    // environment that carries the variable is refused rather than honoured: a skipped row prints
+    // the same `ok` line as a run one, and the census could not tell them apart.
+    if env("RENVOR_TEST_STARTER_ROWS").is_some() {
+        step_fail(
+            4,
+            TITLE,
+            "RENVOR_TEST_STARTER_ROWS is set; the census runs every starter-matrix row and \
+             cannot honour a selection. Unset it and run again",
+        );
+        return false;
+    }
+
     // Defence in depth. Step 1 already refuses the run without these, so reaching here with one
     // absent means the environment changed mid-sequence. Either way the answer is the same: a
     // census that did not run is not a census that passed.
@@ -2734,6 +3049,13 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             .args(&args)
             // Deterministic output regardless of runner. See `without_ansi`.
             .env("CARGO_TERM_COLOR", "never")
+            // The starter matrix builds every generated project here, so the framework's
+            // dependencies compile once per machine and every later row, and every later run,
+            // pays only for the project itself. Absolute, as the matrix requires.
+            .env(
+                "RENVOR_TEST_TARGET_DIR",
+                root.join("target").join("starter-matrix"),
+            )
             .current_dir(root)
             .output();
         let elapsed = started.elapsed();
@@ -2822,8 +3144,9 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
         &format!(
             "all {} required suites reported in (12 tests on each direct-SQLx row, 11 on each \
              SeaORM row, the refresh-rotation, abuse-control, and job-store \
-         contracts on every row, and the \
-             end-to-end test application)",
+             contracts on every row, the end-to-end test application, and the \
+             twenty starter rows: ten covering starters, the refusals, the \
+             determinism proofs, the generator proofs, and the wizard parity of a starter)",
             ROW_EVIDENCE.len()
         ),
     );
@@ -4221,6 +4544,71 @@ mod tests {
         );
     }
 
+    /// A planted warning in a feature-off library is reported, so the step-7 row can fail.
+    ///
+    /// CONTROL for `port_crates_are_warning_free_without_features`. A reader of `cargo check`'s
+    /// output that matched nothing would report every crate clean, which is the vacuous pass the
+    /// Phase 010 warnings hid behind for a day. The scratch crate below carries exactly the shape
+    /// that was missed — a variant nothing constructs — and the reader must count it.
+    #[test]
+    fn a_planted_feature_off_warning_is_counted() {
+        let scratch = std::env::temp_dir().join(format!(
+            "renvor-xtask-warning-control-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(scratch.join("src")).expect("the scratch crate is created");
+        std::fs::write(
+            scratch.join("Cargo.toml"),
+            "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[features]\nadapter = []\n\n[dependencies]\n",
+        )
+        .expect("manifest written");
+        std::fs::write(
+            scratch.join("src/lib.rs"),
+            // The SAME shape as the real defect: a PRIVATE enum behind a public type, whose second
+            // variant only a feature-gated constructor builds. A public enum would not do — an
+            // unused public variant is reachable API and never dead.
+            "//! Scratch.\n\n/// A holder.\npub struct Holder {\n    source: Source,\n}\n\nenum Source {\n    Given(u8),\n    Configured(u8),\n}\n\nimpl Holder {\n    /// Given.\n    #[must_use]\n    pub fn given() -> Self {\n        Self { source: Source::Given(0) }\n    }\n\n    /// Configured; constructed only under `adapter`.\n    #[cfg(feature = \"adapter\")]\n    #[must_use]\n    pub fn configured() -> Self {\n        Self { source: Source::Configured(1) }\n    }\n\n    /// The value.\n    #[must_use]\n    pub fn value(&self) -> u8 {\n        match &self.source {\n            Source::Given(value) | Source::Configured(value) => *value,\n        }\n    }\n}\n",
+        )
+        .expect("source written");
+        // `--locked` needs a lockfile; a dependency-free crate's is generated offline.
+        let generated = std::process::Command::new("cargo")
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(&scratch)
+            .output()
+            .expect("cargo runs");
+        assert!(
+            generated.status.success(),
+            "lockfile: {}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+
+        let warnings = super::warnings_without_features(&scratch, "scratch")
+            .expect("the scratch crate builds");
+        let _ = std::fs::remove_dir_all(&scratch);
+
+        assert_eq!(
+            warnings.len(),
+            1,
+            "expected exactly the planted `Configured` warning, got {warnings:?}"
+        );
+        assert!(
+            warnings[0].contains("Configured") && warnings[0].contains("never constructed"),
+            "the counted line is not the planted warning: {}",
+            warnings[0]
+        );
+    }
+
+    /// Every capability port crate is warning-free with no feature — the step-7 row, reachable
+    /// from `cargo test` as well as from `verify`.
+    #[test]
+    fn port_crates_are_warning_free_without_features_with_their_control() {
+        assert!(
+            super::port_crates_are_warning_free_without_features(&super::workspace_root()),
+            "a port crate emits a warning when built with no feature — see the step-7 detail above"
+        );
+    }
+
     /// Persistence isolation holds, and is reachable from `cargo test` as well as from `verify`.
     ///
     /// Running it here too is deliberate. Step 7 runs it inside the full sequence, which takes
@@ -4264,14 +4652,44 @@ mod tests {
                         .strip_prefix('|')?
                         .trim()
                         .trim_matches('*');
-                    trimmed
-                        .starts_with("W-")
+                    // PHASE 011. A closed waiver keeps its row for the record and is NOT active:
+                    // its last cell says `closed`, with the date and the head it was closed
+                    // against (asserted below). W-023 and W-024 were the first, on 2026-09-05.
+                    let last_cell = line.trim_end().trim_end_matches('|').rsplit('|').next()?;
+                    (trimmed.starts_with("W-") && !last_cell.contains("closed"))
                         .then(|| trimmed.chars().take(5).collect::<String>())
                 })
                 .collect();
             found.sort();
             found.dedup();
             found
+        }
+
+        // A closed row must say when and against what: a closure by prose alone is the failure
+        // mode the whole ledger exists to prevent.
+        for line in ledger.lines() {
+            let Some(rest) = line.trim_start().strip_prefix("| **W-") else {
+                continue;
+            };
+            let last_cell = line
+                .trim_end()
+                .trim_end_matches('|')
+                .rsplit('|')
+                .next()
+                .unwrap_or("");
+            // The ledger's own table has nine cells; the per-phase summary below it has three
+            // and names the same closure without repeating the head.
+            if !last_cell.contains("closed") || line.matches('|').count() < 9 {
+                continue;
+            }
+            let names_a_head = last_cell
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .any(|word| word.len() == 40);
+            assert!(
+                last_cell.contains("2026-") && names_a_head,
+                "W-{} is closed without a date and a 40-hex head in its status cell",
+                rest.chars().take(3).collect::<String>()
+            );
         }
 
         let granted = identifiers(&ledger);
@@ -4430,7 +4848,28 @@ mod tests {
         // reads, to anyone auditing it, as one that has.
         //
         // W-007 is the single exemption, and an explicit one: both documents record at length that
-        // it does not exist and that the identifier is permanently burned.
+        // it does not exist and that the identifier is permanently burned. A CLOSED waiver is
+        // still a granted one — it was issued, and its row records the closure — so a reference
+        // to it is a reference to something the table holds (PHASE 011: W-023, W-024).
+        let closed: Vec<String> = ledger
+            .lines()
+            .filter_map(|line| {
+                let identifier = line
+                    .trim_start()
+                    .strip_prefix('|')?
+                    .trim()
+                    .trim_matches('*');
+                let last_cell = line.trim_end().trim_end_matches('|').rsplit('|').next()?;
+                (identifier.starts_with("W-") && last_cell.contains("closed"))
+                    .then(|| identifier.chars().take(5).collect::<String>())
+            })
+            .collect();
+        for identifier in &closed {
+            assert!(
+                !granted.contains(identifier),
+                "{identifier} is both active and closed in the ledger's tables"
+            );
+        }
         for (label, text) in [("ledger", &ledger), ("GOVERNANCE.md", &governance)] {
             let mut rest = text.as_str();
             while let Some(at) = rest.find("W-0") {
@@ -4443,7 +4882,7 @@ mod tests {
                     continue;
                 }
                 assert!(
-                    granted.contains(&identifier),
+                    granted.contains(&identifier) || closed.contains(&identifier),
                     "{label} refers to {identifier}, which its own table does not grant"
                 );
             }

@@ -708,6 +708,13 @@ impl Terminal {
         self.writer.flush().expect("the pty flushes");
     }
 
+    /// Sends `keys` with no carriage return — for a widget that submits on the key itself, such
+    /// as a confirmation's `y`, where a trailing Enter would fall through to the next prompt.
+    pub fn send(&mut self, keys: &str) {
+        write!(self.writer, "{keys}").expect("the pty accepts input");
+        self.writer.flush().expect("the pty flushes");
+    }
+
     /// Sends Enter alone, accepting a prompt's default.
     pub fn enter(&mut self) {
         self.send_line("");

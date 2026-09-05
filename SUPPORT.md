@@ -168,8 +168,19 @@ also runs gitleaks over the repository history and working tree. Those scans are
 of the repository rather than of the platform, so repeating them on macOS and Windows would
 not exercise additional platform behaviour.
 
-Two behaviours are `#[cfg(unix)]`-gated and therefore verified on Linux and macOS only:
-the FIFO refusal, and the test that drives the non-Unicode environment-name path.
+Three behaviours are `#[cfg(unix)]`-gated and therefore verified on Linux and macOS only:
+the FIFO refusal, the test that drives the non-Unicode environment-name path, and — since
+Phase 011 — the clean-exit assertion of a **generated** starter's own test, which sends the
+child the interrupt a terminal sends and asserts exit `0`. Windows has no such interrupt to
+send a child from a test, so there the generated test ends the process and prints
+`SKIPPED:` for that one assertion rather than faking it (Phase 011 limitation L-10).
+
+The `platform` job also runs one row of `renvor-cli`'s starter matrix, the starter without a
+database (`RENVOR_TEST_STARTER_ROWS=nodb`): generation, the sealed verification build, and
+the placed project's own test over loopback. **No database-backed starter row runs on macOS
+or Windows** — the runners have no container daemon for PostgreSQL, MySQL, Valkey, or the
+mail sink — so a Windows-only regression in a generated starter's database path would
+surface only when an author runs it there (L-10 again).
 
 The FIFO case genuinely cannot arise on Windows in this form. The **non-Unicode name**
 case can: a Windows environment name is WTF-8 and may contain unpaired surrogates, so

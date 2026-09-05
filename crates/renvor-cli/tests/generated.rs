@@ -267,10 +267,10 @@ fn a_reserved_flag_exits_three_with_a_parseable_error() {
     // C-1's reserved-flag rule and C-2's "exactly one document on failure too", together.
     let base = tempfile::tempdir().expect("tempdir");
     let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
-        // `--auth` rather than `--database`: Phase 006 shipped persistence, so `--database` is
-        // honoured now and a test driving this contract with it would be asserting the opposite of
-        // what the CLI does.
-        .args(["new", "demo", "--auth", "session", "--output", "json"])
+        // `--frontend` rather than `--auth`: Phase 011 shipped the auth starter, so `--auth` is
+        // honoured now — as `--database` has been since Phase 006 — and a test driving this
+        // contract with either would be asserting the opposite of what the CLI does.
+        .args(["new", "demo", "--frontend", "react", "--output", "json"])
         .current_dir(base.path())
         .output()
         .expect("runs");

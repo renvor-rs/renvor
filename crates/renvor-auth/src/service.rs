@@ -497,10 +497,14 @@ where
         let secret =
             crate::opaque::Opaque::from_wire(crate::opaque::OpaqueKind::Verification, presented)
                 .ok_or(AuthError::CredentialNoLongerValid)?;
-        tokens
+        let owner = tokens
             .consume(&crate::opaque::SecretDigest::of(&secret), now)
             .await?
-            .ok_or_else(|| AuthError::CredentialNoLongerValid.into())
+            .ok_or(AuthError::CredentialNoLongerValid)?;
+        // The write the flow exists for. Consumption first, so a replayed token is refused
+        // before anything about the account changes.
+        self.users.mark_email_verified(owner, now).await?;
+        Ok(owner)
     }
 
     /// Completes a password reset.
@@ -630,6 +634,18 @@ mod tests {
                 .iter()
                 .find(|row| row.id == id)
                 .cloned())
+        }
+
+        async fn mark_email_verified(
+            &self,
+            id: UserId,
+            now: DateTime<Utc>,
+        ) -> Result<(), DatabaseError> {
+            let mut rows = self.rows.lock().expect("not poisoned");
+            if let Some(row) = rows.iter_mut().find(|row| row.id == id) {
+                row.email_verified_at.get_or_insert(now);
+            }
+            Ok(())
         }
     }
 
@@ -1401,6 +1417,85 @@ mod tests {
                 .expect_err("a consumed token must not work twice"),
         );
         assert_eq!(replay, AuthError::CredentialNoLongerValid);
+    }
+
+    #[tokio::test]
+    async fn confirming_a_verification_records_the_instant_and_a_replay_changes_nothing() {
+        // Phase 011, found by driving the generated starter against a real mail sink: the token
+        // was consumed, `200` came back, and `email_verified_at` stayed NULL for ever, because no
+        // repository method could write it. The flow exists for that write.
+        let (service, tokens, mail) = registered().await;
+        service
+            .send_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationResend),
+                &tokens,
+                &mail,
+                "ada@example.test",
+                TokenLifetime::default(),
+                day(),
+            )
+            .await
+            .expect("no fault");
+        let token = mail.last().expect("sent").token().expose();
+        let before = service
+            .users
+            .find_by_email("ada@example.test")
+            .await
+            .expect("no fault")
+            .expect("registered");
+        assert_eq!(
+            before.email_verified_at, None,
+            "a new account is unverified"
+        );
+
+        let owner = service
+            .confirm_verification(
+                admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                &tokens,
+                &token,
+                day(),
+            )
+            .await
+            .expect("confirms");
+        assert_eq!(
+            owner, before.id,
+            "the token decides whose address is verified"
+        );
+        let after = service
+            .users
+            .find_by_id(owner)
+            .await
+            .expect("no fault")
+            .expect("present");
+        assert_eq!(
+            after.email_verified_at,
+            Some(day()),
+            "the confirmation must record when the address was verified"
+        );
+
+        // The same token again: refused, and the recorded instant untouched.
+        let replay = refusal(
+            service
+                .confirm_verification(
+                    admitted(crate::abuse::AttemptFlow::VerificationComplete),
+                    &tokens,
+                    &token,
+                    day() + chrono::Duration::hours(1),
+                )
+                .await
+                .expect_err("a consumed token must not work twice"),
+        );
+        assert_eq!(replay, AuthError::CredentialNoLongerValid);
+        assert_eq!(
+            service
+                .users
+                .find_by_id(owner)
+                .await
+                .expect("no fault")
+                .expect("present")
+                .email_verified_at,
+            Some(day())
+        );
     }
 
     #[tokio::test]

@@ -167,17 +167,30 @@ impl<DB: sqlx::Database> SqlxProvider<DB> {
     /// there is nothing extra to accommodate.
     #[must_use]
     pub fn required_boot_deadline(&self) -> std::time::Duration {
-        let Some(migrations) = self.migrations.as_ref() else {
-            return renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE;
-        };
-        if !migrations.settings().policy().runs_on_boot() {
+        match self.migrations.as_ref() {
+            Some(migrations) => Self::boot_deadline_for(migrations.settings()),
+            None => renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE,
+        }
+    }
+
+    /// The deadline [`SqlxProvider::required_boot_deadline`] answers for a provider whose migrations
+    /// run under `settings` — answerable before the provider, or its migration set, exists.
+    ///
+    /// Phase 011. An application that constructs its database provider **at** Boot — so that the
+    /// connection string is read by the provider that needs it, and the inspection requests
+    /// `renvor routes` and `renvor openapi` send need no database — has no provider to ask when
+    /// it builds the kernel. The number depends on the migration settings alone, so it is
+    /// answered from them, and `required_boot_deadline` is defined in terms of this function so
+    /// the two can never disagree.
+    #[must_use]
+    pub fn boot_deadline_for(settings: &renvor_database::MigrationSettings) -> std::time::Duration {
+        if !settings.policy().runs_on_boot() {
             return renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE;
         }
         // Lock wait, then run, then the bounded close of the migration session. Serial, because
         // that is the order they occur in.
-        let needed = migrations.settings().lock_timeout()
-            + migrations.settings().run_timeout()
-            + crate::migrate::CLEANUP_TIMEOUT;
+        let needed =
+            settings.lock_timeout() + settings.run_timeout() + crate::migrate::CLEANUP_TIMEOUT;
         needed.max(renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE)
     }
 

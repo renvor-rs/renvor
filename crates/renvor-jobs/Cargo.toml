@@ -30,7 +30,7 @@ authors.workspace = true
 # The shipped file set is STATED, never inferred (Phase 001 FR-039).
 include = [
     "src/**/*.rs",
-    "migrations/**/*.sql",
+    # Listed once. It was listed twice (Phase 010, harmless); `src/migrations.rs` now depends on it.
     "migrations/**/*.sql",
     "Cargo.toml",
     "README.md",

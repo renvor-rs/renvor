@@ -188,11 +188,18 @@ fn every_json_document_matches_its_recorded_shape() {
     shapes.insert(
         "reserved_for_later_phase".into(),
         document_shape(
-            // `--database` drove this case until Phase 006, which is when persistence shipped and
-            // it stopped being reserved. `--auth` replaces it because the SHAPE being recorded is
-            // a reserved-flag refusal, and that shape still has a flag to produce it.
+            // `--database` drove this case until Phase 006 and `--auth` until Phase 011 — each
+            // replaced when its phase shipped the capability and it stopped being reserved. The
+            // SHAPE being recorded is a reserved-flag refusal, and `--frontend` (Phase 019)
+            // still produces it.
             &[
-                "new", "demo", "--auth", "session", "--yes", "--output", "json",
+                "new",
+                "demo",
+                "--frontend",
+                "react",
+                "--yes",
+                "--output",
+                "json",
             ],
             base.path(),
         ),

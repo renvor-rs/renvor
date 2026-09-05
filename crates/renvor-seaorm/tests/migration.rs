@@ -295,6 +295,31 @@ macro_rules! suite {
                 let _ = renvor_database::Database::close(&database).await;
             }
 
+            /// Phase 011: an application that constructs its provider AT Boot — so that the
+            /// connection string is read by the provider that needs it and the inspection
+            /// requests need no database — has no provider to ask before Boot. The deadline
+            /// depends on the migration settings alone, so it is answerable from them, and the
+            /// two answers must never differ.
+            #[tokio::test(flavor = "multi_thread")]
+            async fn the_boot_deadline_is_answerable_from_the_settings_before_the_provider_exists() {
+                let unused = renvor_database::ConnectionString::new("unused");
+                for policy in [MigrationPolicy::OnBoot, MigrationPolicy::Never] {
+                    let built = provider(&unused, "tests/migrations-boot", policy).expect("built");
+                    assert_eq!(
+                        SeaOrmProvider::<$driver>::boot_deadline_for(&boot_settings(policy)),
+                        built.required_boot_deadline(),
+                        "the settings-only answer drifted from the provider's own"
+                    );
+                }
+                assert_eq!(
+                    SeaOrmProvider::<$driver>::boot_deadline_for(&boot_settings(
+                        MigrationPolicy::OnBoot
+                    )),
+                    renvor_core::lifecycle::application::DEFAULT_PROVIDER_DEADLINE
+                        .max(Duration::from_secs(5 + 20 + 5))
+                );
+            }
+
             /// A provider that migrates on boot asks for a deadline long enough to honour its own.
             #[tokio::test(flavor = "multi_thread")]
             async fn the_required_boot_deadline_covers_both_migration_bounds() {

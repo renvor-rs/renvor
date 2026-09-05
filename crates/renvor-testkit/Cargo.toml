@@ -56,6 +56,11 @@ renvor-jobs = { path = "../renvor-jobs", version = "0.0.0", optional = true }
 # against. Ports only — this crate names no driver, and depends on neither adapter, so hosting the
 # shared suite does not put SQLx or SeaORM into anyone's graph.
 renvor-database = { path = "../renvor-database", version = "0.0.0" }
+renvor-http = { path = "../renvor-http", version = "0.0.0", optional = true }
+# The loopback HTTP client generated tests drive a spawned starter with (Phase 011, package
+# research §3): ISC, zero dependencies, chunked responses and timeouts handled. Never an
+# `https-*` feature — `native-tls` is banned and `https-rustls` would pull `aws-lc-rs`.
+minreq = { version = "3.0.0", default-features = false, optional = true }
 
 # `test-util` is a NORMAL dependency here and only here. This crate is itself a testing tool, so
 # time control is its product rather than a test convenience — an author consumes it under
@@ -85,6 +90,10 @@ tokens = ["auth", "renvor-auth/tokens"]
 
 # The shared job-store contract (Phase 010). Names `renvor-jobs`, which names no driver.
 jobs = ["dep:renvor-jobs"]
+# The socket-free test application (Phase 011): dispatches requests through a route registry.
+http = ["dep:renvor-http"]
+# The blocking loopback client for tests that spawn a binary (Phase 011).
+client = ["dep:minreq"]
 
 [lints]
 workspace = true
