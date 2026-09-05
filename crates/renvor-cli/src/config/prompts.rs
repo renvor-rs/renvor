@@ -93,14 +93,16 @@ const AUTH_HELP: &str = "`none` or `session` (cookie sessions, on the selected d
                          through the `mail` capability); `api` and `full` are not supported — no \
                          token-issuance route ships";
 
-/// The one-line help under the capabilities question (Phase 011, W-024).
-///
-/// The five names, so the answer is typed against a list on screen. A text prompt rather than a
-/// menu, deliberately: the wizard's prompt kinds stay text and confirmation (see `fill`), a typed
-/// list drives identically through every pseudo-terminal the harness runs on, and the ONE
-/// validator refuses an unknown or repeated name for both interfaces.
-const CAPABILITIES_HELP: &str = "comma-separated: `cache`, `jobs`, `mail`, `storage`, \
-                                 `observability`; or `none`. `jobs` needs a database";
+/// One line under each capability the wizard offers: what selecting it generates.
+const fn capability_hint(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Cache => "a Valkey provider, `GET /cache/ping`, and read-through item caching",
+        Capability::Jobs => "a durable worker on the database — needs a database",
+        Capability::Mail => "SMTP submission, verified at Boot; the session starter needs it",
+        Capability::Storage => "objects on a filesystem root, `PUT`/`GET /files/{name}`",
+        Capability::Observability => "JSON logs, `/healthz`, `/readyz`, `/metrics`, OTLP export",
+    }
+}
 
 /// The one-line help under the framework-path question (Phase 011).
 const FRAMEWORK_HELP: &str = "a checkout of the Renvor workspace; no crate is published yet, so a \
@@ -293,16 +295,32 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
     // and offering `none` beside it would offer a choice whose only outcome is a refusal — the
     // same reason seed data is offered only after the example domain.
     if answers.capabilities.is_none() {
-        let default = if answers.auth.as_deref() == Some(AuthStarter::Session.as_str()) {
-            Capability::Mail.as_str()
-        } else {
-            Capabilities::NONE
-        };
-        answers.capabilities = Some(prompt::text(
+        // FR-021: a multi-select listing exactly the five, so the operator picks rather than
+        // types the flag's grammar (the first version asked for the comma-separated text; found
+        // by the Codex review of Phase 011). The answer is serialised to the canonical value the
+        // flag takes, so the one validator still decides for both interfaces.
+        let initial: &[&'static str] =
+            if answers.auth.as_deref() == Some(AuthStarter::Session.as_str()) {
+                &["mail"]
+            } else {
+                &[]
+            };
+        let selected = prompt::multi_select(
             "Capabilities",
-            default,
-            Some(CAPABILITIES_HELP),
-        )?);
+            &Capability::ALL.map(|capability| {
+                (
+                    capability.as_str(),
+                    capability.as_str(),
+                    capability_hint(capability),
+                )
+            }),
+            initial,
+        )?;
+        answers.capabilities = Some(if selected.is_empty() {
+            Capabilities::NONE.to_owned()
+        } else {
+            selected.join(",")
+        });
     }
 
     if !answers.local_https {
@@ -447,17 +465,21 @@ mod tests {
         assert!(super::AUTH_HELP.contains("not supported"));
     }
 
-    /// Every capability `--capabilities` accepts must be named in the wizard's help line.
+    /// Every capability `--capabilities` accepts is offered by the wizard with a hint of its
+    /// own, and no two hints are the same line.
     #[test]
-    fn capabilities_help_names_every_capability_and_none() {
-        for capability in Capability::ALL {
-            assert!(
-                super::CAPABILITIES_HELP.contains(&format!("`{}`", capability.as_str())),
-                "`{}` is accepted by --capabilities but is not offered in the wizard",
-                capability.as_str()
-            );
+    fn every_capability_is_offered_with_its_own_hint() {
+        let hints: Vec<&str> = Capability::ALL
+            .iter()
+            .map(|capability| super::capability_hint(*capability))
+            .collect();
+        for (capability, hint) in Capability::ALL.iter().zip(&hints) {
+            assert!(!hint.is_empty(), "`{}` has no hint", capability.as_str());
         }
-        assert!(super::CAPABILITIES_HELP.contains("`none`"));
+        let mut distinct = hints.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), hints.len(), "two capabilities share a hint");
     }
 
     /// Every value `--orm` accepts must be named in the wizard's help line.
@@ -521,7 +543,11 @@ mod tests {
         let asked: Vec<&str> = body
             .lines()
             .map(|line| line.split("//").next().unwrap_or(line))
-            .filter(|code| code.contains("prompt::text(") || code.contains("prompt::confirm("))
+            .filter(|code| {
+                code.contains("prompt::text(")
+                    || code.contains("prompt::confirm(")
+                    || code.contains("prompt::multi_select(")
+            })
             .collect();
 
         // SIX in Phase 004. EIGHT when Phase 006 added persistence: FR-046 requires the database
@@ -638,6 +664,38 @@ mod tests {
                 "the wizard gained a transport question, which FR-049 forbids: {line}"
             );
         }
+    }
+
+    #[test]
+    fn the_capabilities_question_is_a_multi_select_of_exactly_the_five() {
+        // FOUND BY THE CODEX REVIEW (P2). FR-021 requires the wizard to ask the capabilities
+        // with a multi-select listing exactly the five; the first version asked for the
+        // comma-separated text the flag takes, so an operator had to know the grammar and a
+        // misspelling failed only after the later questions.
+        let source = include_str!("prompts.rs");
+        let body = source
+            .split_once("pub fn fill(mut answers: Answers)")
+            .expect("the wizard entry point exists")
+            .1;
+        let call = body
+            .find("prompt::multi_select(")
+            .expect("the capabilities question is a multi-select");
+        let window = &body[call..body.len().min(call + 400)];
+        assert!(
+            window.contains("\"Capabilities\""),
+            "the multi-select is the capabilities question:\n{window}"
+        );
+        for capability in Capability::ALL {
+            assert!(
+                window.contains(&format!("Capability::{capability:?}"))
+                    || window.contains("Capability::ALL"),
+                "`{}` is not offered by the multi-select",
+                capability.as_str()
+            );
+        }
+        // POSITIVE CONTROL for the question count above: the multi-select is counted.
+        let sample = "        answers.capabilities = Some(prompt::multi_select(";
+        assert!(sample.contains("prompt::multi_select("));
     }
 
     #[test]

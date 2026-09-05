@@ -28,7 +28,7 @@
 
 use std::io::{ErrorKind, IsTerminal as _};
 
-use cliclack::{Confirm, Input};
+use cliclack::{Confirm, Input, MultiSelect};
 
 use super::redact;
 use super::style::{Permission, Role};
@@ -272,6 +272,26 @@ pub fn text(
         // first, because the value is the thing being accepted and the guidance is about it.
         prompt = prompt.placeholder(&format!("{default} — {hint}"));
     }
+    prompt.interact().map_err(|error| classify(&error))
+}
+
+/// Asks the operator to pick any number of `choices` — `(value, label, hint)`, every one a
+/// literal — with `initial` already selected. An empty selection is an answer, not a refusal:
+/// the caller decides what "none" means.
+///
+/// # Errors
+///
+/// See [`classify`].
+pub fn multi_select(
+    question: &'static str,
+    choices: &[(&'static str, &'static str, &'static str)],
+    initial: &[&'static str],
+) -> Result<Vec<&'static str>, CliError> {
+    let mut prompt = MultiSelect::new(question).required(false);
+    for (value, label, hint) in choices {
+        prompt = prompt.item(*value, *label, *hint);
+    }
+    prompt = prompt.initial_values(initial.to_vec());
     prompt.interact().map_err(|error| classify(&error))
 }
 
