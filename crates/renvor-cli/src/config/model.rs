@@ -2161,7 +2161,14 @@ mod tests {
         assert_eq!(recorded.kind(), "path");
         assert_eq!(
             recorded.path(),
-            framework.canonicalize().expect("canonical").as_path(),
+            // Windows' canonical form carries the verbatim prefix; the recorded path does not.
+            PathBuf::from(without_verbatim_prefix(
+                &framework
+                    .canonicalize()
+                    .expect("canonical")
+                    .to_string_lossy()
+            ))
+            .as_path(),
             "the path is recorded canonical and absolute"
         );
 
