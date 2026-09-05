@@ -1197,4 +1197,71 @@ mod tests {
         );
         let _ = configuration;
     }
+
+    /// A framework checkout with exactly what `FrameworkSource::validate_path` reads: the
+    /// workspace manifest, the facade's manifest, and a lockfile.
+    fn fake_framework(base: &std::path::Path) -> PathBuf {
+        let root = base.join("framework");
+        std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("crates/renvor/Cargo.toml"),
+            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        )
+        .expect("write");
+        std::fs::write(root.join("Cargo.lock"), "# lock\nversion = 4\n").expect("write");
+        root
+    }
+
+    #[test]
+    fn the_manifest_names_the_variables_the_starter_reads() {
+        // Phase 011's first validation pass found the manifest's comments naming
+        // `RENVOR_AUTH__CSRF_KEY` while the starter reads `RENVOR_AUTH_CSRF_KEY`: a comment nobody
+        // renders into a test drifts from the code that reads the variable. This renders the
+        // manifest of a starter that has every commented variable and pins the names.
+        let base = tempfile::tempdir().expect("tempdir");
+        let mut a = answers(base.path().join("starter"));
+        a.database = Some("postgres".to_owned());
+        a.container = true;
+        a.capabilities = Some("cache,mail".to_owned());
+        a.auth = Some("session".to_owned());
+        a.framework_path = Some(fake_framework(base.path()));
+        let (configuration, destination) = ProjectConfiguration::resolve(a).expect("resolves");
+        let context = Context::build(&configuration);
+        let renderer = Renderer::new(templates::select(&configuration)).expect("builds");
+        let staging = Staging::create(&destination).expect("stages");
+        renderer
+            .render_into(staging.dir(), &context)
+            .expect("renders");
+        let manifest = staging
+            .dir()
+            .read_to_string("renvor.toml")
+            .expect("renvor.toml");
+        for name in [
+            "RENVOR_AUTH_CSRF_KEY",
+            "RENVOR_AUTH_ABUSE_KEY",
+            "RENVOR_CACHE_PASSWORD",
+        ] {
+            assert!(
+                manifest.contains(name),
+                "the manifest must name `{name}`:\n{manifest}"
+            );
+        }
+        // `__Host-rv_session` is a cookie name, not a variable; the drift to catch is a doubled
+        // underscore INSIDE a `RENVOR_…` name.
+        let doubled = manifest.match_indices("RENVOR_").any(|(at, _)| {
+            manifest[at..]
+                .split(|c: char| !(c.is_ascii_uppercase() || c == '_'))
+                .next()
+                .is_some_and(|name| name.contains("__"))
+        });
+        assert!(
+            !doubled,
+            "a doubled underscore names a variable nobody reads:\n{manifest}"
+        );
+    }
 }
