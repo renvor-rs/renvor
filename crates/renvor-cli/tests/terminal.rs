@@ -1219,3 +1219,116 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         "a progress indicator drew during a JSON run on a terminal\n{visible}"
     );
 }
+
+// ── the capabilities multi-select, through the real terminal (Specification axis, FR-021) ────
+
+/// Drives the wizard to the capabilities question with every earlier answer at its default.
+fn to_the_capabilities_question(root: &std::path::Path, destination: &std::path::Path) -> Terminal {
+    let mut terminal = wizard(root, destination);
+    terminal.enter();
+    terminal.expect("Local development domain");
+    terminal.enter();
+    terminal.expect("Generate the example domain module?");
+    terminal.key("n");
+    terminal.expect("Generate database persistence?");
+    terminal.key("n");
+    terminal.expect("Authentication starter");
+    terminal.enter();
+    terminal.expect("Generate container development controls?");
+    terminal.key("n");
+    terminal.expect("Capabilities");
+    terminal
+}
+
+/// Finishes the wizard after an empty capabilities answer by declining the review, and returns
+/// what the terminal showed — the equivalent command included. (A non-empty answer needs a
+/// framework whose starter verification can build, which is `tests/parity.rs`'s business: its
+/// starter case selects two capabilities through this same multi-select and compares the tree
+/// with the flags' tree byte for byte.)
+fn decline_after_capabilities(terminal: &mut Terminal) -> String {
+    terminal.expect("Record that local HTTPS is wanted?");
+    terminal.key("n");
+    terminal.expect("Create this project?");
+    terminal.key("n");
+    let exit = terminal.wait();
+    let visible = terminal.visible();
+    assert_eq!(exit, 4, "declining the review exits 4\n{visible}");
+    visible
+}
+
+/// The `--capabilities` value the equivalent command carries.
+fn capabilities_in(visible: &str) -> String {
+    let stripped = strip_escapes(visible);
+    let at = stripped
+        .find("--capabilities ")
+        .unwrap_or_else(|| panic!("no --capabilities in the equivalent command:\n{stripped}"));
+    stripped[at + "--capabilities ".len()..]
+        .split_whitespace()
+        .next()
+        .expect("a value")
+        .to_owned()
+}
+
+#[test]
+fn the_capabilities_question_offers_exactly_the_five() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.expect("observability");
+    let screen = strip_escapes(&terminal.visible());
+    let question = &screen[screen.rfind("Capabilities").expect("the question")..];
+    for choice in ["cache", "jobs", "mail", "storage", "observability"] {
+        assert!(
+            question.contains(choice),
+            "`{choice}` is not offered:\n{question}"
+        );
+    }
+    // Five choices and no sixth: `none` is not an item, it is what an empty selection means.
+    assert!(
+        !question.contains("none"),
+        "a sixth choice is offered:\n{question}"
+    );
+    terminal.escape();
+    assert_eq!(terminal.wait(), 4);
+    assert!(!destination.exists());
+}
+
+#[test]
+fn selecting_no_capability_is_the_explicit_none() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.enter();
+    // With nothing selected and no auth starter, the framework path is not asked.
+    let visible = decline_after_capabilities(&mut terminal);
+    assert_eq!(capabilities_in(&visible), "none");
+    assert!(!destination.exists());
+}
+
+#[test]
+fn cancelling_at_the_capabilities_question_writes_nothing() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.key(" ");
+    terminal.await_input_readiness();
+    terminal.escape();
+    let exit = terminal.wait();
+    assert_eq!(
+        exit,
+        4,
+        "escape at the multi-select is a cancellation\n{}",
+        terminal.visible()
+    );
+    assert!(
+        !destination.exists(),
+        "a cancellation created a destination"
+    );
+    let residue: Vec<_> = std::fs::read_dir(root.path())
+        .expect("read_dir")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".renvor-staging"))
+        .collect();
+    assert!(residue.is_empty(), "staging left behind: {residue:?}");
+}

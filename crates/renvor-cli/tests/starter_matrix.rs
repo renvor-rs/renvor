@@ -522,6 +522,17 @@ fn touch(project: &Path) {
     }
 }
 
+/// Whether a `cargo test` transcript ends in a pass with at least one test run and none failed
+/// — the placed project's test binary carries the starter test and, since the correction round,
+/// the support module's own negative control, so the count is not pinned to one.
+fn ran_to_a_pass(output: &str) -> bool {
+    output.lines().any(|line| {
+        line.starts_with("test result: ok.")
+            && line.contains("; 0 failed;")
+            && !line.starts_with("test result: ok. 0 passed")
+    })
+}
+
 /// Runs the placed project's own test against the real services. `false` means skipped.
 fn live(row: &Row, project: &Path) -> bool {
     let mut envs: Vec<(&str, String)> = Vec::new();
@@ -564,7 +575,7 @@ fn live(row: &Row, project: &Path) -> bool {
         row.name, outcome.status, outcome.output
     );
     assert!(
-        outcome.output.contains("test result: ok. 1 passed"),
+        ran_to_a_pass(&outcome.output),
         "the placed project's test did not run to a pass for {}:\n{}",
         row.name,
         outcome.output
@@ -924,7 +935,7 @@ fn checks_after_generation(project: &Path, test: &str, needs: &[Service]) -> boo
         &envs,
     );
     assert!(
-        outcome.succeeded && outcome.output.contains("test result: ok. 1 passed"),
+        outcome.succeeded && ran_to_a_pass(&outcome.output),
         "the generated test `{test}` did not pass [{}]:\n{}",
         outcome.status,
         outcome.output

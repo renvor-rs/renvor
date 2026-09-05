@@ -600,7 +600,7 @@ fn a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects() {
             "--auth",
             "session",
             "--capabilities",
-            "mail",
+            "cache,mail,storage",
             "--framework-path",
             &framework,
         ],
@@ -638,13 +638,33 @@ fn a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects() {
     terminal.expect("Generate container development controls?");
     terminal.enter(); // default no
     // With `session` chosen the capabilities default is `mail`, the one the starter needs.
+    // SPECIFICATION AXIS (FR-021): a multi-select, driven through the real terminal. `mail` is
+    // pre-selected under `session`; the cursor starts on `cache`. Three steps down is `storage`
+    // — toggled on FIRST — then three steps up is `cache`, toggled on second, so the keystrokes
+    // arrive in the reverse of the canonical order; Enter submits all three. The flag run above
+    // asked for the same three, in the canonical spelling.
     terminal.expect("Capabilities");
+    terminal.key("\u{1b}[B");
+    terminal.key("\u{1b}[B");
+    terminal.key("\u{1b}[B");
+    terminal.key(" ");
+    terminal.key("\u{1b}[A");
+    terminal.key("\u{1b}[A");
+    terminal.key("\u{1b}[A");
+    terminal.key(" ");
     terminal.enter();
     terminal.expect("Record that local HTTPS is wanted?");
     terminal.enter(); // default no
     terminal.expect("Path to the Renvor framework checkout");
     terminal.send_line(&framework);
     terminal.expect("Create this project?");
+    // The review screen prints the equivalent command: the three, in canonical order, whatever
+    // order they were toggled in.
+    let review = terminal.visible();
+    assert!(
+        review.contains("--capabilities cache,mail,storage"),
+        "the serialised selection is not canonical:\n{review}"
+    );
     terminal.enter(); // default yes
     let wizard_exit = terminal.wait();
     assert_eq!(
@@ -670,7 +690,10 @@ fn a_wizard_run_and_a_flag_run_for_a_starter_produce_byte_identical_projects() {
     }
     let manifest = String::from_utf8_lossy(&from_prompts["renvor.toml"]);
     assert!(
-        manifest.contains("auth = \"session\"") && manifest.contains("mail = true"),
+        manifest.contains("auth = \"session\"")
+            && manifest.contains("cache = true")
+            && manifest.contains("mail = true")
+            && manifest.contains("storage = true"),
         "the recorded manifest carries the starter choices:\n{manifest}"
     );
 }
