@@ -48,9 +48,9 @@ identity)
   note "### Toolchain identity (${RUNNER_OS:-local}, job toolchain \`$toolchain\`)"
   note "- rustup: \`$rustup_version\`"
   note "- active toolchain in the checkout: \`$active\`"
-  note "- rustc resolved in the checkout: \`$(field "$actual_rustc" rustc)\` host \`$(field "$actual_rustc" host)\` commit \`$(field "$actual_rustc" commit-hash)\`"
-  note "- cargo resolved in the checkout: \`$(field "$actual_cargo" cargo)\` commit \`$(field "$actual_cargo" commit-hash)\`"
-  note "- reference \`rustc +$toolchain\`: \`$(field "$expected" rustc)\` commit \`$(field "$expected" commit-hash)\`"
+  note "- rustc resolved in the checkout: \`rustc $(field "$actual_rustc" release)\` host \`$(field "$actual_rustc" host)\` commit \`$(field "$actual_rustc" commit-hash)\`"
+  note "- cargo resolved in the checkout: \`cargo $(field "$actual_cargo" release)\` commit \`$(field "$actual_cargo" commit-hash)\`"
+  note "- reference \`rustc +$toolchain\`: \`rustc $(field "$expected" release)\` commit \`$(field "$expected" commit-hash)\`"
   note "- RUSTUP_TOOLCHAIN=\`${RUSTUP_TOOLCHAIN:-<unset>}\` RUSTUP_AUTO_INSTALL=\`${RUSTUP_AUTO_INSTALL:-<unset>}\`"
 
   # 2. The compiler the checkout resolves must be the compiler the job was given — release AND
@@ -67,6 +67,15 @@ identity)
     fail "RUSTUP_TOOLCHAIN is '${RUSTUP_TOOLCHAIN:-<unset>}'; the job must select '$toolchain' at job level so every step and every child cargo inherits it"
   case "$active" in *RUSTUP_TOOLCHAIN*) ;; *) fail "the active toolchain is not attributed to RUSTUP_TOOLCHAIN by rustup: '$active'";; esac
   [ "${RUSTUP_AUTO_INSTALL:-}" = "0" ] || fail "RUSTUP_AUTO_INSTALL is '${RUSTUP_AUTO_INSTALL:-<unset>}'; the job must set it to 0 so a missing toolchain is a named failure, never a download"
+
+  # 3b. The components the verification sequence and the sealed project verification need must
+  #     resolve under the same selection. With the selection explicit, the checkout's toolchain
+  #     file no longer adds them implicitly (that was a download in the middle of the job), so the
+  #     installing action must have been told, and this fails closed if it was not.
+  for tool in "rustfmt --version" "cargo clippy --version"; do
+    out="$($tool 2>&1)" || fail "\`$tool\` does not resolve under toolchain '$toolchain' (${out}); the installing action must add the component explicitly"
+    note "- \`$tool\`: \`$out\`"
+  done
 
   # 4. Prove on THIS runner's rustup — not from a version table — that an absent selected
   #    toolchain is refused by name without a download or a fall-back. The probe selects a
@@ -87,7 +96,7 @@ identity)
   case "$probe" in *"is not installed"*) ;; *) fail "the absent toolchain '$absent' was not refused by name; this runner's rustup ($rustup_version) may not honour RUSTUP_AUTO_INSTALL=0 (output: $probe)";; esac
   case "$probe" in *syncing*|*downloading*|*"could not download"*) fail "rustup attempted a download for the absent toolchain '$absent' (output: $probe)";; esac
   if rustup toolchain list | grep -q "^$absent-"; then fail "the probe installed '$absent'"; fi
-  note "- result: the checkout compiles with \`$(field "$expected" rustc)\`, selected by the job; implicit installation is refused by name on this runner"
+  note "- result: the checkout compiles with \`rustc $(field "$expected" release) ($(field "$expected" commit-hash))\`, selected by the job; implicit installation is refused by name on this runner"
   ;;
 
 artifacts)

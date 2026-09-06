@@ -399,6 +399,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ matrix.toolchain }}
+          # Explicit, as on `verify`. Until the job selected its toolchain itself, the checkout's
+          # `rust-toolchain.toml` made rustup add these two components implicitly — a download in
+          # the middle of the job that the explicit selection (rightly) no longer triggers. The
+          # sealed verification the renvor-cli unit tests run needs both.
+          components: rustfmt, clippy
 
       # Same guard as `verify`, for the same reason: the `stable` legs here compiled with the
       # pinned 1.94.0 too (the macOS log shows the same mid-job install). See the note there.
