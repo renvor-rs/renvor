@@ -720,3 +720,49 @@ stating the flag, and no secret — VALIDATED, task #107 `validated`. Its three 
 corrected by the commit that carries this paragraph: leg B on `ac6062d` stopped after step 6
 (above), a pass time left half-written in the review record, and the 2b3e4a8 paragraph's phase
 total read alone. **Kept unmerged**; nothing tagged, released, published, or deployed.
+
+## 14. Erratum (2026-09-06) — the CI `stable` contexts ran the pinned MSRV
+
+**What was wrong.** From the day `rust-toolchain.toml` pinned `channel = "1.94.0"` (`98a4e2c`,
+2026-08-11; `ci.yml` first landed the next day) until the fix below, the `verify (stable)` and
+`platform (…, stable)` contexts compiled with **rustc 1.94.0**, not with current stable. rustup
+lets a directory's toolchain file beat `rustup default`, which is all the pinned
+`dtolnay/rust-toolchain` action sets, and `ci.yml` ran plain `cargo xtask verify` in the
+checkout. Every sentence in this record and in earlier records that reads a passing
+`verify (stable)` or `platform (…, stable)` context as proof on stable is corrected by this
+paragraph; the original sentences are left as written.
+
+**Directly observed** (job logs fetched through the GitHub API on 2026-09-06; the excerpts are
+retained out of repository beside the cheat-sheet evidence as `ci-stable-legs-run-the-pin.log`):
+`verify (stable)` on `3742ec1` (run `34025561472`, job `101465783525`) and on `5acb492` (run
+`34018208859`, job `101445807521`), and `platform (macos-latest, stable)` on `3742ec1` (job
+`101465783728`) — pull request #63's runs. Each shows, after `rustup default stable`, rustup's
+note that `1.94.0-…` "is currently in use (overridden by '…/rust-toolchain.toml')", and then,
+**inside the gate step**, `info: syncing channel updates for 1.94.0-…`: rustup installed the MSRV
+on the stable runner and ran the gate with it. Three jobs were inspected; **no other historical
+run was**. The exposure window above is inferred from configuration history, not from reading
+every run.
+
+**What was genuine.** The local legs recorded in §10 and §13 — leg B, `cargo +stable xtask
+verify`, rustc 1.97.1 (8bab26f4f 2026-07-14) — were real stable runs: `+stable` sets
+`RUSTUP_TOOLCHAIN`, which beats the file. Nothing measured locally is withdrawn. `docs` and
+`security` give the action `1.94.0` by input on purpose and were never stable legs.
+
+**What follows for the claims.** Between 2026-08-11 and the fix, CI proved the MSRV twice per
+pull request and stable never; the only proof on stable in that window is the maintainer's local
+leg B of each phase, where a record has one. `SUPPORT.md`'s "only the stable job moves" and the
+toolchain file's "CI additionally runs current stable" described the intent, not the runs.
+
+**The fix and its proof.** Pull request [#64](https://github.com/renvor-rs/renvor/pull/64)
+selects the toolchain at job level (`RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}`, which beats the
+file for every step and every child `cargo`, including the one `renvor new` runs inside its sealed
+environment), forbids implicit installation (`RUSTUP_AUTO_INSTALL=0`), and adds a fail-closed
+`Toolchain identity` step that records, inside the checkout and before anything is built, the
+rustc and cargo the proxies resolve — release, commit, host, and why the toolchain is active — and
+compares them with the job's toolchain; after the sequence, cargo's own `.rustc_info.json` in the
+workspace target and in the census's `target/starter-matrix` is read as the runtime proof that the
+generated projects were built with the same compiler. Its first commit carried the guard without
+the selection, so that CI itself reproduced the wrong resolution: all six legs failed at the guard
+before any suite ran, the stable legs with "the checkout resolves rustc 1.94.0 … but the job's
+toolchain is 'stable'". The compiler identities the fixed legs report are recorded in that pull
+request. This erratum is appended; nothing above it is edited.

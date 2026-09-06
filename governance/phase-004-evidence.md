@@ -684,3 +684,6 @@ load produced 0 failures on macOS. The failing observation is the CI run and its
 repro. The fix is therefore reasoned from the mechanism and from the file's own established pattern,
 and its confirmation is CI passing on the fixed head — not a local demonstration that would have
 been stronger had the machine cooperated.
+
+
+**Erratum (2026-09-06).** The CI context `verify (stable)` named in this record — and every `platform (…, stable)` context — compiled with the pinned **1.94.0**, not with current stable, from `98a4e2c` (2026-08-11) until the fix in pull request #64; only three runs (pull request #63's) were inspected directly, the window is inferred from configuration history, and every locally recorded `cargo +stable xtask verify` leg was genuine. See `phase-011-evidence.md` §14. This note is appended; nothing above it is edited.

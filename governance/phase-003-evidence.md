@@ -112,3 +112,6 @@ omitted — an absent row would read as an oversight instead of a fact.
   deploying, not on merging — absent dated recruitment progress. **RO-001** is that obligation, with
   a first review date of **2026-11-19**, recorded as *not yet progress*.
 - **W-008 confers nothing on Phase 004.**
+
+
+**Erratum (2026-09-06).** The CI context `verify (stable)` named in this record — and every `platform (…, stable)` context — compiled with the pinned **1.94.0**, not with current stable, from `98a4e2c` (2026-08-11) until the fix in pull request #64; only three runs (pull request #63's) were inspected directly, the window is inferred from configuration history, and every locally recorded `cargo +stable xtask verify` leg was genuine. See `phase-011-evidence.md` §14. This note is appended; nothing above it is edited.

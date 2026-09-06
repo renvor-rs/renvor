@@ -50,6 +50,17 @@ jobs:
       # Anything that varies per leg belongs in the step, not in the matrix.
       matrix:
         toolchain: ["1.94.0", "stable"]
+    # THE TOOLCHAIN IS SELECTED HERE, FOR EVERY STEP AND EVERY CHILD (WI-012-4, 2026-09-06).
+    # `RUSTUP_TOOLCHAIN` is rustup's highest-precedence selection short of a `+toolchain`
+    # argument: it beats the checkout's `rust-toolchain.toml`, a directory override, and the
+    # default the action sets. Set at job level it reaches the gate, the census, and the `cargo`
+    # that `renvor new` runs inside its sealed environment (which passes the variable through), so
+    # every leg compiles with the toolchain in its name. `RUSTUP_AUTO_INSTALL=0` makes a missing
+    # toolchain a named failure instead of a download in the middle of a step; the action below
+    # installs explicitly and is unaffected. The `Toolchain identity` step proves both.
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+      RUSTUP_AUTO_INSTALL: "0"
     steps:
       # Full history: verification step 7 scans every commit, and a shallow clone
       # would silently scan only the tip.
@@ -378,6 +389,10 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
         toolchain: ["1.94.0", "stable"]
+    # See the note on `verify`: the selection is made here so every step and child inherits it.
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
+      RUSTUP_AUTO_INSTALL: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
