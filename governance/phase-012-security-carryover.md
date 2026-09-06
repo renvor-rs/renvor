@@ -255,7 +255,7 @@ Closure needs **one** mechanism decided first (D-L2-1); the criteria below are w
 | Rows | all ten starter rows (`pgsqlx`, `mysqlx`, `pgsea`, `mysea`, `authonly`, `cacheonly`, `storageonly`, `mailonly`, `observeonly`, `nodb`) and the six skeleton variants — the pin is rendered into every tree, and the census is the proof that every tree still verifies |
 | Databases | both engines through the rows; the pin is engine-independent |
 | Toolchains | both gate legs; AC-L2-3 needs the stable leg as the "default is not the pin" machine, and AC-L2-6 keeps the stable leg meaningful |
-| Platforms | Linux (`verify`), macOS and Windows (`platform`, `nodb` row) — a toolchain file in a nested directory must be honoured on all three, and the Windows path text (the verbatim canonical-path defect `phase-011-evidence.md` §5 records, fixed in `03a3e8d` and `f95ab6b`) must not regress |
+| Platforms | Linux (`verify`), macOS and Windows (`platform`, `nodb` row) — a toolchain file in a nested directory must be honoured on all three, and the Windows path text (the verbatim canonical-path defect `phase-011-evidence.md` §5 records: observed at `03a3e8d`, fixed in `f95ab6b` and `2df9f81`) must not regress |
 | Commands | `renvor new` (real and dry run), `renvor generate auth` (scratch verification), `renvor generate resource` (`rustfmt`), `renvor check` (reporting), `renvor doctor` (the operator's probe) |
 
 ### 2.8 Dependencies and decisions the maintainer must take — *Decision needed*
