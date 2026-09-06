@@ -423,6 +423,17 @@ impl Application {
     /// **every already-initialised provider is stopped in reverse actual initialisation order**
     /// (FR-004, C-L3), and every rollback failure is reported alongside the original (FR-005,
     /// C-L4). `Ready` is not reached and no `Application` is returned.
+    #[allow(
+        clippy::result_large_err,
+        reason = "`boot` consumes the application and runs once per process, so the large \
+                  `BootFailure` is moved once, on the failure path of a start that has already \
+                  paid for provider initialisation. Its size is the structured diagnostic the \
+                  public API promises — the origin, the rollback report and the phases entered \
+                  (FR-002, FR-004, FR-005) — kept on the `Result` rather than behind a `Box`. A \
+                  deliberate trade-off, not a false-positive claim. `allow`, not `expect`: clippy \
+                  applies this lint to `async fn` only from 1.98 (rust-clippy #17130), so on the \
+                  1.94.0 MSRV an expectation would be unfulfilled and fail the gate"
+    )]
     pub async fn boot(mut self) -> Result<Self, BootFailure> {
         self.cursor.advance();
 

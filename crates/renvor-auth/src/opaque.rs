@@ -104,7 +104,7 @@ impl Opaque {
             return None;
         }
         let mut bytes = [0_u8; OPAQUE_BYTES];
-        for (index, pair) in wire.as_bytes().chunks_exact(2).enumerate() {
+        for (index, pair) in wire.as_bytes().as_chunks::<2>().0.iter().enumerate() {
             let high = hex_value(pair[0])?;
             let low = hex_value(pair[1])?;
             bytes[index] = (high << 4) | low;
@@ -293,7 +293,9 @@ mod tests {
         let secret = fixture();
         let digest = SecretDigest::of(&secret);
         let mut secret_bytes = [0_u8; OPAQUE_BYTES];
-        for (index, pair) in secret.expose().as_bytes().chunks_exact(2).enumerate() {
+        let exposed = secret.expose();
+        let (pairs, _) = exposed.as_bytes().as_chunks::<2>();
+        for (index, pair) in pairs.iter().enumerate() {
             secret_bytes[index] =
                 u8::from_str_radix(std::str::from_utf8(pair).expect("hex is ascii"), 16)
                     .expect("hex parses");
