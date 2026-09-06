@@ -1,6 +1,6 @@
 ---
 description: "Contract C-4 — template delivery, rendering bounds, and containment"
-version: "1.1.0"
+version: "1.2.0"
 status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
