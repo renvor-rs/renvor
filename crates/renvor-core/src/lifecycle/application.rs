@@ -423,6 +423,11 @@ impl Application {
     /// **every already-initialised provider is stopped in reverse actual initialisation order**
     /// (FR-004, C-L3), and every rollback failure is reported alongside the original (FR-005,
     /// C-L4). `Ready` is not reached and no `Application` is returned.
+    #[allow(
+        clippy::result_large_err,
+        reason = "Preserves the structured BootFailure and existing public API; the larger error \
+                  representation is an accepted startup-path trade-off."
+    )]
     pub async fn boot(mut self) -> Result<Self, BootFailure> {
         self.cursor.advance();
 

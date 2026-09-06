@@ -291,3 +291,6 @@ Phase 011 work started.
   manifest change after the gate legs had run; recorded for Phase 011 rather than folded in.
 - **What closure did not do**: no tag, release, deployment, crate publication, or Phase 011 work;
   W-023 and W-024 block release while active.
+
+
+**Erratum (2026-09-06).** The CI context `verify (stable)` named in this record — and every `platform (…, stable)` context — compiled with the pinned **1.94.0**, not with current stable, from `98a4e2c` (2026-08-11) until the fix in pull request #64; only three runs (pull request #63's) were inspected directly, the window is inferred from configuration history, and every locally recorded `cargo +stable xtask verify` leg was genuine. See `phase-011-evidence.md` §14. This note is appended; nothing above it is edited.
