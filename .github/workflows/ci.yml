@@ -62,6 +62,20 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
+      # WHICH COMPILER ACTUALLY RUNS (WI-012-4, 2026-09-06). The checkout pins 1.94.0 in
+      # `rust-toolchain.toml`, and rustup lets a directory's toolchain file beat `rustup default`,
+      # which is all the action above sets. So the `stable` leg compiled with the MSRV from the day
+      # the pin landed (98a4e2c, 2026-08-11) — rustup installed 1.94.0 on the stable runner in the
+      # middle of the gate — and the label said `stable`. The job now selects its toolchain
+      # explicitly (job-level `RUSTUP_TOOLCHAIN`, which beats the file) and forbids implicit
+      # installation (`RUSTUP_AUTO_INSTALL=0`); this step proves, inside the checkout and before
+      # anything is built, which compiler the proxies resolve — release and commit, not a label —
+      # and fails closed on any other answer, on a selection the environment did not make, and on
+      # a runner whose rustup would install a missing toolchain instead of refusing it by name.
+      - name: Toolchain identity
+        shell: bash
+        run: .github/scripts/toolchain-identity.sh identity "${{ matrix.toolchain }}"
+
 
       # No build cache action is used. The obvious candidate is LGPL-3.0 licensed, which
       # is not on the deny.toml allow-list, and dependency review correctly rejected it.
@@ -319,6 +333,14 @@ jobs:
       - name: cargo xtask verify
         run: cargo xtask verify
 
+      # The compiler cargo really used, read from its own record (`.rustc_info.json`) in each
+      # target directory the sequence built into: the workspace's, and the census's, where
+      # `renvor new` built every generated project inside its sealed environment. The second one
+      # is the runtime proof that child `cargo` invocations inherited the selection.
+      - name: Toolchain identity of the built artifacts
+        shell: bash
+        run: .github/scripts/toolchain-identity.sh artifacts "${{ matrix.toolchain }}" target target/starter-matrix
+
       # Named separately so a failure here is not mistaken for a verification failure.
       - name: Stop the real databases
         if: always()
@@ -363,6 +385,12 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
 
+      # Same guard as `verify`, for the same reason: the `stable` legs here compiled with the
+      # pinned 1.94.0 too (the macOS log shows the same mid-job install). See the note there.
+      - name: Toolchain identity
+        shell: bash
+        run: .github/scripts/toolchain-identity.sh identity "${{ matrix.toolchain }}"
+
       # Serial, matching the Linux run. Several suites assert on process-wide state — the
       # tracing global subscriber has exactly one owner, and the readiness ceiling is
       # per-application but observable across tests in one binary — so a parallel run is
@@ -390,8 +418,17 @@ jobs:
         env:
           RENVOR_TEST_STARTER_ROWS: nodb
           INSTA_UPDATE: "no"
+          # A known directory (the matrix otherwise keeps a temporary one) so the step below can
+          # read which compiler built the generated starter. Absolute, as the matrix requires.
+          RENVOR_TEST_TARGET_DIR: ${{ github.workspace }}/target/starter-matrix
 
       # FR-034: the facade must build with no default features on every claimed platform, not
       # only on the one where the feature graph was designed.
       - name: No default features
         run: cargo check -p renvor --no-default-features --all-targets
+
+      # As in `verify`: the compiler cargo really used for the workspace and for the generated
+      # `nodb` starter, from cargo's own record.
+      - name: Toolchain identity of the built artifacts
+        shell: bash
+        run: .github/scripts/toolchain-identity.sh artifacts "${{ matrix.toolchain }}" target target/starter-matrix
