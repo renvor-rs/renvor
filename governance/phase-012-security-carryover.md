@@ -2,8 +2,8 @@
 
 **Companion to**: [`phase-011-limitations.md`](phase-011-limitations.md) · [`phase-011-evidence.md`](phase-011-evidence.md) · [`phase-010-limitations.md`](phase-010-limitations.md) · `PLAN.md` §"Phase 012 — REST documentation and production examples"
 **Drafted**: 2026-09-06, against `main` at `ab701d2a6731f271d53fd0a380554c32e9d8a740` (tree `1722c687bb6568c6cf2e997a1a423db6757b5dcc`, the Phase 011 squash merge), by the maintainer's session
-**Revised**: 2026-09-06, to apply the maintainer's decision **D-L2-0** (§2.8); revised again the same day for **D-L2-1** (the mechanism, decided; everything it leaves open is specified and requested in `phase-012-specification-and-decision-brief.md`). Everything else below remains a proposal
-**Status**: **PLANNING RECORD.** Both limitations stay **open** exactly as `phase-011-limitations.md` states them. This file closes nothing, grants no waiver, accepts no decision record beyond **D-L2-0** and **D-L2-1** (both taken by the maintainer on 2026-09-06 and recorded in §2.8), reinterprets no requirement, changes no contract rule (the one change outside this file is the correction of two contract front-matter `version` fields under D-L2-0, a metadata correction), and implements nothing. Every proposal below is labelled *Proposal*; every choice that is the maintainer's is labelled *Decision needed* (or **DECIDED**, with its date, once the maintainer has taken it) and numbered so that Phase 012's specification can cite it.
+**Revised**: 2026-09-06, to apply the maintainer's decision **D-L2-0** (§2.8); revised again the same day for **D-L2-1** (the mechanism, decided; everything it leaves open is specified and requested in `phase-012-specification-and-decision-brief.md`). **Revised 2026-09-07**: every remaining decision — **D-L1-1 … D-L1-7** and **D-L2-2 … D-L2-10** — was taken by the maintainer with corrections and is recorded in the brief's §4; the *Proposal* and *Decision needed* labels below are kept as the dated record of what was proposed, and the brief supersedes them where the two differ
+**Status**: **PLANNING RECORD.** Both limitations stay **open** exactly as `phase-011-limitations.md` states them. This file closes nothing, grants no waiver, accepts no decision record beyond **D-L2-0** and **D-L2-1** (both taken by the maintainer on 2026-09-06 and recorded in §2.8; the dispositions of 2026-09-07 on every other decision are recorded in the brief, not here), reinterprets no requirement, changes no contract rule (the one change outside this file is the correction of two contract front-matter `version` fields under D-L2-0, a metadata correction), and implements nothing. Every proposal below is labelled *Proposal*; every choice that is the maintainer's is labelled *Decision needed* (or **DECIDED**, with its date, once the maintainer has taken it) and numbered so that Phase 012's specification can cite it.
 **Working copy**: `specs/012-rest-documentation-and-production-examples/security-carryover.md`, under the gitignored `specs/` tree, is the same text; this tracked file is the clone-visible mirror and the authority if the two differ.
 
 ## 0. Why this file exists
@@ -136,7 +136,7 @@ Each negative control needs a **positive control in the same run** (the same end
 | Platforms | the leg runs on `ubuntu-latest` — the only CI leg with a container daemon (`SUPPORT.md`). Root-store discovery on macOS and Windows stays unproven unless the leg also runs a file-CA case on the platform jobs without services (D-L1-6); the platform jobs currently run the `nodb` row only |
 | Toolchains | both gate legs (`1.94.0`, `stable`), as for every CI job |
 
-### 1.8 Dependencies and decisions the maintainer must take — *Decision needed*
+### 1.8 Dependencies and decisions the maintainer must take — *Decision needed* *(all seven **DECIDED 2026-09-07**, with the corrections recorded in the brief §4.2; the proposals below are the dated record)*
 
 | # | Decision | Proposal (not a decision) |
 |---|---|---|
@@ -183,7 +183,7 @@ process variables. The toolchain *identity* therefore enters through three doors
 
 ### 2.2 The security requirement that remains unmet
 
-- **Constitution, Technical Standards**: "The workspace MUST use stable Rust, the Rust 2024 edition, Cargo resolver 3, and an explicit MSRV tested in continuous integration." The framework meets it (`rust-toolchain.toml` pins `1.94.0`; CI runs `1.94.0` and `stable`). The **generated project** declares no MSRV and pins no toolchain: `crates/renvor-cli/templates/starter/Cargo.toml.j2` and `crates/renvor-cli/templates/Cargo.toml.j2` carry `edition = "2024"` and no `rust-version`; no template renders a `rust-toolchain.toml`.
+- **Constitution, Technical Standards**: "The workspace MUST use stable Rust, the Rust 2024 edition, Cargo resolver 3, and an explicit MSRV tested in continuous integration." The framework meets it (`rust-toolchain.toml` pins `1.94.0`; CI runs `1.94.0` and `stable`). *(Dated note, 2026-09-07: when this was written the CI clause described the intent, not the runs — the `stable` contexts had compiled the pinned 1.94.0 since 2026-08-11 and ran stable only from `7281e4f`, 2026-09-06; brief §0.4, `phase-011-evidence.md` §14.)* The **generated project** declares no MSRV and pins no toolchain: `crates/renvor-cli/templates/starter/Cargo.toml.j2` and `crates/renvor-cli/templates/Cargo.toml.j2` carry `edition = "2024"` and no `rust-version`; no template renders a `rust-toolchain.toml`.
 - **Constitution, Release**: release candidates must pass "clean generated-project tests" — a clean generated project's toolchain is undefined today, so "clean" means "whatever the runner had".
 - **`PLAN.md` principle 7** ("Generated code is owned code. Scaffolds are readable, formatted, testable…") and **Phase 012's acceptance** ("commands run from clean environments"): the proof that a starter is formatted and lint-clean is made against one compiler and read as if it held for all.
 - **Contract C-5** (`contracts/generation-transaction.md` 1.1.0, "The checks run in a sealed environment"): the seal is specified to exclude *secrets* — `RENVOR_*`, credentials, proxy passwords — and to admit "what the toolchain needs". It is silent on which toolchain — read here as the contract's intent rather than an omission (a reading, not a finding) — and L-2 is the recorded consequence of that silence.
@@ -208,7 +208,7 @@ process variables. The toolchain *identity* therefore enters through three doors
 **Evidence that exists:**
 
 - `verification_runs_in_a_sealed_environment` proves the allow-list: `RUSTUP_TOOLCHAIN` passes, everything outside the list is dropped.
-- Both gate legs — `cargo +1.94.0 xtask verify` and `cargo +stable xtask verify` — run the census, so every starter row was generated and verified under `rustc` 1.94.0 **and** under 1.97.1 (`phase-011-evidence.md` §10 and §13; CI matrix `toolchain: ["1.94.0", "stable"]` on `ubuntu-latest`, and the `nodb` row on macOS and Windows for both).
+- Both gate legs — `cargo +1.94.0 xtask verify` and `cargo +stable xtask verify` — run the census, so every starter row was generated and verified under `rustc` 1.94.0 **and** under 1.97.1 (`phase-011-evidence.md` §10 and §13; CI matrix `toolchain: ["1.94.0", "stable"]` on `ubuntu-latest`, and the `nodb` row on macOS and Windows for both). *(Dated note, 2026-09-07: the two local legs were genuine; the CI clause was not — the CI `stable` contexts ran 1.94.0 until `7281e4f`; brief §0.4.)*
 - Measured 2026-09-06 (a throw-away crate whose build script prints `rustc --version` and whose binary prints `RUSTUP_TOOLCHAIN`; its output is retained beside the cheat-sheet evidence, out of repository, as `logs/D-envprobe.log`): `cargo +1.94.0 run` and `RUSTUP_TOOLCHAIN=1.94.0 cargo run` both reach the child with `RUSTUP_TOOLCHAIN=1.94.0-aarch64-apple-darwin` and `rustc 1.94.0`; plain `cargo run` outside the framework tree reaches it with `stable-aarch64-apple-darwin` / `rustc 1.97.1`. So the gate's stable leg really did verify the rows on stable — through rustup's proxy behaviour, which the seal passes through — and a project generated in a directory outside the framework is verified on the operator's **default** toolchain.
 - Measured 2026-09-06 during the cheat-sheet execution: two starters and several throw-away projects were generated, verified, built, linted, and tested on `rustc 1.97.1` (the default of a directory outside the framework) with `clippy -D warnings` green. The only tree rendered under **both** toolchains that day was the seed-defect control of §3 (`RUSTUP_TOOLCHAIN=1.94.0`), refused by both; every other tree ran on 1.97.1 alone. Agreement of every census row on both toolchains is the gate's measurement (`phase-011-evidence.md` §10, §13), not this one's.
 
@@ -261,7 +261,7 @@ The mechanism is decided (D-L2-1, 2026-09-06: a rendered `rust-toolchain.toml` *
 | Platforms | Linux (`verify`), macOS and Windows (`platform`, `nodb` row) — a toolchain file in a nested directory must be honoured on all three, and the Windows path text (the verbatim canonical-path defect `phase-011-evidence.md` §5 records: observed at `03a3e8d`, fixed in `f95ab6b` and `2df9f81`) must not regress |
 | Commands | `renvor new` (real and dry run), `renvor generate auth` (scratch verification), `renvor generate resource` (`rustfmt`), `renvor check` (reporting), `renvor doctor` (the operator's probe) |
 
-### 2.8 Dependencies and decisions the maintainer must take — *Decision needed* (D-L2-0 and D-L2-1 **decided** 2026-09-06; D-L2-2 to D-L2-7 open, restated with recommendations in the brief)
+### 2.8 Dependencies and decisions the maintainer must take — *Decision needed* (D-L2-0 and D-L2-1 **decided** 2026-09-06; D-L2-2 to D-L2-7 **decided 2026-09-07** with corrections, and D-L2-8 to D-L2-10 added and decided the same day — brief §4.1; the proposals below are the dated record)
 
 | # | Decision | Proposal (not a decision), unless the cell is marked **DECIDED** |
 |---|---|---|
@@ -303,8 +303,7 @@ It does not close, narrow, waive, or reinterpret L-1 or L-2; it does not edit th
 ledgers; it does not change a contract's rules, a template, a test, or a workflow (the two
 front-matter `version` fields corrected under D-L2-0 are metadata; §2.8 and §5 record the
 correction); it does not start Phase
-012, whose specification (`specs/012-…/spec.md`) does not exist yet and will take this file as an
-input. Every "Proposal" and "Decision needed" above stands until the maintainer disposes of it in
+012, whose specification (`specs/012-…/spec.md`) does not exist yet and will take this file as an input. *(Dated note, 2026-09-07: the specification now exists — `phase-012-specification-and-decision-brief.md`, with `phase-012-task-plan.md`; it took this file as an input and supersedes its proposals where the two differ.)* Every "Proposal" and "Decision needed" above stands until the maintainer disposes of it in
 that specification or in a decision record.
 
 ## 5. How this record was checked
