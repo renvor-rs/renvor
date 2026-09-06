@@ -1,0 +1,13 @@
+# The `[mail]` section for {{ name }}: SMTP submission to a local sink over plaintext loopback.
+#
+# PLAINTEXT IS A DOUBLE OPT-IN, as for the cache: `security = "plaintext"` is accepted only with
+# `allow_insecure_loopback = true` AND a loopback host. A production relay takes
+# `security = "starttls"` (the default) or `"implicit_tls"`, and the two lines below go away.
+# The username is not a secret; the password is, and arrives from `RENVOR_MAIL_PASSWORD`.
+host = "127.0.0.1"
+port = 1025
+security = "plaintext"
+allow_insecure_loopback = true
+username = "renvor"
+hello_name = "{{ local_domain }}"
+sender_domain = "{{ local_domain }}"

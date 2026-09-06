@@ -766,8 +766,13 @@ fn a_confirmation_submits_on_the_keypress_and_n_declines() {
     // question, so the persistence gate is what comes next.
     terminal.expect("Generate database persistence?");
     terminal.key("n");
+    // Phase 011: two TEXT questions between the gates. Enter accepts their `none` defaults.
+    terminal.expect("Authentication starter");
+    terminal.enter();
     terminal.expect("Generate container development controls?");
     terminal.key("n");
+    terminal.expect("Capabilities");
+    terminal.enter();
     terminal.expect("Record that local HTTPS is wanted?");
     terminal.key("n");
     terminal.expect("Create this project?");
@@ -818,15 +823,17 @@ fn the_cursor_is_restored_after_a_successful_run() {
     let root = workspace();
     let destination = root.path().join("demo");
     let mut terminal = wizard(root.path(), &destination);
-    // SEVEN answers, not six: the six wizard questions and then the review screen. Answering six
-    // leaves the review waiting for an answer that never comes, which is a hang rather than a
-    // failure — and a hang is the one outcome a test suite reports as "still running".
+    // NINE answers, not eight: the eight wizard questions and then the review screen. Answering
+    // eight leaves the review waiting for an answer that never comes, which is a hang rather than
+    // a failure — and a hang is the one outcome a test suite reports as "still running".
     for prompt in [
         "Local development domain",
         "Generate the example domain module?",
         "Generate seed data for it?",
         "Generate database persistence?",
+        "Authentication starter",
         "Generate container development controls?",
+        "Capabilities",
         "Record that local HTTPS is wanted?",
     ] {
         terminal.enter();
@@ -872,7 +879,9 @@ fn the_cursor_is_restored_after_a_failure() {
     // is used here rather than waiting on each prompt by name because the destination's parent has
     // just been removed, so the run is racing toward a failure and the later prompts may not all
     // be drawn — what matters is only that the wizard is not left waiting for input.
-    for _ in 0..6 {
+    // EIGHT since Phase 011: the auth-starter and capabilities questions accept `none` on Enter,
+    // and with both at `none` the framework question is not asked.
+    for _ in 0..8 {
         terminal.enter();
     }
     let code = terminal.wait();
@@ -960,6 +969,13 @@ fn the_verification_step_names_each_check_as_it_runs() {
             "55432",
             "--container-cache",
             "none",
+            // Phase 011: both wizard questions answered here, so nothing is asked. On a terminal
+            // an unanswered question IS asked — which is what this pty would otherwise be waiting
+            // at, with nobody to answer it.
+            "--auth",
+            "none",
+            "--capabilities",
+            "none",
         ],
         root.path(),
         &[("TERM", "xterm-256color")],
@@ -972,7 +988,7 @@ fn the_verification_step_names_each_check_as_it_runs() {
     );
     for check in [
         "cargo fmt --check",
-        "cargo clippy -- -D warnings",
+        "cargo clippy --all-targets -- -D warnings",
         "cargo build",
         "cargo test",
         "cargo run --quiet",
@@ -1034,6 +1050,10 @@ fn a_terminal_that_cannot_be_redrawn_still_gets_told_the_work_is_happening() {
                 "55432",
                 "--container-cache",
                 "none",
+                "--auth",
+                "none",
+                "--capabilities",
+                "none",
             ],
             root.path(),
             &[("TERM", term)],
@@ -1083,6 +1103,13 @@ fn only_a_redrawable_terminal_gets_the_live_indicator() {
             "--database-port",
             "55432",
             "--container-cache",
+            "none",
+            // Phase 011: both wizard questions answered here, so nothing is asked. On a terminal
+            // an unanswered question IS asked — which is what this pty would otherwise be waiting
+            // at, with nobody to answer it.
+            "--auth",
+            "none",
+            "--capabilities",
             "none",
         ],
         root.path(),
@@ -1153,7 +1180,9 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         "Generate the example domain module?",
         "Generate seed data for it?",
         "Generate database persistence?",
+        "Authentication starter",
         "Generate container development controls?",
+        "Capabilities",
         "Record that local HTTPS is wanted?",
     ] {
         terminal.expect(prompt);
@@ -1189,4 +1218,117 @@ fn json_mode_on_a_terminal_prompts_on_stderr_and_still_emits_one_document() {
         !visible.contains("verifying the generated project"),
         "a progress indicator drew during a JSON run on a terminal\n{visible}"
     );
+}
+
+// ── the capabilities multi-select, through the real terminal (Specification axis, FR-021) ────
+
+/// Drives the wizard to the capabilities question with every earlier answer at its default.
+fn to_the_capabilities_question(root: &std::path::Path, destination: &std::path::Path) -> Terminal {
+    let mut terminal = wizard(root, destination);
+    terminal.enter();
+    terminal.expect("Local development domain");
+    terminal.enter();
+    terminal.expect("Generate the example domain module?");
+    terminal.key("n");
+    terminal.expect("Generate database persistence?");
+    terminal.key("n");
+    terminal.expect("Authentication starter");
+    terminal.enter();
+    terminal.expect("Generate container development controls?");
+    terminal.key("n");
+    terminal.expect("Capabilities");
+    terminal
+}
+
+/// Finishes the wizard after an empty capabilities answer by declining the review, and returns
+/// what the terminal showed — the equivalent command included. (A non-empty answer needs a
+/// framework whose starter verification can build, which is `tests/parity.rs`'s business: its
+/// starter case selects two capabilities through this same multi-select and compares the tree
+/// with the flags' tree byte for byte.)
+fn decline_after_capabilities(terminal: &mut Terminal) -> String {
+    terminal.expect("Record that local HTTPS is wanted?");
+    terminal.key("n");
+    terminal.expect("Create this project?");
+    terminal.key("n");
+    let exit = terminal.wait();
+    let visible = terminal.visible();
+    assert_eq!(exit, 4, "declining the review exits 4\n{visible}");
+    visible
+}
+
+/// The `--capabilities` value the equivalent command carries.
+fn capabilities_in(visible: &str) -> String {
+    let stripped = strip_escapes(visible);
+    let at = stripped
+        .find("--capabilities ")
+        .unwrap_or_else(|| panic!("no --capabilities in the equivalent command:\n{stripped}"));
+    stripped[at + "--capabilities ".len()..]
+        .split_whitespace()
+        .next()
+        .expect("a value")
+        .to_owned()
+}
+
+#[test]
+fn the_capabilities_question_offers_exactly_the_five() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.expect("observability");
+    let screen = strip_escapes(&terminal.visible());
+    let question = &screen[screen.rfind("Capabilities").expect("the question")..];
+    for choice in ["cache", "jobs", "mail", "storage", "observability"] {
+        assert!(
+            question.contains(choice),
+            "`{choice}` is not offered:\n{question}"
+        );
+    }
+    // Five choices and no sixth: `none` is not an item, it is what an empty selection means.
+    assert!(
+        !question.contains("none"),
+        "a sixth choice is offered:\n{question}"
+    );
+    terminal.escape();
+    assert_eq!(terminal.wait(), 4);
+    assert!(!destination.exists());
+}
+
+#[test]
+fn selecting_no_capability_is_the_explicit_none() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.enter();
+    // With nothing selected and no auth starter, the framework path is not asked.
+    let visible = decline_after_capabilities(&mut terminal);
+    assert_eq!(capabilities_in(&visible), "none");
+    assert!(!destination.exists());
+}
+
+#[test]
+fn cancelling_at_the_capabilities_question_writes_nothing() {
+    let root = workspace();
+    let destination = root.path().join("demo");
+    let mut terminal = to_the_capabilities_question(root.path(), &destination);
+    terminal.key(" ");
+    terminal.await_input_readiness();
+    terminal.escape();
+    let exit = terminal.wait();
+    assert_eq!(
+        exit,
+        4,
+        "escape at the multi-select is a cancellation\n{}",
+        terminal.visible()
+    );
+    assert!(
+        !destination.exists(),
+        "a cancellation created a destination"
+    );
+    let residue: Vec<_> = std::fs::read_dir(root.path())
+        .expect("read_dir")
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".renvor-staging"))
+        .collect();
+    assert!(residue.is_empty(), "staging left behind: {residue:?}");
 }

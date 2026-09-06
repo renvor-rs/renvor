@@ -1,0 +1,28 @@
+-- {{ name }}: create the example item table.
+--
+-- Applied by version order, not by filename order. The version is the numeric prefix.
+{% if database == "postgres" %}
+CREATE TABLE IF NOT EXISTS item (
+    id   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    {% if auth_session %}
+    name VARCHAR(200) NOT NULL,
+    -- The owner's user identifier, exactly as `rv_auth_user.id` stores it. The all-zero value
+    -- marks a seeded item nobody owns; a real owner is a registered user.
+    owner_id BYTEA NOT NULL
+    {% else %}
+    name VARCHAR(200) NOT NULL
+    {% endif %}
+);
+{% else %}
+CREATE TABLE IF NOT EXISTS item (
+    id   BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    {% if auth_session %}
+    name VARCHAR(200) NOT NULL,
+    -- The owner's user identifier, exactly as `rv_auth_user.id` stores it. The all-zero value
+    -- marks a seeded item nobody owns; a real owner is a registered user.
+    owner_id BINARY(16) NOT NULL
+    {% else %}
+    name VARCHAR(200) NOT NULL
+    {% endif %}
+);
+{% endif %}

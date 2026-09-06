@@ -732,6 +732,115 @@ where
     Ok(group)
 }
 
+/// Endpoints that are declared before Boot and built at Boot (Phase 011).
+///
+/// # Why this exists
+///
+/// [`routes`] captures a live [`AuthEndpoints`], and every repository in one holds a connection
+/// pool — so the group could only be built after the database provider had booted. But an HTTP
+/// provider takes its route registry **before** Boot, and `--renvor-dump-routes` must answer
+/// without a database at all. A generated starter therefore needs the route table before the
+/// endpoints exist.
+///
+/// This is the smallest shape that gives both: the group is built over a cell, the handlers
+/// read the cell per request, and whoever boots the database fills the cell afterwards — once.
+/// Until then every route answers `503` with the `unavailable` problem, never a `401` that would
+/// tell a client it presented no credential, and never a panic.
+///
+/// The startup order is preserved rather than sidestepped: the endpoints are constructed after
+/// the database provider, in a provider that depends on it, and the cell is what carries them
+/// across the boundary between "declared" and "serving".
+pub type DeferredEndpoints<U, C, B, S, T, M, R, A> =
+    Arc<std::sync::OnceLock<AuthEndpoints<U, C, B, S, T, M, R, A>>>;
+
+/// Builds the authentication route group over endpoints that are set later.
+///
+/// Declares exactly the routes [`routes`] declares — the same paths, methods, and handlers —
+/// and dispatches each to the endpoints in `cell` once they are set. See
+/// [`DeferredEndpoints`].
+///
+/// # Errors
+///
+/// [`RouteError`] if a path or group name is invalid — a defect here, since every path is a
+/// literal.
+pub fn routes_deferred<U, C, B, S, T, M, R, A>(
+    cell: DeferredEndpoints<U, C, B, S, T, M, R, A>,
+) -> Result<RouteGroup, RouteError>
+where
+    U: UserRepository + Send + Sync + 'static,
+    C: CredentialRepository + Send + Sync + 'static,
+    B: PasswordBlocklist + Send + Sync + 'static,
+    S: SessionRepository + Send + Sync + 'static,
+    T: SingleUseTokenRepository + Send + Sync + 'static,
+    M: MailPort + Send + Sync + 'static,
+    R: AttemptRepository + Send + Sync + 'static,
+    A: AuditSink + Send + Sync + 'static,
+{
+    /// The answer while the cell is empty: a `503` carrying the `unavailable` problem.
+    ///
+    /// Not a `401`: the request may have carried a perfectly good credential that nothing could
+    /// yet check. Not a panic: an HTTP provider that started before its dependencies would be a
+    /// wiring defect, and a defect should answer a status, not kill the process.
+    fn unavailable(request: &Request) -> Response {
+        problem::render_code(
+            renvor_error::ApiErrorCode::Unavailable,
+            503,
+            correlation_of(request),
+            Vec::new(),
+        )
+    }
+
+    macro_rules! route {
+        ($group:expr, $method:ident, $path:literal, $handler:expr) => {{
+            let shared = Arc::clone(&cell);
+            $group.$method($path, move |request: Request| {
+                let shared = Arc::clone(&shared);
+                async move {
+                    match shared.get() {
+                        Some(endpoints) => $handler(endpoints, request).await,
+                        None => unavailable(&request),
+                    }
+                }
+            })?
+        }};
+    }
+
+    let group = RouteGroup::new("auth", "/auth")?;
+    let group = route!(group, post, "/register", register);
+    let group = route!(group, post, "/login", log_in);
+    let group = route!(group, post, "/logout", log_out);
+    let group = route!(group, get, "/me", current_user);
+    let group = route!(group, post, "/verification/confirm", confirm_verification);
+    let group = route!(group, post, "/password/reset", reset_password);
+
+    let shared = Arc::clone(&cell);
+    let group = group.post("/verification/resend", move |request: Request| {
+        let shared = Arc::clone(&shared);
+        async move {
+            match shared.get() {
+                Some(endpoints) => {
+                    mailed_flow(endpoints, request, AttemptFlow::VerificationResend).await
+                }
+                None => unavailable(&request),
+            }
+        }
+    })?;
+    let shared = Arc::clone(&cell);
+    let group = group.post("/password/forgot", move |request: Request| {
+        let shared = Arc::clone(&shared);
+        async move {
+            match shared.get() {
+                Some(endpoints) => {
+                    mailed_flow(endpoints, request, AttemptFlow::ForgotPassword).await
+                }
+                None => unavailable(&request),
+            }
+        }
+    })?;
+
+    Ok(group)
+}
+
 /// The token-mode endpoints, kept separate so [`AuthEndpoints`] has the same shape under every
 /// feature.
 ///
@@ -883,6 +992,156 @@ mod tests {
 
     fn origin(value: &str) -> FetchMetadata {
         FetchMetadata::new(Some(value), None)
+    }
+
+    /// Phase 011. The endpoints a deferred group serves are built at Boot, after the database
+    /// provider — but the group is DECLARED before Boot, so the route table exists for
+    /// `--renvor-dump-routes` and the HTTP provider without a pool.
+    ///
+    /// # What a lazy pool buys this test
+    ///
+    /// `connect_lazy` opens no socket, so constructing real repositories here costs nothing and
+    /// touches no database. The one request dispatched after the endpoints are set is a cookie-
+    /// less `GET /auth/me`, which is refused at the cookie parser before any store is asked.
+    #[tokio::test]
+    async fn a_deferred_group_declares_the_live_routes_and_is_unavailable_until_set() {
+        use std::sync::{Arc, OnceLock};
+
+        use chrono::Duration;
+        use renvor_auth::abuse::{AbuseContract, AbuseGuard, AttemptBuckets, AttemptKeyring};
+        use renvor_auth::audit::RecordingAuditSink;
+        use renvor_auth::cookie::CookiePolicy;
+        use renvor_auth::mail::RecordingMailSink;
+        use renvor_auth::password::{PasswordPolicy, PasswordService, StaticBlocklist};
+        use renvor_auth::service::{AuthenticationService, TokenLifetime};
+        use renvor_auth::session::{SessionPolicy, SessionService};
+        use renvor_auth::{CsrfKey, SystemClock};
+        use renvor_http::route::{Method, PresentedCredentials, RouteRegistry};
+        use renvor_sqlx::auth::TokenTable;
+        use renvor_sqlx::auth::postgres::{
+            SqlxAttemptRepository, SqlxCredentialRepository, SqlxSessionRepository,
+            SqlxSingleUseTokenRepository, SqlxUserRepository,
+        };
+
+        use super::{AuthEndpoints, DeferredEndpoints, routes, routes_deferred};
+
+        type Endpoints = AuthEndpoints<
+            SqlxUserRepository,
+            SqlxCredentialRepository,
+            StaticBlocklist,
+            SqlxSessionRepository,
+            SqlxSingleUseTokenRepository,
+            Arc<RecordingMailSink>,
+            SqlxAttemptRepository,
+            RecordingAuditSink,
+        >;
+
+        // A pool that connects on first use — and is never used.
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/never")
+            .expect("a lazy pool needs no server");
+        let make = || -> Endpoints {
+            let entropy: Arc<dyn renvor_core::observe::EntropySource + Send + Sync> =
+                Arc::new(OsEntropy);
+            AuthEndpoints {
+                authentication: AuthenticationService::new(
+                    SqlxUserRepository::new(pool.clone()),
+                    SqlxCredentialRepository::new(pool.clone()),
+                    StaticBlocklist::new(["password123456789".to_owned()]),
+                    PasswordService::default(),
+                    PasswordPolicy::default(),
+                    Arc::clone(&entropy),
+                )
+                .expect("the dummy hash is computable"),
+                sessions: SessionService::new(
+                    SqlxSessionRepository::new(pool.clone()),
+                    SessionPolicy::new(
+                        Duration::minutes(30),
+                        Duration::hours(8),
+                        std::num::NonZeroU32::new(5).expect("positive"),
+                    )
+                    .expect("within the ceilings"),
+                    CookiePolicy::default(),
+                    Arc::clone(&entropy),
+                ),
+                verifications: SqlxSingleUseTokenRepository::new(
+                    pool.clone(),
+                    TokenTable::Verification,
+                ),
+                resets: SqlxSingleUseTokenRepository::new(pool.clone(), TokenTable::PasswordReset),
+                mail: Arc::new(RecordingMailSink::new()),
+                abuse: AbuseGuard::new(
+                    SqlxAttemptRepository::new(pool.clone()),
+                    AttemptKeyring::from_bytes([0x3C; 32], AttemptBuckets::default()),
+                    AbuseContract::default(),
+                    RecordingAuditSink::new(),
+                ),
+                csrf: CsrfKey::from_bytes([0x7E; 32]),
+                entropy,
+                token_lifetime: TokenLifetime::default(),
+                clock: Arc::new(SystemClock),
+            }
+        };
+
+        // 1. THE SAME DECLARATIONS. Method and path, route for route.
+        let deferred: DeferredEndpoints<
+            SqlxUserRepository,
+            SqlxCredentialRepository,
+            StaticBlocklist,
+            SqlxSessionRepository,
+            SqlxSingleUseTokenRepository,
+            Arc<RecordingMailSink>,
+            SqlxAttemptRepository,
+            RecordingAuditSink,
+        > = Arc::new(OnceLock::new());
+        let mut declared = RouteRegistry::new();
+        declared
+            .group(routes_deferred(Arc::clone(&deferred)).expect("the deferred group builds"))
+            .expect("registers");
+        let declared_pairs: Vec<(Method, String)> = declared
+            .routes()
+            .iter()
+            .map(|route| (route.method(), route.path().to_owned()))
+            .collect();
+
+        // 2. UNAVAILABLE BEFORE THE ENDPOINTS EXIST: every route answers 503, not a panic and not
+        // a 401 that would tell a client it presented no credential.
+        let me = declared
+            .routes()
+            .iter()
+            .find(|route| route.path() == "/auth/me")
+            .expect("the current-user route is declared");
+        let response = me
+            .dispatch(request(http_listener(), FetchMetadata::default()))
+            .await;
+        assert_eq!(response.status_code(), 503, "before set");
+
+        // 3. LIVE ONCE SET: the same request answers as the live group does — a cookie-less
+        // request is refused at the cookie parser, 401, and no store is asked.
+        assert!(deferred.set(make()).is_ok(), "set once");
+        let response = me
+            .dispatch(
+                request(http_listener(), FetchMetadata::default())
+                    .with_credentials(PresentedCredentials::new("", "")),
+            )
+            .await;
+        assert_eq!(response.status_code(), 401, "after set");
+
+        // And the live group, built the ordinary way from an identical construction, declares
+        // the same pairs — so the deferred group is the same route table, not a lookalike.
+        let mut live = RouteRegistry::new();
+        live.group(routes(Arc::new(make())).expect("the live group builds"))
+            .expect("registers");
+        let live_pairs: Vec<(Method, String)> = live
+            .routes()
+            .iter()
+            .map(|route| (route.method(), route.path().to_owned()))
+            .collect();
+        assert_eq!(
+            declared_pairs, live_pairs,
+            "the two groups declare different routes"
+        );
+        assert!(declared_pairs.len() >= 8, "{declared_pairs:?}");
     }
 
     #[test]

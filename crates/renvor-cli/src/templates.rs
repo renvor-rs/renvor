@@ -13,13 +13,22 @@
 //! version, template version, and configuration produce byte-identical trees (SC-016), so this
 //! string is the thing that has to change when a template does.
 
-use crate::config::model::ProjectConfiguration;
-use crate::generate::render::{TemplateEntry, TemplateSet};
+use crate::config::model::{Capability, ProjectConfiguration};
+use crate::generate::render::{TemplateEntry, TemplateSet, VerbatimEntry};
 
 /// The template-set version recorded in every generated project.
 ///
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
+///
+/// **`6` → `7` (Phase 011).** `renvor.toml` records the auth starter (`auth = …`) and a
+/// `[capabilities]` table on every project, a `[framework]` table and — with `session` — an
+/// `[auth]` table on a starter, and `cache_wired_into_application` follows the `cache` capability
+/// rather than being the constant `false` it was through Phase 010. A project given
+/// `--framework-path` is a **starter**: a real application with path dependencies, whose tree the
+/// `STARTER_*` groups below render. The skeleton's other files are unchanged, which
+/// `the_skeleton_is_unchanged_apart_from_its_recorded_version_and_two_keys` asserts against the
+/// template-version-6 fixture.
 ///
 /// **`5` → `6` (post-Phase-007 correction).** No behaviour changed and no file was added or
 /// removed. Two generated bodies did: `renvor.toml`'s `[persistence]` comment named
@@ -51,7 +60,7 @@ use crate::generate::render::{TemplateEntry, TemplateSet};
 /// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
 /// describing the dependency to add once the framework crates are published. `Cargo.toml` is
 /// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
-pub const VERSION: &str = "6";
+pub const VERSION: &str = "7";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[
@@ -183,6 +192,220 @@ const CONTAINER: &[TemplateEntry] = &[
     },
 ];
 
+/// The starter's files (Phase 011): a framework-backed application replacing the skeleton's
+/// `Cargo.toml`, `src/main.rs`, `README.md`, and `.gitignore`, and adding the modules the
+/// selection needs. Selected only when a framework path was given.
+const STARTER_BASE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "Cargo.toml",
+        body: include_str!("../templates/starter/Cargo.toml.j2"),
+    },
+    TemplateEntry {
+        path: "renvor.toml",
+        body: include_str!("../templates/renvor.toml.j2"),
+    },
+    TemplateEntry {
+        path: "src/main.rs",
+        body: include_str!("../templates/starter/src_main.rs.j2"),
+    },
+    TemplateEntry {
+        path: "src/app.rs",
+        body: include_str!("../templates/starter/src_app.rs.j2"),
+    },
+    TemplateEntry {
+        path: "src/config.rs",
+        body: include_str!("../templates/starter/src_config.rs.j2"),
+    },
+    TemplateEntry {
+        path: "src/routes.rs",
+        body: include_str!("../templates/starter/src_routes.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/http.toml",
+        body: include_str!("../templates/starter/config_http.toml.j2"),
+    },
+    TemplateEntry {
+        path: "README.md",
+        body: include_str!("../templates/starter/README.md.j2"),
+    },
+    TemplateEntry {
+        path: ".gitignore",
+        body: include_str!("../templates/starter/gitignore.j2"),
+    },
+    TemplateEntry {
+        path: ".env.example",
+        body: include_str!("../templates/starter/env_example.j2"),
+    },
+    TemplateEntry {
+        path: "tests/starter.rs",
+        body: include_str!("../templates/starter/tests_starter.rs.j2"),
+    },
+    TemplateEntry {
+        path: "tests/support/mod.rs",
+        body: include_str!("../templates/starter/tests_support_mod.rs.j2"),
+    },
+];
+
+/// The starter's example domain: the item type, its handlers, and — with `--seed-data` — seeds.
+const STARTER_EXAMPLE_DOMAIN: &[TemplateEntry] = &[TemplateEntry {
+    path: "src/domain.rs",
+    body: include_str!("../templates/starter/src_domain.rs.j2"),
+}];
+
+const STARTER_SEED_DATA: &[TemplateEntry] = &[TemplateEntry {
+    path: "src/seed.rs",
+    body: include_str!("../templates/starter/src_seed.rs.j2"),
+}];
+
+/// The starter's item migration, which gains an owner column with the auth starter.
+/// With a database: the migration directory exists even when no set is copied into it, because
+/// the provider loads it at Boot and an absent directory is a Boot failure.
+const STARTER_DATABASE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "migrations/README.md",
+        body: include_str!("../templates/starter/migrations_README.md.j2"),
+    },
+    TemplateEntry {
+        path: "src/resources/mod.rs",
+        body: include_str!("../templates/starter/src_resources_mod.rs.j2"),
+    },
+];
+
+const STARTER_MIGRATIONS: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "migrations/0001_create_item.up.sql",
+        body: include_str!("../templates/starter/migrations_item_up.sql.j2"),
+    },
+    TemplateEntry {
+        path: "migrations/0001_create_item.down.sql",
+        body: include_str!("../templates/starter/migrations_item_down.sql.j2"),
+    },
+];
+
+const STARTER_PERSISTENCE_SQLX: &[TemplateEntry] = &[TemplateEntry {
+    path: "src/persistence.rs",
+    body: include_str!("../templates/starter/src_persistence.rs.j2"),
+}];
+
+const STARTER_PERSISTENCE_SEAORM: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/entity.rs",
+        body: include_str!("../templates/starter/src_entity.rs.j2"),
+    },
+    TemplateEntry {
+        path: "src/repository.rs",
+        body: include_str!("../templates/starter/src_repository.rs.j2"),
+    },
+];
+
+/// The session auth starter (W-023).
+const STARTER_AUTH: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/auth.rs",
+        body: include_str!("../templates/starter/src_auth.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/auth.toml",
+        body: include_str!("../templates/starter/config_auth.toml.j2"),
+    },
+];
+
+/// The capabilities module root, present when any capability is selected.
+const STARTER_CAPABILITIES: &[TemplateEntry] = &[TemplateEntry {
+    path: "src/capabilities/mod.rs",
+    body: include_str!("../templates/starter/src_capabilities_mod.rs.j2"),
+}];
+
+const STARTER_CACHE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/capabilities/cache.rs",
+        body: include_str!("../templates/starter/src_capabilities_cache.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/cache.toml",
+        body: include_str!("../templates/starter/config_cache.toml.j2"),
+    },
+];
+
+const STARTER_JOBS: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/capabilities/jobs.rs",
+        body: include_str!("../templates/starter/src_capabilities_jobs.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/jobs.toml",
+        body: include_str!("../templates/starter/config_jobs.toml.j2"),
+    },
+];
+
+const STARTER_MAIL: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/capabilities/mail.rs",
+        body: include_str!("../templates/starter/src_capabilities_mail.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/mail.toml",
+        body: include_str!("../templates/starter/config_mail.toml.j2"),
+    },
+];
+
+const STARTER_STORAGE: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/capabilities/storage.rs",
+        body: include_str!("../templates/starter/src_capabilities_storage.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/storage.toml",
+        body: include_str!("../templates/starter/config_storage.toml.j2"),
+    },
+];
+
+const STARTER_OBSERVABILITY: &[TemplateEntry] = &[
+    TemplateEntry {
+        path: "src/capabilities/observability.rs",
+        body: include_str!("../templates/starter/src_capabilities_observability.rs.j2"),
+    },
+    TemplateEntry {
+        path: "config/otlp.toml.example",
+        body: include_str!("../templates/starter/config_otlp.toml.example.j2"),
+    },
+];
+
+/// The framework's migration sets a starter copies, byte for byte, beside its own.
+///
+/// One directory, one ledger: the item migration is `0001`, the auth set `20260901…`, the jobs set
+/// `20260904…`, applied in version order by the one `Migrations::load`.
+fn verbatim_migrations(configuration: &ProjectConfiguration) -> Vec<VerbatimEntry> {
+    let Some(database) = configuration.database() else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    let mut copy = |set: Option<&'static renvor_auth::migrations::EngineSet>| {
+        if let Some(set) = set {
+            for file in set.files() {
+                files.push(VerbatimEntry {
+                    path: format!("migrations/{}", file.name()),
+                    body: file.contents(),
+                });
+            }
+        }
+    };
+    if configuration.auth() == crate::config::model::AuthStarter::Session {
+        copy(renvor_auth::migrations::for_engine(database.as_str()));
+    }
+    if configuration.capabilities().contains(Capability::Jobs)
+        && let Some(set) = renvor_jobs::migrations::for_engine(database.as_str())
+    {
+        for file in set.files() {
+            files.push(VerbatimEntry {
+                path: format!("migrations/{}", file.name()),
+                body: file.contents(),
+            });
+        }
+    }
+    files
+}
+
 /// Every entry that can ship, for the catalogue-wide validation test.
 ///
 /// This exists so the load-time guarantee covers the **whole** binary rather than whichever subset
@@ -204,6 +427,31 @@ fn catalogue() -> Vec<TemplateEntry> {
     all
 }
 
+/// Every starter entry that can ship, for the same load-time guarantee.
+///
+/// Separate from [`catalogue`] because the two share output paths on purpose (`Cargo.toml`,
+/// `src/main.rs`, …): the starter REPLACES those skeleton files, so a duplicate-path check over
+/// the union would fail for the right reason and prove the wrong thing.
+#[cfg(test)]
+fn starter_catalogue() -> Vec<TemplateEntry> {
+    let mut all = Vec::new();
+    all.extend_from_slice(STARTER_BASE);
+    all.extend_from_slice(STARTER_EXAMPLE_DOMAIN);
+    all.extend_from_slice(STARTER_SEED_DATA);
+    all.extend_from_slice(STARTER_MIGRATIONS);
+    all.extend_from_slice(STARTER_PERSISTENCE_SQLX);
+    all.extend_from_slice(STARTER_PERSISTENCE_SEAORM);
+    all.extend_from_slice(STARTER_AUTH);
+    all.extend_from_slice(STARTER_CAPABILITIES);
+    all.extend_from_slice(STARTER_CACHE);
+    all.extend_from_slice(STARTER_JOBS);
+    all.extend_from_slice(STARTER_MAIL);
+    all.extend_from_slice(STARTER_STORAGE);
+    all.extend_from_slice(STARTER_OBSERVABILITY);
+    all.extend(container_for_starter());
+    all
+}
+
 /// Chooses the entries a configuration actually renders.
 ///
 /// Selection is by **honoured choice**, which is what makes data-model invariant I-12 hold: the
@@ -211,6 +459,9 @@ fn catalogue() -> Vec<TemplateEntry> {
 /// only by adding entries here.
 #[must_use]
 pub fn select(configuration: &ProjectConfiguration) -> TemplateSet {
+    if configuration.is_starter() {
+        return select_starter(configuration);
+    }
     let mut entries = BASE.to_vec();
     if configuration.example_domain() {
         entries.extend_from_slice(EXAMPLE_DOMAIN);
@@ -232,7 +483,82 @@ pub fn select(configuration: &ProjectConfiguration) -> TemplateSet {
     TemplateSet {
         version: VERSION,
         entries,
+        verbatim: Vec::new(),
+        trim_blocks: false,
     }
+}
+
+/// The starter's selection (Phase 011): every group the configuration honours, and nothing else.
+///
+/// The same rule as the skeleton — a file exists iff the manifest records the choice that
+/// produced it — applied to a larger tree. `select` dispatches here when a framework path was
+/// given, which is the one fact that separates the two shapes.
+fn select_starter(configuration: &ProjectConfiguration) -> TemplateSet {
+    let mut entries = STARTER_BASE.to_vec();
+    if configuration.example_domain() {
+        entries.extend_from_slice(STARTER_EXAMPLE_DOMAIN);
+    }
+    if configuration.seed_data() {
+        entries.extend_from_slice(STARTER_SEED_DATA);
+    }
+    if configuration.database().is_some() {
+        entries.extend_from_slice(STARTER_DATABASE);
+    }
+    // The item repository, its entity, and its migration exist for the example domain: without
+    // it there is no table to reach, and a repository over nothing would be an inert file.
+    if configuration.example_domain() {
+        entries.extend_from_slice(STARTER_MIGRATIONS);
+        match configuration.orm() {
+            Some(crate::config::model::Orm::Sqlx) => {
+                entries.extend_from_slice(STARTER_PERSISTENCE_SQLX);
+            }
+            Some(crate::config::model::Orm::SeaOrm) => {
+                entries.extend_from_slice(STARTER_PERSISTENCE_SEAORM);
+            }
+            None => {}
+        }
+    }
+    if configuration.auth() == crate::config::model::AuthStarter::Session {
+        entries.extend_from_slice(STARTER_AUTH);
+    }
+    let capabilities = configuration.capabilities();
+    if !capabilities.is_empty() {
+        entries.extend_from_slice(STARTER_CAPABILITIES);
+    }
+    if capabilities.contains(Capability::Cache) {
+        entries.extend_from_slice(STARTER_CACHE);
+    }
+    if capabilities.contains(Capability::Jobs) {
+        entries.extend_from_slice(STARTER_JOBS);
+    }
+    if capabilities.contains(Capability::Mail) {
+        entries.extend_from_slice(STARTER_MAIL);
+    }
+    if capabilities.contains(Capability::Storage) {
+        entries.extend_from_slice(STARTER_STORAGE);
+    }
+    if capabilities.contains(Capability::Observability) {
+        entries.extend_from_slice(STARTER_OBSERVABILITY);
+    }
+    if configuration.container() {
+        entries.extend(container_for_starter());
+    }
+    TemplateSet {
+        version: VERSION,
+        entries,
+        verbatim: verbatim_migrations(configuration),
+        trim_blocks: true,
+    }
+}
+
+/// The container group minus `.env.example`, which the starter's own template supersedes: the
+/// starter's example names every key the application reads — the container passwords included —
+/// where the skeleton's names the container passwords alone.
+fn container_for_starter() -> impl Iterator<Item = TemplateEntry> {
+    CONTAINER
+        .iter()
+        .copied()
+        .filter(|entry| entry.path != ".env.example")
 }
 
 #[cfg(test)]
@@ -248,8 +574,99 @@ mod tests {
         let set = TemplateSet {
             version: VERSION,
             entries: catalogue(),
+            verbatim: Vec::new(),
+            trim_blocks: false,
         };
         Renderer::new(set).expect("every embedded template must validate and compile");
+    }
+
+    #[test]
+    fn the_whole_starter_catalogue_loads_and_compiles() {
+        // The same load-time guarantee for the Phase 011 groups.
+        let set = TemplateSet {
+            version: VERSION,
+            entries: starter_catalogue(),
+            verbatim: Vec::new(),
+            trim_blocks: true,
+        };
+        Renderer::new(set).expect("every embedded starter template must validate and compile");
+    }
+
+    #[test]
+    fn no_two_starter_groups_declare_the_same_output_path() {
+        let all = starter_catalogue();
+        let mut paths: Vec<&str> = all.iter().map(|entry| entry.path).collect();
+        let total = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(
+            paths.len(),
+            total,
+            "two starter entries share an output path"
+        );
+    }
+
+    #[test]
+    fn the_starter_copies_exactly_the_migration_sets_its_selection_needs() {
+        // The verbatim list follows the selection: no auth set without `session`, no jobs set
+        // without `jobs`, and the engine's set, not the other engine's.
+        let base = tempfile::tempdir().expect("tempdir");
+        let framework = base.path().join("framework");
+        std::fs::create_dir_all(framework.join("crates/renvor")).expect("mkdir");
+        std::fs::write(framework.join("Cargo.toml"), "[workspace]\nmembers = []\n").expect("write");
+        std::fs::write(
+            framework.join("crates/renvor/Cargo.toml"),
+            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        std::fs::write(framework.join("Cargo.lock"), "version = 4\n").expect("write");
+        let answers =
+            |auth: &str, capabilities: &str, database: &str| crate::config::model::Answers {
+                name: Some("demo".to_owned()),
+                destination: base.path().join("demo"),
+                local_domain: None,
+                target: "api".to_owned(),
+                transport: None,
+                container: false,
+                local_https: false,
+                seed_data: false,
+                example_domain: false,
+                orm: None,
+                database: Some(database.to_owned()),
+                database_version: None,
+                database_name: None,
+                database_user: None,
+                database_port: None,
+                container_cache: None,
+                cache_port: None,
+                auth: Some(auth.to_owned()),
+                capabilities: Some(capabilities.to_owned()),
+                framework_path: Some(framework.clone()),
+            };
+        let paths = |auth: &str, capabilities: &str, database: &str| -> Vec<String> {
+            let (configuration, _) =
+                ProjectConfiguration::resolve(answers(auth, capabilities, database))
+                    .expect("resolves");
+            select(&configuration)
+                .verbatim
+                .into_iter()
+                .map(|entry| entry.path)
+                .collect()
+        };
+        assert!(paths("none", "none", "postgres").is_empty());
+        let auth_only = paths("session", "mail", "mysql");
+        assert!(
+            auth_only.iter().all(|path| path.contains("_auth_")),
+            "{auth_only:?}"
+        );
+        assert_eq!(auth_only.len(), 16, "MySQL's auth set is eight pairs");
+        let both = paths("session", "mail,jobs", "postgres");
+        assert_eq!(
+            both.len(),
+            18 + 10,
+            "PostgreSQL's nine auth pairs and five jobs pairs"
+        );
+        assert!(both.iter().all(|path| path.starts_with("migrations/")));
     }
 
     #[test]

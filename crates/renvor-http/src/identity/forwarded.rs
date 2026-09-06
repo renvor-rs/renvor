@@ -50,33 +50,43 @@ pub fn from_x_forwarded_for(value: &str) -> Option<IpAddr> {
 /// [`from_x_forwarded_for`] reads the rightmost entry.
 ///
 /// Returns `None` — fail closed — when the value is empty, carries a control character, has no
-/// `for=` parameter, or names an obfuscated or `unknown` identifier. RFC 7239 permits those forms;
-/// they are legal syntax that carries no address, and treating them as one would be an invention.
+/// `for=` parameter, has `for=` twice, has any parameter without `=`, or names an obfuscated or
+/// `unknown` identifier. RFC 7239 permits the last forms; they are legal syntax that carries no
+/// address, and treating them as one would be an invention.
+///
+/// EVERY parameter of the element is read, not just the ones before `for`. Until Phase 011 the
+/// loop returned at `for=`, so a malformed parameter after it passed while one before it refused
+/// the header (Phase 010 limitation L-17): a value we cannot fully parse is a value we do not
+/// understand, wherever the unreadable part sits, and [`proto_from_forwarded`] already read to
+/// the end.
 #[must_use]
 pub fn from_forwarded(value: &str) -> Option<IpAddr> {
     let last_element = last_element(value)?;
 
+    let mut found = None;
     for parameter in split_outside_quotes(last_element, ';') {
         // A parameter with no `=` is not RFC 7239 syntax. Refusing the whole header rather than
-        // skipping the parameter is deliberate: a value we cannot fully parse is a value we do not
-        // understand, and guessing at the rest of it is how a parser disagrees with its upstream.
+        // skipping the parameter is deliberate: guessing at the rest of a value is how a parser
+        // disagrees with its upstream.
         let (name, raw) = parameter.split_once('=')?;
         if !name.trim().eq_ignore_ascii_case("for") {
             continue;
         }
-
-        let raw = raw.trim().trim_matches('"');
-
-        // RFC 7239 §6.3: an obfuscated identifier begins with `_`. `unknown` is also legal. Both
-        // are valid syntax carrying no address.
-        if raw.is_empty() || raw.starts_with('_') || raw.eq_ignore_ascii_case("unknown") {
+        // RFC 7239 §4 permits each parameter once per element; two are refused, not chosen from.
+        if found.is_some() {
             return None;
         }
+        found = Some(raw.trim().trim_matches('"'));
+    }
+    let raw = found?;
 
-        return parse_address(raw);
+    // RFC 7239 §6.3: an obfuscated identifier begins with `_`. `unknown` is also legal. Both are
+    // valid syntax carrying no address.
+    if raw.is_empty() || raw.starts_with('_') || raw.eq_ignore_ascii_case("unknown") {
+        return None;
     }
 
-    None
+    parse_address(raw)
 }
 
 /// Extracts the `proto` parameter from a single `Forwarded` header value (RFC 7239 §5.4).
@@ -241,6 +251,26 @@ pub fn single_value<'a>(values: &[&'a str]) -> Option<&'a str> {
 
 #[cfg(test)]
 mod tests {
+
+    /// Phase 010 limitation L-17. A parameter without `=` refused the header only when it came
+    /// before `for=`: the loop returned at `for=`, so `for=1.2.3.4;garbage` parsed. A value the
+    /// parser cannot fully read is a value it does not understand, wherever the unreadable part
+    /// sits — the rule `proto_from_forwarded` already applies. A `for` given twice is refused for
+    /// the same reason (RFC 7239 §4 permits each parameter once per element).
+    #[test]
+    fn a_malformed_parameter_after_for_refuses_the_header_like_one_before_it() {
+        assert_eq!(
+            from_forwarded("for=203.0.113.9;garbage"),
+            None,
+            "a trailing parameter without `=` must refuse the whole header"
+        );
+        assert_eq!(from_forwarded("garbage;for=203.0.113.9"), None);
+        assert_eq!(from_forwarded("for=203.0.113.9;for=198.51.100.1"), None);
+        assert_eq!(
+            from_forwarded("for=203.0.113.9;proto=https"),
+            Some("203.0.113.9".parse().unwrap())
+        );
+    }
     use super::{
         from_forwarded, from_x_forwarded_for, proto_from_forwarded, proto_from_x_forwarded_proto,
         single_value,

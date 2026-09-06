@@ -102,6 +102,12 @@ pub enum Code {
     /// bump: C-2 defines breaking as renaming, reusing, or **removing** a code. The `1 → 2` bump
     /// was caused by a removal, not by the four additions that accompanied it.
     TransportNotWired,
+    /// `renvor generate` found a target file it may not write — changed since generation, or
+    /// regenerable without `--overwrite-unchanged` — so nothing was written. `details.paths`
+    /// names every refusing path and `details.count` says how many; `details.reason`,
+    /// `details.changed`, `details.regenerable`, and `details.flag` say which kind and what
+    /// would help. Added in Phase 011 (FR-048); see `json-output.md` §"Added in Phase 011".
+    GenerationConflict,
     /// The project has no container controls to drive.
     ///
     /// # Why three codes were added in schemaVersion 2 rather than reusing existing ones
@@ -152,6 +158,7 @@ impl Code {
             Self::ToolMissing => "tool_missing",
             Self::ContainerRuntimeUnavailable => "container_runtime_unavailable",
             Self::TransportNotWired => "transport_not_wired",
+            Self::GenerationConflict => "generation_conflict",
             Self::ContainerControlsMissing => "container_controls_missing",
             Self::RenderFailed => "render_failed",
             Self::BoundExceeded => "bound_exceeded",
@@ -180,6 +187,7 @@ impl Code {
             | Self::ProjectVerificationFailed
             | Self::ContainerControlsMissing
             | Self::TransportNotWired
+            | Self::GenerationConflict
             | Self::RenderFailed
             | Self::BoundExceeded
             | Self::StagingFailed
@@ -195,7 +203,7 @@ impl Code {
     /// `#[cfg(test)]` because nothing at runtime iterates the registry; a shipped constant that no
     /// shipped code reads is dead weight that reads like an API.
     #[cfg(test)]
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::Usage,
         Self::UnsupportedValue,
         Self::UnsupportedCombination,
@@ -211,6 +219,7 @@ impl Code {
         Self::ContainerRuntimeUnavailable,
         Self::ContainerControlsMissing,
         Self::TransportNotWired,
+        Self::GenerationConflict,
         Self::RenderFailed,
         Self::BoundExceeded,
         Self::StagingFailed,
@@ -298,7 +307,7 @@ mod tests {
         // 19 -> 20 in Phase 004: `transport_not_wired`. The literal is updated deliberately rather
         // than derived, because deriving it from `ALL` would make this assertion vacuous — it
         // exists precisely so that growing the registry is a decision somebody records.
-        assert_eq!(Code::ALL.len(), 20);
+        assert_eq!(Code::ALL.len(), 21);
     }
 
     /// The published registry, parsed out of the contract document itself.

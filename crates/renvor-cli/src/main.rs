@@ -434,6 +434,7 @@ fn main() {
         Command::Dev => "dev",
         Command::Docker { .. } => "docker",
         Command::Tls { .. } => "tls",
+        Command::Generate { .. } => "generate",
     };
 
     set_panic_context(format, command_name);
@@ -498,5 +499,9 @@ fn dispatch(cli: Cli, reporter: &Reporter) -> Result<Exit, CliError> {
                 commands::tls::trust(reporter, consent, std::io::stdin().is_terminal(), dry_run)
             }
         },
+        Command::Generate { action } => {
+            let (path, action, overwrite_unchanged) = commands::generate::parts(action);
+            commands::generate::run(reporter, &path, action, dry_run, overwrite_unchanged)
+        }
     }
 }

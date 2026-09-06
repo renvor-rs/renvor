@@ -1,0 +1,157 @@
+//! The item repository for {{ name }}, over SeaORM, against {{ database }}.
+//!
+//! # Every function takes the connection the caller chose
+//!
+//! `renvor_seaorm::SeaOrmUnitOfWork` implements both `sea_orm::ConnectionTrait` and Renvor's
+//! `UnitOfWork`, so the same repository call serves a one-off read and a call inside an explicit
+//! transaction. The boundary stays in the caller, where it can be seen.
+//!
+//! # Raw SQL has three rungs, and two look-alikes that are not rungs
+//!
+//! Entity and SeaQuery APIs (everything below); `Statement::from_sql_and_values` when a query
+//! cannot be expressed above **and every value is still bound**; a database-specific module when
+//! the two engines genuinely differ. `execute_unprepared` and `Statement::from_string` bind
+//! nothing and are not rungs.
+
+use renvor::ApiErrorCode;
+use renvor_database::{Database as _, UnitOfWork as _};
+use sea_orm::{
+    ActiveModelTrait as _, ActiveValue, DbErr, EntityTrait as _, Order, QueryOrder as _,
+};
+
+use crate::app::Services;
+use crate::domain::{Item, SaveItem};
+use crate::entity as item;
+use crate::entity::Entity as ItemEntity;
+{% if auth_session %}
+use renvor_auth::UserId;
+{% endif %}
+
+fn database(services: &Services) -> Result<&crate::app::Database, ApiErrorCode> {
+    services.database().ok_or(ApiErrorCode::InternalError)
+}
+
+fn to_item(model: item::Model) -> Result<Item, ApiErrorCode> {
+    Ok(Item {
+        id: model.id,
+        name: model.name,
+{% if auth_session %}
+        owner: crate::auth::render_user_id(&model.owner_id).ok_or(ApiErrorCode::InternalError)?,
+{% endif %}
+    })
+}
+
+fn internal(_: DbErr) -> ApiErrorCode {
+    ApiErrorCode::InternalError
+}
+
+/// Every item, by id.
+pub async fn list(services: &Services) -> Result<Vec<Item>, ApiErrorCode> {
+    let connection = database(services)?
+        .acquire()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    ItemEntity::find()
+        .order_by(item::Column::Id, Order::Asc)
+        .all(&connection)
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(to_item)
+        .collect()
+}
+
+/// One item, or `None`.
+pub async fn get(services: &Services, id: i64) -> Result<Option<Item>, ApiErrorCode> {
+    let connection = database(services)?
+        .acquire()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    ItemEntity::find_by_id(id)
+        .one(&connection)
+        .await
+        .map_err(internal)?
+        .map(to_item)
+        .transpose()
+}
+
+/// Inserts one item and returns it, primary key included.
+{% if auth_session %}
+pub async fn create(
+    services: &Services,
+    input: SaveItem,
+    owner: UserId,
+) -> Result<Item, ApiErrorCode> {
+{% else %}
+pub async fn create(services: &Services, input: SaveItem) -> Result<Item, ApiErrorCode> {
+{% endif %}
+    let unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    let inserted = item::ActiveModel {
+        id: ActiveValue::NotSet,
+        name: ActiveValue::Set(input.name),
+{% if auth_session %}
+        owner_id: ActiveValue::Set(owner.as_bytes().to_vec()),
+{% endif %}
+    }
+    .insert(&unit)
+    .await;
+    match inserted {
+        Ok(model) => {
+            unit.commit()
+                .await
+                .map_err(|_| ApiErrorCode::InternalError)?;
+            to_item(model)
+        }
+        Err(_) => {
+            let _ = unit.rollback().await;
+            Err(ApiErrorCode::InternalError)
+        }
+    }
+}
+
+/// Renames one item, or `None` when there is no such item.
+pub async fn replace(
+    services: &Services,
+    id: i64,
+    input: SaveItem,
+) -> Result<Option<Item>, ApiErrorCode> {
+    let unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    let Some(existing) = ItemEntity::find_by_id(id)
+        .one(&unit)
+        .await
+        .map_err(internal)?
+    else {
+        return Ok(None);
+    };
+    let mut active: item::ActiveModel = existing.into();
+    active.name = ActiveValue::Set(input.name);
+    let updated = active.update(&unit).await.map_err(internal)?;
+    unit.commit()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    to_item(updated).map(Some)
+}
+
+/// Deletes one item, reporting whether a row was removed.
+pub async fn delete(services: &Services, id: i64) -> Result<bool, ApiErrorCode> {
+    let unit = database(services)?
+        .begin()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    let deleted = ItemEntity::delete_by_id(id)
+        .exec(&unit)
+        .await
+        .map_err(internal)?
+        .rows_affected
+        > 0;
+    unit.commit()
+        .await
+        .map_err(|_| ApiErrorCode::InternalError)?;
+    Ok(deleted)
+}

@@ -1,12 +1,14 @@
 ---
 source: crates/renvor-cli/tests/cli.rs
-assertion_line: 272
 expression: "Value::Object(shapes)"
 ---
 {
   "check": {
     "command": "check",
     "result": {
+      "auth": "<string>",
+      "capabilities": [],
+      "framework": null,
       "name": "<string>",
       "target": "<string>",
       "templateVersion": "<string>",
@@ -155,10 +157,19 @@ expression: "Value::Object(shapes)"
     "command": "new",
     "result": {
       "configuration": {
+        "auth": "<string>",
+        "capabilities": {
+          "cache": "<boolean>",
+          "jobs": "<boolean>",
+          "mail": "<boolean>",
+          "observability": "<boolean>",
+          "storage": "<boolean>"
+        },
         "container": "<boolean>",
         "container_settings": null,
         "database": null,
         "example_domain": "<boolean>",
+        "framework": null,
         "local_domain": "<string>",
         "local_https": "<string>",
         "name": "<string>",
@@ -186,6 +197,14 @@ expression: "Value::Object(shapes)"
     "command": "new",
     "result": {
       "configuration": {
+        "auth": "<string>",
+        "capabilities": {
+          "cache": "<boolean>",
+          "jobs": "<boolean>",
+          "mail": "<boolean>",
+          "observability": "<boolean>",
+          "storage": "<boolean>"
+        },
         "container": "<boolean>",
         "container_settings": {
           "cache": "<string>",
@@ -197,6 +216,7 @@ expression: "Value::Object(shapes)"
         },
         "database": null,
         "example_domain": "<boolean>",
+        "framework": null,
         "local_domain": "<string>",
         "local_https": "<string>",
         "name": "<string>",
@@ -224,10 +244,19 @@ expression: "Value::Object(shapes)"
     "command": "new",
     "result": {
       "configuration": {
+        "auth": "<string>",
+        "capabilities": {
+          "cache": "<boolean>",
+          "jobs": "<boolean>",
+          "mail": "<boolean>",
+          "observability": "<boolean>",
+          "storage": "<boolean>"
+        },
         "container": "<boolean>",
         "container_settings": null,
         "database": null,
         "example_domain": "<boolean>",
+        "framework": null,
         "local_domain": "<string>",
         "local_https": "<string>",
         "name": "<string>",

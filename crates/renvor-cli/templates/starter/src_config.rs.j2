@@ -1,0 +1,304 @@
+//! Configuration: one typed section per concern, each a lifecycle source the kernel validates
+//! before any provider constructs.
+//!
+//! # Where values come from
+//!
+//! Each section reads, lowest precedence first: its built-in defaults, its optional file under
+//! `config/<section>.toml`, then the environment under `RENVOR_<SECTION>_…`. The environment
+//! always wins, which is where every secret lives: a key or a password is never written to a
+//! file this project ships, and `.env.example` names each one with an empty value.
+//!
+//! # A section that fails validation stops the application at Validate
+//!
+//! Naming the key, the constraint, and the layer that supplied the value — before a socket is
+//! opened or a task spawned. There is no fallback to a default for a value that was supplied and
+//! wrong.
+
+use renvor_config::{ConfigSchema, FileLayer, LayeredResolverBuilder, SchemaSource, Table};
+use serde::Deserialize;
+
+/// A builder carrying the two layers every section shares: its file, then the environment.
+pub fn layers(section: &str) -> LayeredResolverBuilder {
+    LayeredResolverBuilder::new()
+        .with_file(FileLayer::optional(format!("config/{section}.toml")))
+        .with_environment(format!("RENVOR_{}_", section.to_ascii_uppercase()))
+}
+
+/// The `[http]` section: where the server listens and which host it answers to.
+#[derive(Debug, Deserialize)]
+pub struct HttpSection {
+    /// The bind address, `host:port`.
+    pub address: String,
+    /// The local development domain the host policy allows, beside loopback.
+    pub local_domain: String,
+}
+
+/// The all-optional form `renvor-config` decodes each layer into before merging.
+#[allow(dead_code, reason = "decoded, never read back; see `ConfigSchema`")]
+#[derive(Debug, Default, Deserialize)]
+pub struct PartialHttpSection {
+    address: Option<String>,
+    local_domain: Option<String>,
+}
+
+impl ConfigSchema for HttpSection {
+    type Partial = PartialHttpSection;
+}
+
+/// The `[http]` defaults.
+fn http_defaults() -> Table {
+    String::from("address = \"127.0.0.1:3000\"\nlocal_domain = \"{{ local_domain }}\"\n")
+        .parse()
+        .expect("the defaults are valid TOML")
+}
+
+/// The `[http]` source.
+pub fn http_source() -> SchemaSource<HttpSection> {
+    let resolver = layers("http")
+        .with_defaults(http_defaults())
+        .build::<HttpSection>();
+    SchemaSource::new("http", resolver).with_validator(|resolved| {
+        let address = &resolved.value().address;
+        address
+            .parse::<std::net::SocketAddr>()
+            .map(|_| ())
+            .map_err(|_| {
+                renvor::kernel::error::context::configuration(
+                    "address",
+                    renvor_config::layer_of(resolved, "address").as_str(),
+                    "host:port",
+                    &renvor::kernel::error::context::Constraint::Rule(
+                        "must be a socket address such as 127.0.0.1:3000",
+                    ),
+                )
+            })
+    })
+}
+{% if auth_session %}
+
+/// The `[auth]` section: session bounds, and the two keys that arrive only from the environment.
+///
+/// The keys are 32 bytes each, written as 64 hexadecimal characters:
+/// `RENVOR_AUTH_CSRF_KEY` signs CSRF tokens, `RENVOR_AUTH_ABUSE_KEY` keys the abuse buckets. A
+/// missing, short, or non-hex key is refused at Validate. Generate each with
+/// `openssl rand -hex 32`, and never reuse one across deployments.
+#[derive(Debug, Deserialize)]
+pub struct AuthSection {
+    /// Idle bound, seconds. `SessionPolicy` refuses more than the AAL2 ceiling.
+    pub session_idle_secs: u64,
+    /// Absolute bound, seconds.
+    pub session_absolute_secs: u64,
+    /// Live sessions per user; the stalest is evicted past this.
+    pub sessions_per_user: u32,
+    /// The CSRF key, 64 hex characters. Decoded by [`AuthSection::csrf_key`].
+    pub csrf_key: String,
+    /// The abuse-bucket key, 64 hex characters. Decoded by [`AuthSection::abuse_key`].
+    pub abuse_key: String,
+}
+
+/// The all-optional form.
+#[allow(dead_code, reason = "decoded, never read back; see `ConfigSchema`")]
+#[derive(Debug, Default, Deserialize)]
+pub struct PartialAuthSection {
+    session_idle_secs: Option<u64>,
+    session_absolute_secs: Option<u64>,
+    sessions_per_user: Option<u32>,
+    csrf_key: Option<String>,
+    abuse_key: Option<String>,
+}
+
+impl ConfigSchema for AuthSection {
+    type Partial = PartialAuthSection;
+}
+
+impl AuthSection {
+    /// The CSRF key, decoded.
+    ///
+    /// # Errors
+    ///
+    /// The value is not 64 hexadecimal characters.
+    pub fn csrf_key(&self) -> Result<[u8; 32], &'static str> {
+        decode_key(&self.csrf_key)
+    }
+
+    /// The abuse-bucket key, decoded.
+    ///
+    /// # Errors
+    ///
+    /// The value is not 64 hexadecimal characters.
+    pub fn abuse_key(&self) -> Result<[u8; 32], &'static str> {
+        decode_key(&self.abuse_key)
+    }
+}
+
+/// Decodes 64 hexadecimal characters into 32 bytes. Written here rather than pulled in as a
+/// dependency: it is one loop, and a dependency for it would be the larger surface.
+fn decode_key(text: &str) -> Result<[u8; 32], &'static str> {
+    let text = text.trim();
+    if text.len() != 64 {
+        return Err("must be exactly 64 hexadecimal characters (32 bytes)");
+    }
+    let mut key = [0_u8; 32];
+    for (index, pair) in text.as_bytes().chunks(2).enumerate() {
+        let high = hex_digit(pair[0])?;
+        let low = hex_digit(pair[1])?;
+        key[index] = (high << 4) | low;
+    }
+    Ok(key)
+}
+
+fn hex_digit(byte: u8) -> Result<u8, &'static str> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err("must be exactly 64 hexadecimal characters (32 bytes)"),
+    }
+}
+
+/// The `[auth]` defaults. The keys have no default: absent is refused.
+fn auth_defaults() -> Table {
+    "session_idle_secs = 1800\nsession_absolute_secs = 28800\nsessions_per_user = 5\n"
+        .parse()
+        .expect("the defaults are valid TOML")
+}
+
+/// The numbers the session policy refuses, checked here so they stop the application at
+/// Validate — naming the key — rather than while the auth provider boots, after the database and
+/// mail providers have already come up. The ceilings are `SessionPolicy`'s own.
+///
+/// # Errors
+///
+/// The offending key and its constraint.
+pub fn check_auth_section(section: &AuthSection) -> Result<(), (&'static str, &'static str)> {
+    use renvor_auth::session::SessionPolicy;
+    let idle_ceiling =
+        u64::try_from(SessionPolicy::AAL2_INACTIVITY_CEILING.num_seconds()).unwrap_or(u64::MAX);
+    let absolute_ceiling =
+        u64::try_from(SessionPolicy::AAL2_OVERALL_CEILING.num_seconds()).unwrap_or(u64::MAX);
+    if section.sessions_per_user == 0 {
+        return Err(("sessions_per_user", "at least 1"));
+    }
+    if section.session_idle_secs == 0 || section.session_idle_secs > idle_ceiling {
+        return Err((
+            "session_idle_secs",
+            "1 to 3600 seconds: positive, within the AAL2 inactivity ceiling",
+        ));
+    }
+    if section.session_absolute_secs == 0 || section.session_absolute_secs > absolute_ceiling {
+        return Err((
+            "session_absolute_secs",
+            "1 to 86400 seconds: positive, within the AAL2 overall ceiling",
+        ));
+    }
+    if section.session_idle_secs > section.session_absolute_secs {
+        return Err(("session_idle_secs", "at most session_absolute_secs"));
+    }
+    Ok(())
+}
+
+/// The `[auth]` source. The keys and the session numbers are validated here, so a bad value
+/// stops the application before any provider constructs.
+pub fn auth_source() -> SchemaSource<AuthSection> {
+    let resolver = layers("auth")
+        .with_defaults(auth_defaults())
+        .build::<AuthSection>();
+    SchemaSource::new("auth", resolver).with_validator(|resolved| {
+        use renvor::kernel::error::context::{Constraint, configuration};
+        let section = resolved.value();
+        for (name, decoded) in [
+            ("csrf_key", section.csrf_key()),
+            ("abuse_key", section.abuse_key()),
+        ] {
+            if let Err(rule) = decoded {
+                return Err(configuration(
+                    name,
+                    renvor_config::layer_of(resolved, name).as_str(),
+                    "64 hexadecimal characters",
+                    &Constraint::Rule(rule),
+                ));
+            }
+        }
+        if let Err((name, constraint)) = check_auth_section(section) {
+            return Err(configuration(
+                name,
+                renvor_config::layer_of(resolved, name).as_str(),
+                constraint,
+                &Constraint::Rule("refused by the session policy"),
+            ));
+        }
+        Ok(())
+    })
+}
+{% endif %}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_http_defaults_parse_and_name_the_local_domain() {
+        // Bound to a name first so the line's width does not depend on the project's name.
+        let expected = "{{ local_domain }}";
+        let defaults = http_defaults();
+        assert_eq!(defaults["local_domain"].as_str(), Some(expected));
+    }
+{% if auth_session %}
+
+    #[test]
+    fn a_key_must_be_exactly_sixty_four_hex_characters() {
+        assert!(decode_key(&"ab".repeat(32)).is_ok());
+        assert!(decode_key(&"AB".repeat(32)).is_ok());
+        assert!(decode_key(&"ab".repeat(31)).is_err(), "too short");
+        assert!(decode_key(&"ab".repeat(33)).is_err(), "too long");
+        assert!(decode_key(&"zz".repeat(32)).is_err(), "not hex");
+        assert!(decode_key("").is_err(), "empty");
+    }
+
+    #[test]
+    fn the_session_numbers_are_checked_at_validate_naming_the_key() {
+        let section = |idle: u64, absolute: u64, per_user: u32| AuthSection {
+            session_idle_secs: idle,
+            session_absolute_secs: absolute,
+            sessions_per_user: per_user,
+            csrf_key: "ab".repeat(32),
+            abuse_key: "ab".repeat(32),
+        };
+        assert!(check_auth_section(&section(1800, 28800, 5)).is_ok());
+        let key = |idle, absolute, per_user| {
+            check_auth_section(&section(idle, absolute, per_user))
+                .expect_err("refused")
+                .0
+        };
+        assert_eq!(key(1800, 28800, 0), "sessions_per_user");
+        assert_eq!(key(0, 28800, 5), "session_idle_secs");
+        assert_eq!(
+            key(3601, 28800, 5),
+            "session_idle_secs",
+            "above the inactivity ceiling"
+        );
+        assert_eq!(key(1800, 0, 5), "session_absolute_secs");
+        assert_eq!(
+            key(1800, 86401, 5),
+            "session_absolute_secs",
+            "above the overall ceiling"
+        );
+        assert_eq!(
+            key(3600, 1800, 5),
+            "session_idle_secs",
+            "idle beyond absolute"
+        );
+    }
+
+    #[test]
+    fn decoding_is_the_inverse_of_hex_encoding() {
+        // POSITIVE CONTROL for the decoder: a decoder that returned zeros would pass the shape
+        // tests above and make every key the same key.
+        let decoded = decode_key(&"0f".repeat(32)).expect("decodes");
+        assert!(decoded.iter().all(|byte| *byte == 0x0f));
+        let decoded = decode_key(&format!("{}{}", "ff", "00".repeat(31))).expect("decodes");
+        assert_eq!(decoded[0], 0xff);
+        assert_eq!(decoded[1], 0x00);
+    }
+{% endif %}
+}

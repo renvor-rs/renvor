@@ -1,0 +1,16 @@
+//! Seed data for v6-project's example domain.
+
+use crate::domain::Item;
+
+/// The seeded items.
+#[must_use]
+pub fn items() -> Vec<Item> {
+    vec![
+        Item {
+            name: "first".to_owned(),
+        },
+        Item {
+            name: "second".to_owned(),
+        },
+    ]
+}

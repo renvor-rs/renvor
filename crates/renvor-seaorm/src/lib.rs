@@ -72,6 +72,21 @@ pub struct SeaOrmDatabase<DB: sqlx::Database> {
     close_timeout: core::time::Duration,
 }
 
+/// Written by hand rather than derived: a derive would demand `DB: Clone`, and the driver marker
+/// types are not. Every field is cloneable on its own — the pool is a reference-counted handle,
+/// so the clone shares the ONE pool with the original (Phase 011, for a generated starter's
+/// repositories). `close` on any copy closes the pool for all of them, which is the provider's
+/// Stop and nobody else's business.
+impl<DB: sqlx::Database> Clone for SeaOrmDatabase<DB> {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            kind: self.kind,
+            close_timeout: self.close_timeout,
+        }
+    }
+}
+
 impl<DB: sqlx::Database> core::fmt::Debug for SeaOrmDatabase<DB> {
     /// Prints the database kind and pool counters, and nothing that could carry a credential.
     ///
@@ -701,3 +716,21 @@ driver!(
     "db-mysql",
     bind_mysql
 );
+
+#[cfg(test)]
+mod handle_tests {
+    //! Phase 011: a generated starter's repositories hold a database handle each, and the
+    //! provider that opened the pool hands out a reference — so the handle must be cloneable,
+    //! sharing the one pool, for a repository to own its copy. RED before the derive existed:
+    //! this module did not compile.
+
+    fn assert_clone<T: Clone>() {}
+
+    #[test]
+    fn the_database_handle_is_cloneable_so_repositories_can_share_the_pool() {
+        #[cfg(feature = "db-postgres")]
+        assert_clone::<super::SeaOrmDatabase<sqlx::Postgres>>();
+        #[cfg(feature = "db-mysql")]
+        assert_clone::<super::SeaOrmDatabase<sqlx::MySql>>();
+    }
+}

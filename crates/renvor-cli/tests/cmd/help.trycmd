@@ -10,14 +10,15 @@ Exit codes: 0 success, 1 internal defect, 2 usage, 3 validation, 4 cancelled, 5 
 Usage: renvor[EXE] [OPTIONS] <COMMAND>
 
 Commands:
-  new      Create a project, from prompts or from flags
-  doctor   Report environment readiness
-  check    Validate a project without building it
-  routes   Show the routes this project would serve
-  openapi  Show the OpenAPI description this project would publish
-  dev      Run the local development loop
-  docker   Container development controls
-  tls      Local TLS trust. Issues no certificate and modifies no trust store in this phase
+  new       Create a project, from prompts or from flags
+  doctor    Report environment readiness
+  check     Validate a project without building it
+  routes    Show the routes this project would serve
+  openapi   Show the OpenAPI description this project would publish
+  dev       Run the local development loop
+  docker    Container development controls
+  tls       Local TLS trust. Issues no certificate and modifies no trust store in this phase
+  generate  Add to an existing project, rerun-safe: a file you changed is never overwritten
 
 Options:
       --output <human|json>

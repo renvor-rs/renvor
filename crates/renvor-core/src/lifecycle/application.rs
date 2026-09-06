@@ -263,6 +263,11 @@ impl InitialisedProvider {
 pub struct Application {
     cursor: PhaseCursor,
     state: TypedStateMap,
+    /// The typed state after Boot, frozen and shareable: providers registered into `state` while
+    /// they booted and nothing registers after, so a transport — or a test harness — can hand
+    /// every request the map the providers filled rather than an empty one. `None` until Boot
+    /// completes.
+    shared: Option<Arc<TypedStateMap>>,
     registry: ProviderRegistry,
     order: InitialisationOrder,
     report: ResolutionReport,
@@ -291,6 +296,7 @@ impl Application {
         Self {
             cursor,
             state: TypedStateMap::new(),
+            shared: None,
             registry,
             order,
             report,
@@ -353,8 +359,19 @@ impl Application {
 
     /// The application's typed state.
     #[must_use]
-    pub const fn state(&self) -> &TypedStateMap {
-        &self.state
+    pub fn state(&self) -> &TypedStateMap {
+        self.shared.as_deref().unwrap_or(&self.state)
+    }
+
+    /// The typed state the providers filled, shareable once Boot has completed; `None` before.
+    ///
+    /// A request served by a transport carries an `Arc` of the map its handlers read. The
+    /// kernel's own map is what the caller's providers registered into, so a harness that boots
+    /// them attaches this to every request it dispatches (found by the Codex review of Phase
+    /// 011: the test application booted providers and gave requests an empty map).
+    #[must_use]
+    pub fn shared_state(&self) -> Option<Arc<TypedStateMap>> {
+        self.shared.clone()
     }
 
     /// The root cancellation scope.
@@ -498,6 +515,8 @@ impl Application {
             return Err(self.unwind(origin).await);
         }
 
+        // Every provider has registered what it will; the map is frozen and shareable from here.
+        self.shared = Some(Arc::new(core::mem::take(&mut self.state)));
         self.cursor.advance();
         Ok(self)
     }

@@ -158,7 +158,7 @@ Current order:
 | 3 | `renvor-storage` | `renvor-core` | The object-storage port, its memory substitute, and the filesystem adapter behind `filesystem` (Phase 010) |
 | 4 | `renvor-auth` | `renvor-core`, `renvor-config`, `renvor-database` | The authentication domain. Names **no driver and no transport** — `xtask` step 7 asserts it resolves neither — so it publishes with the ports rather than with the adapters that implement them |
 | 5 | `renvor-mail` | `renvor-core`, `renvor-config`, `renvor-auth` *(optional)* | The mail port, its recording substitute, and the SMTP adapter behind `smtp` (Phase 010). Its `auth` feature implements `renvor_auth::MailPort`, so it publishes **after** `renvor-auth` — the topological test builds every package with `--all-features`, and an optional edge is a real edge to it |
-| 5 | `renvor-testkit` | `renvor-core`, `renvor-database`, `renvor-auth` *(optional)* | The test harness. **Moved from 2 to 4 in Phase 007** and from 4 to 5 in Phase 009 batch G2: it hosts every shared contract both adapters are measured against, and the refresh one names `renvor-auth` |
+| 5 | `renvor-testkit` | `renvor-core`, `renvor-database`, `renvor-auth` *(optional)*, `renvor-http` *(optional)* | The test harness. **Moved from 2 to 4 in Phase 007** and from 4 to 5 in Phase 009 batch G2: it hosts every shared contract both adapters are measured against, and the refresh one names `renvor-auth` |
 | 5 | `renvor-sqlx` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-auth`, `renvor-jobs` (optional, under `jobs`) | The direct-SQLx adapter. Publishes after the ports it implements — and, **since Phase 009, after `renvor-auth`**, whose repository ports it also implements |
 | 4 | `renvor-seaorm` | `renvor-core`, `renvor-database`, `renvor-validation`, `renvor-jobs` (optional, under `jobs`) | The SeaORM adapter. **A sibling of `renvor-sqlx`, not a dependant** — neither names the other, which is what keeps a SeaORM application's graph free of a direct-SQLx crate. Same position, and the two may publish concurrently |
 | 4 | `renvor-http` | `renvor-core`, `renvor-error`, `renvor-validation`, `renvor-openapi` | The REST transport. It **adapts** all three Phase 005 contracts to HTTP, so it publishes after every one of them |
@@ -207,6 +207,15 @@ Current order:
 > moves were forced by the same rule rather than chosen. A `cargo publish --dry-run` computes its
 > own order and would have reported green either way; only a real publish would have failed, with a
 > missing-dependency registry error that reads like a network fault.
+
+> **Corrected 2026-09-05 (Phase 011).** `renvor-testkit` moves again — in the release list, from
+> before the adapters to **after `renvor-http`** — for the same rule a third time: it gained an
+> optional `renvor-http` dependency behind its `http` feature (the socket-free test application),
+> and `--all-features` makes that a real edge, which reaches `renvor-openapi` under the transport.
+> `publication_order_is_topological` refused the old order with "`renvor-testkit` publishes at
+> position 10 but depends on `renvor-openapi` at position 13"; the second validation pass of Phase
+> 011 found it, not the author. Nothing publishable depends on the testkit except as a
+> dev-dependency, so the later position is valid.
 
 > **Extended 2026-08-24 (Phase 007).** `renvor-seaorm` joins at position 4, beside `renvor-sqlx`
 > rather than after it. The two adapters implement the same ports against different programming

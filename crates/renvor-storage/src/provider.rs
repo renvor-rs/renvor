@@ -88,6 +88,8 @@ pub struct StorageProvider<S> {
     id: ProviderId,
     provides: Vec<CapabilityId>,
     store: StoreSource<S>,
+    /// The value a `Configured` source produced at Boot. Only that source writes it.
+    #[cfg(feature = "filesystem")]
     built: std::sync::OnceLock<Arc<S>>,
     boot_timeout: Duration,
     ready: Arc<AtomicBool>,
@@ -99,6 +101,11 @@ enum StoreSource<S> {
     Given(Arc<S>),
     /// Opened at Boot by a closure that reads the validated section; the closure is what lets a
     /// provider generic over `S` open the one concrete store a section describes.
+    ///
+    /// Gated on the feature that constructs it. Without `filesystem` nothing can build this
+    /// variant, and a variant nothing constructs is a `dead_code` warning in every consumer's
+    /// feature-off build — which is what happened until 2026-09-05 (`xtask` step 7 now checks).
+    #[cfg(feature = "filesystem")]
     Configured(Box<dyn Fn() -> Result<Arc<S>, BoxedCause> + Send + Sync>),
 }
 
@@ -119,6 +126,7 @@ impl<S: ObjectStore + 'static> StorageProvider<S> {
             id,
             provides: vec![storage_capability()],
             store: StoreSource::Given(store),
+            #[cfg(feature = "filesystem")]
             built: std::sync::OnceLock::new(),
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
             ready: Arc::new(AtomicBool::new(false)),
@@ -138,6 +146,7 @@ impl<S: ObjectStore + 'static> StorageProvider<S> {
     pub fn store(&self) -> Option<Arc<S>> {
         match &self.store {
             StoreSource::Given(store) => Some(Arc::clone(store)),
+            #[cfg(feature = "filesystem")]
             StoreSource::Configured(_) => self.built.get().cloned(),
         }
     }
@@ -164,6 +173,7 @@ impl StorageProvider<crate::filesystem::FilesystemStore> {
             id,
             provides: vec![storage_capability()],
             store: StoreSource::Configured(Box::new(open)),
+            #[cfg(feature = "filesystem")]
             built: std::sync::OnceLock::new(),
             boot_timeout: DEFAULT_BOOT_TIMEOUT,
             ready: Arc::new(AtomicBool::new(false)),
@@ -205,6 +215,7 @@ impl<S: ObjectStore + 'static> Provider for StorageProvider<S> {
             }
             let store = match &self.store {
                 StoreSource::Given(store) => Arc::clone(store),
+                #[cfg(feature = "filesystem")]
                 StoreSource::Configured(open) => {
                     let store = open()?;
                     let _ = self.built.set(Arc::clone(&store));

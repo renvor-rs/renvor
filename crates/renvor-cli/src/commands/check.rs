@@ -101,17 +101,17 @@ fn read_bounded(path: &std::path::Path) -> Result<String, CliError> {
 /// makes every typo permanent and invisible.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct RenvorTable {
-    generator_version: String,
-    template_version: String,
+pub(crate) struct RenvorTable {
+    pub(crate) generator_version: String,
+    pub(crate) template_version: String,
 }
 
 /// The `[project]` table — **every key the generator writes**, not merely the validated ones.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ProjectTable {
-    name: String,
-    target: String,
+pub(crate) struct ProjectTable {
+    pub(crate) name: String,
+    pub(crate) target: String,
     /// Added in Phase 004, when the transport capability shipped and `transport` moved from a
     /// reserved input to a defaulted-and-recorded choice.
     ///
@@ -125,8 +125,13 @@ struct ProjectTable {
     /// `None` therefore means "written before the transport was recorded", which is a fact about
     /// the manifest rather than an error in it.
     #[serde(default)]
-    transport: Option<String>,
-    local_domain: String,
+    pub(crate) transport: Option<String>,
+    /// Added in Phase 011, when the auth starter shipped and `--auth` moved from a reserved input
+    /// to an honoured choice. Optional for the reason `transport` is: a version-6 manifest has no
+    /// such key, and `None` means "written before the starter was recorded".
+    #[serde(default)]
+    pub(crate) auth: Option<String>,
+    pub(crate) local_domain: String,
     // ── EVERY KEY THE GENERATOR WRITES MUST BE DECLARED HERE ────────────────────────────
     //
     // `deny_unknown_fields` turns an undeclared key into a rejection, so this struct is no longer
@@ -138,10 +143,10 @@ struct ProjectTable {
     //
     // These five are recorded rather than validated: they describe honoured choices, and the
     // generator has already acted on them.
-    container: bool,
-    local_https: String,
-    example_domain: bool,
-    seed_data: bool,
+    pub(crate) container: bool,
+    pub(crate) local_https: String,
+    pub(crate) example_domain: bool,
+    pub(crate) seed_data: bool,
 }
 
 /// The `[persistence]` table — present only when a database was chosen.
@@ -158,10 +163,10 @@ struct ProjectTable {
 /// honoured choice.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct PersistenceTable {
-    database: String,
-    orm: String,
-    driver_feature: String,
+pub(crate) struct PersistenceTable {
+    pub(crate) database: String,
+    pub(crate) orm: String,
+    pub(crate) driver_feature: String,
 }
 
 /// The `[container]` section a project generated with `--container` carries.
@@ -180,41 +185,111 @@ struct PersistenceTable {
 /// project that grew a credential in its committed manifest fails its own validation.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct ContainerTable {
+pub(crate) struct ContainerTable {
     #[serde(default)]
-    database_service: Option<String>,
+    pub(crate) database_service: Option<String>,
     #[serde(default)]
-    database_image: Option<String>,
+    pub(crate) database_image: Option<String>,
     #[serde(default)]
-    database_version: Option<String>,
+    pub(crate) database_version: Option<String>,
     #[serde(default)]
-    database_name: Option<String>,
+    pub(crate) database_name: Option<String>,
     #[serde(default)]
-    database_user: Option<String>,
+    pub(crate) database_user: Option<String>,
     #[serde(default)]
-    database_port: Option<u16>,
-    cache: String,
+    pub(crate) database_port: Option<u16>,
+    pub(crate) cache: String,
     #[serde(default)]
-    cache_image: Option<String>,
+    pub(crate) cache_image: Option<String>,
     #[serde(default)]
-    cache_version: Option<String>,
+    pub(crate) cache_version: Option<String>,
     #[serde(default)]
-    cache_port: Option<u16>,
+    pub(crate) cache_port: Option<u16>,
     /// Always `false` in this phase. Recorded so the manifest states the limitation rather than
     /// leaving a reader to infer it from the absence of a cache adapter.
     #[serde(default)]
-    cache_wired_into_application: Option<bool>,
+    pub(crate) cache_wired_into_application: Option<bool>,
+}
+
+/// The `[framework]` table — present only on a framework-backed **starter** (Phase 011).
+///
+/// `source` is the kind (`path` is the only one until a crate is published) and `path` the
+/// checkout. A path is not a secret; a credential-bearing URL would be, and there is no field for
+/// one.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FrameworkTable {
+    pub(crate) source: String,
+    pub(crate) path: String,
+}
+
+/// The `[auth]` table — present only when the session starter was generated (Phase 011).
+///
+/// Every field is a recorded fact about what generation acted on. **There is no key field, and
+/// there cannot be**: the CSRF and abuse keys the generated application needs are read from its
+/// environment, and `deny_unknown_fields` refuses a manifest that grew one.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuthTable {
+    pub(crate) starter: String,
+    pub(crate) migrations: String,
+    pub(crate) session_cookie: String,
+    pub(crate) mail: String,
+}
+
+/// The `[capabilities]` table — written on every version-7 manifest, optional on read.
+///
+/// Five booleans, one per capability Phase 010 shipped. `false` is a recorded decline, and a
+/// `true` means the dependency, the configuration section, the provider, and the wiring exist.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CapabilitiesTable {
+    pub(crate) cache: bool,
+    pub(crate) jobs: bool,
+    pub(crate) mail: bool,
+    pub(crate) storage: bool,
+    pub(crate) observability: bool,
+}
+
+impl CapabilitiesTable {
+    /// Whether anything was selected.
+    pub(crate) fn any(&self) -> bool {
+        self.cache || self.jobs || self.mail || self.storage || self.observability
+    }
+
+    /// The selected names, in the recorded order.
+    pub(crate) fn selected(&self) -> Vec<&'static str> {
+        [
+            ("cache", self.cache),
+            ("jobs", self.jobs),
+            ("mail", self.mail),
+            ("storage", self.storage),
+            ("observability", self.observability),
+        ]
+        .into_iter()
+        .filter_map(|(name, selected)| selected.then_some(name))
+        .collect()
+    }
 }
 
 /// A generated `renvor.toml`.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-struct Manifest {
-    renvor: RenvorTable,
-    project: ProjectTable,
+pub(crate) struct Manifest {
+    pub(crate) renvor: RenvorTable,
+    pub(crate) project: ProjectTable,
+    /// `None` means the project is the dependency-free skeleton, or was written before version 7.
+    #[serde(default)]
+    pub(crate) framework: Option<FrameworkTable>,
+    /// `None` means no session starter was generated, or the manifest predates version 7.
+    #[serde(default)]
+    pub(crate) auth: Option<AuthTable>,
+    /// `None` means the manifest predates version 7; a version-7 manifest always carries it.
+    #[serde(default)]
+    pub(crate) capabilities: Option<CapabilitiesTable>,
     /// `None` means the project was generated without persistence, which is not an error.
     #[serde(default)]
-    persistence: Option<PersistenceTable>,
+    pub(crate) persistence: Option<PersistenceTable>,
     /// `None` means the project was generated without container controls, which is not an error.
     ///
     /// # Backward compatibility
@@ -223,15 +298,16 @@ struct Manifest {
     /// `#[serde(default)]` is what lets `renvor check` keep reading it. The compatibility contract
     /// is that an older manifest stays valid; it is not that an older manifest gains fields.
     #[serde(default)]
-    container: Option<ContainerTable>,
+    pub(crate) container: Option<ContainerTable>,
 }
 
-/// Runs the command against a project directory.
+/// Reads and validates a project's `renvor.toml`, for this command and for `renvor generate`,
+/// which must know a project's shape before it writes into it.
 ///
 /// # Errors
 ///
-/// [`Code::ManifestInvalid`] with `details.field` and `details.constraint`.
-pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
+/// As [`run`]: [`Code::ManifestInvalid`] naming the field and the constraint.
+pub(crate) fn load(path: &std::path::Path) -> Result<Manifest, CliError> {
     let manifest_path = path.join("renvor.toml");
     let text = read_bounded(&manifest_path)?;
 
@@ -283,6 +359,105 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
         return Err(invalid("renvor.template_version", "must not be empty"));
     }
 
+    // ── PHASE 011: present-and-wrong is refused by name; absent is "written before version 7".
+    if let Some(auth) = manifest.project.auth.as_deref()
+        && auth != "none"
+        && auth != "session"
+    {
+        return Err(invalid(
+            "project.auth",
+            "must be `none` or `session`; no other starter is generated by this version",
+        ));
+    }
+    if let Some(framework) = &manifest.framework {
+        if framework.source != "path" {
+            return Err(invalid(
+                "framework.source",
+                "must be `path`; no crate is published, so a path is the only source this \
+                 version records",
+            ));
+        }
+        if framework.path.is_empty() {
+            return Err(invalid("framework.path", "must not be empty"));
+        }
+    }
+    if let Some(auth) = &manifest.auth {
+        if auth.starter != "session" {
+            return Err(invalid(
+                "auth.starter",
+                "must be `session`; it is the only starter that carries an `[auth]` table",
+            ));
+        }
+        // FR-034: each value against the supported set, not merely non-empty. `renvor check`
+        // reporting `migrations = "garbage"` as valid described a project this generator could
+        // never have produced (found by the Codex review of Phase 011).
+        let expected_set = manifest
+            .persistence
+            .as_ref()
+            .map(|persistence| format!("renvor-auth/{}", persistence.database));
+        if expected_set.as_deref() != Some(auth.migrations.as_str()) {
+            return Err(invalid(
+                "auth.migrations",
+                &format!(
+                    "must be `renvor-auth/<engine>` for the recorded `[persistence].database`{}",
+                    expected_set
+                        .map(|set| format!(", which is `{set}`"))
+                        .unwrap_or_else(|| "; no database is recorded".to_owned())
+                ),
+            ));
+        }
+        if auth.session_cookie != "__Host-rv_session" {
+            return Err(invalid(
+                "auth.session_cookie",
+                "must be `__Host-rv_session`, the only cookie name the session starter sets",
+            ));
+        }
+        if auth.mail != "smtp" {
+            return Err(invalid(
+                "auth.mail",
+                "must be `smtp`, the only transport the session starter bridges",
+            ));
+        }
+    }
+    // Consistency across tables. The manifest is the reproducibility record, and a table that
+    // claims a starter the other tables could not have produced describes a project that was not
+    // generated.
+    let session_recorded = manifest.project.auth.as_deref() == Some("session");
+    if session_recorded && manifest.auth.is_none() {
+        return Err(invalid(
+            "auth",
+            "`project.auth = \"session\"` needs an `[auth]` table recording what was generated",
+        ));
+    }
+    if manifest.auth.is_some() && !session_recorded {
+        return Err(invalid(
+            "auth",
+            "an `[auth]` table is present but `project.auth` is not `session`",
+        ));
+    }
+    let needs_framework = session_recorded
+        || manifest
+            .capabilities
+            .as_ref()
+            .is_some_and(CapabilitiesTable::any);
+    if needs_framework && manifest.framework.is_none() {
+        return Err(invalid(
+            "framework",
+            "a starter (an auth starter or a selected capability) needs a `[framework]` table; \
+             without one nothing could have supplied the dependency",
+        ));
+    }
+
+    Ok(manifest)
+}
+
+/// `renvor check`.
+///
+/// # Errors
+///
+/// [`Code::ManifestInvalid`] naming the field and the constraint.
+pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
+    let manifest = load(path)?;
     let human = crate::output::layout::Report::new()
         .status(
             crate::output::layout::Status::Done,
@@ -300,7 +475,30 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
                 // "generated before transports were recorded" from "recorded as nothing".
                 .unwrap_or_else(|| "not recorded (generated before Phase 004)".to_owned()),
         )
-        .row("Template version", manifest.renvor.template_version.clone());
+        .row("Template version", manifest.renvor.template_version.clone())
+        .row(
+            "Auth starter",
+            manifest
+                .project
+                .auth
+                .clone()
+                .unwrap_or_else(|| "not recorded (generated before Phase 011)".to_owned()),
+        )
+        .row(
+            "Capabilities",
+            match &manifest.capabilities {
+                Some(table) if table.any() => table.selected().join(", "),
+                Some(_) => "none".to_owned(),
+                None => "not recorded (generated before Phase 011)".to_owned(),
+            },
+        )
+        .row(
+            "Framework",
+            match &manifest.framework {
+                Some(framework) => format!("{} {}", framework.source, framework.path),
+                None => "none (dependency-free skeleton)".to_owned(),
+            },
+        );
     Ok(reporter.finish(
         "check",
         &human,
@@ -309,6 +507,12 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
             "target": manifest.project.target,
             "transport": manifest.project.transport,
             "templateVersion": manifest.renvor.template_version,
+            "auth": manifest.project.auth,
+            "capabilities": manifest.capabilities.as_ref().map(|table| table.selected()),
+            "framework": manifest.framework.as_ref().map(|framework| serde_json::json!({
+                "source": framework.source,
+                "path": crate::output::redact::path(std::path::Path::new(&framework.path)),
+            })),
         }),
     ))
 }
@@ -447,6 +651,213 @@ seed_data = false
                 injected.0
             );
         }
+    }
+
+    /// A version-7 manifest, as the Phase 011 generator writes one for a session starter.
+    const VERSION_7_STARTER: &str = r#"
+[renvor]
+generator_version = "0.0.0"
+template_version = "7"
+
+[project]
+name = "commerce"
+target = "api"
+transport = "rest"
+auth = "session"
+local_domain = "commerce.test"
+container = false
+local_https = "off"
+example_domain = true
+seed_data = true
+
+[framework]
+source = "path"
+path = "/opt/renvor"
+
+[persistence]
+database = "postgres"
+orm = "sqlx"
+driver_feature = "db-postgres"
+
+[auth]
+starter = "session"
+migrations = "renvor-auth/postgres"
+session_cookie = "__Host-rv_session"
+mail = "smtp"
+
+[capabilities]
+cache = false
+jobs = false
+mail = true
+storage = false
+observability = false
+"#;
+
+    #[test]
+    fn a_version_7_starter_manifest_validates() {
+        // RED before Phase 011's tables existed: `deny_unknown_fields` refused `auth`,
+        // `[framework]`, `[auth]`, and `[capabilities]` — which is exactly what it is for, and
+        // exactly why every key the generator writes must be declared here.
+        let dir = write(VERSION_7_STARTER);
+        assert_eq!(
+            run(&reporter(), dir.path()).expect("validates"),
+            Exit::Success
+        );
+    }
+
+    #[test]
+    fn a_version_6_manifest_without_the_phase_011_keys_still_validates() {
+        // The compatibility rule, one version on: absent keys are "written before version 7",
+        // never an error. The real fixture is exercised by `tests/legacy_compatibility.rs`; this
+        // is the unit-level statement.
+        let dir = write(VALID);
+        assert_eq!(
+            run(&reporter(), dir.path()).expect("validates"),
+            Exit::Success
+        );
+    }
+
+    #[test]
+    fn every_phase_011_value_is_validated_when_present() {
+        // Present-and-wrong is refused by name; absent is not (see above). Each case names the
+        // field, so a manifest edited by hand fails on the key that was edited.
+        let cases = [
+            (
+                VERSION_7_STARTER.replace("auth = \"session\"", "auth = \"api\""),
+                "project.auth",
+            ),
+            (
+                VERSION_7_STARTER.replace("source = \"path\"", "source = \"git\""),
+                "framework.source",
+            ),
+            (
+                VERSION_7_STARTER.replace("path = \"/opt/renvor\"", "path = \"\""),
+                "framework.path",
+            ),
+            (
+                VERSION_7_STARTER.replace("starter = \"session\"", "starter = \"full\""),
+                "auth.starter",
+            ),
+            (
+                VERSION_7_STARTER
+                    .replace("migrations = \"renvor-auth/postgres\"", "migrations = \"\""),
+                "auth.migrations",
+            ),
+        ];
+        for (text, field) in cases {
+            let dir = write(&text);
+            let error = run(&reporter(), dir.path()).unwrap_err();
+            assert_eq!(error.code, Code::ManifestInvalid, "{field}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "field" && v == field),
+                "expected field {field}, got {:?}",
+                error.details
+            );
+        }
+    }
+
+    #[test]
+    fn the_phase_011_tables_refuse_unknown_keys_too() {
+        // `deny_unknown_fields` is per struct; a new table that forgot it would be the one place
+        // a `database_password` could hide.
+        for (table, injected) in [
+            ("[framework]", "[framework]\nnonsense = 1"),
+            ("[auth]", "[auth]\nnonsense = 1"),
+            ("[capabilities]", "[capabilities]\nnonsense = 1"),
+        ] {
+            let dir = write(&VERSION_7_STARTER.replace(table, injected));
+            let error = run(&reporter(), dir.path()).unwrap_err();
+            assert_eq!(
+                error.code,
+                Code::ManifestInvalid,
+                "an unknown key in {table} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_auth_table_holds_the_values_the_generator_writes_and_nothing_else() {
+        // FOUND BY THE CODEX REVIEW (P2). `migrations = "garbage"`, an arbitrary cookie name,
+        // or `mail = "anything"` passed, because the checks asked only for non-empty strings;
+        // `renvor check` reported as valid manifests this generator could never have produced.
+        // FR-034: every present value is validated against the supported set.
+        for (from, to, field) in [
+            (
+                "migrations = \"renvor-auth/postgres\"",
+                "migrations = \"garbage\"",
+                "auth.migrations",
+            ),
+            (
+                // The set must be the one for the project's engine, not merely a valid name.
+                "migrations = \"renvor-auth/postgres\"",
+                "migrations = \"renvor-auth/mysql\"",
+                "auth.migrations",
+            ),
+            (
+                "session_cookie = \"__Host-rv_session\"",
+                "session_cookie = \"sid\"",
+                "auth.session_cookie",
+            ),
+            ("mail = \"smtp\"", "mail = \"anything\"", "auth.mail"),
+        ] {
+            let manifest = VERSION_7_STARTER.replace(from, to);
+            assert_ne!(manifest, VERSION_7_STARTER, "the fixture must change: {to}");
+            let error = match run(&reporter(), write(&manifest).path()) {
+                Ok(_) => panic!("`{to}` was accepted"),
+                Err(error) => error,
+            };
+            assert_eq!(error.code, Code::ManifestInvalid, "{to}");
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "field" && v == field),
+                "`{to}` must be refused naming `{field}`: {:?}",
+                error.details
+            );
+        }
+    }
+
+    #[test]
+    fn a_session_starter_manifest_must_carry_its_auth_table_and_a_framework() {
+        // The manifest is the reproducibility record, and `auth = "session"` with no `[auth]`
+        // table — or with no `[framework]` — describes a project that could not have been
+        // generated. Present-and-inconsistent is refused, naming the table.
+        let without_auth_table = VERSION_7_STARTER
+            .split("[auth]")
+            .next()
+            .expect("prefix")
+            .to_owned()
+            + "[capabilities]\ncache = false\njobs = false\nmail = true\nstorage = false\nobservability = false\n";
+        let error = run(&reporter(), write(&without_auth_table).path()).unwrap_err();
+        assert_eq!(error.code, Code::ManifestInvalid);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "field" && v == "auth"),
+            "{:?}",
+            error.details
+        );
+
+        let without_framework = VERSION_7_STARTER.replace(
+            "[framework]\nsource = \"path\"\npath = \"/opt/renvor\"\n",
+            "",
+        );
+        assert!(!without_framework.contains("[framework]"));
+        let error = run(&reporter(), write(&without_framework).path()).unwrap_err();
+        assert_eq!(error.code, Code::ManifestInvalid);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "field" && v == "framework"),
+            "{:?}",
+            error.details
+        );
     }
 
     #[test]

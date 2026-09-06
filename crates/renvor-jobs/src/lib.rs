@@ -32,6 +32,8 @@
 pub mod config;
 pub mod job;
 pub mod memory;
+/// The migration set this crate ships, embedded so a generator can copy it (Phase 011).
+pub mod migrations;
 pub mod provider;
 pub mod store;
 pub mod worker;

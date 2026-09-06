@@ -114,6 +114,29 @@ pub trait UserRepository: Send + Sync {
         &self,
         id: UserId,
     ) -> impl Future<Output = Result<Option<UserRecord>, DatabaseError>> + Send;
+
+    /// Records that `id`'s address was verified at `now`.
+    ///
+    /// **The first instant wins.** A second confirmation — another token, or the same address
+    /// re-verified — leaves the recorded instant untouched, so `email_verified_at` answers "since
+    /// when" rather than "most recently".
+    ///
+    /// # Why this exists (Phase 011)
+    ///
+    /// Until Phase 011 no repository method wrote `email_verified_at`: the confirmation flow
+    /// consumed its token, answered `200`, and the column stayed `NULL` forever. Found by driving
+    /// the generated authentication starter against a real mail sink; every flow is now proven
+    /// end to end in [`crate::service::AuthenticationService::confirm_verification`].
+    ///
+    /// # Errors
+    ///
+    /// Any [`DatabaseError`]. An unknown `id` is **not** an error: the token that led here named
+    /// a user who existed when it was issued, and there is nothing the holder should learn.
+    fn mark_email_verified(
+        &self,
+        id: UserId,
+        now: DateTime<Utc>,
+    ) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 }
 
 /// Reads and writes credential rows.

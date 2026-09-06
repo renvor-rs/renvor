@@ -18,13 +18,13 @@ For more information, try '--help'.
 A reserved flag is a VALIDATION error, exit 3 — deliberately not exit 2, because the command is
 well formed and the request is refused.
 
-This example used `--database` until Phase 006, which is when persistence shipped and `--database`
-stopped being reserved. `--auth` replaces it here rather than the case being deleted: the contract
-being demonstrated is the exit code for a reserved flag, and that contract still has flags to
-demonstrate it with.
+This example used `--database` until Phase 006 and `--auth` until Phase 011 — each replaced when
+its phase shipped the capability and the flag stopped being reserved, rather than the case being
+deleted: the contract being demonstrated is the exit code for a reserved flag, and `--frontend`
+(Phase 019) still demonstrates it.
 
 ```
-$ renvor new demo --auth session --output json
+$ renvor new demo --frontend react --output json
 ? 3
 {
   "schemaVersion": 2,
@@ -34,7 +34,7 @@ $ renvor new demo --auth session --output json
     "code": "reserved_for_later_phase",
     "message": "[..]",
     "details": {
-      "flag": "--auth",
+      "flag": "--frontend",
       "phase": "[..]"
     }
   }

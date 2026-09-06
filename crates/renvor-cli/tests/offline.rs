@@ -180,3 +180,68 @@ fn a_dry_run_generation_also_completes_with_networking_unavailable() {
         "a dry run wrote to the destination"
     );
 }
+
+/// FR-006, measured the way it is promised: `CARGO_NET_OFFLINE=true` generation of a starter
+/// succeeds when the framework has been built on the machine. The precondition is realised in an
+/// **empty** `CARGO_HOME` — never this machine's warm cache — by fetching the framework's own
+/// lockfile closure into it, which is what any build of the framework leaves in the registry
+/// cache for the crates it built (a fetch covers every feature at once). Everything the starter
+/// then resolves must already be there: the framework's `Cargo.lock` seeds resolution, and a
+/// package outside that lock is exactly the failure this test exists to catch (the seeded lock was
+/// one package short — `signal-hook-registry` — until the correction round of 2026-09-05).
+#[test]
+fn a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework_build_leaves() {
+    let framework = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .expect("the workspace root exists");
+    let cargo_home = tempfile::tempdir().expect("an empty CARGO_HOME");
+    let fetched = std::process::Command::new("cargo")
+        .args(["fetch", "--locked"])
+        .current_dir(&framework)
+        .env("CARGO_HOME", cargo_home.path())
+        .output()
+        .expect("cargo runs");
+    assert!(
+        fetched.status.success(),
+        "the precondition could not be established (the framework's lock closure fetched into an \
+         empty cache):\n{}",
+        String::from_utf8_lossy(&fetched.stderr)
+    );
+
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let target = tempfile::tempdir().expect("a build directory");
+    let cargo_home = cargo_home.path().to_str().expect("utf-8").to_owned();
+    let target = target.path().to_str().expect("utf-8").to_owned();
+    let framework = framework.to_str().expect("utf-8").to_owned();
+    let mut env = offline();
+    env.push(("CARGO_HOME", cargo_home.as_str()));
+    env.push(("CARGO_TARGET_DIR", target.as_str()));
+    let (exit, stdout, stderr) = renvor(
+        &[
+            "new",
+            "offline-starter",
+            "--capabilities",
+            "storage",
+            "--framework-path",
+            &framework,
+            "--output",
+            "json",
+            "--yes",
+        ],
+        base.path(),
+        &env,
+    );
+    assert_eq!(
+        exit, 0,
+        "FR-006: a starter must generate offline from the cache the framework's build left:\n{stderr}\n{stdout}"
+    );
+    assert!(
+        base.path()
+            .join("offline-starter")
+            .join("Cargo.lock")
+            .is_file(),
+        "the starter was not placed"
+    );
+}

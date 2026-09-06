@@ -1,0 +1,204 @@
+//! The observability capability: structured JSON logs with central redaction, the two health
+//! documents, Prometheus text, inbound trace context, and OTLP export when configured.
+//!
+//! # Installed first, before the kernel
+//!
+//! [`install`] builds the subscriber and installs it through the kernel's one install path, so a
+//! refused configuration section is a redacted log line rather than nothing. OTLP export is
+//! added only when `config/otlp.toml` exists or `RENVOR_OTLP_ENDPOINT` is set: an exporter with
+//! no endpoint would be refused at Validate, and an application without a collector is the
+//! ordinary case in development.
+
+use std::sync::Arc;
+
+use renvor::RouteRegistry;
+use renvor_observability::config::OtlpSection;
+use renvor_observability::health::{is_alive, is_ready, liveness_document, readiness_document};
+use renvor_observability::otel::OtelHandle;
+use renvor_observability::{LogSettings, build};
+use tracing_subscriber::layer::SubscriberExt as _;
+
+use crate::app::Services;
+use crate::routes::services;
+
+/// What [`install`] hands back: the metrics registry the application shares, and the OTLP
+/// handle, or nothing.
+pub struct Telemetry {
+    registry: Arc<renvor::kernel::observe::metrics::Registry>,
+    otel: Option<OtelHandle>,
+}
+
+impl Telemetry {
+    /// The one registry: the exporter's own counters, every capability's instruments, and
+    /// `GET /metrics` all read and write the same families.
+    pub fn registry(&self) -> Arc<renvor::kernel::observe::metrics::Registry> {
+        Arc::clone(&self.registry)
+    }
+
+    /// Flushes what the exporter still holds, within its bound, and joins its drain.
+    ///
+    /// Called by `main` after the application has stopped. Dropping the handle instead is a
+    /// forced close: the last batch may never leave the process, and a run of a few seconds
+    /// would export nothing at all — the framework says so, and the generated test would show
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// The flush did not complete within its bound; the spans it could not export are counted
+    /// in `renvor_otel_spans_unexported_total`.
+    pub async fn shutdown(self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(handle) = self.otel {
+            handle.shutdown().await?;
+        }
+        Ok(())
+    }
+}
+
+/// Registers the metric every process carries, so `GET /metrics` is never an empty document:
+/// the start time, which is also what lets a scrape compute uptime.
+fn start_time(
+    registry: &renvor::kernel::observe::metrics::Registry,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "the system clock is before the Unix epoch")?
+        .as_secs_f64();
+    registry
+        .gauge(
+            "process_start_time_seconds",
+            "Start time of the process since the Unix epoch, in seconds.",
+            &[],
+        )?
+        .set(&[], started);
+    Ok(())
+}
+
+/// Builds and installs the process subscriber.
+///
+/// # Errors
+///
+/// The log filter does not parse, an OTLP section that is present does not validate, or a
+/// subscriber was already installed.
+pub fn install() -> Result<Telemetry, Box<dyn std::error::Error>> {
+    let settings = LogSettings::new();
+    let registry = Arc::new(renvor::kernel::observe::metrics::Registry::new());
+    start_time(&registry)?;
+    let otlp_configured = std::path::Path::new("config/otlp.toml").is_file()
+        || std::env::var_os("RENVOR_OTLP_ENDPOINT").is_some();
+    if !otlp_configured {
+        let subscriber = build(&settings, std::io::stdout)?;
+        renvor::kernel::observe::try_init_global(subscriber)?;
+        return Ok(Telemetry {
+            registry,
+            otel: None,
+        });
+    }
+
+    // The OTLP section is the one resolved BEFORE the lifecycle, because the subscriber it
+    // configures precedes the kernel. Its diagnostics are the same shape as every other section's.
+    let source = OtlpSection::source("otlp", crate::config::layers("otlp"));
+    let resolved = source.handle();
+    renvor::kernel::config_port::ConfigSource::load(&source)?;
+    renvor::kernel::config_port::ConfigSource::validate(&source)?;
+    let otlp = resolved.with(OtlpSection::settings_from)??;
+    let (layer, handle) = renvor_observability::otel::layer(&otlp, &registry)?;
+    // The same JSON formatter `build` installs, composed by hand beside the OTLP layer.
+    let rule = renvor_observability::Redaction::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(settings.filter()?)
+        .with(layer)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stdout)
+                .with_ansi(false)
+                .fmt_fields(renvor_observability::json::JsonFields::new(rule.clone()))
+                .event_format(renvor_observability::json::JsonEvent::new(rule)),
+        );
+    renvor::kernel::observe::try_init_global(subscriber)?;
+    Ok(Telemetry {
+        registry,
+        otel: Some(handle),
+    })
+}
+
+/// The health and metrics routes.
+///
+/// # Errors
+///
+/// A path that does not validate — a defect here.
+pub fn declare(
+    routes: &mut RouteRegistry,
+    _services: &Services,
+) -> Result<(), Box<dyn std::error::Error>> {
+    routes.get("/healthz", healthz)?.describe(
+        renvor::OperationSpec::new()
+            .id("liveness")
+            .summary("Liveness")
+            .tag("health")
+            .response(200, "Alive", None),
+    )?;
+    routes.get("/readyz", readyz)?.describe(
+        renvor::OperationSpec::new()
+            .id("readiness")
+            .summary("Readiness, with every contributor's verdict")
+            .tag("health")
+            .response(200, "Ready", None),
+    )?;
+    routes.get("/metrics", metrics)?.describe(
+        renvor::OperationSpec::new()
+            .id("metrics")
+            .summary("Prometheus text exposition of every registered family")
+            .tag("health")
+            .response(200, "The families", None),
+    )?;
+    Ok(())
+}
+
+fn document(ok: bool, body: String) -> renvor::Response {
+    renvor::Response::status(if ok { 200 } else { 503 })
+        .expect("a fixed valid status")
+        .with_header("content-type", "application/json")
+        .expect("a fixed valid header")
+        .with_body(body)
+}
+
+/// `GET /healthz`.
+async fn healthz(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    match services.health.get() {
+        Some(health) => document(is_alive(health), liveness_document(health)),
+        None => document(false, r#"{"status":"dead"}"#.to_owned()),
+    }
+}
+
+/// `GET /readyz`.
+async fn readyz(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    match services.health.get() {
+        Some(health) => document(is_ready(health), readiness_document(health)),
+        None => document(
+            false,
+            r#"{"status":"not_ready","contributors":[]}"#.to_owned(),
+        ),
+    }
+}
+
+/// `GET /metrics`.
+async fn metrics(request: renvor::Request) -> renvor::Response {
+    let services = match services(&request) {
+        Ok(services) => services,
+        Err(response) => return response,
+    };
+    let text = renvor_observability::prometheus::render(&services.metrics.snapshot());
+    renvor::Response::status(200)
+        .expect("200 is valid")
+        .with_header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+        .expect("a fixed valid header")
+        .with_body(text)
+}

@@ -86,6 +86,13 @@ renvor-mail = { path = "../renvor-mail", version = "0.0.0", optional = true }
 renvor-storage = { path = "../renvor-storage", version = "0.0.0", optional = true }
 renvor-observability = { path = "../renvor-observability", version = "0.0.0", optional = true }
 
+# The interrupt a generated starter waits on before it drains (`shutdown_signal`). `signal` is
+# the one Tokio feature no other workspace crate enables, and a starter that enabled it itself
+# resolved `signal-hook-registry` OUTSIDE the framework's lockfile — the one package the seeded
+# lock was short of, which broke the offline guarantee of FR-006 (Phase 011 limitation L-3,
+# closed by this edge). Optional, under `transport-rest`, which every starter enables.
+tokio = { version = "1.53.1", default-features = false, features = ["signal"], optional = true }
+
 # Examples only. `tokio` is already in the workspace graph through `renvor-core`, so this adds a
 # dependency EDGE and no new package — checked against the lockfile rather than assumed.
 [dev-dependencies]
@@ -161,6 +168,7 @@ transport-rest = [
     "dep:renvor-error",
     "dep:renvor-validation",
     "dep:renvor-openapi",
+    "dep:tokio",
 ]
 
 # The Phase 010 capabilities (PLAN.md §7.4). Each is a DECISION and is off by default; a build

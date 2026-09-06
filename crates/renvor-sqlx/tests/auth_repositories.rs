@@ -514,6 +514,68 @@ macro_rules! auth_repository_suite {
                 database.close().await.expect("closes");
             }
 
+            /// Phase 011. Found by driving the generated authentication starter against a real
+            /// mail sink: the confirmation consumed its token and the column stayed NULL, because
+            /// no repository method wrote it. The first instant wins on a second confirmation.
+            #[tokio::test]
+            async fn marking_an_address_verified_records_the_first_instant_only() {
+                let Some((database, _fixture)) = migrated().await else {
+                    return;
+                };
+                let users = SqlxUserRepository::new(database.pool().clone());
+                let now = Utc.with_ymd_and_hms(2026, 9, 1, 0, 0, 0).unwrap();
+                let Registration::Created(user) = users
+                    .register("verify@example.test", now)
+                    .await
+                    .expect("registers")
+                else {
+                    panic!("created")
+                };
+                assert_eq!(
+                    users
+                        .find_by_id(user)
+                        .await
+                        .expect("no fault")
+                        .expect("present")
+                        .email_verified_at,
+                    None,
+                    "a new account is unverified"
+                );
+
+                let first = now + chrono::Duration::minutes(5);
+                users.mark_email_verified(user, first).await.expect("marks");
+                let record = users
+                    .find_by_id(user)
+                    .await
+                    .expect("no fault")
+                    .expect("present");
+                assert_eq!(record.email_verified_at, Some(first));
+
+                let later = first + chrono::Duration::hours(1);
+                users
+                    .mark_email_verified(user, later)
+                    .await
+                    .expect("marks again");
+                let record = users
+                    .find_by_id(user)
+                    .await
+                    .expect("no fault")
+                    .expect("present");
+                assert_eq!(
+                    record.email_verified_at,
+                    Some(first),
+                    "a second confirmation must keep the first instant"
+                );
+
+                // An identity nobody registered is not an error to the caller.
+                users
+                    .mark_email_verified(renvor_auth::subject::UserId::from_bytes([7; 16]), later)
+                    .await
+                    .expect("an unknown identity is not a fault");
+
+                database.close().await.expect("closes");
+            }
+
             // ---- sessions (batch F) --------------------------------------------------------
 
             /// Registers one subject and returns its identity.

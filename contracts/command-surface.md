@@ -1,7 +1,7 @@
 ---
 description: "Contract C-1 — CLI command surface, exit codes, and stream discipline"
-version: "1.1.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.1.0 (2026-08-29) CORRECTS the phase the reserved-flag paragraph names — Phase 011 delivers the flag, Phase 009 delivers only the library the flag would generate against — and adds the rule that a reserved message must name the phase that delivers the FLAG. No exit code, stream rule, or flag changed. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.3.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.4.0 (2026-09-05, FR-048 decided): every `generate` action takes `--overwrite-unchanged`; a target that differs from the render but is unchanged since generation is REGENERABLE and is replaced only under the flag — without it the run is `generation_conflict` naming the flag; a changed file is refused with or without it; a dry run classifies exactly as a real run. No exit code or stream rule changed. 1.3.0 (2026-09-05, Phase 011 correction round): generation into an existing project is one change or none; marked files are untouched outside their markers; `auth` keeps applied migrations and adds the owner column forward, renders recorded resources again, verifies the merged tree, and writes the resolved lockfile; migration versions are allocated past the directory; a name beside `--import`, a version another migration holds, and a bare SQL keyword are refused. 1.2.0 (2026-09-05, Phase 011) HONOURS `--auth` (none|session) and ADDS `--capabilities` and `--framework-path`: a project with any of them is a framework-backed STARTER with real path dependencies, and the reserved table loses `--auth`. No exit code or stream rule changed. 1.1.0 (2026-08-29) CORRECTS the phase the reserved-flag paragraph names — Phase 011 delivers the flag, Phase 009 delivers only the library the flag would generate against — and adds the rule that a reserved message must name the phase that delivers the FLAG. No exit code, stream rule, or flag changed. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-1 — Command surface, exit codes, and stream discipline
@@ -19,11 +19,65 @@ status: "normative — public contract from the first release that ships it; not
 | `renvor routes` | Show the routes a project would serve | **Full.** The relay is implemented; it currently reaches no *generated* project — see below |
 | `renvor dev` | Run the local development loop | **Full** |
 | `renvor docker up\|down\|status\|logs` | Container development controls | **Full** |
+| `renvor generate migration\|resource\|auth` | Add to an existing project — a migration pair or an imported set, a resource, or the auth starter — rerun-safe, see §`renvor generate` | **Full** (Phase 011) |
 | `renvor tls trust` | The consent boundary for a trust-store change. **In this phase: consent only — it describes what would change, requires explicit consent, and then declines.** Non-interactive consent is `--i-understand-this-modifies-my-system-trust-store`; `--yes` does not grant it. |
 
-`PLAN.md` §9.3 lists further commands — `generate`, `migrate`, `seed`, `openapi`, and the
-package-ecosystem surface. **They are not implemented here and are not stubbed.** A stub that exits
-zero is worse than an absent command, because it reports success for work that did not happen.
+`PLAN.md` §9.3 lists further commands — `migrate`, `seed`, and the package-ecosystem surface.
+**They are not implemented here and are not stubbed.** A stub that exits zero is worse than an
+absent command, because it reports success for work that did not happen. `generate` ships in
+Phase 011 with the actions listed below and no other; an action it does not list is a `usage`
+refusal from the argument parser.
+
+### `renvor generate` — into an existing project, rerun-safe
+
+Every `generate` action classifies each target path **before** writing anything, against the
+working tree and the project's provenance record `.renvor/generated.toml`
+([`template-contract.md`](template-contract.md) §"The provenance record"):
+
+| The target path is | Effect |
+|---|---|
+| absent | written (`write`) |
+| present and byte-identical to the render | nothing (`unchanged`) |
+| present, different, and **unchanged since generation** — its digest equals the recorded one — with `--overwrite-unchanged` | replaced (`regenerate`): the generator owns it, and the operator said so |
+| the same, **without** `--overwrite-unchanged` | **regenerable, refused**: `generation_conflict`, exit 3, nothing at all is written; `details.reason = overwrite_required`, `details.regenerable` names every such path, `details.flag` names the flag |
+| present, different, and changed since generation, or never generated | **`generation_conflict`, exit 3, and nothing at all is written**, with or without the flag; `details.reason = changed_since_generation`, `details.changed` names every such path |
+| an existing file's managed region — a marked block, or the lockfile the merged build resolves | edited (`edit`): the region is written, the rest of the file is kept; no flag needed, and never a conflict |
+
+`details.paths` and `details.count` cover every refusing path of both kinds, in plan order; the
+two sub-lists split them, and `reason` is `changed_since_generation` whenever a changed path is
+among them, because the flag alone would not help. A refusal also lists what the plan would have
+done beside it — `details.write` (created), `details.edit`, and, under the flag,
+`details.regenerate` — each present only when non-empty, so a refused `--dry-run` reports the
+whole classification: created, regenerated, edited, refused. **A differing file is never overwritten
+implicitly** (FR-048, SR-009, decided 2026-09-05): the recorded digest proves the generator owns
+the file, and `--overwrite-unchanged` is the permission to replace it. The flag waives nothing
+else — not validation, not a conflict, not a verification failure.
+
+Files are committed as **one change or none** (2026-09-05, Phase 011 correction round): every
+file is first staged as a temporary sibling, then every sibling is renamed into place, and the
+record is rewritten last with the new digests. A failure while staging removes the siblings; a
+failure while placing, or in the record write, puts every placed path back the way it was, newest
+first, and the message names any path the rollback could not restore. `--dry-run` classifies
+**exactly** as the real run does and writes nothing: the same `result.files[]` when the run would
+succeed, the same refusal with the same `details` when it would not. `--output json` carries
+`result.files[]` with each path's action and `result.written`. A rerun of a command whose files are
+in place reports `unchanged` and exit `0`, and needs no flag. Paths are named; contents never are.
+
+For the two **marked** files — `src/resources/mod.rs` and `src/routes.rs` — "untouched" means
+untouched **outside the markers**: the record digests them with the lines between the markers
+removed, so an edit of the block never claims the rest of the file, and a line the user added
+outside the block is a conflict for the next full re-render (found by the Codex review).
+
+| Flag | On | Effect |
+|---|---|---|
+| `--overwrite-unchanged` | every `generate` action | replace the regenerable targets — those that differ from the render and are unchanged since generation. Never a file you changed; never a waiver of validation or of a conflict |
+
+| Action | What it writes | Refused when |
+|---|---|---|
+| `migration <name>` | `migrations/<YYYYMMDDHHMMSS>_<name>.up.sql` and `.down.sql`, the version being the UTC instant **moved forward, second by second, past every version the directory already holds** — two names generated within one second get two versions, because SQLx keys its ledger by version; run again for the same name it finds the pair it wrote and leaves it, so a rerun never stacks a second pair | the project has no `[persistence]` (`unsupported_combination`, `details.reason = no_database`); the name is not a lowercase identifier of at most 64 characters (`unsupported_value`); a name **beside** `--import` (a parser conflict, exit `2`: the two ask for different work, and neither is silently dropped) |
+| `migration --import auth\|jobs` | the framework's embedded migration set for the project's engine, byte for byte — the same files a starter receives — so a project that adopts the auth starter or the jobs capability later composes both sets in its one directory (Phase 010 limitation L-7) | a set outside the two (`unsupported_value`, `details.flag = --import`); a version of the set already held by **another** migration in the directory (`generation_conflict`, `details.reason = version_present`, `details.versions`), with nothing written |
+| `resource <Name> [field:type …]` | into a **starter** with a database: `src/resources/<snake>.rs` (the type, its repository over the project's persistence model, five handlers, and their OpenAPI declarations), `migrations/<version>_create_<snake>.{up,down}.sql`, `tests/<snake>.rs`, the shared `tests/support/mod.rs` re-rendered, and **two marked edits** — `pub mod <snake>;` between the markers of `src/resources/mod.rs` and `crate::resources::<snake>::declare(&mut routes)?;` between the markers of `src/routes.rs`, which are edited whether or not the file was changed elsewhere. Types: `string`, `text`, `integer`, `boolean`, `float`. Rendered Rust is laid out by the toolchain's `rustfmt` before it is planned, so a user-named type or column never decides the formatting; a missing `rustfmt` is `tool_missing`. Writes need a session when the project has the auth starter. The record gains one `[[resource]]` with the name and the fields as given, which is what lets `auth` render the module again | a skeleton (`transport_not_wired`, `details.reason = no_renvor_dependency`); no `[persistence]` (`unsupported_combination`); a name that is not PascalCase of at most 32 characters, a field outside the grammar, `id`, or a duplicate (`unsupported_value`); a name or a field that would be a **bare SQL keyword** on PostgreSQL or MySQL — `Order`, `key` — (`unsupported_value`, `details.reason = reserved_identifier`), since the generated SQL uses the identifiers unquoted |
+| `auth` | the session authentication starter added to a starter that has none: every generator-owned file rendered again with `auth = "session"` — `renvor.toml`, `Cargo.toml`, `src/main.rs`, `src/app.rs`, `src/routes.rs`, `src/auth.rs`, `config/auth.toml`, the auth migration set, the generated test — with the marked blocks of `src/resources/mod.rs` and `src/routes.rs` carried over. **Applied migrations are never re-planned**: the project's `0001_create_item` pair stays byte-identical (its checksum is in the ledger), and the owner column arrives by a new forward pair `migrations/<version>_add_item_owner.{up,down}.sql` — rows that existed before belong to nobody, the all-zero identifier, as the seeds mark theirs. **Every recorded resource** (`[[resource]]`) is rendered again with the session guards its writes now need; one the user edited is a conflict, so the starter is refused rather than added beside a public write. The merged tree is **verified in a scratch copy** — the same five checks `renvor new` runs — before anything is committed, and the `Cargo.lock` that build resolves is written as an `edit`, so `cargo build --locked` passes on the tree the command leaves. A file the user changed is a `generation_conflict`. **Every generator-owned file it renders again is regenerable on a placed starter, so the action needs `--overwrite-unchanged`**; without it the run is refused naming the flag, and nothing is written | regenerable targets without `--overwrite-unchanged` (`generation_conflict`, `details.reason = overwrite_required`); exactly what `renvor new --auth session` refuses: no database, no `mail` capability (`unsupported_combination` naming the flag); a skeleton (`transport_not_wired`); a merged tree that does not build, lint, format, test, or start (`project_verification_failed`, nothing written) |
 
 `routes` **ships in Phase 004**, with the transport it inspects, and is held to the same rule.
 
@@ -52,11 +106,12 @@ parser would be one.
 `protocol_unsupported` — so a consumer can tell "the binary would not build" from "the binary
 answered something I cannot read".
 
-**Dated limitation — 2026-08-22.** No Renvor crate is published, so no project the current
-generator produces depends on the framework, and none of them can answer the invocation. The
-command therefore succeeds against **none of them today** — not because the relay is missing, but
-because there is nothing published for a generated project to depend on. It reports that with
-`transport_not_wired`, exit `3`, and `details.reason = no_renvor_dependency`.
+**Dated limitation — 2026-08-22, narrowed 2026-09-05.** No Renvor crate is published, so no
+**skeleton** the generator produces depends on the framework, and a skeleton cannot answer the
+invocation; it reports that with `transport_not_wired`, exit `3`, and
+`details.reason = no_renvor_dependency`. Since Phase 011 a **starter** — a project generated with
+`--framework-path` — depends on the framework by path and answers the invocation, so the command
+succeeds against every starter and against no skeleton.
 
 **It never prints an empty route table and exits `0` when the registry could not be obtained.** An
 empty success is indistinguishable, to a consumer, from an application that genuinely declares no
@@ -158,31 +213,102 @@ are not using.
 
 `renvor.toml` records `database`, `orm`, and `driver_feature` under `[persistence]` either way.
 
-**`Cargo.toml` declares no dependency in both cases**, and for the SeaORM path the reason is
-stronger than "the crate is unpublished". `sea-orm` *is* published, so it could be declared — but
-generation runs the staged project's own `cargo fmt`, `clippy`, `build`, `test` and `run` **before**
-placing it, so a real dependency would make `renvor new` resolve and compile SeaORM and SQLx from
+**`Cargo.toml` declares no dependency in both cases — for the skeleton.** *(Since Phase 011 a
+project given `--framework-path` is a starter whose `Cargo.toml` declares path dependencies on
+exactly the crates the selection needs; the paragraph below describes the skeleton, which is
+unchanged.)* For the SeaORM path the reason is stronger than "the crate is unpublished". `sea-orm` *is* published, so it could be declared — but
+generation runs the staged project's own `cargo fmt`, `clippy --all-targets`, `build`, `test` and `run` **before**
+placing it (a skeleton is run bare and must exit; a starter is sent `--renvor-dump-routes`, the
+request `renvor routes` sends, and must answer it before Boot, without a database), so a real dependency would make `renvor new` resolve and compile SeaORM and SQLx from
 the registry. Renvor guarantees offline generation. One ORM choice is not a reason to withdraw it.
 
 Consequently `src/entity.rs` and `src/repository.rs` are generated **in full and idiomatic** but are
 not declared as modules, because declaring a module nothing can compile emits a project that does
 not build. `Cargo.toml` names the four lines to add and the two declarations to make.
 
+## `--auth`
+
+**No longer reserved.** Phase 011 ships the authenticated starter, so `--auth` is a real choice
+(W-023's removal plan):
+
+| Value | Behaviour |
+|---|---|
+| `none` | **accepted**, and the default when omitted — recorded as `auth = "none"` |
+| `session` | **accepted** — cookie sessions: registration, login, logout, the current user, verification, and password reset, on the selected persistence row; the item example gains ownership and a deny-by-default policy |
+| `api`, `full` | `unsupported_value`, naming `none, session` and the reason: the framework ships no route that issues a first token pair (only `POST /auth/token/refresh`), so a generated `api` starter could not authenticate anyone. **Not** `reserved_for_later_phase` — no phase is assigned to issuance, and naming one would be a promise |
+| anything else | `unsupported_value`, naming both supported values |
+
+`session` needs `--database` (`unsupported_combination`, flags `--auth, --database`), the `mail`
+capability (`unsupported_combination`, flags `--auth, --capabilities` — a starter whose
+verification mail went nowhere would be the silent fallback constitution III and IV forbid), and
+`--framework-path` (below). The wizard **asks**: two supported values, so clause 2 of principle
+VII does not apply.
+
+**History.** Reserved from Phase 003, the flag named Phase 013, then Phase 009, then — corrected by
+Phase 009 itself (its FR-085) — Phase 011, the phase that delivers a generated project rather than
+the library one uses. Phase 011 honoured it on 2026-09-05 (W-023).
+
+## `--capabilities`
+
+A comma-separated subset of the five capabilities Phase 010 shipped, or `none` (W-024's removal
+plan):
+
+| Value | Behaviour |
+|---|---|
+| `cache`, `jobs`, `mail`, `storage`, `observability`, in any order and combination | **accepted**; recorded as five booleans under `[capabilities]`; each selected one changes the generated dependencies and features, the typed configuration section, the provider registration and lifecycle, and the application wiring; each **unselected** one appears nowhere |
+| `none` | **accepted**, and the default when omitted |
+| an unknown name | `unsupported_value`, naming the five |
+| a name given twice, or an empty list | `unsupported_value` |
+| `none` beside a name | `unsupported_combination` |
+
+`jobs` needs `--database` (the durable store is the application's own row, ADR-0032). Any
+capability needs `--framework-path`. With `--container`, the `cache` capability generates the
+cache service the way `--database` generates the database service, and `[container]` records
+`cache_wired_into_application = true`; `--container-cache none` beside it is refused as a
+contradiction. The wizard asks for the list by name.
+
+## `--framework-path`
+
+**Local tooling: where the framework is, not what the project does.** No Renvor crate is published
+(Phase 013), so a generated project can depend on the framework only by **path**. The value names
+a checkout of the Renvor workspace and is validated **before any write** — two files are read,
+nothing is evaluated:
+
+| Rule (`details.rule`) | Requirement |
+|---|---|
+| `framework_path_utf8`, `framework_path_control_character` | the path is UTF-8 and carries no control character (it is written into `Cargo.toml`) |
+| `framework_directory` | it resolves to an existing directory; recorded canonical and absolute |
+| `framework_manifest`, `framework_workspace` | its `Cargo.toml` exists, is under 64 KiB, parses, and declares `[workspace]` |
+| `framework_facade` | `crates/renvor/Cargo.toml` exists and names package `renvor` |
+
+Every refusal is `unsupported_value` with `details.flag = "--framework-path"`.
+
+| Given | Shape generated |
+|---|---|
+| omitted, and neither `--auth session` nor a capability was asked for | the **skeleton**: the dependency-free tree every earlier phase produced, changed only by its recorded version and the two recorded choices |
+| omitted, and one of them was | `unsupported_combination`, flags `--framework-path` — the choice cannot be honoured, so it is refused rather than recorded |
+| given | the **starter**: a real Renvor application with path dependencies on exactly the crates the selection needs, verified in staging like any other generation |
+
+Recorded as `[framework] source = "path"`, `path = "<absolute>"`. The wizard asks for it **only**
+when a selection needs it. When the crates are published the same model gains a registry source
+and the path becomes optional; nothing else moves.
+
 ## Reserved flags
 
-Flags for later-phase choices — `--auth`, `--frontend`,
-`--styling`, `--render-mode`, `--desktop` — **parse successfully and then fail validation** with
-exit `3` and a message naming the choice and the phase that will support it.
+Flags for later-phase choices — `--frontend`, `--styling`, `--render-mode`, `--desktop` —
+**parse successfully and then fail validation** with exit `3` and a message naming the choice and
+the phase that will support it.
 
 They are **not** rejected as unknown flags, because "unknown flag" tells a user their command is
 wrong while "not supported until Phase 011" tells them when it will be right. They are **not**
 silently ignored, because that would let a Phase 003 command line quietly change meaning later.
 
 > **The phase a message names must be the phase that delivers the flag, not the phase that delivers
-> the subject.** `--auth` named Phase 009 until Phase 009 corrected it: Phase 009 ships the
-> authentication library, and the flag asks for a **generated project** that uses it, which is
-> Phase 011. Naming the library's phase would have made the message expire the day that phase
-> merged — an operator would read it, try the flag, and find it still refused.
+> the subject.** The authentication flag named Phase 009 until Phase 009 corrected it (its history
+> is under its own heading above): Phase 009 shipped the library, and a flag that asks for a
+> **generated project** belongs to the phase that generates. Naming the library's phase would have
+> made the message expire the day that phase merged — an operator would read it, try the flag, and
+> find it still refused.
 
 ## Interaction and terminals
 

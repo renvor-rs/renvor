@@ -11,8 +11,11 @@
 //!
 //! Principle VII's original wizard-scope sentence listed eleven things the wizard should ask about:
 //! target, transport, persistence model, database, auth starter, frontend, render mode, styling,
-//! desktop option, capabilities, and local tooling. **This wizard asks about two of them** — local
-//! tooling (container and local HTTPS) and capabilities (example domain, seed data).
+//! desktop option, capabilities, and local tooling. **This wizard asks about five of them** —
+//! persistence model and database (Phase 006/007), the auth starter (Phase 011), capabilities
+//! (the five Phase 010 capabilities since Phase 011, beside the example domain and seed data),
+//! and local tooling (container, local HTTPS, and — when a selection needs it — the framework
+//! path). *(Read "two of them — local tooling and capabilities" until Phase 011.)*
 //!
 //! It said "three of them — target, local tooling, and capabilities" until 2026-08-18, and **there
 //! is no target prompt**: `--target` has one legal value in this phase, so a question offering one
@@ -61,7 +64,9 @@ use crate::generate::manifest::FileManifest;
 use crate::output::layout::{Report, Status};
 use crate::output::prompt;
 
-use super::model::Answers;
+use std::path::PathBuf;
+
+use super::model::{Answers, AuthStarter, Capabilities, Capability};
 use crate::exit::CliError;
 
 /// The title that opens the guided sequence.
@@ -78,6 +83,30 @@ const TITLE: &str = "Create a Renvor application";
 /// invisible in the wizard, which is the quiet half of a half-shipped option.
 const ORM_HELP: &str = "`sqlx` (hand-written SQL, no object mapper) or `seaorm` (entity and \
                         repository generated; SeaORM is built on SQLx)";
+
+/// The one-line help under the auth-starter question (Phase 011, W-023).
+///
+/// Written out rather than built from `AuthStarter::ALL` for the reason `ORM_HELP` gives, with
+/// the same drift test beside it. It names what `api` and `full` are NOT, because an operator who
+/// read PLAN §9.1 will type one of them.
+const AUTH_HELP: &str = "`none` or `session` (cookie sessions, on the selected database, with mail \
+                         through the `mail` capability); `api` and `full` are not supported — no \
+                         token-issuance route ships";
+
+/// One line under each capability the wizard offers: what selecting it generates.
+const fn capability_hint(capability: Capability) -> &'static str {
+    match capability {
+        Capability::Cache => "a Valkey provider, `GET /cache/ping`, and read-through item caching",
+        Capability::Jobs => "a durable worker on the database — needs a database",
+        Capability::Mail => "SMTP submission, verified at Boot; the session starter needs it",
+        Capability::Storage => "objects on a filesystem root, `PUT`/`GET /files/{name}`",
+        Capability::Observability => "JSON logs, `/healthz`, `/readyz`, `/metrics`, OTLP export",
+    }
+}
+
+/// The one-line help under the framework-path question (Phase 011).
+const FRAMEWORK_HELP: &str = "a checkout of the Renvor workspace; no crate is published yet, so a \
+                              starter depends on the framework by path. Nothing there is run";
 
 /// Runs the wizard, filling only what the flags did not supply.
 ///
@@ -156,6 +185,18 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
                 Some(ORM_HELP),
             )?);
         }
+    }
+
+    // PHASE 011 (W-023). Two supported values, so it is ASKED rather than defaulted — constitution
+    // VII clause 2 covers single-valued choices only. Asked after persistence because the answer
+    // needs a database and the refusal for a database-less `session` names `--database`; asking
+    // it first would have the operator choose a starter before choosing whether it has a store.
+    if answers.auth.is_none() {
+        answers.auth = Some(prompt::text(
+            "Authentication starter",
+            AuthStarter::None.as_str(),
+            Some(AUTH_HELP),
+        )?);
     }
 
     if !answers.container {
@@ -249,11 +290,65 @@ pub fn fill(mut answers: Answers) -> Result<Answers, CliError> {
         }
     }
 
+    // PHASE 011 (W-024). Asked after the container questions, in PLAN §9.1's order (capabilities
+    // are item 12, local tooling 13). The default follows the auth answer: `session` needs `mail`,
+    // and offering `none` beside it would offer a choice whose only outcome is a refusal — the
+    // same reason seed data is offered only after the example domain.
+    if answers.capabilities.is_none() {
+        // FR-021: a multi-select listing exactly the five, so the operator picks rather than
+        // types the flag's grammar (the first version asked for the comma-separated text; found
+        // by the Codex review of Phase 011). The answer is serialised to the canonical value the
+        // flag takes, so the one validator still decides for both interfaces.
+        let initial: &[&'static str] =
+            if answers.auth.as_deref() == Some(AuthStarter::Session.as_str()) {
+                &["mail"]
+            } else {
+                &[]
+            };
+        let selected = prompt::multi_select(
+            "Capabilities",
+            &Capability::ALL.map(|capability| {
+                (
+                    capability.as_str(),
+                    capability.as_str(),
+                    capability_hint(capability),
+                )
+            }),
+            initial,
+        )?;
+        answers.capabilities = Some(if selected.is_empty() {
+            Capabilities::NONE.to_owned()
+        } else {
+            selected.join(",")
+        });
+    }
+
     if !answers.local_https {
         answers.local_https = prompt::confirm(
             "Record that local HTTPS is wanted? (nothing is issued and no trust store is touched)",
             false,
         )?;
+    }
+
+    // PHASE 011. Asked ONLY when a selection needs the framework: a skeleton depends on nothing,
+    // and asking where the framework is for a project that will not use it is a question with no
+    // consequence. The strings are compared as typed — the validator, not the wizard, decides
+    // whether `sesion` is a starter; a misspelling that reaches here is refused by `resolve`
+    // after this question rather than before it, and nothing is written either way.
+    let wants_starter = answers
+        .auth
+        .as_deref()
+        .is_some_and(|auth| auth != AuthStarter::None.as_str())
+        || answers
+            .capabilities
+            .as_deref()
+            .is_some_and(|list| list.trim() != Capabilities::NONE);
+    if wants_starter && answers.framework_path.is_none() {
+        answers.framework_path = Some(PathBuf::from(prompt::text(
+            "Path to the Renvor framework checkout",
+            "",
+            Some(FRAMEWORK_HELP),
+        )?));
     }
 
     prompt::outro("Answers recorded")?;
@@ -354,6 +449,39 @@ pub fn review(
 
 #[cfg(test)]
 mod tests {
+    /// Every value `--auth` accepts must be named in the wizard's help line — and the two it
+    /// refuses by name must be named as refused, because an operator who read PLAN §9.1 will try
+    /// them.
+    #[test]
+    fn auth_help_names_every_supported_value_and_the_two_refused_ones() {
+        for auth in AuthStarter::ALL {
+            assert!(
+                super::AUTH_HELP.contains(&format!("`{}`", auth.as_str())),
+                "`{}` is accepted by --auth but is not offered in the wizard",
+                auth.as_str()
+            );
+        }
+        assert!(super::AUTH_HELP.contains("`api`") && super::AUTH_HELP.contains("`full`"));
+        assert!(super::AUTH_HELP.contains("not supported"));
+    }
+
+    /// Every capability `--capabilities` accepts is offered by the wizard with a hint of its
+    /// own, and no two hints are the same line.
+    #[test]
+    fn every_capability_is_offered_with_its_own_hint() {
+        let hints: Vec<&str> = Capability::ALL
+            .iter()
+            .map(|capability| super::capability_hint(*capability))
+            .collect();
+        for (capability, hint) in Capability::ALL.iter().zip(&hints) {
+            assert!(!hint.is_empty(), "`{}` has no hint", capability.as_str());
+        }
+        let mut distinct = hints.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(distinct.len(), hints.len(), "two capabilities share a hint");
+    }
+
     /// Every value `--orm` accepts must be named in the wizard's help line.
     #[test]
     fn orm_help_names_every_supported_value() {
@@ -415,7 +543,11 @@ mod tests {
         let asked: Vec<&str> = body
             .lines()
             .map(|line| line.split("//").next().unwrap_or(line))
-            .filter(|code| code.contains("prompt::text(") || code.contains("prompt::confirm("))
+            .filter(|code| {
+                code.contains("prompt::text(")
+                    || code.contains("prompt::confirm(")
+                    || code.contains("prompt::multi_select(")
+            })
             .collect();
 
         // SIX in Phase 004. EIGHT when Phase 006 added persistence: FR-046 requires the database
@@ -434,13 +566,56 @@ mod tests {
         // The count is asserted rather than inferred so that a sixteenth question is reviewed
         // against FR-049 before it ships. It is not a style rule: each question is a thing an
         // operator must answer to get a project.
+        // EIGHTEEN in Phase 011. Three questions, each reviewed against FR-049 of Phase 004: the
+        // auth starter (two documented values, a default matching the non-interactive path, and
+        // a consequence the operator can see — a different tree), the capabilities (five named
+        // values plus `none`, same default rule, same consequence), and the framework path
+        // (asked ONLY when a selection needs it; its consequence is the starter shape itself).
         assert_eq!(
             asked.len(),
-            15,
-            "the wizard asks {} question(s), not the fifteen FR-046, FR-049 and Phase 007 FR-039 \
-             were reviewed against. A new question must be checked against FR-049 before this \
-             count is updated: {asked:#?}",
+            18,
+            "the wizard asks {} question(s), not the eighteen FR-046, FR-049, Phase 007 FR-039 \
+             and Phase 011 FR-033 were reviewed against. A new question must be checked against \
+             FR-049 before this count is updated: {asked:#?}",
             asked.len()
+        );
+
+        // PHASE 011 ORDER (PLAN §9.1). The auth question sits AFTER the persistence gate, the
+        // capabilities question AFTER the container gate, and the framework question LAST, after
+        // local HTTPS — each asserted by position in the source, as the ORM and container gates
+        // are below.
+        let auth_question = body
+            .find("Authentication starter")
+            .expect("the auth question exists");
+        let capabilities_question = body
+            .find("\"Capabilities\"")
+            .expect("the capabilities question exists");
+        let framework_question = body
+            .find("Path to the Renvor framework checkout")
+            .expect("the framework question exists");
+        let https_question = body
+            .find("Record that local HTTPS is wanted?")
+            .expect("the local HTTPS question exists");
+        assert!(
+            auth_question > body.find("Generate database persistence?").expect("gate"),
+            "the auth question is asked before persistence, so its refusal for a database-less \
+             session would name a choice the operator has not made yet"
+        );
+        assert!(
+            capabilities_question
+                > body
+                    .find("Generate container development controls?")
+                    .expect("gate"),
+            "the capabilities question is asked before the container gate; PLAN §9.1 orders \
+             capabilities (12) after the container questions"
+        );
+        assert!(
+            framework_question > https_question,
+            "the framework question must be the last question, after local HTTPS"
+        );
+        assert!(
+            body[..framework_question].contains("wants_starter &&"),
+            "the framework question must be gated on a selection that needs the framework"
         );
 
         // AND THE PERSISTENCE GATE. The ORM question must sit inside it, for the same reason the
@@ -489,6 +664,38 @@ mod tests {
                 "the wizard gained a transport question, which FR-049 forbids: {line}"
             );
         }
+    }
+
+    #[test]
+    fn the_capabilities_question_is_a_multi_select_of_exactly_the_five() {
+        // FOUND BY THE CODEX REVIEW (P2). FR-021 requires the wizard to ask the capabilities
+        // with a multi-select listing exactly the five; the first version asked for the
+        // comma-separated text the flag takes, so an operator had to know the grammar and a
+        // misspelling failed only after the later questions.
+        let source = include_str!("prompts.rs");
+        let body = source
+            .split_once("pub fn fill(mut answers: Answers)")
+            .expect("the wizard entry point exists")
+            .1;
+        let call = body
+            .find("prompt::multi_select(")
+            .expect("the capabilities question is a multi-select");
+        let window = &body[call..body.len().min(call + 400)];
+        assert!(
+            window.contains("\"Capabilities\""),
+            "the multi-select is the capabilities question:\n{window}"
+        );
+        for capability in Capability::ALL {
+            assert!(
+                window.contains(&format!("Capability::{capability:?}"))
+                    || window.contains("Capability::ALL"),
+                "`{}` is not offered by the multi-select",
+                capability.as_str()
+            );
+        }
+        // POSITIVE CONTROL for the question count above: the multi-select is counted.
+        let sample = "        answers.capabilities = Some(prompt::multi_select(";
+        assert!(sample.contains("prompt::multi_select("));
     }
 
     #[test]
