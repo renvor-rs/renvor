@@ -516,3 +516,6 @@ so this is a late resolution and the mismatch is preserved explicitly.
 This deployment does not publish a crate, create a framework release or tag, complete the Phase 012
 documentation programme, or close the companion repository's protection gap. `renvor-docs` has CI,
 but as observed on 2026-09-03 its `main` branch has no protection rule and no required checks.
+
+
+**Erratum (2026-09-06).** The CI context `verify (stable)` named in this record — and every `platform (…, stable)` context — compiled with the pinned **1.94.0**, not with current stable, from `98a4e2c` (2026-08-11) until the fix in pull request #64; only three runs (pull request #63's) were inspected directly, the window is inferred from configuration history, and every locally recorded `cargo +stable xtask verify` leg was genuine. See `phase-011-evidence.md` §14. This note is appended; nothing above it is edited.

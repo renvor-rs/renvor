@@ -116,6 +116,11 @@ impl TestApplication {
     /// # Errors
     ///
     /// The kernel's own [`BootFailure`], with every provider that had booted rolled back.
+    #[allow(
+        clippy::result_large_err,
+        reason = "Preserves the kernel's structured BootFailure in the existing testkit API; the \
+                  larger error representation is an accepted startup-path trade-off."
+    )]
     pub async fn boot(
         builder: ApplicationBuilder,
         registry: RouteRegistry,
