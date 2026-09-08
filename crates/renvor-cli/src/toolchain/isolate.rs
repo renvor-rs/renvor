@@ -252,10 +252,15 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {}
 
 /// Reads at most [`MAX_CAPTURED_BYTES`] from a stream on its own thread, then drains the rest
-/// so the child is never blocked on a full pipe.
+/// so the child is never blocked on a full pipe, and **sends** what it read.
+///
+/// A channel rather than a [`std::thread::JoinHandle`], because a join has no deadline: see
+/// [`run_bounded`]. Dropping the receiver only makes the final `send` fail; the thread still ends
+/// when the pipe closes, and it holds nothing but its own buffer until then.
 fn capture(
     stream: Option<impl std::io::Read + Send + 'static>,
-) -> std::thread::JoinHandle<Vec<u8>> {
+) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut collected = Vec::new();
         if let Some(mut stream) = stream {
@@ -263,18 +268,36 @@ fn capture(
             let _ = limited.read_to_end(&mut collected);
             let _ = std::io::copy(&mut stream, &mut std::io::sink());
         }
-        collected
-    })
+        let _ = sender.send(collected);
+    });
+    receiver
+}
+
+/// What is left of `deadline`, or nothing when it has passed.
+pub fn remaining(deadline: std::time::Instant) -> Duration {
+    deadline.saturating_duration_since(std::time::Instant::now())
 }
 
 /// Runs `command` with both streams captured and a deadline. On the deadline the direct child
 /// is killed and reaped and the readers are detached — joined, they could wait on a grandchild
 /// that inherited the pipe (the shape `commands/relay.rs` measured).
 ///
+/// # The deadline bounds the answer, not only the exit
+///
+/// A child that exits leaving a descendant holding the write end of its pipe is the same hazard
+/// one step later: the process is gone, `wait_timeout` has returned, and the read still blocks
+/// for as long as the descendant lives. Waiting on the reader with no bound would hand that
+/// descendant control of how long this program runs — the exact failure the deadline exists to
+/// prevent, reached through the success path instead of the timeout path. So `timeout` is a
+/// deadline over **both** phases: the child's exit and the collection of what it wrote. A
+/// collection that does not finish in what is left is [`RunError::TimedOut`], with the reader
+/// detached exactly as on the other path.
+///
 /// # Errors
 ///
 /// [`RunError`].
 pub fn run_bounded(mut command: Command, timeout: Duration) -> Result<Answer, RunError> {
+    let deadline = std::time::Instant::now() + timeout;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -283,7 +306,10 @@ pub fn run_bounded(mut command: Command, timeout: Duration) -> Result<Answer, Ru
         .map_err(RunError::Spawn)?;
     let stdout = capture(child.stdout.take());
     let stderr = capture(child.stderr.take());
-    let status = match child.wait_timeout(timeout).map_err(RunError::Wait)? {
+    let status = match child
+        .wait_timeout(remaining(deadline))
+        .map_err(RunError::Wait)?
+    {
         Some(status) => status,
         None => {
             let _ = child.kill();
@@ -293,8 +319,12 @@ pub fn run_bounded(mut command: Command, timeout: Duration) -> Result<Answer, Ru
             return Err(RunError::TimedOut(timeout));
         }
     };
-    let stdout = stdout.join().unwrap_or_default();
-    let stderr = stderr.join().unwrap_or_default();
+    let (Ok(stdout), Ok(stderr)) = (
+        stdout.recv_timeout(remaining(deadline)),
+        stderr.recv_timeout(remaining(deadline)),
+    ) else {
+        return Err(RunError::TimedOut(timeout));
+    };
     Ok(Answer {
         status,
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -462,6 +492,33 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(10),
             "the deadline did not bound the wait"
+        );
+    }
+
+    /// The other half of the same hazard: the child **exits**, and a descendant of it keeps the
+    /// write end of both pipes open. The exit deadline is satisfied at once and the collection is
+    /// not, so only a deadline over the collection as well ends the wait.
+    ///
+    /// The descendant is the test's own, sleeps for a fixed short time, and ends on its own; the
+    /// reader threads end with it. The bound is a fraction of that life, so the elapsed-time
+    /// assertion separates "bounded" from "waited for the descendant".
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_exits_leaving_a_descendant_on_the_pipe_is_bounded_too() {
+        const DESCENDANT_SECONDS: u64 = 3;
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("( sleep {DESCENDANT_SECONDS} ) &\nexit 0\n"));
+        let started = std::time::Instant::now();
+        let error = run_bounded(command, Duration::from_millis(300))
+            .expect_err("the collection is bounded");
+        let elapsed = started.elapsed();
+
+        assert!(matches!(error, RunError::TimedOut(_)));
+        assert!(
+            elapsed < Duration::from_secs(DESCENDANT_SECONDS - 1),
+            "the collection waited for the descendant instead of the deadline"
         );
     }
 }

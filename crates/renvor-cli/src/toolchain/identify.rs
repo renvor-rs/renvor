@@ -4,13 +4,16 @@
 //! the rustup that owns the proxy is known to honour `RUSTUP_AUTO_INSTALL=0` — which is rustup
 //! 1.28.1 and later ([`RUSTUP_FLOOR`]). Before that release a proxy asked for an absent toolchain
 //! **installed** it, from inside generation, and hiding `rustup` from `PATH` changed nothing:
-//! `rustc` and `cargo` on `PATH` may still be the proxies.
+//! `rustc` and `cargo` on `PATH` may still be the proxies — and so may `rustfmt`, which this
+//! crate runs inside the project directory for the component check and for `generate resource`.
+//! [`Tool`] names every executable that goes through this, and the mixed layout where only one of
+//! them is a proxy is a control, not a hypothetical.
 //!
 //! | Step | Function | Guarantee |
 //! |---|---|---|
 //! | (2) the floor | [`floor`] | `rustup --version` runs only under [`Isolation`]; unparseable or below 1.28.1 is refused, and no proxy has run |
 //! | (3) classify | [`is_proxy_of`], [`classify`] | a binary that is the same file as a located rustup is an *identified* proxy; nothing runs |
-//! | (4) the probe | [`isolated_probe`] | a binary that is not: `-vV` once, under [`Isolation`]; an identity → bare; rustup's words → refused by name; else unreadable |
+//! | (4) the probe | [`isolated_probe`] | a binary that is not: `-vV` once, under [`Isolation`]; its own answer → bare; rustup's words → refused by name; else unreadable |
 //! | FR-012-7c | [`confirm_no_install`] | on an identified proxy only: asked for a name that cannot be installed, it must answer `is not installed` |
 //!
 //! # Tests are stubs, and never download
@@ -28,7 +31,7 @@ use std::path::{Path, PathBuf};
 use crate::exit::{CliError, Code};
 use crate::generate::verify::{Sealed, sealed_command};
 use crate::toolchain::isolate::{self, Isolation, RunError};
-use crate::toolchain::{Classification, Identity, RUSTUP_FLOOR, grammar, unreadable};
+use crate::toolchain::{Classification, RUSTUP_FLOOR, grammar, unreadable};
 
 /// The toolchain name the FR-012-7c confirmation asks for: a custom name is never downloadable
 /// (rustup can only *link* one), so a rustup that honours the guarantee answers
@@ -45,12 +48,19 @@ pub fn floor_version() -> semver::Version {
 }
 
 /// Which tool an isolated probe is asking, which decides the first word of a valid answer.
+///
+/// Every executable this crate looks up on the sealed `PATH` and then runs where a toolchain may
+/// be named has a variant here. `rustup` has none: it is *located*, never looked up as a tool to
+/// be identified, and its own version query is [`floor`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     /// `rustc -vV`.
     Rustc,
     /// `cargo -vV`.
     Cargo,
+    /// `rustfmt -vV` — the component `resolve` queries and `generate resource` runs on the
+    /// rendered module, both **inside the project directory**, which is pinned.
+    Rustfmt,
 }
 
 impl Tool {
@@ -60,6 +70,20 @@ impl Tool {
         match self {
             Self::Rustc => "rustc",
             Self::Cargo => "cargo",
+            Self::Rustfmt => "rustfmt",
+        }
+    }
+
+    /// Whether `stdout` is this tool's own answer to `-vV` — the thing a rustup proxy asked
+    /// where nothing is selected cannot produce.
+    ///
+    /// `rustc` and `cargo` answer in the labelled multi-line shape; `rustfmt` answers in one
+    /// line (measured 2026-09-08), which is why this is a predicate per tool rather than one
+    /// call to [`grammar::parse_vv`].
+    fn answers(self, stdout: &str) -> bool {
+        match self {
+            Self::Rustc | Self::Cargo => grammar::parse_vv(stdout, self.name()).is_ok(),
+            Self::Rustfmt => grammar::is_rustfmt_version(stdout),
         }
     }
 }
@@ -182,12 +206,21 @@ fn refuse_unidentified(tool: Tool) -> CliError {
 /// FR-012-7a step (4): `binary -vV` once, under [`Isolation`] — nothing is pinned or selected
 /// there, so a proxy requests no toolchain and has nothing to install.
 ///
+/// # What the answer is used for, and what it is not
+///
+/// Nothing. The probe is a **gate**, not a measurement: its only product is permission to run
+/// this binary where a toolchain is named. The identities a record carries are queried later,
+/// from the executables Cargo's own `Running` lines name (FR-012-7d), and an identity taken here
+/// — in a directory where nothing is selected — would name a different compiler from the one the
+/// project's pin selects. Returning `()` is what stops that answer being mistaken for one.
+///
 /// # Errors
 ///
-/// An identity → `Ok` (the binary is *bare*, or a proxy able to answer without a selection).
-/// rustup's words → [`Code::ToolMissing`] with `reason = proxy_unidentified`. Anything else, or
-/// the deadline → [`Code::ProjectVerificationFailed`] with `reason = compiler_identity_unreadable`.
-pub fn isolated_probe(binary: &Path, tool: Tool, sealed: &Sealed) -> Result<Identity, CliError> {
+/// The tool's own answer → `Ok` (the binary is *bare*, or a proxy able to answer without a
+/// selection). rustup's words → [`Code::ToolMissing`] with `reason = proxy_unidentified`.
+/// Anything else, or the deadline → [`Code::ProjectVerificationFailed`] with
+/// `reason = compiler_identity_unreadable`.
+pub fn isolated_probe(binary: &Path, tool: Tool, sealed: &Sealed) -> Result<(), CliError> {
     let label = format!("{} -vV", tool.name());
     let isolation = Isolation::create(sealed)?;
     let answer = match isolation.run(binary.as_os_str(), &["-vV"], sealed) {
@@ -197,10 +230,8 @@ pub fn isolated_probe(binary: &Path, tool: Tool, sealed: &Sealed) -> Result<Iden
             return Err(crate::toolchain::tool_absent(tool.name()));
         }
     };
-    if answer.status.success()
-        && let Ok(identity) = grammar::parse_vv(&answer.stdout, tool.name())
-    {
-        return Ok(identity);
+    if answer.status.success() && tool.answers(&answer.stdout) {
+        return Ok(());
     }
     if grammar::looks_like_rustup_words(&answer.stderr)
         || grammar::looks_like_rustup_words(&answer.stdout)
@@ -542,9 +573,10 @@ mod tests {
             let stubs = Stubs::new();
             let rustc = stubs.script("rustc", "printf '%s' \"$RUSTC_VV\"\nexit 0\n");
             let seal = stubs.sealed(&[("RUSTUP_TOOLCHAIN", "1.93.0")]);
-            let identity = isolated_probe(&rustc, Tool::Rustc, &seal).expect("bare");
-            assert_eq!(identity.release, "1.94.0");
-            assert_eq!(identity.host, "aarch64-apple-darwin");
+            // The probe is a gate: it answers `Ok(())`, and the identity the stub printed is
+            // deliberately not returned — the record's identities are queried later, from the
+            // executables Cargo names, in the directory the pin governs.
+            isolated_probe(&rustc, Tool::Rustc, &seal).expect("bare");
             let records = stubs.records();
             assert_eq!(records.len(), 1);
             assert_eq!(records[0].rustup_toolchain, "<unset>");
@@ -574,6 +606,50 @@ mod tests {
             assert_eq!(
                 detail(&error, "reason"),
                 Some("compiler_identity_unreadable")
+            );
+        }
+
+        /// The mixed layout: bare `rustc` and `cargo`, a `rustfmt` that is a proxy of a rustup
+        /// nothing can locate. No rustup is found, so the floor of step 2 never runs and step 3
+        /// classifies the whole toolchain `Bare` — and `rustfmt` is then the only binary left
+        /// that could install a pin, because `resolve` runs it **in the pinned directory** for
+        /// the component check and `generate resource` runs it there on the rendered module.
+        ///
+        /// The stub installs whenever it is run where a toolchain file is, which is what makes
+        /// the assertion below a measurement rather than a restatement: the marker is written by
+        /// the stub, not by the test.
+        #[test]
+        fn a_rustfmt_proxy_beside_bare_tools_is_identified_before_it_runs_in_a_pinned_directory() {
+            let stubs = Stubs::new();
+            stubs.script("rustc", "printf '%s' \"$RUSTC_VV\"\nexit 0\n");
+            stubs.script(
+                "cargo",
+                "case \"$1\" in -vV) printf '%s' \"$CARGO_VV\";; clippy) printf '%s\\n' \"$CLIPPY_VERSION\";; *) exit 1;; esac\nexit 0\n",
+            );
+            stubs.script("rustfmt", UNIDENTIFIED_PROXY);
+            let project = stubs.pinned_dir("1.93.0");
+            let error =
+                preflight(&project, &stubs.sealed(&[]), &expectations()).expect_err("refused");
+
+            assert_eq!(error.code, Code::ToolMissing);
+            assert_eq!(detail(&error, "reason"), Some("proxy_unidentified"));
+            assert!(
+                error.message.contains("`rustfmt`"),
+                "the refusal must name the binary that could not be identified"
+            );
+            assert!(
+                !stubs.marker.exists(),
+                "an unidentified proxy installed a toolchain from inside generation"
+            );
+            // And it was never run where the pin is: every invocation of it saw no toolchain
+            // file, which is only true of the isolation's own empty directory.
+            assert!(
+                stubs
+                    .records()
+                    .iter()
+                    .filter(|record| record.name == "rustfmt")
+                    .all(|record| record.toolchain_file == "no"),
+                "`rustfmt` ran in a pinned directory before it was identified"
             );
         }
 

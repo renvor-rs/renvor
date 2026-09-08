@@ -435,14 +435,15 @@ fn verify_merged(
     project_path: &Path,
     plan: &apply::Plan,
     record: Option<&crate::generate::record::Record>,
+    formatting: &Formatting,
+    classification: &toolchain::Classification,
 ) -> Result<VerifiedMerge, CliError> {
     // ONE snapshot of the parent environment for the preflight and for the checks, as in
-    // `renvor new`.
-    let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
-    let sealed = crate::generate::verify::seal(parent.iter().cloned());
-    // IDENTIFY FIRST (FR-012-7a): before the scratch copy exists, so a refusal leaves the
-    // project's parent directory exactly as it was.
-    let classification = toolchain::identify(&sealed)?;
+    // `renvor new` — and it is the snapshot `rustfmt` already ran under, taken before the first
+    // tool child of this command. The identification (FR-012-7a) happened with it, before the
+    // scratch copy exists and before anything was rendered, so a refusal leaves the project's
+    // parent directory exactly as it was.
+    let sealed = &formatting.sealed;
 
     // A legacy tree expects nothing: it pins no channel and its manifest declares no
     // `rust-version`, so the resolution is measured and reported, never held to a figure the
@@ -511,7 +512,7 @@ fn verify_merged(
         &merged,
         &progress,
         crate::generate::verify::Smoke::AnswersDumpRequest,
-        parent.into_iter(),
+        formatting.parent.iter().cloned(),
     );
     progress.finish();
     let verified = verified?;
@@ -774,7 +775,17 @@ pub fn run(
     // Where `rustfmt` runs, and with what (FR-012-6, FR-012-14): sealed, in the project directory
     // itself. Built once so both `plan_resource` and `plan_auth`'s re-render of every recorded
     // resource use the one environment.
+    //
+    // IDENTIFY BEFORE INVOKING, FOR EVERY ACTION — not only the one that verifies (FR-012-7a).
+    // `rustfmt` is a tool child this command runs INSIDE the project directory, and a project
+    // directory is pinned: a proxy run there resolves the pin, and a rustup older than 1.28.1
+    // resolving an absent pin *installed* it. `generate resource` and `generate migration`
+    // verify nothing, so before this line they reached `rustfmt` with nothing identified at all
+    // — the floor unchecked, the proxy unclassified. The identification is now the first thing
+    // that touches a tool, and `auth` reuses this classification rather than repeating it, so
+    // one command performs exactly one preflight.
     let formatting = Formatting::for_project(path);
+    let classification = toolchain::identify(&formatting.sealed)?;
     let (what, planned) = match action {
         Action::Migration { name, import } => {
             let Some(persistence) = manifest.persistence.as_ref() else {
@@ -845,7 +856,7 @@ pub fn run(
         // command has reported success (found by the Codex review of Phase 011). The merged tree
         // is built and tested in a scratch copy, which is also what proves a resource module
         // rendered again with its guards still compiles beside everything the user wrote.
-        let verified = verify_merged(reporter, path, &plan, record.as_ref())?;
+        let verified = verify_merged(reporter, path, &plan, record.as_ref(), &formatting, &classification)?;
         plan = plan.with_edit(&project, "Cargo.lock", verified.lock)?;
         // FR-012-5a: `auth` ran the five checks, so it writes `[verified_with]` with
         // `operation = "auth"` — and `[toolchain]`, which for a legacy tree says `none` twice
@@ -1964,7 +1975,12 @@ impl ResourceContext {
 /// install-server variables absent. It runs **in the project directory itself** (FR-012-14), so
 /// the `rustfmt` it uses is the one the project's own pin selects rather than whichever the
 /// generator's working directory happens to resolve.
+/// It also carries the **parent snapshot** the seal was taken from. One `renvor generate` run
+/// seals once: the identification of FR-012-7a, `rustfmt`, and — for `auth` — the five checks all
+/// run from the same reading of the environment, so nothing this command does can be attributed
+/// to a variable that changed between two readings of it.
 pub(crate) struct Formatting {
+    parent: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     sealed: Sealed,
     directory: PathBuf,
 }
@@ -1972,8 +1988,11 @@ pub(crate) struct Formatting {
 impl Formatting {
     /// Seals this process's environment for the tool children run in `directory`.
     fn for_project(directory: &Path) -> Self {
+        let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+        let sealed = crate::generate::verify::seal(parent.iter().cloned());
         Self {
-            sealed: crate::generate::verify::seal(std::env::vars_os()),
+            parent,
+            sealed,
             directory: directory.to_path_buf(),
         }
     }

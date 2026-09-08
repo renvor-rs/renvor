@@ -1848,6 +1848,96 @@ esac
         );
     }
 
+    /// A failing check whose stream carries a launch command split across physical lines: neither
+    /// rendering of the refusal — the human message or the JSON envelope, which is the whole of
+    /// what leaves this program — carries any part of it.
+    ///
+    /// The canary sits in the **continuation**, which is where a filter that drops only the first
+    /// physical line leaves it, and it is shaped like the thing that would actually be there: a
+    /// long `CARGO_PKG_*` value whose newline came from the manifest, and a `RUSTFLAGS`-derived
+    /// argument after it. The diagnostic is asserted present in the same breath, so a filter that
+    /// passed by deleting everything would fail here.
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_checks_message_and_json_carry_no_part_of_a_multiline_launch_command() {
+        let stub = tempfile::tempdir().expect("tempdir");
+        let stub_dir = stub.path().display().to_string();
+        // `clippy` answers with a well-formed stream so the run reaches `build`, which is the
+        // check under test; `build` then fails with the split launch command.
+        executable(
+            &stub.path().join("cargo"),
+            &format!(
+                r#"#!/bin/sh
+case "$1" in
+  clippy)
+    echo "    Checking probe v0.1.0 ($PWD)" >&2
+    echo "     Running \`CARGO_MANIFEST_DIR=$PWD CARGO_PKG_NAME=probe {stub}/clippy-driver {stub}/rustc --crate-name probe src/main.rs\`" >&2
+    echo "    Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 0.10s" >&2
+    exit 0 ;;
+  build)
+    echo "   Compiling probe v0.1.0 ($PWD)" >&2
+    printf '     Running `CARGO_PKG_DESCRIPTION='"'"'a description whose\n' >&2
+    printf 'renvor_canary_continuation_7c1d second line'"'"' {stub}/rustc --cfg renvor_canary_flag_9e2f --crate-name probe`\n' >&2
+    echo "error[E0425]: cannot find value \`renvor_diagnostic_marker\` in this scope" >&2
+    exit 101 ;;
+  *) exit 0 ;;
+esac
+"#,
+                stub = stub_dir
+            ),
+        );
+        executable(
+            &stub.path().join("clippy-driver"),
+            "#!/bin/sh\necho \"clippy 0.1.94 (4a4ef493e3 2026-03-02)\"\n",
+        );
+        executable(
+            &stub.path().join("rustc"),
+            "#!/bin/sh\nprintf 'rustc 1.94.0 (0123456789 2026-01-01)\\nbinary: rustc\\ncommit-hash: \
+             0123456789abcdef0123456789abcdef01234567\\ncommit-date: 2026-01-01\\nhost: \
+             x86_64-unknown-linux-gnu\\nrelease: 1.94.0\\n'\n",
+        );
+        let parent = vec![
+            (
+                OsString::from("PATH"),
+                OsString::from(format!("{}:/usr/bin:/bin", stub.path().display())),
+            ),
+            (
+                OsString::from("HOME"),
+                std::env::var_os("HOME").unwrap_or_default(),
+            ),
+        ];
+        let dir = project("fn main() {}\n");
+        let error = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect_err("the stub build fails");
+
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "check" && value.contains("build")),
+            "the refusal under test is the failing build, not an earlier check"
+        );
+        assert!(
+            error.message.contains("renvor_diagnostic_marker"),
+            "the diagnostic the operator needs was dropped with the launch command"
+        );
+        let json = serde_json::to_string(&crate::output::json::Envelope::failure(
+            "generate", &error,
+        ))
+        .expect("the failure envelope serialises");
+        for rendering in [error.message.as_str(), json.as_str()] {
+            assert!(
+                !rendering.contains("renvor_canary_continuation"),
+                "a launch command's continuation reached a rendering of the refusal"
+            );
+            assert!(
+                !rendering.contains("renvor_canary_flag"),
+                "an argument of a launch command reached a rendering of the refusal"
+            );
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_unreadable_compiler_identity_is_project_verification_failed_and_redacted() {

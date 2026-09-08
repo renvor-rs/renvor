@@ -371,22 +371,41 @@ pub fn shows_wrapper(chain: &Chain, is_clippy: bool) -> bool {
     chain.len() > if is_clippy { 2 } else { 1 }
 }
 
-/// A check's stderr without its `Running` launch lines, for a failure message.
+/// A check's stderr without its `Running` launch commands, for a failure message.
 ///
-/// A launch line is Cargo's rendering of a whole command — every environment variable it set,
-/// every `RUSTFLAGS`-derived argument, every path — and a failing check's message embeds the
-/// check's output. The diagnostics stay; the launch lines, which exist for [`parse_check`] and
+/// A launch command is Cargo's rendering of a whole invocation — every environment variable it
+/// set, every `RUSTFLAGS`-derived argument, every path — and a failing check's message embeds the
+/// check's output. The diagnostics stay; the launch commands, which exist for [`parse_check`] and
 /// say nothing about why the check failed, do not reach a stream.
+///
+/// # A launch command is not a line
+///
+/// It is a **logical** command that may span several physical lines, because every path in it
+/// comes from the operator's filesystem and a directory name may legally contain a newline —
+/// and because a value may carry a backtick of its own, so the first line that *ends* with one
+/// has not necessarily ended the command (see `rejoin`). Dropping the first physical line and
+/// keeping the rest published the continuations: the middle of a quoted argument, which is
+/// precisely the part a long value's newline puts there. This reads the stream with the **same**
+/// `rejoin` [`parse_check`] uses, so the two readings of one launch cannot disagree about
+/// where it ended.
+///
+/// An unterminated or truncated command — one still open after `MAX_REJOINED_LINES`, or one the
+/// stream ends inside — is dropped whole rather than partly kept. That is the safe direction: a
+/// fragment this parser cannot account for is a fragment it cannot say is free of arguments, and
+/// [`parse_check`] refuses the same stream as `Malformed` anyway.
 #[must_use]
 pub fn without_launch_lines(stderr: &str) -> String {
     let mut kept = String::with_capacity(stderr.len());
-    for raw in stderr.lines() {
+    let mut lines = stderr.lines();
+    while let Some(raw) = lines.next() {
         let line = without_sgr(raw);
         let trimmed = line.trim_start();
-        if trimmed
-            .strip_prefix("Running ")
-            .is_some_and(|rest| rest.starts_with('`'))
+        if let Some(rest) = trimmed.strip_prefix("Running ")
+            && rest.starts_with('`')
         {
+            // Consumes this line and every continuation of it from the iterator; the joined text
+            // is deliberately unused — it is the thing being removed.
+            let _ = rejoin(rest, &mut lines);
             continue;
         }
         kept.push_str(raw);
@@ -407,7 +426,7 @@ pub fn query_rustc(compiler: &Path, sealed: &Sealed, cwd: &Path) -> Result<Ident
     const QUERY: &str = "rustc -vV";
     let mut command = sealed_command(compiler.as_os_str(), sealed, cwd);
     command.arg("-vV");
-    let text = answer(&mut command).map_err(|failure| unreadable(QUERY, failure))?;
+    let text = answer(&mut command, QUERY_TIMEOUT).map_err(|failure| unreadable(QUERY, failure))?;
     grammar::parse_rustc_vv(&text).map_err(|error| unreadable(QUERY, QueryFailure::Grammar(error)))
 }
 
@@ -425,7 +444,7 @@ pub fn query_driver(
     const QUERY: &str = "clippy-driver --version";
     let mut command = sealed_command(driver.as_os_str(), sealed, cwd);
     command.arg("--version");
-    let text = answer(&mut command).map_err(|failure| unreadable(QUERY, failure))?;
+    let text = answer(&mut command, QUERY_TIMEOUT).map_err(|failure| unreadable(QUERY, failure))?;
     grammar::parse_clippy_version(&text)
         .map_err(|error| unreadable(QUERY, QueryFailure::Grammar(error)))
 }
@@ -480,10 +499,16 @@ fn unreadable(query: &'static str, failure: QueryFailure) -> CliError {
 }
 
 /// Runs a query with stdin closed and stderr discarded, reads at most the bound from stdout on
-/// its own thread, and waits at most [`QUERY_TIMEOUT`] — the reader-and-deadline shape
-/// `commands::relay` uses, so a child that never exits or never stops writing is bounded either
-/// way.
-fn answer(command: &mut Command) -> Result<String, QueryFailure> {
+/// its own thread, and waits at most `timeout` — the reader-and-deadline shape `commands::relay`
+/// uses, so a child that never exits or never stops writing is bounded either way.
+///
+/// `timeout` is a **deadline over both phases**: the child's exit and the collection of what it
+/// wrote. The two are separate hazards — a child that never exits, and a child that exits leaving
+/// a descendant holding the write end of its pipe — and a bound on the first alone leaves the
+/// second unbounded on the success path. Every shipped caller passes [`QUERY_TIMEOUT`]; the
+/// parameter exists so a control can prove the bound in under a second.
+fn answer(command: &mut Command, timeout: Duration) -> Result<String, QueryFailure> {
+    let deadline = std::time::Instant::now() + timeout;
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -491,7 +516,9 @@ fn answer(command: &mut Command) -> Result<String, QueryFailure> {
         .spawn()
         .map_err(|_| QueryFailure::Spawn)?;
     let stdout = child.stdout.take();
-    let reader = std::thread::spawn(move || {
+    // A channel, not a `JoinHandle`: a join has no deadline, and the collection below needs one.
+    let (sender, reader) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut collected = Vec::new();
         if let Some(mut stream) = stdout {
             // One byte past the bound so an over-long answer is detectable, then the rest is
@@ -500,9 +527,9 @@ fn answer(command: &mut Command) -> Result<String, QueryFailure> {
             let _ = limited.read_to_end(&mut collected);
             let _ = std::io::copy(&mut stream, &mut std::io::sink());
         }
-        collected
+        let _ = sender.send(collected);
     });
-    let status = match child.wait_timeout(QUERY_TIMEOUT) {
+    let status = match child.wait_timeout(super::isolate::remaining(deadline)) {
         Ok(Some(status)) => status,
         Ok(None) | Err(_) => {
             let _ = child.kill();
@@ -513,7 +540,13 @@ fn answer(command: &mut Command) -> Result<String, QueryFailure> {
             return Err(QueryFailure::Timeout);
         }
     };
-    let collected = reader.join().map_err(|_| QueryFailure::Spawn)?;
+    // AND THE SAME DEADLINE OVER THE COLLECTION. The child has exited; a descendant of it may
+    // still hold the write end, and reading until that descendant ends is a wait this program
+    // does not control. Bounding only the exit left the hazard one step further on, reached
+    // through the success path.
+    let Ok(collected) = reader.recv_timeout(super::isolate::remaining(deadline)) else {
+        return Err(QueryFailure::Timeout);
+    };
     if !status.success() {
         return Err(QueryFailure::Exit);
     }
@@ -1222,5 +1255,96 @@ mod tests {
             kept.contains("Running unittests"),
             "a status line that is not a command stays"
         );
+    }
+
+    /// A child that exits at once while a descendant of it holds the write end of the pipe. The
+    /// process is gone, so the exit deadline is satisfied immediately; the read is not, and only
+    /// a deadline over the collection as well ends the wait.
+    ///
+    /// The descendant is the test's own, sleeps for a fixed short time, and ends on its own —
+    /// nothing here kills a process it did not start, and nothing is left running past it. The
+    /// bound under test is a fraction of the descendant's life, so the elapsed-time assertion
+    /// distinguishes "bounded" from "waited for the descendant" rather than merely observing an
+    /// error.
+    #[cfg(unix)]
+    #[test]
+    fn a_query_whose_descendant_holds_the_pipe_is_bounded_by_the_deadline() {
+        const DESCENDANT_SECONDS: u64 = 3;
+        let mut command = Command::new("/bin/sh");
+        command
+            .arg("-c")
+            .arg(format!("( sleep {DESCENDANT_SECONDS} ) &\nexit 0\n"));
+        let started = std::time::Instant::now();
+        let failure = answer(&mut command, Duration::from_millis(300))
+            .expect_err("the collection is bounded");
+        let elapsed = started.elapsed();
+
+        assert_eq!(failure, QueryFailure::Timeout);
+        assert!(
+            elapsed < Duration::from_secs(DESCENDANT_SECONDS - 1),
+            "the collection waited for the descendant instead of the deadline"
+        );
+    }
+
+    /// The three shapes a launch command takes when it is not one physical line, each carrying a
+    /// canary in the part a first-line-only filter left behind: a newline inside a quoted value,
+    /// a backtick inside one (which ends a physical line without ending the command), and a
+    /// command the stream ends inside.
+    ///
+    /// The canaries are distinct so a failure names which shape leaked.
+    #[cfg(unix)]
+    #[test]
+    fn no_continuation_of_a_launch_command_reaches_a_failure_message() {
+        // EVERY NEWLINE BELOW IS WRITTEN `\n`. A `\` at the end of a Rust string literal eats
+        // the newline *and* the next line's indentation, so a fixture laid out to look multiline
+        // is one physical line and asserts nothing — which is how the first draft of this test
+        // passed against the defect it exists to catch.
+
+        // (a) A newline inside a quoted value: the continuation is the middle of that value.
+        let multiline = concat!(
+            "   Compiling probe v0.1.0 (/x)\n",
+            "     Running `CARGO_PKG_DESCRIPTION='first\n",
+            "renvor_canary_newline_a1b2 second' /t/bin/rustc --crate-name probe`\n",
+            "error[E0425]: cannot find value `x`\n",
+        );
+        let kept = without_launch_lines(multiline);
+        assert!(
+            !kept.contains("renvor_canary_newline"),
+            "a continuation of a multiline launch command reached the failure text"
+        );
+        assert!(kept.contains("error[E0425]"), "the diagnostic was dropped");
+
+        // (b) A backtick inside a quoted value, landing at the end of the first physical line —
+        // the `tracing-serde` shape the census found. The first line looks complete and is not.
+        let backticked = concat!(
+            "     Running `CARGO_PKG_DESCRIPTION='A layer for `\n",
+            "renvor_canary_backtick_c3d4`' /t/bin/rustc --crate-name probe`\n",
+            "warning: unused variable\n",
+        );
+        let kept = without_launch_lines(backticked);
+        assert!(
+            !kept.contains("renvor_canary_backtick"),
+            "a backtick inside a quoted argument ended the command early and published the rest"
+        );
+        assert!(kept.contains("warning: unused"), "the diagnostic was dropped");
+
+        // (c) A command the stream ends inside: nothing closes it, so nothing of it is kept.
+        let truncated = "     Running `SECRET='renvor_canary_truncated_e5f6\n";
+        let kept = without_launch_lines(truncated);
+        assert!(
+            !kept.contains("renvor_canary_truncated"),
+            "a truncated launch command was published in pieces"
+        );
+
+        // And the two readings of one stream agree about where the launch ended: `parse_check`
+        // accounts for (a) as one own unit, which is only possible if it rejoined the same text
+        // this dropped.
+        let evidence = parse_check(
+            &format!("{multiline}    Finished `dev` profile\n"),
+            "probe",
+            Path::new("/x"),
+        )
+        .expect("the multiline launch is one accounted unit");
+        assert_eq!(evidence.units_launched, 1);
     }
 }

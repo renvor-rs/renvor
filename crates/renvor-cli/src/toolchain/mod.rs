@@ -258,11 +258,31 @@ pub fn unreadable(check: &str) -> CliError {
 /// 3. [`identify::classify`] — `rustc` (and `cargo`, by the same rule) is an *identified* proxy
 ///    when it is the same file as the located rustup; **nothing runs**.
 /// 4. [`identify::isolated_probe`] — every binary that is not an identified proxy answers `-vV`
-///    once under the isolation: an identity is bare; rustup's words are refused as
+///    once under the isolation: its own answer is bare; rustup's words are refused as
 ///    `proxy_unidentified`; anything else is `compiler_identity_unreadable`.
 /// 5. [`identify::confirm_no_install`] — on an identified proxy only, the FR-012-7c witness:
 ///    asked, in an isolation's empty directory and under the seal, for a toolchain that cannot
 ///    be installed, it answers `is not installed`.
+///
+/// # Which tools, and why `rustfmt` is one of them
+///
+/// Every executable this crate looks up on the sealed `PATH` and then runs **in a directory a
+/// toolchain file may govern**: `rustc` and `cargo` for [`fn@resolve`]'s identity queries, and
+/// `rustfmt` — which `resolve` runs for the component check, and which `renvor generate resource`
+/// runs on the module it renders, both inside the project directory (FR-012-14). A layout where
+/// `rustc` and `cargo` are bare but `rustfmt` is a proxy is not exotic: a distribution compiler on
+/// `PATH` ahead of a `~/.cargo/bin` that still carries rustup's proxies produces exactly it, and
+/// then no `rustup` is located at all — so the floor of step 2 never runs, and step 3 classifies
+/// nothing. Step 4 on `rustfmt` is what closes that, and the control is
+/// `a_rustfmt_proxy_beside_bare_tools_is_identified_before_it_runs_in_a_pinned_directory`.
+///
+/// `cargo clippy --version` needs no separate step: it is `cargo`, which step 3 or step 4 has
+/// already covered. `clippy-driver` and the trailing compiler of a launch chain (FR-012-7d) are
+/// not looked up here and are not `PATH` lookups at all — they are the paths **Cargo's own
+/// `Running` line named**, queried after Cargo has already executed them in that same directory,
+/// so the toolchain they would resolve is the one that has just built and no absent toolchain is
+/// nameable. What runs them is stated in [`super::evidence`]; that they are within the seal's
+/// declared limits rather than outside them is the audit's answer, not an omission.
 ///
 /// The [`Classification`] it returns carries what [`fn@resolve`] needs: the located rustup's path
 /// (for `rustup show active-toolchain`) and version, or `Bare`.
@@ -289,12 +309,21 @@ pub fn identify(sealed: &Sealed) -> Result<Classification, CliError> {
             .as_ref()
             .is_some_and(|(rustup, _)| identify::is_proxy_of(binary, rustup))
     };
+    // `rustfmt`'s ABSENCE is not this function's refusal: `resolve` reports it as the missing
+    // component it is, naming the pinned channel in the `rustup component add` remedy, which is
+    // knowledge this step does not have. Its PRESENCE is identified here like any other.
+    let rustfmt = locate::on_path(sealed, "rustfmt");
     // 4: the isolated probe for whatever is not identified.
     if !identified(&rustc) {
         identify::isolated_probe(&rustc, identify::Tool::Rustc, sealed)?;
     }
     if !identified(&cargo) {
         identify::isolated_probe(&cargo, identify::Tool::Cargo, sealed)?;
+    }
+    if let Some(rustfmt) = &rustfmt
+        && !identified(rustfmt)
+    {
+        identify::isolated_probe(rustfmt, identify::Tool::Rustfmt, sealed)?;
     }
     let classification = identify::classify(&rustc, located);
     // 5: the uninstallable-name confirmation, on an identified proxy only.

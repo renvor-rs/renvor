@@ -215,6 +215,26 @@ pub fn parse_clippy_version(text: &str) -> Result<DriverIdentity, GrammarError> 
     })
 }
 
+/// Whether `text` is `rustfmt`'s own version answer: line 1 `rustfmt <version> (<commit> <date>)`
+/// (measured 2026-09-08: `rustfmt 1.8.0-stable (4a4ef493e3 2026-03-02)`, printed identically for
+/// `--version`, `-V`, and `-vV`).
+///
+/// # Why this is a predicate and not a parser
+///
+/// The identification probe of FR-012-7a step (4) asks one question — *did this binary answer as
+/// itself, or in rustup's words?* — and `rustfmt`'s answer enters no record: the toolchain
+/// identities the record carries come from `rustc` and from `clippy-driver`. A parser here would
+/// return a value with nowhere to go, and the `-stable` suffix its release carries is not
+/// [`is_release`]'s shape, so it would need a second grammar to hold nothing.
+#[must_use]
+pub fn is_rustfmt_version(text: &str) -> bool {
+    first_line(text).is_some_and(|first| {
+        first
+            .strip_prefix("rustfmt ")
+            .is_some_and(|rest| !rest.trim().is_empty())
+    })
+}
+
 /// Parses the first stdout line of `rustup --version`: `rustup X.Y.Z (<commit> <date>)`
 /// (rustup 1.29.0 on 2026-09-07: `rustup 1.29.0 (28d1352db 2026-03-05)`). Only that line is
 /// read; rustup's `info:` lines go to stderr and are not consulted.
