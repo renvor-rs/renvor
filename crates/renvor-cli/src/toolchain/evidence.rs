@@ -56,7 +56,10 @@
 //! `Compiling`/`Checking`, the dirty unit's `Running` line, and **nothing whatsoever** for the
 //! reused unit. `Fresh <pkg>` is all-or-nothing — it appears only when every unit of the package
 //! was reused, and never in the same stream as that package's **announcement** — and no line
-//! anywhere carries a unit count or a total.
+//! anywhere carries a unit count or a total. That exclusivity is per package **identity** (name,
+//! version, source), so a status line counts as the project's own only when its parenthetical is
+//! the directory the check ran in: a dependency sharing the project's name is a different package
+//! and may be `Fresh` beside the project's own `Compiling`.
 //!
 //! `Fresh` beside a *launch* is a different matter and is **legitimate**: a fully cached
 //! `cargo test -vv` on a crate with a doctest prints `Fresh` and then a `Running` line for the
@@ -356,14 +359,14 @@ pub fn parse_check(
                 announced = false;
             }
         } else if let Some(rest) = line.strip_prefix("Fresh ") {
-            if package_of(rest) == own_package {
+            if own_status_line(rest, own_package, &staging) {
                 evidence.units_fresh += 1;
             }
         } else if let Some(rest) = line
             .strip_prefix("Compiling ")
             .or_else(|| line.strip_prefix("Checking "))
         {
-            if package_of(rest) == own_package {
+            if own_status_line(rest, own_package, &staging) {
                 announced = true;
                 announced_ever = true;
             }
@@ -378,7 +381,10 @@ pub fn parse_check(
         return Err(EvidenceError::Unaccounted);
     }
     // `Fresh` is all-or-nothing per package and the ANNOUNCEMENT is its complement: a stream says
-    // one of those two about the own package, never both.
+    // one of those two about the own package, never both — where "the own package" is the one at
+    // the staging directory, which is what `own_status_line` enforces. Cargo's exclusivity is per
+    // package IDENTITY, so a dependency that merely shares the name is a different package and may
+    // legitimately be `Fresh` in the same stream.
     //
     // THE PREDICATE IS THE ANNOUNCEMENT, NOT THE LAUNCH COUNT, and the difference is a state
     // Cargo really emits. `cargo test -vv` on a fully cached crate with a doctest prints `Fresh`
@@ -814,6 +820,43 @@ fn package_of(rest: &str) -> &str {
     rest.split_whitespace().next().unwrap_or("")
 }
 
+/// The parenthesised location a status line ends with, if it has one.
+///
+/// Cargo prints `<name> v<version> (<path>)` for a package it reads from a directory, and
+/// `<name> v<version>` — no parenthetical — for one it reads from a registry.
+fn location_of(rest: &str) -> Option<&str> {
+    let inner = rest.trim_end().strip_suffix(')')?;
+    let open = inner.rfind('(')?;
+    Some(&inner[open + 1..])
+}
+
+/// Whether a `Fresh`/`Compiling`/`Checking` remainder is about **the project being verified**.
+///
+/// # Why the name is not enough
+///
+/// A package's identity is its name, version, and source; the name alone is shared. A project may
+/// depend on a differently-versioned or differently-sourced crate of its own name — a wrapper named
+/// after the crate it vendors or forks, declared as
+/// `inner = { path = "…", package = "probe" }` — and Cargo then prints, in one stream:
+///
+/// ```text
+///        Fresh probe v0.2.0 (/…/inner)
+///    Compiling probe v0.1.0 (/…/outer)
+/// ```
+///
+/// Cargo's own exclusivity is per identity and is intact there; it is *this* reading that
+/// conflated the two. Counting both against `own_package` inflated the unit counts, and once the
+/// contradiction check existed it turned an ordinary build into `evidence_capture_failed`
+/// (measured 2026-09-08 on cargo 1.97.1; found by the independent validation of this round).
+///
+/// The location is what separates them, and it is the same rule [`launch`] already applies to a
+/// `Running` command through `CARGO_MANIFEST_DIR`: the project being verified is the one whose
+/// parenthetical is the directory the check ran in. A registry dependency has no parenthetical at
+/// all, so it cannot match by accident.
+fn own_status_line(rest: &str, own_package: &str, staging: &Location) -> bool {
+    package_of(rest) == own_package && location_of(rest).is_some_and(|at| staging.matches(at))
+}
+
 /// Splits a `Running` command the way the platform's Cargo quoted it.
 fn tokenize(command: &str) -> Option<Vec<String>> {
     if cfg!(windows) {
@@ -1090,15 +1133,44 @@ mod tests {
         assert_eq!(evidence.chains.len(), 2, "two chains");
     }
 
+    /// A `Fresh` line is the project's own when it names the package **and the directory the
+    /// check ran in** — not when it merely shares the name.
+    ///
+    /// The dependency cases are the point. `serde` is separated by its name, which any reading
+    /// manages. The second is not: a project may depend on a differently-versioned crate **of its
+    /// own name** (`inner = { path = "…", package = "probe" }`), and Cargo then prints `Fresh probe
+    /// v0.2.0 (…/inner)` beside `Compiling probe v0.1.0 (…/outer)` — measured on cargo 1.97.1. A
+    /// name-only reading counted both against the project, which inflated the counts and, once the
+    /// contradiction check existed, refused an ordinary build outright.
     #[test]
     fn a_fresh_own_package_is_counted_and_a_fresh_dependency_is_not() {
         let staging = tempfile::tempdir().expect("tempdir");
-        let text = "       Fresh serde v1.0.0\n       Fresh probe v0.1.0 (/x)\n    Finished \
-                    `dev` profile [unoptimized + debuginfo] target(s) in 0.00s\n";
-        let evidence = parse_check(text, "probe", staging.path()).expect("parses");
+        let at = staging.path().display();
+        let text = format!(
+            "       Fresh serde v1.0.0\n       Fresh probe v0.1.0 ({at})\n    Finished `dev` \
+             profile [unoptimized + debuginfo] target(s) in 0.00s\n"
+        );
+        let evidence = parse_check(&text, "probe", staging.path()).expect("parses");
         assert_eq!(evidence.units_fresh, 1, "one own fresh report");
         assert_eq!(evidence.units_launched, 0, "no launch");
         assert!(evidence.chains.is_empty(), "no chain");
+
+        // THE SAME NAME, A DIFFERENT PACKAGE. The dependency is reused and the project is built:
+        // an ordinary stream, and one a name-only reading called a contradiction.
+        let shared_name = format!(
+            "       Fresh probe v0.2.0 (/elsewhere/inner)\n   Compiling probe v0.1.0 ({at})\n                  Running `CARGO_MANIFEST_DIR={at} CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe \
+             src/main.rs`\n    Finished `dev` profile in 0.4s\n"
+        );
+        let evidence = parse_check(&shared_name, "probe", staging.path())
+            .expect("a same-named dependency is not the project, and the stream is ordinary");
+        assert_eq!(
+            evidence.units_fresh, 0,
+            "a dependency that shares the project's name was counted as the project"
+        );
+        assert_eq!(
+            evidence.units_launched, 1,
+            "the project's own unit launched"
+        );
     }
 
     #[test]
@@ -1270,9 +1342,15 @@ mod tests {
     #[test]
     fn colour_sequences_around_the_status_word_are_ignored() {
         let staging = tempfile::tempdir().expect("tempdir");
-        let text = "\u{1b}[1m\u{1b}[32m       Fresh\u{1b}[0m probe v0.1.0 (/x)\n\u{1b}[1m\u{1b}[32m    \
-                    Finished\u{1b}[0m `dev` profile in 0.0s\n";
-        let evidence = parse_check(text, "probe", staging.path()).expect("parses");
+        // The escape lives in a binding: `\u{1b}` is a lexer escape, so it cannot be written
+        // inside a `format!` literal that also needs braces of its own.
+        let esc = "\u{1b}";
+        let text = format!(
+            "{esc}[1m{esc}[32m       Fresh{esc}[0m probe v0.1.0 ({at})\n{esc}[1m{esc}[32m    \
+             Finished{esc}[0m `dev` profile in 0.0s\n",
+            at = staging.path().display()
+        );
+        let evidence = parse_check(&text, "probe", staging.path()).expect("parses");
         assert_eq!(evidence.units_fresh, 1, "the coloured Fresh line counts");
     }
 

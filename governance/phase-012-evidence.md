@@ -234,6 +234,18 @@ configuration** — starters render no `lib.rs`, so no census row emits a doctes
 would have rejected a legitimate run of any lib-bearing project, and the margin rested on a
 measurement that was wrong.
 
+**A second correction, from the re-check.** The exclusivity is per package **identity** — name,
+version, source — and this parser identified the own package by **name alone**. A project that
+depends on a differently-versioned crate of its own name (`inner = { path = "…", package = "probe" }`
+— a wrapper named after the crate it vendors or forks) makes Cargo print `Fresh probe v0.2.0
+(…/inner)` beside `Compiling probe v0.1.0 (…/outer)`, and the contradiction check then refused an
+ordinary build. The name conflation predates this round; the **refusal** does not, so this round
+turned a wrong count into a failed generation. A status line now counts as the project's own only
+when its parenthetical is the directory the check ran in — the rule `launch` already applies to a
+`Running` command through `CARGO_MANIFEST_DIR`. A registry dependency prints no parenthetical, so it
+cannot match by accident. The existing control could not have caught this: it separated its
+dependency by giving it a *different* name.
+
 **A related limitation, surfaced by the same counter-example and NOT fixed here.** In a lib-bearing
 project the doctest unit's launch chain ends in `rustdoc`, and FR-012-7e's identity query parses
 `rustc -vV`'s shape — so `rustdoc -vV` fails the grammar and the run is
