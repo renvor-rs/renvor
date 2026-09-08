@@ -170,3 +170,85 @@ What the round decided, and what it did not: it led to the maintainer's U-2 poli
 represented explicitly, no mandatory artifact witness — and to A-8 and the clippy correction
 (§4.3.2). It implemented nothing, and the actual generator's cache paths (§1.2) were deliberately
 left to T-012-08 rather than to another feasibility round.
+
+## 3. The B1 correction round (2026-09-08)
+
+Six source-review findings, verified against the tree before anything was changed. Each entry says
+what was **reproduced** (a failing test written first, and watched fail against the code as it
+stood), what was fixed, and — where the reviewer's diagnosis and the measurement disagreed — which
+one the evidence supports. Two of the six are not what the review said they were, and both are
+recorded that way rather than quietly re-scoped.
+
+| # | Finding | Reproduced? | Disposition |
+|---|---|---|---|
+| 1 | `resolve.rs` invokes `PATH` `rustfmt` with no identification | **Yes**, and worse than reported | `identify()` covered `rustc` and `cargo` only. A mixed layout — bare `rustc`/`cargo`, `rustfmt` a proxy of a rustup nothing can locate — reaches `rustfmt --version` **inside the pinned directory** with the floor unchecked. `generate resource` was worse still: it formats in the project directory and called `identify()` **not at all**. Fixed by giving `Tool` a `Rustfmt` variant, probing it in `identify()`, and identifying once per `generate` run before the first tool child. Control: `a_rustfmt_proxy_beside_bare_tools_is_identified_before_it_runs_in_a_pinned_directory`, whose stub installs whenever it runs where a toolchain file is |
+| 2 | `without_launch_lines` removes only the first physical line | **Yes** | It dropped one physical line where `parse_check` rejoins a whole logical command, so a launch command split by a newline in a value — or by a backtick inside a quoted one — left its continuation in a failure message. Fixed by reading the stream with the same `rejoin`; an unterminated command is dropped whole. Controls: `no_continuation_of_a_launch_command_reaches_a_failure_message` (three canaries: newline, embedded backtick, truncation) and, end to end, `a_failing_checks_message_and_json_carry_no_part_of_a_multiline_launch_command`, which asserts over the human message **and** the serialised JSON envelope |
+| 3 | The capture threads are joined without a deadline | **Yes**, measured | A child that exits leaving a descendant on the pipe made the "bounded" run take **3.01 s against a 300 ms deadline** and return `Ok` — the deadline bounded the exit and not the collection. Fixed by a channel and `recv_timeout` against one deadline over both phases, in `isolate::run_bounded` and `evidence::answer`. Controls: `a_child_that_exits_leaving_a_descendant_on_the_pipe_is_bounded_too` and `a_query_whose_descendant_holds_the_pipe_is_bounded_by_the_deadline`, each with a short-lived descendant of the test's own |
+| 4 | `found.toolchain.is_some()` reads "declares a pin" | **Yes**, at `auth` | The first legacy `auth` writes `[toolchain]` `none` twice, so the predicate flips and the **next** `auth` plans the pin group into a tree that asked for none. `generate resource` was never affected — it plans no pin file — so the reproduction is at `plan_auth`, not at the surface first tried. Fixed by `Toolchain::declares()`, one predicate shared with `auth_expectations`. Controls: `a_second_auth_on_a_verified_legacy_tree_plans_no_pin_and_no_rust_version` (fails under the old predicate) and, live, C-sel-3 below |
+| 5 | The result is built after the transaction commits | **Yes**, measured | `provenance_json` walks the tree scope and can fail; run after `commit` returned, its failure is a reported failure with every file already rewritten. Fixed by `apply::commit_with`, which runs the caller's result construction with the record's previous bytes remembered, so a failure rolls back through the path a failed rename takes; `commit` is now `#[cfg(test)]`, so no shipped caller can end the transaction early. Control: `generate-result` added to `a_failure_at_every_placement_boundary_leaves_the_project_byte_identical`, which compares the whole project byte for byte — with the boundary at the old position it fails with *"a failure at `generate-result` left the project changed"* |
+| 6 | `parse_check` clears its announced flag after the first own launch | **Partly — the conclusion holds, the mechanism does not** | See §3.1 |
+
+### 3.1 Finding 6: the accounting C-5 promises is not available from Cargo's output
+
+The reported mechanism is **not** the cause. The flag is a latch: an announcement arms it and a
+launch discharges it, Cargo emits one announcement per package per check, and never clearing it
+would fail every ordinary stream. Removing the reset changes nothing.
+
+The conclusion is right for a different and larger reason. Measured 2026-09-08 on cargo 1.97.1, for
+`build`, `test`, and `clippy --all-targets` alike, on a package with a lib and a bin:
+
+| State | What Cargo prints for the own package |
+|---|---|
+| every unit dirty | `Compiling`/`Checking`, one `Running` per unit, **no** `Fresh` |
+| every unit reused | one `Fresh`, **no** announcement and no `Running` |
+| **one unit dirty, one reused** | `Compiling`/`Checking`, **one** `Running` — and **nothing at all** for the reused unit |
+
+So: `Fresh` is all-or-nothing per package and never shares a stream with that package's
+announcement; no line anywhere carries a unit count or a total. Two consequences —
+
+1. C-5 1.2.0's sentence *"every unit of the project's own package(s) must be accounted for by a
+   `Running` line or a positive `Fresh` report"* **describes a state Cargo does not report**. The
+   ordinary partially-fresh run is already outside it.
+2. Removing one of several own `Running` lines yields a stream that is, line for line, the shape of
+   a legitimate partial rebuild. No parser of this output can tell them apart.
+
+**The contract text is not narrowed here.** What was done instead: the strongest accounting the
+evidence *does* support was established — an announced package must launch, a package that appears
+nowhere is refused, a truncated or malformed stream is refused, and (new) a stream reporting the own
+package **both** `Fresh` and launched is refused as `EvidenceError::Contradictory` rather than
+recorded as `mixed`, a shape Cargo never emits. The control
+`one_of_several_own_launches_may_go_missing_and_this_names_the_limit` asserts the limit and the four
+refusals together, so a later reading of C-5 finds the measurement rather than an assumption.
+
+**For decision.** Whether C-5's sentence is corrected to what Cargo's output can carry, or the
+guarantee is bought with evidence outside that output, is a maintainer's decision. It is not taken
+here, and U-2's ban on mandatory artifact witnesses is not reopened.
+
+### 3.2 The selection controls
+
+| Control | Where | State |
+|---|---|---|
+| **C-sel-2** — a directory override on the project directory beats its own `rust-toolchain.toml` | `tests/toolchain_selection.rs` | **Runs.** A directory override is a row in `$RUSTUP_HOME/settings.toml`, so the question was whose file it goes in: a temporary `RUSTUP_HOME` whose `toolchains` is a symlink to the real one takes the write, installs nothing, and the control re-reads the operator's own `settings.toml` to assert it was not opened. The run refuses with `toolchain_resolution_diverged` — the override governs the project directory and not the sibling scratch copy — **after** printing the FR-012-8 (1) notice this control is about, which is also what keeps it cheap: with the override removed the same test takes 47 s because the run proceeds to a real build. Unix only, for the symlink |
+| **C-sel-3** — a legacy pin-less tree under an ancestor pinning `Z` | `tests/starter_matrix.rs`, census row | **Runs.** `generate auth` resolves `Z` in the project directory and in the sibling scratch copy alike (they agree, or FR-012-13 refuses), records `selected_by = "toolchain_file"` and `Z`'s release, inserts no pin — and the **repeat** `auth`, which reads the `[toolchain]` `none` the first one wrote, still inserts none and leaves the applied migrations alone. Proved locally before it reached CI: **76 s**, against a real PostgreSQL and mail sink and a second installed toolchain, on a dedicated probe database created and dropped for the run |
+
+**Why C-sel-2 could not be a `renvor new` control.** `renvor new` resolves in its **staging**
+directory, whose name carries the process id and a clock reading; rustup prefers a toolchain file to
+a directory override only when the file is *closer*, and the staged tree always holds the freshly
+rendered `rust-toolchain.toml` at its own level. Through `renvor new`, `selected_by =
+"directory_override"` is therefore unreachable **by construction** — not merely untested — which is
+stated in the test file rather than left as a gap someone rediscovers.
+
+### 3.3 CodeQL coverage of this branch: **none**
+
+Asked separately, as instructed, and the answer is the one the question anticipated.
+
+| Question | Answer | Evidence |
+|---|---|---|
+| Is CodeQL configured? | Yes — default setup, `rust` and `actions`, default query suite, weekly | `GET /repos/renvor-rs/renvor/code-scanning/default-setup` → `{"state":"configured",…}` |
+| Has PR #72's head been scanned? | **No** | `GET …/code-scanning/analyses?ref=refs/pull/72/head` returns nothing; no analysis anywhere carries commit `23a8729…` |
+| What was scanned? | PR #65 only, at `6c0d780` and `4eac0eaa` | the analyses list, newest first |
+| Why | Default setup scans the default branch and pull requests **targeting** it. PR #72 targets `docs/phase-012-decision-brief`, not `main` | `gh pr view 72` → `base: docs/phase-012-decision-brief`; default branch `main` |
+
+**So a green check list on #72 does not mean this code was scanned, and this record says so.** The
+scan happens when the branch is re-targeted to `main` (after #65 merges) or lands on it. Open alerts
+across the repository at the last scan: **0**.

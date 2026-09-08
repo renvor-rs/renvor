@@ -2291,7 +2291,7 @@ fn the_end_to_end_relay_ran(root: &Path) -> bool {
 /// suite lived in a crate with **no database features at all**: `renvor-auth-http` reaches
 /// PostgreSQL through a dev-dependency, so passing it `--features db-postgres` is not a harmless
 /// extra — it is an error, and the census would have failed to run rather than failed to find.
-const ROW_EVIDENCE: [(&str, &str, &str, &str); 87] = [
+const ROW_EVIDENCE: [(&str, &str, &str, &str); 88] = [
     // THE STARTER MATRIX (Phase 011, W-023 and W-024). Fourteen rows in one binary — the ten
     // covering rows, each generating a framework-backed starter and running its own live proof,
     // the refusals, and the three determinism proofs — and the wizard-versus-flags parity of a
@@ -2417,6 +2417,17 @@ const ROW_EVIDENCE: [(&str, &str, &str, &str); 87] = [
         "renvor-cli",
         "starter_matrix",
         "the_auth_starter_is_refused_where_new_would_refuse_it",
+        "",
+    ),
+    // C-sel-3 (Phase 012, §5.4). A legacy pin-less tree under an ancestor that pins a SECOND
+    // toolchain: `generate auth` must resolve that ancestor in the project directory and in the
+    // sibling scratch copy alike, and must still insert no pin on the run after. It is a census
+    // row because it can SKIP — for want of the control toolchain or the services — and a skipped
+    // control prints the same `ok` line as a run one.
+    (
+        "renvor-cli",
+        "starter_matrix",
+        "c_sel_3_a_legacy_tree_resolves_its_ancestor_and_stays_pin_less_across_repeated_auth",
         "",
     ),
     // THE TEST APPLICATION (FR-083). Not a four-row entry — it exercises the ROUTES, and the thing
@@ -3145,9 +3156,18 @@ fn the_four_rows_all_ran(root: &Path, env: &dyn Fn(&str) -> Option<std::ffi::OsS
             "all {} required suites reported in (12 tests on each direct-SQLx row, 11 on each \
              SeaORM row, the refresh-rotation, abuse-control, and job-store \
              contracts on every row, the end-to-end test application, and the \
-             twenty starter rows: ten covering starters, the refusals, the \
-             determinism proofs, the generator proofs, and the wizard parity of a starter)",
-            ROW_EVIDENCE.len()
+             {} starter rows: ten covering starters, the refusals, the determinism proofs, the \
+             generator proofs, the legacy-tree selection control, and the wizard parity of a \
+             starter)",
+            ROW_EVIDENCE.len(),
+            // COUNTED, NOT WRITTEN DOWN. This sentence carried the literal `twenty` until a row
+            // was added beside it and made the sentence false without failing anything — the
+            // shape of stale measurement this repository has met before. A figure a gate prints
+            // about itself is derived from the thing it describes.
+            ROW_EVIDENCE
+                .iter()
+                .filter(|(_, binary, _, _)| *binary == "starter_matrix" || *binary == "parity")
+                .count()
         ),
     );
     true

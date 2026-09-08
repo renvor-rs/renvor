@@ -1,7 +1,7 @@
 ---
 description: "Contract C-4 — template delivery, rendering bounds, and containment"
 version: "1.3.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.3.0 (2026-09-07, Phase 012, L-2): every generated tree declares its toolchain — `rust-toolchain.toml` (an exact release, the framework checkout's channel for a starter, the generator's MSRV for a skeleton) and `rust-version` (the MSRV) — as a template group gated on the record; the provenance record gains `record_version = 2`, `[toolchain]`, and `[verified_with]` (measured after verification, never derived); readers dispatch on `record_version`; the generator now reads THREE files from the framework checkout it validates (`Cargo.toml`, `rust-toolchain.toml`, and `Cargo.lock`) and one it copies (`Cargo.lock`); a checkout whose pin is malformed, an alias, or below its own MSRV is refused by name; the Dockerfile builder tag derives from the pin. A project rendered at template version 8 is not readable by a generator built before this revision. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.3.0 (2026-09-07, Phase 012, L-2): every generated tree declares its toolchain — `rust-toolchain.toml` (an exact release, the framework checkout's channel for a starter, the generator's MSRV for a skeleton) and `rust-version` (the MSRV) — as a template group gated on the record; the provenance record gains `record_version = 2`, `[toolchain]`, and `[verified_with]` (measured after verification, never derived); readers dispatch on `record_version`; the generator now reads THREE files from the framework checkout it validates (`Cargo.toml`, `rust-toolchain.toml`, and `Cargo.lock`) and one it copies (`Cargo.lock`); a checkout whose pin is malformed, an alias, or below its own MSRV is refused by name; the Dockerfile builder tag derives from the pin. A project rendered at template version 8 is not readable by a generator built before this revision. **The number 1.3.0 was reviewed and retained** (maintainer decision, 2026-09-08): the reader keeps accepting every record it accepted before and no promise of 1.2.0 is withdrawn, so the bump is minor under this document's own versioning policy — the incompatibility runs the other way, from an OLDER generator to a version-2 record, which is a property of the record and is disclosed as its own rule rather than encoded in this number. The three numbers that move in this phase — this contract text 1.3.0, `template_version` 8, `record_version` 2 — are distinguished in the body. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-4 — Templates
@@ -149,6 +149,32 @@ Three rules were made explicit by the Phase 011 correction round (2026-09-05):
 | The record is written **after** verification and before the manifest | verification resolves `Cargo.lock` — pruning a starter's seeded lock, creating a skeleton's — and the record must digest the lockfile that is placed |
 | For the two **marked** files (`src/resources/mod.rs`, `src/routes.rs`) the digest is taken over the file with the lines between its markers removed | the block is the generators' shared zone; a marker edit must not turn the user's lines outside it into generator-owned bytes, and a filled block must not read as a user change |
 | One `[[resource]]` per `renvor generate resource` run: `name` and `fields` exactly as given | a digest cannot say what a module was rendered from, and `renvor generate auth` renders every recorded resource again with the session guards |
+
+### Three numbers change in Phase 012, and they are three different things
+
+They are easy to read as one revision under three names. They are not, they move independently,
+and a reader who conflates them will look for a compatibility rule in the wrong place.
+
+| Number | What it identifies | Phase 012 value | Who reads it |
+|---|---|---|---|
+| **This contract's text version** | the revision of *this document* — what the generator promises about templates, records, and containment | **1.3.0** | people, in review; nothing in the code |
+| **`template_version`** | the shape of the *tree* a generation rendered, recorded in `renvor.toml` and in the record | **8** | `renvor check` and `renvor generate`, to know which files a tree has |
+| **`record_version`** | the shape of the *provenance record file* `.renvor/generated.toml` | **2** | the record reader, which dispatches on it (the Reader rule below) |
+
+**The contract version is not a compatibility axis.** It is the maintainer's number for this text,
+and it is a MINOR bump — the record's *reader* keeps accepting every record it accepted before
+(the Reader rule: an absent `record_version` is a legacy record, read and reported as such), and no
+promise made by 1.2.0 is withdrawn. What a newer generator does with an older project is unchanged
+and is the compatible direction.
+
+**The incompatible direction is real, and it is a property of the record, not of this number.** An
+older generator — one built from source at or before `7281e4f`, since nothing has been published —
+**cannot read a version-2 record at all**: it validates the document with
+`#[serde(deny_unknown_fields)]` and fails on `[toolchain]` with a generic parse error, because it
+has no `record_version` rule to refuse by name with. That is stated as its own rule below
+("The incompatibility the other way"), it is repeated in the README of every project this generator
+writes, and it is the reason the bump is announced loudly here even though the number itself is
+minor. *Rebuild the generator, not the project.*
 
 ### Record version 2 (Phase 012, L-2)
 
