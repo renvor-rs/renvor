@@ -630,6 +630,78 @@ fn generate_into_a_template_7_tree_inserts_no_pin_and_no_rust_version() {
     );
 }
 
+/// The state the **first** `generate auth` on a legacy tree leaves behind, and what the next
+/// generation into that tree must still do.
+///
+/// `auth` is the one action that verifies, so it is the one that writes `[verified_with]` — and
+/// with it a `[toolchain]` table saying `pinned = "none"`, `rust_version = "none"`: the honest
+/// record that this tree declares nothing (FR-012-10a). The tree is not thereby a declared tree.
+/// A predicate that reads "a `[toolchain]` table exists" instead of "this record names a pin"
+/// flips at exactly that point, and the next generation renders the pin group into a project that
+/// asked for none — the silent insertion FR-012-10b forbids, arriving one run late.
+///
+/// **What this file can and cannot show.** `generate resource` re-renders one starter file and
+/// never plans the toolchain group, so it stays correct under either predicate: this is a
+/// *control* over the state, not the reproduction. The reproduction is at the surface that does
+/// plan that group — `a_second_auth_on_a_verified_legacy_tree_plans_no_pin_and_no_rust_version`
+/// in `src/commands/generate.rs`, which fails under the wrong predicate — and the live pass, on a
+/// real tree with a real build, is the starter matrix's
+/// `a_legacy_tree_stays_pin_less_across_repeated_auth`. The record is written by hand here
+/// because a real `auth` needs the framework checkout and a full starter build.
+#[test]
+fn a_legacy_tree_that_has_already_been_verified_still_has_no_pin_inserted() {
+    let project = legacy_copy();
+    let record_path = project.path().join(".renvor").join("generated.toml");
+    let record = std::fs::read_to_string(&record_path).expect("readable");
+    // Exactly what `apply::commit` renders for a legacy tree that has just been verified: the
+    // version marker, then the table that says the tree declares nothing.
+    let verified = record.replace(
+        "generator_version = \"0.0.0\"",
+        "record_version = 2\ngenerator_version = \"0.0.0\"",
+    ) + "\n[toolchain]\npinned = \"none\"\nrust_version = \"none\"\n";
+    assert_ne!(record, verified, "the record fixture was not rewritten");
+    std::fs::write(&record_path, &verified).expect("writable");
+
+    let cargo_before =
+        std::fs::read_to_string(project.path().join("Cargo.toml")).expect("readable");
+    let (exit, stdout, stderr) = generate(
+        project.path(),
+        &["resource", "Gadget", "title:string", "--output", "json"],
+    );
+    assert_eq!(exit, 0, "{stdout}\n{stderr}");
+
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    let planned: Vec<&str> = document["result"]["files"]
+        .as_array()
+        .expect("a file list")
+        .iter()
+        .map(|entry| entry["path"].as_str().expect("a path"))
+        .collect();
+    assert!(
+        !planned.contains(&"rust-toolchain.toml"),
+        "a verified legacy tree was treated as declaring a pin: {planned:?}"
+    );
+    assert!(
+        !project.path().join("rust-toolchain.toml").exists(),
+        "a pin was inserted into a project that asked for none"
+    );
+    let cargo_after = std::fs::read_to_string(project.path().join("Cargo.toml")).expect("readable");
+    assert!(
+        !cargo_after.contains("rust-version"),
+        "a `rust-version` line was inserted into a legacy manifest:\n{cargo_after}"
+    );
+    assert_eq!(
+        cargo_before, cargo_after,
+        "`Cargo.toml` was rewritten by an operation that does not own it"
+    );
+    // And the record still says what it said: `none` twice, never filled in.
+    let after = std::fs::read_to_string(&record_path).expect("readable");
+    assert!(
+        after.contains("pinned = \"none\"") && after.contains("rust_version = \"none\""),
+        "the record's honest `none` was overwritten:\n{after}"
+    );
+}
+
 #[test]
 fn every_generate_into_a_legacy_tree_states_once_that_no_toolchain_action_exists() {
     // FR-012-10a's last sentence. ONCE — not per file, not per template, and not zero times,

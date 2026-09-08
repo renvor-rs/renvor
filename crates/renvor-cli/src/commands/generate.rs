@@ -564,7 +564,7 @@ fn verify_merged(
 fn auth_expectations(
     toolchain: &crate::generate::record::Toolchain,
 ) -> Result<Expectations, CliError> {
-    if toolchain.pinned == "none" && toolchain.rust_version == "none" {
+    if !toolchain.declares() {
         return Ok(Expectations {
             pinned: None,
             rust_version: None,
@@ -757,12 +757,16 @@ pub fn run(
     // is "this record names a pin", which is what FR-012-10b's template group switches on: a
     // legacy tree never declares, so `generate auth` re-renders `Cargo.toml` without a
     // `rust-version` line and plans no `rust-toolchain.toml`.
+    //
+    // THE VALUE, NOT THE TABLE. `auth` writes `[toolchain]` on every tree it verifies, `none`
+    // twice for a legacy one — so "the table exists" is true from the first legacy `auth`
+    // onwards, and reading it as "declares" would let the SECOND `auth` render the pin group
+    // into a project that asked for none. `Toolchain::declares` is where that reading lives, and
+    // the two callers here and in `auth_expectations` share it rather than each spelling it out.
     let legacy = record
         .as_ref()
         .is_none_or(|found| found.record_version.is_none());
-    let declared = record
-        .as_ref()
-        .is_some_and(|found| found.toolchain.is_some());
+    let declared = declares_toolchain(record.as_ref());
     if legacy {
         // ONCE PER RUN, on stderr, whatever the action (FR-012-10a). There is no
         // `renvor generate toolchain`, and inventing one would be the silent insertion FR-012-10b
@@ -880,12 +884,28 @@ pub fn run(
             Status::Info,
             format!("Dry run: {what} — {writes} file(s) would be written"),
         );
+    }
+    // THE RECORD AS IT NOW STANDS, read back from the tree rather than assembled from what this
+    // run believes it wrote (C-2 §"`result.toolchain` and `result.verified_with`"). `historical`
+    // is recomputed against the working tree by the same rule `renvor check` applies, so
+    // `generate resource` — which verifies nothing and leaves `[verified_with]` byte-identical —
+    // reports the evidence it inherited as what it now is: evidence of an earlier tree
+    // (FR-012-10c).
+    //
+    // INSIDE THE TRANSACTION. The read walks the tree scope and can fail on one unreadable
+    // in-scope source file; performed after the commit returned, its failure would be a reported
+    // failure with every file already rewritten — which is precisely what C-5 promises cannot
+    // happen. `commit_with` runs it while the rollback is still possible, so the command either
+    // reports a result or leaves the tree as it found it.
+    let (toolchain_json, verified_with_json) = if dry_run {
+        provenance_json(&project)?
     } else {
-        apply::commit(
+        let (_, provenance) = apply::commit_with(
             &project,
             plan,
             env!("CARGO_PKG_VERSION"),
             &manifest.renvor.template_version,
+            provenance_json,
         )?;
         human = human.status(
             Status::Done,
@@ -895,18 +915,12 @@ pub fn run(
                 format!("Generated {what}: {writes} file(s) written")
             },
         );
-    }
+        provenance
+    };
     human = human.blank();
     for (path, action) in &decisions {
         human = human.row(action.as_str(), path.clone());
     }
-    // THE RECORD AS IT NOW STANDS, read back from the tree rather than assembled from what this
-    // run believes it wrote (C-2 §"`result.toolchain` and `result.verified_with`"). `historical`
-    // is recomputed against the working tree by the same rule `renvor check` applies, so
-    // `generate resource` — which verifies nothing and leaves `[verified_with]` byte-identical —
-    // reports the evidence it inherited as what it now is: evidence of an earlier tree
-    // (FR-012-10c).
-    let (toolchain_json, verified_with_json) = provenance_json(&project)?;
     Ok(reporter.finish(
         "generate",
         &human,
@@ -919,6 +933,17 @@ pub fn run(
             "verified_with": verified_with_json,
         }),
     ))
+}
+
+/// FR-012-10b's switch: whether the tree's record **names a pin**.
+///
+/// A named function rather than an expression at the one call site, because it is the thing a
+/// control has to be able to ask. See [`crate::generate::record::Toolchain::declares`] for why
+/// the answer is the value and not the table's presence.
+fn declares_toolchain(record: Option<&crate::generate::record::Record>) -> bool {
+    record
+        .and_then(|found| found.toolchain.as_ref())
+        .is_some_and(crate::generate::record::Toolchain::declares)
 }
 
 /// The one sentence every `renvor generate` into a legacy tree prints, once (FR-012-10a).
@@ -1281,6 +1306,81 @@ mod toolchain_tests {
         })
         .expect_err("a malformed record is refused by name");
         assert_eq!(refused.code, Code::ManifestInvalid);
+    }
+
+    /// FR-012-10b, the second run. A legacy tree that `generate auth` has already verified carries
+    /// a `[toolchain]` table saying `none` twice — the honest record that it declares nothing. It
+    /// is still an undeclared tree, and the next generation must render the same files.
+    ///
+    /// The two halves are asserted together because either alone would pass a defect: the
+    /// predicate could be right while the selection ignored it, and the selection is only ever
+    /// given what the predicate returns.
+    #[test]
+    fn a_verified_legacy_record_still_declares_nothing_and_selects_no_pin_file() {
+        use crate::generate::record::Toolchain;
+
+        let verified_legacy = Toolchain {
+            pinned: Toolchain::NONE.to_owned(),
+            rust_version: Toolchain::NONE.to_owned(),
+        };
+        assert!(
+            !verified_legacy.declares(),
+            "a `[toolchain]` table saying `none` was read as a declared pin"
+        );
+        assert!(
+            Toolchain {
+                pinned: "1.94.0".to_owned(),
+                rust_version: "1.94.0".to_owned(),
+            }
+            .declares(),
+            "a real pin was read as no pin, which would strip it from a declared project"
+        );
+
+        // And what the selection does with each answer. The skeleton is enough: the toolchain
+        // group is appended to whatever the configuration chose, so its presence is the switch.
+        let scratch = tempfile::tempdir().expect("tempdir");
+        let (configuration, _destination) = crate::config::model::ProjectConfiguration::resolve(
+            crate::config::model::Answers {
+                name: None,
+                destination: scratch.path().join("probe"),
+                local_domain: None,
+                target: "api".to_owned(),
+                transport: None,
+                container: false,
+                local_https: false,
+                seed_data: false,
+                example_domain: false,
+                orm: None,
+                database: None,
+                database_version: None,
+                database_name: None,
+                database_user: None,
+                database_port: None,
+                container_cache: None,
+                cache_port: None,
+                auth: None,
+                capabilities: None,
+                framework_path: None,
+            },
+        )
+        .expect("a skeleton configuration resolves");
+        let pin_files = |declared: bool| -> Vec<&'static str> {
+            crate::templates::select_with_toolchain(&configuration, declared)
+                .entries
+                .iter()
+                .map(|entry| entry.path)
+                .filter(|path| *path == "rust-toolchain.toml")
+                .collect()
+        };
+        assert!(
+            pin_files(verified_legacy.declares()).is_empty(),
+            "a verified legacy tree was planned a pin file"
+        );
+        assert_eq!(
+            pin_files(true).len(),
+            1,
+            "the control is inert: no selection ever names a pin file"
+        );
     }
 }
 
@@ -2746,6 +2846,72 @@ mod auth_tests {
         )
         .expect("record");
         (destination, dir)
+    }
+
+    /// FR-012-10b on the **second** run. The first `generate auth` into a legacy tree records
+    /// `[toolchain]` `none` twice — the honest statement that the tree declares nothing. The next
+    /// `auth` reads that record, and must still plan no `rust-toolchain.toml` and re-render
+    /// `Cargo.toml` without a `rust-version`.
+    ///
+    /// The record is written into a starter here because `plan_auth` needs a project that can be
+    /// re-rendered; the shape written is the one `apply::commit` writes. The live pass, on a real
+    /// legacy tree with a real build, is the starter matrix's
+    /// `a_legacy_tree_stays_pin_less_across_repeated_auth`.
+    #[test]
+    fn a_second_auth_on_a_verified_legacy_tree_plans_no_pin_and_no_rust_version() {
+        use crate::generate::record::Toolchain;
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let (path, dir) = starter_without_auth(base.path(), true);
+        let manifest = check::load(&path).expect("loads");
+
+        // The record as the first legacy `auth` leaves it: versioned, and declaring nothing.
+        crate::generate::record::write(
+            &dir,
+            "0.0.0",
+            crate::templates::VERSION,
+            &Toolchain {
+                pinned: Toolchain::NONE.to_owned(),
+                rust_version: Toolchain::NONE.to_owned(),
+            },
+            Some(&crate::generate::record::fixtures::launched()),
+            &[],
+        )
+        .expect("record");
+        let record = crate::generate::record::read(&dir)
+            .expect("readable")
+            .expect("a record");
+
+        let declared = declares_toolchain(Some(&record));
+        assert!(
+            !declared,
+            "a `[toolchain]` table saying `none` was read as a declared pin"
+        );
+
+        let (_, planned) = plan_auth(&dir, &manifest, declared, &formatting(&path)).expect("plans");
+        let paths: Vec<&str> = planned.iter().map(|p| p.path.as_str()).collect();
+        assert!(
+            !paths.contains(&"rust-toolchain.toml"),
+            "a pin file was planned for a tree that declares none: {paths:?}"
+        );
+        let cargo = planned
+            .iter()
+            .find(|p| p.path == "Cargo.toml")
+            .expect("auth re-renders the manifest");
+        let cargo = String::from_utf8(cargo.bytes.clone()).expect("utf-8");
+        assert!(
+            !cargo.contains("rust-version"),
+            "a `rust-version` line was inserted into an undeclared project:\n{cargo}"
+        );
+
+        // THE CONTROL. With the switch on, both appear — so the two assertions above are about
+        // the switch and not about a template group that never renders here.
+        let (_, with_pin) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
+        let with_paths: Vec<&str> = with_pin.iter().map(|p| p.path.as_str()).collect();
+        assert!(
+            with_paths.contains(&"rust-toolchain.toml"),
+            "no selection ever plans a pin file, so the control is inert: {with_paths:?}"
+        );
     }
 
     #[test]

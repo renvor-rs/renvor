@@ -499,16 +499,60 @@ fn roll_back(project: &Dir, placed: &[Placed], error: CliError) -> CliError {
 /// the tree the plan found, never a mixture (the correction round of Phase 011 made this a rule
 /// rather than a hope: the first version wrote one file at a time and kept what it had written).
 ///
+/// # `#[cfg(test)]`: the shipped path is [`commit_with`]
+///
+/// Every command that writes also reports, and every report of provenance is built by a fallible
+/// read of the tree — so there is no shipped caller for a commit that ends before the result is
+/// constructed, and a shipped one would be the way back to constructing it outside the
+/// transaction. The tests that are about placement alone keep this shape; production cannot
+/// reach it.
+///
 /// # Errors
 ///
 /// [`Code::RenderFailed`] when a write, a rename, or the record write fails, naming the path; if
 /// the rollback itself could not restore a path, the message says which.
+#[cfg(test)]
 pub fn commit(
     project: &Dir,
     plan: Plan,
     generator_version: &str,
     template_version: &str,
 ) -> Result<Vec<(String, Action)>, CliError> {
+    commit_with(project, plan, generator_version, template_version, |_| Ok(()))
+        .map(|(done, ())| done)
+}
+
+/// [`commit`], with a fallible construction of the command's **result** performed while the
+/// rollback is still possible.
+///
+/// # Why the result is built inside the transaction
+///
+/// A command that reports provenance reads it back from the tree, because what the record now
+/// says is the truth and what this run believes it wrote is a guess. That read walks the tree
+/// scope and can fail — one in-scope source file the process cannot open is enough. Performed
+/// after `commit` returned, its failure is a **reported failure with the changes already made**:
+/// the operator sees a non-zero exit and a message about provenance, and the project has been
+/// rewritten anyway. Contract C-5 promises the opposite — the tree the plan describes, or the
+/// tree the plan found.
+///
+/// So `result` runs here, with the record's previous bytes remembered alongside every placed
+/// path: a failure in it rolls the whole transaction back through the same path a failed rename
+/// takes, and the error the caller sees is the one `result` produced. Nothing is swallowed and
+/// nothing is invented — the command fails, and the tree is as it was.
+///
+/// The boundary `RENVOR_FAIL_AT=generate-result` fails exactly here, with everything placed and
+/// the record rewritten, which is the state the guarantee is about.
+///
+/// # Errors
+///
+/// Those of [`commit`], and whatever `result` returns — after the rollback.
+pub fn commit_with<T>(
+    project: &Dir,
+    plan: Plan,
+    generator_version: &str,
+    template_version: &str,
+    result: impl FnOnce(&Dir) -> Result<T, CliError>,
+) -> Result<(Vec<(String, Action)>, T), CliError> {
     let mut files: Vec<GeneratedFile> = plan
         .record
         .as_ref()
@@ -637,10 +681,39 @@ pub fn commit(
         files,
         resources,
     });
+    // What the record held, remembered before it is replaced, so the rollback below can put it
+    // back through exactly the path every other placed file takes.
+    let previous_record = match project.read(record::PATH) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(roll_back(
+                project,
+                &placed,
+                failed(
+                    record::PATH,
+                    "could not be read before it was replaced",
+                    &error,
+                ),
+            ));
+        }
+    };
     if let Err(error) = write_atomically(project, record::PATH, text.as_bytes()) {
         return Err(roll_back(project, &placed, error));
     }
-    Ok(done)
+    placed.push(Placed {
+        path: record::PATH.to_owned(),
+        previous: previous_record,
+    });
+
+    // ── 4. RESULT ────────────────────────────────────────────────────────────────────
+    //
+    // Still inside the transaction. See this function's documentation for why.
+    let constructed = crate::inject::fail_at("generate-result").and_then(|()| result(project));
+    match constructed {
+        Ok(value) => Ok((done, value)),
+        Err(error) => Err(roll_back(project, &placed, error)),
+    }
 }
 
 #[cfg(test)]

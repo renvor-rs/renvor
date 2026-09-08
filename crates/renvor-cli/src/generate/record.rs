@@ -94,6 +94,26 @@ pub struct Toolchain {
     pub rust_version: String,
 }
 
+impl Toolchain {
+    /// What both fields say when the project declares no toolchain.
+    pub const NONE: &'static str = "none";
+
+    /// Whether this record names a pin — the question FR-012-10b's template group switches on.
+    ///
+    /// # Why the table's existence is not the answer
+    ///
+    /// `generate auth` writes `[toolchain]` on **every** tree it verifies, because the honest
+    /// record of a legacy tree is `none` twice and not an absent table. So "the table exists"
+    /// becomes true the first time a legacy project is verified, and a caller reading it as
+    /// "declares a pin" renders the pin group into that project on the **next** run — the silent
+    /// insertion FR-012-10b forbids, arriving one run late and looking like a fresh decision.
+    /// The value is the answer; the table's presence is not.
+    #[must_use]
+    pub fn declares(&self) -> bool {
+        self.pinned != Self::NONE
+    }
+}
+
 /// The operation whose five checks a `[verified_with]` table describes (FR-012-5a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
