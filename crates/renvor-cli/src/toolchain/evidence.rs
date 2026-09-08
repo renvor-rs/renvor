@@ -824,6 +824,11 @@ mod tests {
     /// `above<newline>FORGED-LINE/` refused with `evidence_capture_failed`, because the first
     /// physical line ended in a backtick that never closed. A legal directory name is not a
     /// capture failure.
+    /// Unix-shaped: the stream fixture below is quoted the way Cargo quotes on Unix, and
+    /// [`tokenize`] follows the platform's rules. The Windows shape has its own tests —
+    /// [`the_windows_shape_is_tokenised_under_its_own_rules`] for the tokeniser and
+    /// [`a_backtick_inside_a_quoted_argument_does_not_end_a_windows_command`] for the stream.
+    #[cfg(unix)]
     #[test]
     fn a_running_command_split_by_a_newline_in_a_path_is_rejoined() {
         let staging = tempfile::tempdir().expect("tempdir");
@@ -857,6 +862,11 @@ mod tests {
     /// Cargo's one `Running` line arrives as two physical lines, the first ending in that
     /// backtick. Reading only the first leaves an unclosed single quote, and the row is refused
     /// as `evidence_capture_failed` — a real generation blocked by a dependency's prose.
+    /// Unix-shaped: the stream fixture below is quoted the way Cargo quotes on Unix, and
+    /// [`tokenize`] follows the platform's rules. The Windows shape has its own tests —
+    /// [`the_windows_shape_is_tokenised_under_its_own_rules`] for the tokeniser and
+    /// [`a_backtick_inside_a_quoted_argument_does_not_end_a_windows_command`] for the stream.
+    #[cfg(unix)]
     #[test]
     fn a_backtick_inside_a_quoted_argument_does_not_end_the_command() {
         let stream = concat!(
@@ -877,6 +887,27 @@ mod tests {
 
     /// A backtick that never closes at all is still `Malformed`: the rejoin is bounded, and a
     /// stream this parser cannot account for is a capture failure rather than a silent success.
+    /// The same defect as the Unix case above, in the shape Windows Cargo prints: a value quoted
+    /// with double quotes whose own text ends the physical line with a backtick.
+    #[cfg(windows)]
+    #[test]
+    fn a_backtick_inside_a_quoted_argument_does_not_end_a_windows_command() {
+        let stream = concat!(
+            "   Compiling probe v0.1.0 (C:\\s)\n",
+            "     Running `CARGO_PKG_DESCRIPTION=\"trace data with `serde`\n",
+            "\" CARGO_PKG_NAME=probe C:\\t\\rustc.exe --crate-name probe C:\\s\\src\\main.rs`\n",
+            "    Finished `dev` profile\n",
+        );
+        let evidence = parse_check(stream, "probe", Path::new("C:\\s")).expect("one launched unit");
+        assert_eq!(evidence.units_launched, 1, "the launch is observed");
+        assert_eq!(evidence.units_fresh, 0, "nothing was fresh");
+        assert_eq!(
+            evidence.chains[0].executables.len(),
+            1,
+            "the chain is the compiler alone, with no argument mistaken for one"
+        );
+    }
+
     #[test]
     fn an_unterminated_running_command_is_still_malformed() {
         let staging = tempfile::tempdir().expect("tempdir");
@@ -889,6 +920,11 @@ mod tests {
         assert_eq!(error, EvidenceError::Malformed);
     }
 
+    /// Unix-shaped: the stream fixture below is quoted the way Cargo quotes on Unix, and
+    /// [`tokenize`] follows the platform's rules. The Windows shape has its own tests —
+    /// [`the_windows_shape_is_tokenised_under_its_own_rules`] for the tokeniser and
+    /// [`a_backtick_inside_a_quoted_argument_does_not_end_a_windows_command`] for the stream.
+    #[cfg(unix)]
     #[test]
     fn a_launched_own_unit_is_counted_with_its_chain_and_nothing_else_is_kept() {
         let staging = tempfile::tempdir().expect("tempdir");
@@ -997,6 +1033,11 @@ mod tests {
         );
     }
 
+    /// Unix-shaped: the stream fixture below is quoted the way Cargo quotes on Unix, and
+    /// [`tokenize`] follows the platform's rules. The Windows shape has its own tests —
+    /// [`the_windows_shape_is_tokenised_under_its_own_rules`] for the tokeniser and
+    /// [`a_backtick_inside_a_quoted_argument_does_not_end_a_windows_command`] for the stream.
+    #[cfg(unix)]
     #[test]
     fn a_running_line_that_does_not_tokenise_is_malformed() {
         let staging = tempfile::tempdir().expect("tempdir");

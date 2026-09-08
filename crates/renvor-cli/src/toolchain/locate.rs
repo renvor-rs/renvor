@@ -35,7 +35,11 @@ pub fn variable<'a>(sealed: &'a Sealed, name: &str) -> Option<&'a OsStr> {
     sealed
         .variables
         .iter()
-        .find(|(candidate, _)| candidate == name)
+        .find(|(candidate, _)| {
+            candidate
+                .to_str()
+                .is_some_and(|text| crate::generate::verify::same_variable_name(text, name))
+        })
         .map(|(_, value)| value.as_os_str())
 }
 

@@ -357,7 +357,11 @@ mod tests {
         let value = |name: &str| {
             child
                 .iter()
-                .find(|(candidate, _)| *candidate == name)
+                .find(|(candidate, _)| {
+                    candidate
+                        .to_str()
+                        .is_some_and(|text| crate::generate::verify::same_variable_name(text, name))
+                })
                 .map(|(_, value)| *value)
         };
         // After `env_clear`, `env_remove` deletes the entry outright rather than marking it,

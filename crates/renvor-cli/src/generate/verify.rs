@@ -290,7 +290,13 @@ impl Sealed {
             .variables
             .iter()
             .filter(|(name, _)| {
-                name != FORCED_NO_INSTALL.0 && !NEVER_PASSED.iter().any(|never| name == never)
+                let Some(text) = name.to_str() else {
+                    return true;
+                };
+                !same_variable_name(text, FORCED_NO_INSTALL.0)
+                    && !NEVER_PASSED
+                        .iter()
+                        .any(|never| same_variable_name(text, never))
             })
             .cloned()
             .collect();
@@ -323,6 +329,23 @@ pub fn sealed_command(program: &OsStr, sealed: &Sealed, cwd: &Path) -> Command {
     command
 }
 
+/// Whether two environment-variable names are the same name.
+///
+/// Case-sensitive everywhere except Windows, whose environment block is case-insensitive and
+/// which spells the search path `Path`. A case-sensitive comparison there dropped `PATH` from the
+/// seal entirely, so [`crate::toolchain::locate`] could not find a compiler and every generation
+/// refused with `tool_missing` — found by the Windows platform legs on 2026-09-08, which the
+/// macOS and Linux gates cannot see. The checks themselves had survived it only because
+/// `Command::new("cargo")` resolves its program against the *parent's* path, not the child's.
+#[must_use]
+pub fn same_variable_name(left: &str, right: &str) -> bool {
+    if cfg!(windows) {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
+}
+
 /// Seals `parent`: keeps the variables [`PASSED_THROUGH`] names, in order, and strips the
 /// `user:password@` a proxy URL may carry.
 ///
@@ -343,10 +366,16 @@ pub fn seal(parent: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString
         let Some(text_name) = name.to_str() else {
             continue;
         };
-        if !PASSED_THROUGH.contains(&text_name) {
+        if !PASSED_THROUGH
+            .iter()
+            .any(|allowed| same_variable_name(allowed, text_name))
+        {
             continue;
         }
-        if PROXY_VARIABLES.contains(&text_name) {
+        if PROXY_VARIABLES
+            .iter()
+            .any(|proxy| same_variable_name(proxy, text_name))
+        {
             let Some(text) = value.to_str() else {
                 continue;
             };
@@ -474,7 +503,10 @@ pub fn in_staging_with(
     let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = parent.collect();
     let configured_target = parent
         .iter()
-        .find(|(name, _)| name == "CARGO_TARGET_DIR")
+        .find(|(name, _)| {
+            name.to_str()
+                .is_some_and(|text| same_variable_name(text, "CARGO_TARGET_DIR"))
+        })
         .map(|(_, value)| value.clone());
     let target = target_directory(configured_target.as_deref())?;
     let sealed = seal(parent.into_iter());
@@ -950,6 +982,38 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", "),
         ]
+    }
+
+    #[test]
+    fn the_seal_keeps_the_search_path_under_the_name_the_platform_spells_it() {
+        // FOUND BY THE WINDOWS PLATFORM LEGS (2026-09-08). Windows spells the search path `Path`
+        // and matches variable names case-insensitively; a case-sensitive allow-list dropped it,
+        // so the sealed environment had no path at all. The checks survived because
+        // `Command::new("cargo")` resolves its program against the parent's path — but
+        // `toolchain::locate` reads the sealed variables, found nothing, and every generation
+        // refused with `tool_missing`. Nothing on Unix changes: there `Path` is a different
+        // variable from `PATH` and is dropped, as it always was.
+        use std::ffi::OsString;
+        let parent = [("Path", "/usr/bin"), ("SYSTEMROOT", "C:\\Windows")]
+            .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        let sealed = seal(parent.into_iter());
+        let kept: Vec<&str> = sealed
+            .variables
+            .iter()
+            .map(|(name, _)| name.to_str().expect("utf-8"))
+            .collect();
+        if cfg!(windows) {
+            assert_eq!(
+                kept,
+                ["Path", "SYSTEMROOT"],
+                "the platform's own spelling of an allowed name must pass, unchanged"
+            );
+        } else {
+            assert!(
+                kept.is_empty(),
+                "a case-insensitive match must not widen the allow-list off Windows"
+            );
+        }
     }
 
     #[test]

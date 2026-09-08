@@ -50,12 +50,14 @@ fn run(program: &str, args: &[&str], directory: &Path, target: &Path) -> Run {
         .env("CARGO_TARGET_DIR", target)
         .output()
         .unwrap_or_else(|error| panic!("`{program}` could not be run: {error}"));
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     Run {
         succeeded: output.status.success(),
         status: describe(&output.status),
-        output: combined,
+        output: format!("{stdout}{stderr}"),
+        stdout,
+        stderr,
     }
 }
 
@@ -68,7 +70,16 @@ struct Run {
     succeeded: bool,
     /// Never empty. See [`describe`].
     status: String,
+    /// Both streams, for a failure message that should show everything the command said.
     output: String,
+    /// `stdout` **alone**. C-1 reserves it for the result, so a test that parses one JSON
+    /// document must read this and not the combination: a diagnostic on `stderr` is not a second
+    /// document, and reading the two together turned the FR-012-8 resolution notice — which
+    /// prints on every leg whose toolchain is not the pin — into "trailing characters". Found by
+    /// `verify (stable)` and `platform (macos-latest, stable)` on 2026-09-08.
+    stdout: String,
+    /// `stderr` alone: every notice, warning, and progress line.
+    stderr: String,
 }
 
 /// How a child process ended, in a form that is never empty.
@@ -243,7 +254,7 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
     );
 
     let dry: serde_json::Value =
-        serde_json::from_str(dry_run.output.trim()).unwrap_or_else(|error| {
+        serde_json::from_str(dry_run.stdout.trim()).unwrap_or_else(|error| {
             panic!(
                 "stdout was not one JSON document: {error}\n{}",
                 dry_run.output
@@ -271,7 +282,31 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
         real_run.status, real_run.output
     );
     let real: serde_json::Value =
-        serde_json::from_str(real_run.output.trim()).expect("one JSON document");
+        serde_json::from_str(real_run.stdout.trim()).expect("one JSON document");
+    // C-1's stream discipline, now that a run has something to say: whatever the notices were,
+    // they are on `stderr` and `stdout` carries the one document and nothing else.
+    assert!(
+        !real_run.stdout.trim_end().contains('\n') || real_run.stdout.trim_start().starts_with('{'),
+        "stdout carries the JSON result and nothing else"
+    );
+    // Whichever notices this leg produced — the resolution notice prints only where the toolchain
+    // is not the project's pin, so a leg running on the pin produces none — each is on `stderr`
+    // and on no other stream.
+    for notice in [
+        "toolchain resolved before verification",
+        "verification launched",
+        "verification reused cached artifacts",
+    ] {
+        assert!(
+            !real_run.stdout.contains(notice),
+            "a diagnostic notice reached stdout, which C-1 reserves for the result"
+        );
+        assert_eq!(
+            real_run.output.contains(notice),
+            real_run.stderr.contains(notice),
+            "a notice appeared somewhere other than stderr"
+        );
+    }
 
     // THE RECORD'S DIGEST AND SIZE ARE NOT COMPARED, for the reason
     // `generating_the_same_configuration_twice_produces_identical_trees` states above: since
