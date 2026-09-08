@@ -41,9 +41,37 @@
 //!
 //! A stream without a `Finished` line is truncated; a `Compiling`/`Checking` of the own package
 //! with no own `Running` line after it is unaccounted; a `Running` command that does not tokenise
-//! is malformed; a stream in which the own package never appears is unaccounted. Each is an
+//! is malformed; a stream in which the own package never appears is unaccounted; a stream that
+//! reports the own package both `Fresh` and launched is contradictory. Each is an
 //! [`EvidenceError`], which the caller reports as `project_verification_failed` with
 //! `reason = evidence_capture_failed` — never as a cached run.
+//!
+//! # What this accounting cannot establish, and why
+//!
+//! Contract C-5 1.2.0 says *"every unit of the project's own package(s) must be accounted for by
+//! a `Running` line or a positive `Fresh` report; a missing line … is `evidence_capture_failed`"*.
+//! **Cargo's `-vv` output cannot support that sentence, and the ordinary partially-fresh run is
+//! already outside it.** Measured 2026-09-08 on cargo 1.97.1, for `build`, `test`, and
+//! `clippy --all-targets` alike: a package with one dirty unit and one reused unit prints
+//! `Compiling`/`Checking`, the dirty unit's `Running` line, and **nothing whatsoever** for the
+//! reused unit. `Fresh <pkg>` is all-or-nothing — it appears only when every unit of the package
+//! was reused, and never in the same stream as that package's announcement — and no line anywhere
+//! carries a unit count or a total.
+//!
+//! Two consequences, both stated rather than worked around:
+//!
+//! 1. A reused unit in a partially-fresh package is accounted for by neither a `Running` line nor
+//!    a `Fresh` report. The contract's sentence describes a state Cargo does not report.
+//! 2. Removing one of several own `Running` lines produces a stream that is, line for line, the
+//!    shape of a legitimate partial rebuild. No parser of this output can tell them apart.
+//!
+//! So this module establishes the strongest accounting the evidence *does* support — an announced
+//! package must launch, a package that appears nowhere is refused, a truncated or malformed stream
+//! is refused, and a package reported both reused and launched is refused — and claims nothing
+//! beyond it. The control that measures the limit rather than asserting past it is
+//! `one_of_several_own_launches_may_go_missing_and_this_names_the_limit`. **The contract text is
+//! not narrowed here**: whether C-5's sentence is corrected, or the guarantee is bought with
+//! evidence Cargo's output does not carry, is a maintainer's decision and is reported as one.
 //!
 //! # The queries
 //!
@@ -151,6 +179,14 @@ pub enum EvidenceError {
     /// identities. One identity per check is representable; a disagreement is not, and picking
     /// one would be a claim about units it was not queried for.
     Disagreement,
+    /// One check's stream reports the own package **both** `Fresh` and launched. Cargo emits
+    /// `Fresh <pkg>` only when every unit of that package was reused, and announces
+    /// `Compiling`/`Checking <pkg>` only when at least one was not — so the two never appear for
+    /// one package in one stream (measured 2026-09-08 on cargo 1.97.1, for `build`, `test`, and
+    /// `clippy --all-targets`, including the partially-fresh case of each). A stream that shows
+    /// both is not a stream this parser can account for, and calling it `mixed` would report a
+    /// state Cargo never described.
+    Contradictory,
 }
 
 impl EvidenceError {
@@ -163,6 +199,7 @@ impl EvidenceError {
             Self::Malformed => "malformed",
             Self::NoDriver => "no_driver",
             Self::Disagreement => "disagreement",
+            Self::Contradictory => "contradictory",
         }
     }
 }
@@ -180,6 +217,10 @@ impl fmt::Display for EvidenceError {
             Self::Disagreement => {
                 "the executables the check's units were launched with answered with different \
                  identities, and one identity per check is all the record can represent"
+            }
+            Self::Contradictory => {
+                "one check reports the project's own package both reused and launched, which is \
+                 not a state Cargo describes"
             }
         })
     }
@@ -317,6 +358,13 @@ pub fn parse_check(
     }
     if announced || (evidence.units_launched == 0 && evidence.units_fresh == 0) {
         return Err(EvidenceError::Unaccounted);
+    }
+    // `Fresh` is all-or-nothing per package, and the announcement is its complement, so one
+    // check's stream says one of the two about the own package and never both. See
+    // [`EvidenceError::Contradictory`] for the measurement, and the module header for what this
+    // accounting can and cannot establish.
+    if evidence.units_launched > 0 && evidence.units_fresh > 0 {
+        return Err(EvidenceError::Contradictory);
     }
     Ok(evidence)
 }
@@ -1254,6 +1302,68 @@ mod tests {
         assert!(
             kept.contains("Running unittests"),
             "a status line that is not a command stays"
+        );
+    }
+
+    /// What the accounting establishes, and what it cannot — the control C-5's missing-unit
+    /// sentence asks for, with the answer it actually produces.
+    ///
+    /// **(a)** Removing exactly one of several own launches is **not** detectable, and the
+    /// measurement says why: a package with one dirty unit and one reused unit prints
+    /// `Compiling`/`Checking`, the dirty unit's `Running` line, and **nothing at all** for the
+    /// reused one — no `Fresh`, no count, no total (measured 2026-09-08 on cargo 1.97.1 for
+    /// `build`, `test`, and `clippy --all-targets`). A stream with a `Running` line removed is
+    /// therefore indistinguishable, line for line, from a legitimate partially-fresh run. This
+    /// asserts the limit rather than a guarantee, so that a later reading of C-5's sentence finds
+    /// the measurement instead of an assumption.
+    ///
+    /// **(b)** What *is* established, from the same evidence: an announced own package must
+    /// launch, an own package that appears nowhere is refused, a stream without `Finished` is
+    /// refused, and — new in this round — a stream claiming the own package both `Fresh` and
+    /// launched is refused rather than recorded as `mixed`.
+    #[test]
+    fn one_of_several_own_launches_may_go_missing_and_this_names_the_limit() {
+        let launch = |unit: &str| {
+            format!(
+                "     Running `CARGO_PKG_NAME=probe /t/bin/rustc --crate-name {unit} src/lib.rs`\n"
+            )
+        };
+        let stream = |units: &[&str]| {
+            format!(
+                "   Compiling probe v0.1.0 (/x)\n{}    Finished `dev` profile\n",
+                units.iter().map(|unit| launch(unit)).collect::<String>()
+            )
+        };
+
+        let whole = parse_check(&stream(&["probe", "probe_bin"]), "probe", Path::new("/x"))
+            .expect("the whole stream is evidence");
+        assert_eq!(whole.units_launched, 2);
+
+        // (a) THE LIMIT. One launch removed, and the stream still parses — because that is the
+        // shape Cargo prints when the unit was reused rather than removed.
+        let tampered = parse_check(&stream(&["probe"]), "probe", Path::new("/x"))
+            .expect("a stream with one launch removed is indistinguishable from a partial rebuild");
+        assert_eq!(
+            tampered.units_launched, 1,
+            "the count is what the stream says, and the stream cannot say what is missing"
+        );
+
+        // (b) WHAT IS ESTABLISHED. Every own launch removed, with the announcement left: refused.
+        assert_eq!(
+            parse_check(&stream(&[]), "probe", Path::new("/x")),
+            Err(EvidenceError::Unaccounted),
+            "an announced package with no launch at all passed"
+        );
+        // And a stream claiming both states at once: refused, never recorded as `mixed`.
+        let both = format!(
+            "   Compiling probe v0.1.0 (/x)\n{}       Fresh probe v0.1.0 (/x)\n    Finished `dev` \
+             profile\n",
+            launch("probe")
+        );
+        assert_eq!(
+            parse_check(&both, "probe", Path::new("/x")),
+            Err(EvidenceError::Contradictory),
+            "a package reported both reused and launched was accepted"
         );
     }
 
