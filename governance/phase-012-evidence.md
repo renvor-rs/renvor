@@ -256,6 +256,14 @@ the location, because a package name and a version cannot contain one. Control:
 `a_project_directory_whose_name_carries_brackets_is_still_the_project`, which asserts both halves,
 since one fails loudly and the other fails by passing.
 
+**The same defect, one trigger over.** The location reader also required the physical line to END
+with `)`, and a directory name containing a **newline** splits the status line so that it does not —
+`above<newline>FORGED-LINE` is the shape `tests/redaction.rs` already generates into, so this is a
+directory the project promises to survive rather than a hypothesis. Same origin, same two silent
+consequences. Fixed the way the launch side already was: a status remainder that opens a bracket
+without closing it pulls following lines until it does, bounded as `rejoin` is. Control:
+`a_project_directory_whose_name_carries_a_newline_is_still_the_project`.
+
 And the bound: the location is now **necessary** for a status line but remains only **sufficient**
 for a `Running` line, where `launch` accepts `CARGO_PKG_NAME` alone. A same-named dependency's
 launches are therefore still counted as the project's own and its chain can still reach the record —

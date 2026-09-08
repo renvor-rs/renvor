@@ -359,6 +359,10 @@ pub fn parse_check(
                 announced = false;
             }
         } else if let Some(rest) = line.strip_prefix("Fresh ") {
+            // A path may carry a newline, so a status line may be two physical lines — the same
+            // cause `rejoin` handles for a launch command.
+            let rejoined = rejoin_status(rest, &mut lines);
+            let rest = rejoined.as_deref().unwrap_or(rest);
             if own_status_line(rest, own_package, &staging) {
                 evidence.units_fresh += 1;
             }
@@ -366,6 +370,8 @@ pub fn parse_check(
             .strip_prefix("Compiling ")
             .or_else(|| line.strip_prefix("Checking "))
         {
+            let rejoined = rejoin_status(rest, &mut lines);
+            let rest = rejoined.as_deref().unwrap_or(rest);
             if own_status_line(rest, own_package, &staging) {
                 announced = true;
                 announced_ever = true;
@@ -799,6 +805,38 @@ fn rejoin<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> Option<S
     Some(joined)
 }
 
+/// Rejoins a `Fresh`/`Compiling`/`Checking` remainder whose parenthesised path was split across
+/// physical lines by a newline inside it.
+///
+/// `None` when the remainder needs no rejoining — no parenthetical at all (a registry dependency),
+/// or one already closed — which is every ordinary stream; the caller then keeps the line it has.
+///
+/// # Why a status line needs this too
+///
+/// A directory name may contain a newline, and Cargo prints the path raw, so the status line
+/// arrives in two pieces and the second carries the `)`. [`rejoin`] has done this for `Running`
+/// commands since the census found the shape; the location test added to status lines needs the
+/// same treatment, and without it a cached check in such a directory loses its only own line and
+/// is refused. `renvor`'s own `tests/redaction.rs` generates into a directory named
+/// `above<newline>FORGED-LINE`, so this is a shape the project already promises to survive.
+///
+/// The continuations are NOT trimmed: they are the middle of a path, where a space is data.
+fn rejoin_status<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> Option<String> {
+    if !rest.contains('(') || rest.trim_end().ends_with(')') {
+        return None;
+    }
+    let mut joined = rest.to_owned();
+    for _ in 0..MAX_REJOINED_LINES {
+        let Some(next) = lines.next() else { break };
+        joined.push('\n');
+        joined.push_str(without_sgr(next).as_ref());
+        if joined.trim_end().ends_with(')') {
+            break;
+        }
+    }
+    Some(joined)
+}
+
 /// Whether a backtick-opened remainder is a complete, tokenisable command.
 fn whole(rest: &str) -> bool {
     rest.len() > 1 && rest.ends_with('`') && tokenize(&rest[1..rest.len() - 1]).is_some()
@@ -1160,15 +1198,41 @@ mod tests {
         assert_eq!(evidence.chains.len(), 2, "two chains");
     }
 
-    /// A `Fresh` line is the project's own when it names the package **and the directory the
-    /// check ran in** — not when it merely shares the name.
+    /// A project directory whose NAME CONTAINS A NEWLINE is still the project's own.
     ///
-    /// The dependency cases are the point. `serde` is separated by its name, which any reading
-    /// manages. The second is not: a project may depend on a differently-versioned crate **of its
-    /// own name** (`inner = { path = "…", package = "probe" }`), and Cargo then prints `Fresh probe
-    /// v0.2.0 (…/inner)` beside `Compiling probe v0.1.0 (…/outer)` — measured on cargo 1.97.1. A
-    /// name-only reading counted both against the project, which inflated the counts and, once the
-    /// contradiction check existed, refused an ordinary build outright.
+    /// The shape `tests/redaction.rs` already generates into — `above<newline>FORGED-LINE` — so
+    /// this is not a hypothesis about hostile input but a directory this project promises to
+    /// survive. Cargo prints the path raw, so the status line arrives as two physical lines with
+    /// the closing bracket on the second, and a location test that reads one line finds no
+    /// bracket, matches nothing, and drops the own line. Same consequences as the bracketed name:
+    /// a cached check is refused, and every other run silently loses its announcement.
+    ///
+    /// `rejoin` has done this for launch commands since the census found the shape; this is the
+    /// status line's half of it.
+    #[test]
+    fn a_project_directory_whose_name_carries_a_newline_is_still_the_project() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let staging = root.path().join("above\nFORGED-LINE");
+        std::fs::create_dir(&staging).expect("a newline is a legal directory name");
+        let at = staging.display();
+
+        // (a) Cached: the one own line spans two physical lines and must still count.
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+        let evidence = parse_check(&cached, "probe", &staging)
+            .expect("a cached check in a newline-bearing directory is ordinary evidence");
+        assert_eq!(evidence.units_fresh, 1);
+
+        // (b) The announcement still announces, so an announced package with no launch is refused.
+        let announced_only =
+            format!("   Compiling probe v0.1.0 ({at})\n    Finished `dev` profile in 0.4s\n");
+        assert_eq!(
+            parse_check(&announced_only, "probe", &staging),
+            Err(EvidenceError::Unaccounted),
+            "the split announcement was not recognised, so its guarantee was switched off"
+        );
+    }
+
     /// A project directory whose NAME CONTAINS PARENTHESES is still the project's own.
     ///
     /// `Project (copy)` and `New Folder (2)` are ordinary directory names, and Cargo prints the
@@ -1243,6 +1307,15 @@ mod tests {
         assert_eq!(evidence.units_fresh, 1);
     }
 
+    /// A `Fresh` line is the project's own when it names the package **and the directory the
+    /// check ran in** — not when it merely shares the name.
+    ///
+    /// The dependency cases are the point. `serde` is separated by its name, which any reading
+    /// manages. The second is not: a project may depend on a differently-versioned crate **of its
+    /// own name** (`inner = { path = "…", package = "probe" }`), and Cargo then prints `Fresh probe
+    /// v0.2.0 (…/inner)` beside `Compiling probe v0.1.0 (…/outer)` — measured on cargo 1.97.1. A
+    /// name-only reading counted both against the project, which inflated the counts and, once the
+    /// contradiction check existed, refused an ordinary build outright.
     #[test]
     fn a_fresh_own_package_is_counted_and_a_fresh_dependency_is_not() {
         let staging = tempfile::tempdir().expect("tempdir");
