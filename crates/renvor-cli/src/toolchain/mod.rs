@@ -281,7 +281,7 @@ pub fn unreadable(check: &str) -> CliError {
 /// not looked up here and are not `PATH` lookups at all — they are the paths **Cargo's own
 /// `Running` line named**, queried after Cargo has already executed them in that same directory,
 /// so the toolchain they would resolve is the one that has just built and no absent toolchain is
-/// nameable. What runs them is stated in [`super::evidence`]; that they are within the seal's
+/// nameable. What runs them is stated in [`evidence`]; that they are within the seal's
 /// declared limits rather than outside them is the audit's answer, not an omission.
 ///
 /// The [`Classification`] it returns carries what [`fn@resolve`] needs: the located rustup's path

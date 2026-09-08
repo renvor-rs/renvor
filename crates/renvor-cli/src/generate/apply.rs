@@ -21,7 +21,8 @@
 //! from the tree it found — and a dry run classifies exactly as a real run does.
 //!
 //! Writes are staged as temporary siblings first and renamed into place second, after the whole
-//! plan has passed; a failure at either point leaves the project as it was found ([`commit`]).
+//! plan has passed; a failure at either point leaves the project as it was found
+//! ([`commit_with`]).
 //! The record is rewritten last, the same way, with the new digests — over the file with its
 //! marked block emptied for the two marked files ([`provenance_digest`]).
 
@@ -524,8 +525,9 @@ pub fn commit(
     .map(|(done, ())| done)
 }
 
-/// [`commit`], with a fallible construction of the command's **result** performed while the
-/// rollback is still possible.
+/// The transaction, with a fallible construction of the command's **result** performed while
+/// the rollback is still possible. The shipped entry point: every command that writes goes
+/// through this one.
 ///
 /// # Why the result is built inside the transaction
 ///
@@ -547,7 +549,8 @@ pub fn commit(
 ///
 /// # Errors
 ///
-/// Those of [`commit`], and whatever `result` returns — after the rollback.
+/// [`Code::RenderFailed`] when a write, a rename, or the record write fails, naming the path;
+/// and whatever `result` returns — after the rollback.
 pub fn commit_with<T>(
     project: &Dir,
     plan: Plan,

@@ -855,8 +855,20 @@ mod tests {
         // POSITIVE CONTROL. Without it, a verifier that rejected everything would satisfy every
         // failure test below and make `renvor new` impossible to use.
         let dir = project("fn main() {}\n");
-        let verified =
-            in_staging(dir.path(), &silent(), Smoke::Exits).expect("a correct project must verify");
+        // THE ENVIRONMENT IS SHAPED, not read. `CARGO_TARGET_DIR` is in the seal's pass-through
+        // (FR-007, deliberately: an operator who sets it gets it honoured), so a shell that has
+        // one hands these checks a SHARED build directory — and the observation assertion below,
+        // whose whole premise is a private empty target, then reports `mixed` and blames the
+        // verifier. Measured on 2026-09-08 while running this suite under a second toolchain with
+        // a shared target directory set. `environment()` removes the variable, which makes the
+        // premise true by construction rather than true of whoever's shell ran the suite.
+        let verified = in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            environment().into_iter(),
+        )
+        .expect("a correct project must verify");
         // Phase 012 (FR-012-7d (h), the trivial case (vii)): a private, empty target launches
         // every unit, so the observation is `launched`, the launched compiler and the clippy
         // driver were each asked who they were, and nothing was cached.
