@@ -824,9 +824,24 @@ fn package_of(rest: &str) -> &str {
 ///
 /// Cargo prints `<name> v<version> (<path>)` for a package it reads from a directory, and
 /// `<name> v<version>` — no parenthetical — for one it reads from a registry.
+///
+/// # The FIRST parenthesis, not the last
+///
+/// A directory name may contain parentheses — `Project (copy)`, `New Folder (2)` — and Cargo
+/// prints the path raw, brackets and all. Searching backwards takes the innermost `(` and returns
+/// a fragment: `…/paren (dir) test` comes back as `dir) test`, which matches no staging directory.
+/// The consequences were both silent and both bad: a fully cached check lost its only own line and
+/// was refused as `evidence_capture_failed`, and every other run lost its announcement, which
+/// switches off "an announced package must launch" with no symptom at all.
+///
+/// Searching forwards is correct because of what precedes the path: a package name and a version,
+/// neither of which can contain `(`. So the first `(` opens the location and everything to the
+/// closing bracket is the path, brackets included. (Measured 2026-09-08 in a directory named
+/// `paren (dir) test`; found by the independent validation of this round, against the backwards
+/// form this function shipped with.)
 fn location_of(rest: &str) -> Option<&str> {
     let inner = rest.trim_end().strip_suffix(')')?;
-    let open = inner.rfind('(')?;
+    let open = inner.find('(')?;
     Some(&inner[open + 1..])
 }
 
@@ -849,10 +864,22 @@ fn location_of(rest: &str) -> Option<&str> {
 /// contradiction check existed it turned an ordinary build into `evidence_capture_failed`
 /// (measured 2026-09-08 on cargo 1.97.1; found by the independent validation of this round).
 ///
-/// The location is what separates them, and it is the same rule [`launch`] already applies to a
-/// `Running` command through `CARGO_MANIFEST_DIR`: the project being verified is the one whose
-/// parenthetical is the directory the check ran in. A registry dependency has no parenthetical at
-/// all, so it cannot match by accident.
+/// The location is what separates them: the project being verified is the one whose parenthetical
+/// is the directory the check ran in. A registry dependency has no parenthetical at all, so it
+/// cannot match by accident.
+///
+/// # The same test as [`launch`]'s, applied the other way round
+///
+/// [`launch`] also compares the staging directory — against a `Running` command's
+/// `CARGO_MANIFEST_DIR` — but as one arm of a **disjunction**, where the location is *sufficient*
+/// and `CARGO_PKG_NAME` alone is enough on its own. Here the location is *necessary*. The
+/// difference is not cosmetic and is stated because it bounds what this fix achieved: a status
+/// line for a same-named dependency is now excluded, while that dependency's `Running` lines are
+/// still counted as the project's own, because they carry `CARGO_PKG_NAME=<own>`. Its unit counts
+/// and its chain can therefore still reach the record. That is a **record that is wrong**, not a
+/// run that fails — the contradiction check no longer reads the launch count — and it predates
+/// this round; requiring the location on the launch side too is a change with a wider blast
+/// radius than this correction round opened.
 fn own_status_line(rest: &str, own_package: &str, staging: &Location) -> bool {
     package_of(rest) == own_package && location_of(rest).is_some_and(|at| staging.matches(at))
 }
@@ -1142,6 +1169,80 @@ mod tests {
     /// v0.2.0 (…/inner)` beside `Compiling probe v0.1.0 (…/outer)` — measured on cargo 1.97.1. A
     /// name-only reading counted both against the project, which inflated the counts and, once the
     /// contradiction check existed, refused an ordinary build outright.
+    /// A project directory whose NAME CONTAINS PARENTHESES is still the project's own.
+    ///
+    /// `Project (copy)` and `New Folder (2)` are ordinary directory names, and Cargo prints the
+    /// path raw. Reading the location backwards from the closing bracket returns `dir) test` for
+    /// `…/paren (dir) test`, which matches nothing — and the damage is silent both ways: a fully
+    /// cached check loses its only own line and is refused, and every other run quietly loses its
+    /// announcement, which is what "an announced package must launch" rests on.
+    ///
+    /// Both halves are asserted here because they fail differently: the cached stream fails loudly
+    /// as `Unaccounted`, and the announced one fails by **passing** where it should refuse.
+    #[test]
+    fn a_project_directory_whose_name_carries_brackets_is_still_the_project() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let staging = root.path().join("paren (dir) test");
+        std::fs::create_dir(&staging).expect("a bracketed directory is an ordinary directory");
+        let at = staging.display();
+
+        // (a) The cached stream: its one own line must count, or the check is refused.
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+        let evidence = parse_check(&cached, "probe", &staging)
+            .expect("a cached check in a bracketed directory is ordinary evidence");
+        assert_eq!(evidence.units_fresh, 1);
+
+        // (b) The announcement: it must still be an announcement, so an announced package with no
+        // own launch is still refused. Read backwards, this stream passes.
+        let announced_only =
+            format!("   Compiling probe v0.1.0 ({at})\n    Finished `dev` profile in 0.4s\n");
+        assert_eq!(
+            parse_check(&announced_only, "probe", &staging),
+            Err(EvidenceError::Unaccounted),
+            "the announcement was not recognised, so the guarantee it carries was switched off"
+        );
+    }
+
+    /// The own status line counts when Cargo spells the staging directory **differently from the
+    /// caller** — which it does on every macOS run.
+    ///
+    /// Cargo prints the canonical path in the parenthetical; `std::env::temp_dir()` hands the
+    /// generator `/var/folders/…` and Cargo answers `/private/var/folders/…` (both measured
+    /// 2026-09-08). `Location::matches` resolves the candidate before comparing, so the two meet.
+    ///
+    /// # Why this is asserted through `Fresh` and not through `Compiling`
+    ///
+    /// A missed status line is **silent**: an unmatched `Compiling` leaves `announced_ever` false,
+    /// which discharges nothing and refuses nothing. And it cannot be observed through the launch
+    /// count either — `launch` recognises an own unit by `CARGO_PKG_NAME` alone, so a `Running`
+    /// line counts whatever its paths say. `units_fresh` is the one field a status-line match
+    /// moves on its own, so `Fresh` is what this asks about. (The first version of this test used
+    /// `Compiling` plus a launch, and passed with the resolution deliberately removed.)
+    #[test]
+    fn an_own_status_line_counts_when_cargo_spells_the_directory_canonically() {
+        let staging = tempfile::tempdir().expect("tempdir");
+        let raw = staging.path().to_path_buf();
+        let canonical = raw.canonicalize().expect("the staging directory resolves");
+        let cached = |at: &std::path::Path| {
+            format!(
+                "       Fresh probe v0.1.0 ({})\n    Finished `dev` profile in 0.0s\n",
+                at.display()
+            )
+        };
+
+        // The spelling Cargo actually uses. Unmatched, this is `Unaccounted` — the own package
+        // would appear nowhere — so the `expect` is the assertion.
+        let evidence = parse_check(&cached(&canonical), "probe", &raw)
+            .expect("the canonical spelling is the project's own");
+        assert_eq!(evidence.units_fresh, 1);
+
+        // And the caller's own spelling, whether or not it differs from the above.
+        let evidence = parse_check(&cached(&raw), "probe", &raw)
+            .expect("the caller's spelling is the project's own");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
     #[test]
     fn a_fresh_own_package_is_counted_and_a_fresh_dependency_is_not() {
         let staging = tempfile::tempdir().expect("tempdir");

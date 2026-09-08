@@ -246,6 +246,23 @@ when its parenthetical is the directory the check ran in — the rule `launch` a
 cannot match by accident. The existing control could not have caught this: it separated its
 dependency by giving it a *different* name.
 
+**A third correction, and the bound on the second.** The location reader took the **last** opening
+parenthesis, so a project directory whose name contains one — `Project (copy)`, `New Folder (2)` —
+had its path truncated to a fragment matching nothing. Both consequences were silent: a fully cached
+check lost its only own line and was refused as `evidence_capture_failed` (a U-2 break caused by a
+directory name), and every other run lost its announcement, switching off "an announced package must
+launch" with no symptom. Introduced by the location fix above and fixed with it: the first `(` opens
+the location, because a package name and a version cannot contain one. Control:
+`a_project_directory_whose_name_carries_brackets_is_still_the_project`, which asserts both halves,
+since one fails loudly and the other fails by passing.
+
+And the bound: the location is now **necessary** for a status line but remains only **sufficient**
+for a `Running` line, where `launch` accepts `CARGO_PKG_NAME` alone. A same-named dependency's
+launches are therefore still counted as the project's own and its chain can still reach the record —
+a record that is wrong rather than a run that fails, since the contradiction check no longer reads
+the launch count. That conflation predates this round and requiring the location on the launch side
+has a wider blast radius than a correction round should take; it is left for the maintainer.
+
 **A related limitation, surfaced by the same counter-example and NOT fixed here.** In a lib-bearing
 project the doctest unit's launch chain ends in `rustdoc`, and FR-012-7e's identity query parses
 `rustc -vV`'s shape — so `rustdoc -vV` fails the grammar and the run is
