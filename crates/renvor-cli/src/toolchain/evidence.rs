@@ -1436,7 +1436,10 @@ mod tests {
             !kept.contains("renvor_canary_backtick"),
             "a backtick inside a quoted argument ended the command early and published the rest"
         );
-        assert!(kept.contains("warning: unused"), "the diagnostic was dropped");
+        assert!(
+            kept.contains("warning: unused"),
+            "the diagnostic was dropped"
+        );
 
         // (c) A command the stream ends inside: nothing closes it, so nothing of it is kept.
         let truncated = "     Running `SECRET='renvor_canary_truncated_e5f6\n";

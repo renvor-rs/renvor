@@ -518,8 +518,10 @@ pub fn commit(
     generator_version: &str,
     template_version: &str,
 ) -> Result<Vec<(String, Action)>, CliError> {
-    commit_with(project, plan, generator_version, template_version, |_| Ok(()))
-        .map(|(done, ())| done)
+    commit_with(project, plan, generator_version, template_version, |_| {
+        Ok(())
+    })
+    .map(|(done, ())| done)
 }
 
 /// [`commit`], with a fallible construction of the command's **result** performed while the

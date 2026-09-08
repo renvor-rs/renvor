@@ -39,17 +39,20 @@
 //!
 //! - **C-sel-4** (`c_sel_4_the_environment_beats_the_file`, = AC-012-6) and **C-sel-1**
 //!   (`c_sel_1_a_closer_toolchain_file_beats_a_farther_directory_override`) run.
-//! - **C-sel-2** is present as an `#[ignore]`d test that explains itself. The brief's form of it
-//!   needs `rustup override set` on the project directory, which writes a **persistent entry into
-//!   the operator's `~/.rustup/settings.toml`** — a change to the machine the suite runs on, which
-//!   this suite does not make. The consequence is stated rather than hidden: the
-//!   `directory_override` attribution and the notice it produces are **unproven** by this file.
-//! - **C-sel-3** is not here. It needs `renvor generate auth` on a legacy tree, which costs a
-//!   framework checkout and a full starter build; it is deferred to the starter-matrix leg
-//!   elsewhere in this batch, where a built starter already exists. Its negative half — the
-//!   divergence check itself — is proved as a unit test
-//!   (`a_divergent_scratch_resolution_is_refused`, in `src/commands/generate.rs`), and the
-//!   sibling placement FR-012-13 requires is proved by
+//! - **C-sel-2** (`c_sel_2_a_directory_override_on_the_project_beats_its_file`) runs, against a
+//!   **real** directory override. A directory override has no on-disk form inside the directory it
+//!   governs — it is a row in `$RUSTUP_HOME/settings.toml` — so the question was never whether one
+//!   could be created without writing a persistent entry, but **whose file** the entry goes in.
+//!   [`PrivateRustup`] answers it: a temporary `RUSTUP_HOME` whose `toolchains` is a symlink to the
+//!   real one, so the override is written there, the already-installed toolchains are readable,
+//!   nothing is installed, and the operator's `~/.rustup/settings.toml` is never opened — which
+//!   that control re-reads and asserts. Unix only, for the symlink.
+//! - **C-sel-3** is not here. It needs `renvor generate auth` to run its checks on a legacy tree,
+//!   which costs a framework checkout and a full starter build; it lives in `starter_matrix.rs`,
+//!   where a built starter already exists. Its negative half — the divergence check itself — is
+//!   proved as a unit test (`a_divergent_scratch_resolution_is_refused`, in
+//!   `src/commands/generate.rs`) and, on a real cause, by C-sel-2 above; the sibling placement
+//!   FR-012-13 requires is proved by
 //!   `a_scratch_copy_is_a_sibling_of_the_project_with_the_residue_name` beside it.
 //!
 //! # What the controls select *against*, and why it is not always the control toolchain
@@ -105,6 +108,9 @@ enum Missing {
     LegUnusable,
     /// The control is the pinned release, and so is the leg's own: nothing left to select against.
     NeitherDistinct,
+    /// A rustup home of this test's own could not be made, or `rustup override set` declined to
+    /// write into it — so the control has no override to measure and refuses to invent one.
+    NoPrivateRustup,
 }
 
 impl Missing {
@@ -123,6 +129,10 @@ impl Missing {
             Self::NeitherDistinct => {
                 "neither the control toolchain nor the leg's own differs in release from the \
                  release the project pins"
+            }
+            Self::NoPrivateRustup => {
+                "a private rustup home with a directory override could not be created, and the \
+                 operator's own rustup settings are never written to"
             }
         }
     }
@@ -154,6 +164,9 @@ fn unavailable<T>(test: &str, missing: Missing) -> Option<T> {
             ),
             Missing::NeitherDistinct => panic!(
                 "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but neither the control toolchain nor the leg's own differs in release from the release the project pins"
+            ),
+            Missing::NoPrivateRustup => panic!(
+                "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but a private rustup home with a directory override could not be created"
             ),
         }
     }
@@ -530,11 +543,10 @@ fn c_sel_4_the_environment_beats_the_file() {
 ///
 /// **This test proves the proximity half.** The farther selection is written as a
 /// `rust-toolchain.toml` in an ancestor directory rather than as a directory override, because
-/// `rustup override set` writes a persistent entry into the operator's rustup settings and this
-/// suite does not change the machine it runs on. **It does not prove the directory-override half**
-/// — that a `directory_override` entry exists, is discovered by walking up, and is what
-/// `selected_by = "directory_override"` reports. That half is `c_sel_2` below, which is deferred
-/// for the same reason and says so.
+/// a toolchain file needs no rustup state at all, and the proximity rule is the half this control
+/// is about. **It does not prove the directory-override half** — that a `directory_override` entry
+/// exists, is discovered, and is what `selected_by = "directory_override"` reports. That half is
+/// `c_sel_2` below, which proves it against a real override written into a rustup home of its own.
 ///
 /// The ancestor file is proved live before the project is generated, by asking what that directory
 /// alone selects. Without that step a passing result would be indistinguishable from an ancestor
@@ -610,34 +622,300 @@ fn c_sel_1_a_closer_toolchain_file_beats_a_farther_directory_override() {
     );
 }
 
-/// **C-sel-2 — NOT RUN, and this is what it would have proved.**
+// ───────────────────────────────────────────────── private rustup state
+
+/// A rustup home of this test's own: real toolchains, a settings file nobody else reads.
 ///
-/// The brief's control sets a directory override on the project directory itself with a pin
-/// already in it, and asserts rustup's order puts the override first: the control's release
-/// resolved, `selected_by = "directory_override"`, and the FR-012-8 (1) resolution notice with
-/// `(directory_override)`.
+/// # Why the operator's settings are never touched
 ///
-/// It is not run because the only way to create a directory override is `rustup override set`,
-/// which writes a **persistent entry into `~/.rustup/settings.toml`** — the operator's own rustup
-/// configuration, on the machine the suite happens to be running on. That entry outlives the test,
-/// outlives the temporary directory it names, and would silently change how every later command in
-/// that directory resolves. This suite reads the machine; it does not edit it. There is no
-/// non-mutating equivalent: unlike a toolchain file, a directory override has no on-disk form
-/// inside the directory it governs.
+/// A directory override has no on-disk form inside the directory it governs — it is a row in
+/// `$RUSTUP_HOME/settings.toml`, keyed by absolute path. So creating one *does* write a
+/// persistent entry, and the question is only **whose file** it is written to. `RUSTUP_HOME` is
+/// the whole answer: pointed at a temporary directory, `rustup override set` writes there and the
+/// operator's `~/.rustup/settings.toml` is not opened. The temporary directory goes away with the
+/// test, and with it the row.
 ///
-/// What that costs is stated rather than hidden: **`directory_override` is unproven end to end.**
-/// The attribution string rustup prints for it is pinned by a unit test of the grammar
-/// (`parse_active_toolchain_attribution`, `src/toolchain/grammar.rs`), and the notice it produces
-/// is pinned by the table test in `src/toolchain/notice.rs` — but that the two meet, on a real
-/// override, in a real generation, is not something this file establishes. Running it by hand,
-/// with `--ignored`, is not enough either: it would still have to create the override, which is
-/// the thing being avoided.
+/// # Why the toolchains are a symlink and not a copy
+///
+/// rustup reads installed toolchains from `$RUSTUP_HOME/toolchains`. Copying them would be
+/// gigabytes and would be a toolchain installation by another name, which no authorisation covers.
+/// A symlink to the real directory makes the already-installed toolchains readable from the
+/// private home and installs nothing: `RUSTUP_AUTO_INSTALL=0` is in force for everything the
+/// generator runs, and every name used below is checked as installed, on the filesystem, first.
+///
+/// Unix only: the symlink is what makes this work, and `std`'s Windows equivalent needs a
+/// privilege an ordinary CI account does not have. The Windows legs of the matrix do not set
+/// `RENVOR_TEST_CONTROL_TOOLCHAIN`, so no control here runs there either way.
+#[cfg(unix)]
+struct PrivateRustup {
+    home: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl PrivateRustup {
+    /// A private home whose `toolchains` is the real one, or `None` when there is nothing to
+    /// point at.
+    fn create() -> Option<Self> {
+        let real = toolchains_directory()?;
+        if !real.is_dir() {
+            return None;
+        }
+        let home = tempfile::tempdir().ok()?;
+        std::os::unix::fs::symlink(&real, home.path().join("toolchains")).ok()?;
+        // `version = "12"` is the settings schema rustup 1.29 writes; the default toolchain is
+        // named so that a directory with no override and no file still resolves something.
+        let default = leg_toolchain_name().unwrap_or_else(|| "stable".to_owned());
+        std::fs::write(
+            home.path().join("settings.toml"),
+            format!(
+                "version = \"12\"\ndefault_toolchain = \"{default}\"\nprofile = \
+                 \"minimal\"\n\n[overrides]\n"
+            ),
+        )
+        .ok()?;
+        Some(Self { home })
+    }
+
+    fn path(&self) -> &Path {
+        self.home.path()
+    }
+
+    /// `rustup override set --path <directory> <toolchain>`, written into **this** home.
+    fn override_set(&self, directory: &Path, toolchain: &str) -> bool {
+        Command::new("rustup")
+            .args(["override", "set", toolchain, "--path"])
+            .arg(directory)
+            .env("RUSTUP_HOME", self.path())
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .env_remove("RUSTUP_TOOLCHAIN")
+            .env_remove("RUSTUP_TOOLCHAIN_SOURCE")
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
+    /// Whether the settings file this home owns now names `directory` — read back, so a control
+    /// cannot pass on an override rustup declined to write.
+    fn governs(&self, directory: &Path) -> bool {
+        std::fs::read_to_string(self.home.path().join("settings.toml"))
+            .is_ok_and(|text| text.contains(&directory.display().to_string()))
+    }
+}
+
+/// A file's SHA-256, in the hex form the provenance record uses, from whichever hasher this
+/// machine has — or `None`, which makes the control skip rather than guess.
+///
+/// # Why a child process and not a crate
+///
+/// The record digests an unmarked file over its own bytes, so this is a plain SHA-256. Adding a
+/// hashing dependency to the test build to compute one value in one control is a larger change to
+/// the crate's graph than the control is worth, and the lockfile closure is something this project
+/// keeps small on purpose. `sha256sum` is coreutils (the Linux legs); `shasum -a 256` is Perl's
+/// (macOS). Both print `<hex>  <path>`.
+#[cfg(unix)]
+fn sha256_of(path: &Path) -> Option<String> {
+    for (program, arguments) in [("sha256sum", &[][..]), ("shasum", &["-a", "256"][..])] {
+        let Ok(output) = Command::new(program).args(arguments).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8(output.stdout).ok()?;
+        let hex = text.split_whitespace().next()?.to_owned();
+        if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(hex);
+        }
+    }
+    None
+}
+
+/// A starter tree `generate auth` can plan against, copied from the template-7 fixture, or `None`
+/// when its record cannot be made to match the copy.
+///
+/// The fixture is a legacy tree, which is what makes it usable here: a legacy record declares no
+/// pin, so the resolution is held to nothing and a control may select any installed toolchain
+/// without tripping the MSRV prerequisite. Two edits are made to `renvor.toml` and both are
+/// stated — `[framework].path` is pointed at this checkout, because the fixture records the
+/// `/opt/renvor` no machine has, and `[capabilities].mail` is turned on, because `generate auth`
+/// refuses a session starter without the capability it needs.
+///
+/// # Why the record is rewritten with it
+///
+/// `auth` re-renders `renvor.toml`, so an edited manifest whose recorded digest still describes
+/// the fixture is `changed_since_generation` and the run refuses **before** it resolves anything
+/// — the conflict check comes first precisely so that a refusal costs no build (C-5). Recording
+/// the copy's own digest is what makes the edit invisible to that check; it changes what the tree
+/// says about itself, never what the generator does with it.
+#[cfg(unix)]
+fn auth_planning_tree() -> Option<tempfile::TempDir> {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("template-7-project");
+    let root = tempfile::tempdir().expect("tempdir");
+    let destination = root.path().join("legacy-api");
+    copy_tree(&fixture, &destination);
+
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .expect("the workspace root is two levels above this crate")
+        .to_path_buf();
+    let escaped = workspace
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    let manifest_path = destination.join("renvor.toml");
+    let manifest = std::fs::read_to_string(&manifest_path)
+        .expect("readable")
+        .replace("path = \"/opt/renvor\"", &format!("path = \"{escaped}\""))
+        .replace("mail = false", "mail = true");
+    std::fs::write(&manifest_path, manifest).expect("writable");
+
+    let digest = sha256_of(&manifest_path)?;
+    let record_path = destination.join(".renvor").join("generated.toml");
+    let record = std::fs::read_to_string(&record_path).expect("readable");
+    let mut lines: Vec<String> = record.lines().map(str::to_owned).collect();
+    let manifest_entry = lines
+        .iter()
+        .position(|line| line == "path = \"renvor.toml\"")?;
+    let sha = lines.get_mut(manifest_entry + 1)?;
+    if !sha.starts_with("sha256 = ") {
+        return None;
+    }
+    *sha = format!("sha256 = \"{digest}\"");
+    std::fs::write(&record_path, format!("{}\n", lines.join("\n"))).expect("writable");
+    Some(root)
+}
+
+/// Copies a directory tree, files and directories only.
+#[cfg(unix)]
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).expect("mkdir");
+    for entry in std::fs::read_dir(from).expect("readable") {
+        let entry = entry.expect("an entry");
+        let target = to.join(entry.file_name());
+        if entry.file_type().expect("a type").is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), &target).expect("copy");
+        }
+    }
+}
+
+/// **C-sel-2.** A directory override on the project directory itself beats the project's own
+/// `rust-toolchain.toml`, and the generator reports it as `directory_override`.
+///
+/// # Why this runs `generate auth` and not `renvor new`
+///
+/// `renvor new` resolves in its **staging** directory, whose name carries the process id and a
+/// clock reading (`generate::place::Staging::create`) and cannot be known before the run. rustup
+/// prefers a toolchain file to a directory override only when the file is *closer*; the staged
+/// tree always holds the freshly rendered `rust-toolchain.toml` at its own level, and any override
+/// a test could set is at the parent's. So through `renvor new`, `selected_by =
+/// "directory_override"` is unreachable **by construction** — not merely untested. The directory
+/// `generate auth` resolves in is the project's own, which a test does choose, and that is where
+/// the brief's control lives.
+///
+/// # Why the run refuses, and why that is the control passing
+///
+/// FR-012-13 has `generate auth` resolve twice: in the project directory, and in the scratch copy
+/// beside it. The override governs the project directory alone; the scratch copy is a sibling and
+/// carries the project's `rust-toolchain.toml`, which is then the closest selection it has. The
+/// two resolutions therefore differ **because the override won in one of them**, and the run
+/// refuses with `toolchain_resolution_diverged` — after printing the FR-012-8 (1) notice for the
+/// project directory, which is the assertion this control is about. The refusal is a second
+/// measurement in the same run: the divergence check firing on a real cause rather than a
+/// constructed one.
+///
+/// Nothing is written: the refusal precedes every check and every placement, and the command is
+/// given `--dry-run` besides.
+#[cfg(unix)]
 #[test]
-#[ignore = "creating a directory override writes a persistent entry into the operator's rustup settings"]
 fn c_sel_2_a_directory_override_on_the_project_beats_its_file() {
-    println!(
-        "SKIPPED: c_sel_2_a_directory_override_on_the_project_beats_its_file: this control is \
-         not run — it needs `rustup override set`, which writes a persistent entry into the \
-         operator's rustup settings; `directory_override` is therefore unproven end to end"
+    const TEST: &str = "c_sel_2_a_directory_override_on_the_project_beats_its_file";
+    let Some(selected) = distinct_from_the_pin(TEST) else {
+        return;
+    };
+    let Some(private) = PrivateRustup::create() else {
+        let _: Option<()> = unavailable(TEST, Missing::NoPrivateRustup);
+        return;
+    };
+    let Some(root) = auth_planning_tree() else {
+        let _: Option<()> = unavailable(TEST, Missing::NoPrivateRustup);
+        return;
+    };
+    let project = root.path().join("legacy-api");
+    // The file the override has to beat. It names the pin, which both legs have installed.
+    std::fs::write(
+        project.join("rust-toolchain.toml"),
+        format!("[toolchain]\nchannel = \"{PIN}\"\n"),
+    )
+    .expect("the project's own pin is written");
+
+    if !private.override_set(&project, &selected.name) || !private.governs(&project) {
+        let _: Option<()> = unavailable(TEST, Missing::NoPrivateRustup);
+        return;
+    }
+    // AND THE OPERATOR'S OWN SETTINGS ARE UNTOUCHED. Read from the real home directly: the whole
+    // premise of this control is that the override went somewhere else.
+    if let Some(real) = toolchains_directory().and_then(|path| path.parent().map(Path::to_path_buf))
+        && let Ok(theirs) = std::fs::read_to_string(real.join("settings.toml"))
+    {
+        assert!(
+            !theirs.contains(&project.display().to_string()),
+            "the override was written into the operator's own rustup settings"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .current_dir(&project)
+        .args([
+            "generate",
+            "auth",
+            "--dry-run",
+            "--overwrite-unchanged",
+            "--output",
+            "json",
+        ])
+        .env("RUSTUP_HOME", private.path())
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTUP_TOOLCHAIN_SOURCE")
+        .output()
+        .expect("the generator runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+
+    // THE NOTICE, for the project directory: the override's release, attributed to the override.
+    assert!(
+        stderr.contains(RESOLUTION_NOTICE),
+        "no resolution notice was printed:\n{stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "rustc {} (directory_override)",
+            selected.identity.release
+        )),
+        "the override did not win, or was not attributed to itself:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains(RESOLUTION_NOTICE),
+        "a resolution notice reached stdout, which C-1 reserves for the result"
+    );
+
+    // AND THE DIVERGENCE, for the reason above.
+    assert!(
+        !output.status.success(),
+        "the run did not refuse:\n{stdout}"
+    );
+    let document: serde_json::Value = serde_json::from_str(&stdout).expect("one JSON document");
+    assert_eq!(
+        document["error"]["details"]["reason"], "toolchain_resolution_diverged",
+        "the refusal is not the one the override causes: {document}"
+    );
+    assert!(
+        !project.join(".renvor-scratch").exists(),
+        "a scratch directory survived the refusal"
     );
 }

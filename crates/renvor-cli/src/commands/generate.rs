@@ -457,7 +457,7 @@ fn verify_merged(
     let expectations = auth_expectations(&toolchain)?;
 
     // THE PROJECT DIRECTORY'S RESOLUTION, first and on its own.
-    let in_project = toolchain::resolve(project_path, &sealed, &classification, &expectations)?;
+    let in_project = toolchain::resolve(project_path, sealed, classification, &expectations)?;
     if let Some(line) = notice::resolution(
         &in_project.rustc,
         in_project.selected_by,
@@ -497,7 +497,7 @@ fn verify_merged(
     }
 
     // THE SCRATCH COPY'S RESOLUTION, and the comparison the whole arrangement exists for.
-    let in_scratch = toolchain::resolve(&merged, &sealed, &classification, &expectations)?;
+    let in_scratch = toolchain::resolve(&merged, sealed, classification, &expectations)?;
     if diverged(&in_project, &in_scratch) {
         scratch.remove(reporter);
         return Err(refuse_divergence());
@@ -860,7 +860,14 @@ pub fn run(
         // command has reported success (found by the Codex review of Phase 011). The merged tree
         // is built and tested in a scratch copy, which is also what proves a resource module
         // rendered again with its guards still compiles beside everything the user wrote.
-        let verified = verify_merged(reporter, path, &plan, record.as_ref(), &formatting, &classification)?;
+        let verified = verify_merged(
+            reporter,
+            path,
+            &plan,
+            record.as_ref(),
+            &formatting,
+            &classification,
+        )?;
         plan = plan.with_edit(&project, "Cargo.lock", verified.lock)?;
         // FR-012-5a: `auth` ran the five checks, so it writes `[verified_with]` with
         // `operation = "auth"` — and `[toolchain]`, which for a legacy tree says `none` twice
@@ -1339,8 +1346,8 @@ mod toolchain_tests {
         // And what the selection does with each answer. The skeleton is enough: the toolchain
         // group is appended to whatever the configuration chose, so its presence is the switch.
         let scratch = tempfile::tempdir().expect("tempdir");
-        let (configuration, _destination) = crate::config::model::ProjectConfiguration::resolve(
-            crate::config::model::Answers {
+        let (configuration, _destination) =
+            crate::config::model::ProjectConfiguration::resolve(crate::config::model::Answers {
                 name: None,
                 destination: scratch.path().join("probe"),
                 local_domain: None,
@@ -1361,9 +1368,8 @@ mod toolchain_tests {
                 auth: None,
                 capabilities: None,
                 framework_path: None,
-            },
-        )
-        .expect("a skeleton configuration resolves");
+            })
+            .expect("a skeleton configuration resolves");
         let pin_files = |declared: bool| -> Vec<&'static str> {
             crate::templates::select_with_toolchain(&configuration, declared)
                 .entries

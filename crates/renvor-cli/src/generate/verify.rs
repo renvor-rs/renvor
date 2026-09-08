@@ -1922,10 +1922,9 @@ esac
             error.message.contains("renvor_diagnostic_marker"),
             "the diagnostic the operator needs was dropped with the launch command"
         );
-        let json = serde_json::to_string(&crate::output::json::Envelope::failure(
-            "generate", &error,
-        ))
-        .expect("the failure envelope serialises");
+        let json =
+            serde_json::to_string(&crate::output::json::Envelope::failure("generate", &error))
+                .expect("the failure envelope serialises");
         for rendering in [error.message.as_str(), json.as_str()] {
             assert!(
                 !rendering.contains("renvor_canary_continuation"),
