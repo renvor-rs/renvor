@@ -361,7 +361,7 @@ pub fn parse_check(
         } else if let Some(rest) = line.strip_prefix("Fresh ") {
             // A path may carry a newline, so a status line may be two physical lines — the same
             // cause `rejoin` handles for a launch command.
-            let rejoined = rejoin_status(rest, &mut lines);
+            let rejoined = rejoin_status(rest, own_package, &staging, &mut lines);
             let rest = rejoined.as_deref().unwrap_or(rest);
             if own_status_line(rest, own_package, &staging) {
                 evidence.units_fresh += 1;
@@ -370,7 +370,7 @@ pub fn parse_check(
             .strip_prefix("Compiling ")
             .or_else(|| line.strip_prefix("Checking "))
         {
-            let rejoined = rejoin_status(rest, &mut lines);
+            let rejoined = rejoin_status(rest, own_package, &staging, &mut lines);
             let rest = rejoined.as_deref().unwrap_or(rest);
             if own_status_line(rest, own_package, &staging) {
                 announced = true;
@@ -658,6 +658,13 @@ impl Location {
         }
     }
 
+    /// Whether either spelling of this directory **begins with** `candidate` — the test that says
+    /// a partly-read path is still a viable prefix of it rather than some other package's.
+    fn begins_with(&self, candidate: &str) -> bool {
+        let starts = |path: &Path| path.to_string_lossy().starts_with(candidate);
+        starts(&self.raw) || self.canonical.as_deref().is_some_and(starts)
+    }
+
     fn matches(&self, candidate: &str) -> bool {
         let candidate = Path::new(candidate);
         if candidate == self.raw {
@@ -808,21 +815,51 @@ fn rejoin<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> Option<S
 /// Rejoins a `Fresh`/`Compiling`/`Checking` remainder whose parenthesised path was split across
 /// physical lines by a newline inside it.
 ///
-/// `None` when the remainder needs no rejoining — no parenthetical at all (a registry dependency),
-/// or one already closed — which is every ordinary stream; the caller then keeps the line it has.
+/// `None` when nothing needs joining, which is every ordinary stream; the caller then keeps the
+/// line it has.
 ///
-/// # Why a status line needs this too
+/// # Why a status line needs this at all
 ///
 /// A directory name may contain a newline, and Cargo prints the path raw, so the status line
-/// arrives in two pieces and the second carries the `)`. [`rejoin`] has done this for `Running`
-/// commands since the census found the shape; the location test added to status lines needs the
-/// same treatment, and without it a cached check in such a directory loses its only own line and
-/// is refused. `renvor`'s own `tests/redaction.rs` generates into a directory named
-/// `above<newline>FORGED-LINE`, so this is a shape the project already promises to survive.
+/// arrives in two pieces with the closing bracket on the second. [`rejoin`] has done this for
+/// `Running` commands since the census found the shape. `renvor`'s own `tests/redaction.rs`
+/// generates into a directory named `above<newline>FORGED-LINE`, so this is a shape the project
+/// already promises to survive rather than a hypothesis.
 ///
-/// The continuations are NOT trimmed: they are the middle of a path, where a space is data.
-fn rejoin_status<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> Option<String> {
-    if !rest.contains('(') || rest.trim_end().ends_with(')') {
+/// # The staging path is the oracle, because the text cannot be one
+///
+/// "Does this line end the location?" has no answer in the text. A first version asked
+/// `ends_with(')')`, and that is the **same mistake** `whole` exists to prevent on the launch
+/// side: a `)` inside the path, immediately before the newline, closes the physical line without
+/// closing the location — `above)<newline>FORGED-LINE` produces exactly that, measured. `whole`
+/// answers the question by handing the candidate to `tokenize`, an authority outside the text;
+/// here the authority is the staging directory the caller is about to test against.
+///
+/// So: join while the accumulated location is still a **prefix** of the staging path, and stop the
+/// moment it *is* the staging path — or stops being able to become it. Two properties follow that
+/// a suffix test could not give:
+///
+/// - a line for a **different package** is never joined (the name is checked first), and neither
+///   is one for a same-named dependency whose path is not a prefix of staging — so a `Fresh` line
+///   for a dependency can never swallow the lines after it;
+/// - the loop cannot run away on a line that will never match, because viability fails on the
+///   first join.
+fn rejoin_status<'a>(
+    rest: &str,
+    own_package: &str,
+    staging: &Location,
+    lines: &mut impl Iterator<Item = &'a str>,
+) -> Option<String> {
+    if package_of(rest) != own_package {
+        return None;
+    }
+    // Already the staging path, closing bracket and all: the ordinary case, nothing consumed.
+    if location_of(rest).is_some_and(|at| staging.matches(at)) {
+        return None;
+    }
+    // Not even the beginning of it: a dependency, or a package this parser has no business
+    // joining. Nothing consumed.
+    if !open_location_of(rest).is_some_and(|open| staging.begins_with(open)) {
         return None;
     }
     let mut joined = rest.to_owned();
@@ -830,7 +867,10 @@ fn rejoin_status<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> O
         let Some(next) = lines.next() else { break };
         joined.push('\n');
         joined.push_str(without_sgr(next).as_ref());
-        if joined.trim_end().ends_with(')') {
+        if location_of(&joined).is_some_and(|at| staging.matches(at)) {
+            break;
+        }
+        if !open_location_of(&joined).is_some_and(|open| staging.begins_with(open)) {
             break;
         }
     }
@@ -877,6 +917,12 @@ fn package_of(rest: &str) -> &str {
 /// closing bracket is the path, brackets included. (Measured 2026-09-08 in a directory named
 /// `paren (dir) test`; found by the independent validation of this round, against the backwards
 /// form this function shipped with.)
+/// Everything after the first `(`, **without** requiring the closing bracket — a location that
+/// may still be mid-read, for the viability test in [`rejoin_status`].
+fn open_location_of(rest: &str) -> Option<&str> {
+    rest.find('(').map(|open| &rest[open + 1..])
+}
+
 fn location_of(rest: &str) -> Option<&str> {
     let inner = rest.trim_end().strip_suffix(')')?;
     let open = inner.find('(')?;
@@ -1196,6 +1242,48 @@ mod tests {
             "the build script compile and the bin are own units; the executions are not"
         );
         assert_eq!(evidence.chains.len(), 2, "two chains");
+    }
+
+    /// A path whose pre-newline segment ENDS WITH `)` — the shape a suffix test calls closed.
+    ///
+    /// `above)<newline>FORGED-LINE` makes Cargo print a first physical line that ends with `)`
+    /// while the location runs on (measured 2026-09-08). A `ends_with(')')` test reads it as
+    /// complete and extracts `…/above`, which matches no staging directory — the same silent
+    /// double failure as the two triggers before it. This is the third, and it is why the join is
+    /// decided by the staging path rather than by punctuation.
+    ///
+    /// The second half is the guard that makes the oracle safe: a `Fresh` line for a **same-named
+    /// dependency**, whose path is not a prefix of staging, must consume nothing — or a rejoin
+    /// would eat the project's own lines that follow it.
+    #[test]
+    fn a_closing_bracket_before_a_newline_does_not_end_the_location() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let staging = root.path().join("above)\nFORGED-LINE");
+        std::fs::create_dir(&staging).expect("brackets and newlines are legal in a directory name");
+        let at = staging.display();
+
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+        let evidence = parse_check(&cached, "probe", &staging)
+            .expect("the first line ends with `)` and the location is not closed");
+        assert_eq!(evidence.units_fresh, 1);
+
+        // THE GUARD. A same-named dependency's line is not a prefix of staging, so it joins
+        // nothing — the project's own lines after it survive.
+        // The launch carries `CARGO_PKG_NAME` and no manifest directory: the newline belongs in
+        // the path under test, not inside a command, where it would be `rejoin`'s subject instead.
+        let with_a_dependency = format!(
+            "       Fresh probe v0.2.0 (/elsewhere/inner)\n   Compiling probe v0.1.0 ({at})\n     \
+             Running `CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe src/main.rs`\n    \
+             Finished `dev` profile in 0.4s\n"
+        );
+        let evidence = parse_check(&with_a_dependency, "probe", &staging)
+            .expect("a dependency line consumed the lines after it");
+        assert_eq!(evidence.units_fresh, 0, "the dependency is not the project");
+        assert_eq!(
+            evidence.units_launched, 1,
+            "the project's own unit survived the rejoin"
+        );
     }
 
     /// A project directory whose NAME CONTAINS A NEWLINE is still the project's own.

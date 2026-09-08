@@ -264,6 +264,23 @@ consequences. Fixed the way the launch side already was: a status remainder that
 without closing it pulls following lines until it does, bounded as `rejoin` is. Control:
 `a_project_directory_whose_name_carries_a_newline_is_still_the_project`.
 
+**And a third trigger, which is why the join no longer guesses.** The first form of that rejoin
+asked `ends_with(')')` — and that is the *same* mistake `whole` exists to prevent on the launch
+side, where a backtick inside a quoted value ended a physical line without ending the command. A
+directory named `above)<newline>FORGED-LINE` makes Cargo print a first line that ends with `)`
+while the location runs on, so the reader called it closed and dropped the own line again. There is
+no answer in the text, so the join is now decided by an authority outside it — the staging path the
+caller is about to test against: join while the accumulated location is still a **prefix** of it,
+stop when it *is* it or can no longer become it. That also supplies the guard the suffix test never
+had: a `Fresh` line for a same-named dependency is not a prefix of staging, so it consumes nothing.
+Measured: without that guard, the dependency's line swallows the rest of the stream and the check
+reports `Truncated`. Control: `a_closing_bracket_before_a_newline_does_not_end_the_location`, which
+asserts both halves.
+
+Three triggers on one function in one round is itself the finding: a delimiter test over text the
+operator controls is a guess, and each of these was found by an independent reader rather than by a
+gate.
+
 And the bound: the location is now **necessary** for a status line but remains only **sufficient**
 for a `Running` line, where `launch` accepts `CARGO_PKG_NAME` alone. A same-named dependency's
 launches are therefore still counted as the project's own and its chain can still reach the record —
