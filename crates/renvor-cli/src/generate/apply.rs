@@ -28,8 +28,9 @@
 use cap_std::fs::Dir;
 use sha2::{Digest as _, Sha256};
 
-use super::record::{self, GeneratedFile, GeneratedResource, Record};
+use super::record::{self, GeneratedFile, GeneratedResource, Record, Toolchain, VerifiedWith};
 use crate::exit::{CliError, Code};
+use crate::toolchain::RECORD_VERSION;
 
 /// One file a generator wants to exist with these bytes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +116,10 @@ pub struct Plan {
     record: Option<Record>,
     /// Resource definitions the commit records beside the files, replacing a same-named one.
     resources: Vec<GeneratedResource>,
+    /// The two evidence tables an operation that **verified** writes in place of what the record
+    /// held (FR-012-5a): `generate auth`. `None` for every other operation, which carries the
+    /// record's tables through byte-identically.
+    replacement: Option<(Toolchain, VerifiedWith)>,
 }
 
 impl Plan {
@@ -122,6 +127,17 @@ impl Plan {
     #[must_use]
     pub fn with_resource(mut self, resource: GeneratedResource) -> Self {
         self.resources.push(resource);
+        self
+    }
+
+    /// Replaces the record's `[toolchain]` and `[verified_with]` when the plan commits — for an
+    /// operation that ran the five checks (`generate auth`, FR-012-5a) and measured
+    /// `verified_with` itself. A legacy record becomes a version-2 record. Never for `resource`
+    /// or `migration`, which verify nothing and may write no evidence.
+    // integration.
+    #[must_use]
+    pub fn with_verified_with(mut self, toolchain: Toolchain, verified_with: VerifiedWith) -> Self {
+        self.replacement = Some((toolchain, verified_with));
         self
     }
 
@@ -321,6 +337,7 @@ pub fn plan(
         decisions,
         record,
         resources: Vec::new(),
+        replacement: None,
     })
 }
 
@@ -466,6 +483,13 @@ fn roll_back(project: &Dir, placed: &[Placed], error: CliError) -> CliError {
 /// Writes every non-`Unchanged` file, then rewrites the provenance record with the new digests
 /// — as one change to the project, or none.
 ///
+/// # The evidence tables are carried, not rewritten (FR-012-5a)
+///
+/// The record's `record_version`, `[toolchain]`, and `[verified_with]` are rendered again from
+/// the parsed record through the deterministic renderer, so they come out byte for byte: an
+/// operation that verified nothing writes no evidence, and a legacy record stays legacy. Only a
+/// plan built with [`Plan::with_verified_with`] replaces the two tables.
+///
 /// # Transactional, in two phases
 ///
 /// Every file is first **staged** as a temporary sibling; a failure there removes the siblings
@@ -592,7 +616,27 @@ pub fn commit(
         done.push((planned.path, action));
     }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    let text = record::render(&recorded_generator, &recorded_template, &files, &resources);
+    let (record_version, toolchain, verified_with) = match plan.replacement {
+        Some((toolchain, verified_with)) => {
+            (Some(RECORD_VERSION), Some(toolchain), Some(verified_with))
+        }
+        None => plan.record.as_ref().map_or((None, None, None), |found| {
+            (
+                found.record_version,
+                found.toolchain.clone(),
+                found.verified_with.clone(),
+            )
+        }),
+    };
+    let text = record::render(&Record {
+        record_version,
+        generator_version: recorded_generator,
+        template_version: recorded_template,
+        toolchain,
+        verified_with,
+        files,
+        resources,
+    });
     if let Err(error) = write_atomically(project, record::PATH, text.as_bytes()) {
         return Err(roll_back(project, &placed, error));
     }
@@ -617,6 +661,27 @@ mod tests {
 
     fn planned(path: &str, bytes: &[u8]) -> Planned {
         Planned::file(path, bytes.to_vec())
+    }
+
+    /// A version-2 record for the tree, as `renvor new` writes one.
+    fn write_record(dir: &Dir) {
+        record::write(
+            dir,
+            "0.0.0",
+            "8",
+            &record::fixtures::toolchain(),
+            Some(&record::fixtures::launched()),
+            &[],
+        )
+        .expect("record");
+    }
+
+    /// The bytes from `[toolchain]` through the last check table — everything FR-012-5a says a
+    /// non-verifying operation must leave alone.
+    fn evidence_span(text: &str) -> &str {
+        let start = text.find("\n[toolchain]\n").expect("a [toolchain] table");
+        let end = text.find("\n[[file]]\n").expect("a [[file]] entry");
+        &text[start..end]
     }
 
     #[test]
@@ -665,7 +730,7 @@ mod tests {
             ("edited.txt", b"the user's version\n"),
         ]);
         // The record says `untouched.txt` and `edited.txt` were both generated as "old render".
-        record::write(&dir, "0.0.0", "7").expect("record");
+        write_record(&dir);
         let mut rec = record::read(&dir).expect("reads").expect("present");
         let old = sha256_hex(b"old render\n");
         for file in &mut rec.files {
@@ -673,17 +738,8 @@ mod tests {
                 file.sha256 = old.clone();
             }
         }
-        dir.write(
-            record::PATH,
-            record::render(
-                &rec.generator_version,
-                &rec.template_version,
-                &rec.files,
-                &rec.resources,
-            )
-            .as_bytes(),
-        )
-        .expect("rewrite");
+        dir.write(record::PATH, record::render(&rec).as_bytes())
+            .expect("rewrite");
 
         // FR-048 AS DECIDED (2026-09-05): the untouched file is regenerable, and without the
         // flag that refuses the plan — naming the path and the flag — and writes nothing.
@@ -807,7 +863,7 @@ mod tests {
         // must not transfer them.
         let generated = "head\n// renvor:resources:begin\n// renvor:resources:end\ntail\n";
         let (_keep, dir) = project(&[("src/routes.rs", generated.as_bytes())]);
-        record::write(&dir, "0.0.0", "7").expect("record");
+        write_record(&dir);
         // The user adds a line of their own, outside the markers.
         let edited = "head\n// renvor:resources:begin\n// renvor:resources:end\ntail\nmine();\n";
         dir.write("src/routes.rs", edited).expect("write");
@@ -857,7 +913,7 @@ mod tests {
         // block's contents are the generators' and do not count against the file — refused
         // without the flag, regenerated with it.
         let (_keep2, dir2) = project(&[("src/routes.rs", generated.as_bytes())]);
-        record::write(&dir2, "0.0.0", "7").expect("record");
+        write_record(&dir2);
         let filled = "head\n// renvor:resources:begin\nadded();\n// renvor:resources:end\ntail\n";
         let edit = plan(
             &dir2,
@@ -924,6 +980,104 @@ mod tests {
                 b"// renvor:resources:modules:begin\npub mod post;\n// renvor:resources:modules:end\n"
             )
         );
+    }
+
+    #[test]
+    fn generate_resource_and_migration_leave_verified_with_byte_identical() {
+        // FR-012-5a. Neither operation verifies, so neither may touch the evidence: the parsed
+        // tables go back through the deterministic renderer and come out byte for byte, while
+        // the `[[file]]`/`[[resource]]` entries they own are rewritten around them.
+        let (keep, dir) = project(&[("src/main.rs", b"fn main() {}\n")]);
+        write_record(&dir);
+        let before = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
+        assert!(before.contains("\nrecord_version = 2\n"));
+        assert!(
+            evidence_span(&before)
+                .ends_with("\n[verified_with.checks.run]\noutcome = \"passed\"\n"),
+            "the span reaches the last check table"
+        );
+        // A migration adds two files; a resource adds a module and a `[[resource]]`.
+        let ok = plan(
+            &dir,
+            vec![
+                planned("migrations/0002_add.up.sql", b"ALTER TABLE t ADD c INT;\n"),
+                planned("migrations/0002_add.down.sql", b"ALTER TABLE t DROP c;\n"),
+                planned("src/resources/post.rs", b"pub struct Post;\n"),
+            ],
+            false,
+        )
+        .expect("plans")
+        .with_resource(GeneratedResource {
+            name: "Post".to_owned(),
+            fields: vec!["title:string".to_owned()],
+        });
+        commit(&dir, ok, "9.9.9", "99").expect("commits");
+        let after = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
+        assert_ne!(before, after, "the entries changed");
+        assert_eq!(
+            evidence_span(&before),
+            evidence_span(&after),
+            "[toolchain] through [verified_with.checks.run] is byte-identical"
+        );
+        assert!(
+            after.contains("\nrecord_version = 2\n"),
+            "the version is carried"
+        );
+        assert!(
+            after.contains("\ngenerator_version = \"0.0.0\"\n"),
+            "the recorded generator is kept, not the committing one"
+        );
+        assert!(after.contains("path = \"migrations/0002_add.up.sql\""));
+        assert!(after.contains("[[resource]]\nname = \"Post\""));
+        let parsed = record::read(&dir).expect("reads").expect("present");
+        assert_eq!(parsed.verified_with, Some(record::fixtures::launched()));
+        assert_eq!(parsed.toolchain, Some(record::fixtures::toolchain()));
+
+        // A LEGACY record stays legacy (FR-012-10a): no version, no tables, nothing invented.
+        let (keep, dir) = project(&[("src/main.rs", b"fn main() {}\n")]);
+        let legacy = record::render(&Record {
+            record_version: None,
+            generator_version: "0.0.0".to_owned(),
+            template_version: "7".to_owned(),
+            toolchain: None,
+            verified_with: None,
+            files: Vec::new(),
+            resources: Vec::new(),
+        });
+        dir.create_dir_all(record::DIRECTORY).expect("mkdir");
+        dir.write(record::PATH, legacy.as_bytes()).expect("write");
+        let ok = plan(&dir, vec![planned("migrations/0002.up.sql", b"x\n")], false).expect("plans");
+        commit(&dir, ok, "9.9.9", "99").expect("commits");
+        let after = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
+        assert!(
+            !after.contains("record_version"),
+            "a legacy record stays legacy"
+        );
+        assert!(!after.contains("[toolchain]"));
+        assert!(!after.contains("[verified_with]"));
+        assert!(after.contains("path = \"migrations/0002.up.sql\""));
+
+        // Only an operation that VERIFIED replaces the tables — and that upgrades a legacy
+        // record to version 2 with the toolchain it was given, `"none"` for a tree without a pin.
+        let none = Toolchain {
+            pinned: "none".to_owned(),
+            rust_version: "none".to_owned(),
+        };
+        let ok = plan(
+            &dir,
+            vec![planned("src/auth.rs", b"pub fn auth() {}\n")],
+            false,
+        )
+        .expect("plans")
+        .with_verified_with(none.clone(), record::fixtures::cached());
+        commit(&dir, ok, "9.9.9", "99").expect("commits");
+        let upgraded = record::read(&dir).expect("reads").expect("present");
+        assert_eq!(upgraded.record_version, Some(2));
+        assert_eq!(upgraded.toolchain, Some(none));
+        assert_eq!(upgraded.verified_with, Some(record::fixtures::cached()));
+        let text = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
+        assert!(text.contains("\noperation = \"auth\"\n"));
+        assert!(text.contains("\npinned = \"none\"\n"));
     }
 
     #[test]

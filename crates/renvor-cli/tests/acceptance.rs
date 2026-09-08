@@ -252,6 +252,28 @@ fn defaulted_and_explicitly_supplied_answers_produce_byte_identical_projects() {
             left_path, right_path,
             "the two runs produced different paths"
         );
+        // THE PROVENANCE RECORD IS COMPARED BY PATH, NOT BY BYTES (Phase 012, FR-012-4). Its
+        // `[verified_with]` table records the instant the five checks passed and what they
+        // observed, so two runs a second apart differ there — and a record that did NOT differ
+        // would be one filled in from something other than the run, which is the failure
+        // FR-012-4 exists to forbid. What this test is about, the configuration the two
+        // interfaces resolve to, is in every other file and in the record's `[toolchain]`.
+        if left_path.replace('\\', "/") == ".renvor/generated.toml" {
+            let table = |bytes: &[u8]| -> String {
+                let text = String::from_utf8_lossy(bytes).into_owned();
+                let start = text.find("[toolchain]").expect("a [toolchain] table");
+                let end = text
+                    .find("[verified_with]")
+                    .expect("a [verified_with] table");
+                text[start..end].to_owned()
+            };
+            assert_eq!(
+                table(left_bytes),
+                table(right_bytes),
+                "the two runs recorded different toolchain declarations"
+            );
+            continue;
+        }
         assert_eq!(
             left_bytes, right_bytes,
             "`{left_path}` differs between a defaulted run and an explicitly-answered one, so the \

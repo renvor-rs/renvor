@@ -166,7 +166,17 @@ fn generating_the_same_configuration_twice_produces_identical_trees() {
     let first = generate(&one, &flags);
     let second = generate(&two, &flags);
 
-    let read = |root: &Path| -> Vec<(String, Vec<u8>)> {
+    // THE PROVENANCE RECORD IS COMPARED BY PATH, NOT BY BYTES (Phase 012, FR-012-4). Its
+    // `[verified_with]` table is *measured*: the instant the checks passed, the digest of the
+    // tree they passed on, and whether a compiler was launched or artifacts were reused. Two runs
+    // a second apart legitimately differ there, and a record that did not differ would be one
+    // filled in from something other than the run — which is the failure FR-012-4 exists to
+    // forbid. `template-contract.md` §"Snapshot stability policy" states the same exclusion for
+    // `tests/snapshots.rs`, and for the same reason.
+    //
+    // The path stays compared, so a run that stopped writing a record fails here; and every other
+    // file in the tree is still compared byte for byte, which is what SC-016 is about.
+    let read = |root: &Path| -> Vec<(String, Option<Vec<u8>>)> {
         let mut files = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(directory) = stack.pop() {
@@ -180,7 +190,11 @@ fn generating_the_same_configuration_twice_produces_identical_trees() {
                         .expect("relative")
                         .display()
                         .to_string();
-                    files.push((relative, std::fs::read(&path).expect("read")));
+                    let measured = relative.replace('\\', "/") == ".renvor/generated.toml";
+                    files.push((
+                        relative,
+                        (!measured).then(|| std::fs::read(&path).expect("read")),
+                    ));
                 }
             }
         }
@@ -188,11 +202,14 @@ fn generating_the_same_configuration_twice_produces_identical_trees() {
         files
     };
 
-    assert_eq!(
-        read(&first),
-        read(&second),
-        "two identical runs produced different trees"
+    let (first, second) = (read(&first), read(&second));
+    assert!(
+        first.iter().any(
+            |(path, bytes)| path.replace('\\', "/") == ".renvor/generated.toml" && bytes.is_none()
+        ),
+        "the run wrote no provenance record, so its exclusion above is hiding a missing file"
     );
+    assert_eq!(first, second, "two identical runs produced different trees");
 }
 
 #[test]
@@ -256,8 +273,34 @@ fn a_dry_run_writes_nothing_and_its_manifest_matches_the_real_run() {
     let real: serde_json::Value =
         serde_json::from_str(real_run.output.trim()).expect("one JSON document");
 
+    // THE RECORD'S DIGEST AND SIZE ARE NOT COMPARED, for the reason
+    // `generating_the_same_configuration_twice_produces_identical_trees` states above: since
+    // Phase 012 the record carries the instant the checks passed and what they observed, so two
+    // runs differ there by construction. Its PATH is still compared, and so is every other
+    // entry's digest and size — which is what SC-006 asserts.
+    let entries = |document: &serde_json::Value| -> Vec<serde_json::Value> {
+        document["result"]["manifest"]
+            .as_array()
+            .expect("a manifest")
+            .iter()
+            .map(|entry| {
+                if entry["path"] == ".renvor/generated.toml" {
+                    serde_json::json!({ "path": entry["path"], "kind": entry["kind"] })
+                } else {
+                    entry.clone()
+                }
+            })
+            .collect()
+    };
+    let (dry_entries, real_entries) = (entries(&dry), entries(&real));
+    assert!(
+        dry_entries
+            .iter()
+            .any(|entry| entry["path"] == ".renvor/generated.toml"),
+        "neither run listed a provenance record, so its exclusion above is hiding a missing file"
+    );
     assert_eq!(
-        dry["result"]["manifest"], real["result"]["manifest"],
+        dry_entries, real_entries,
         "the dry-run manifest does not match what the real run created"
     );
 }
@@ -350,5 +393,72 @@ fn json_dev_puts_exactly_one_document_on_stdout_and_the_child_output_on_stderr()
     assert!(
         stderr.contains("test result: ok"),
         "`cargo test`'s output must be redirected to stderr, not discarded; stderr was:\n{stderr}"
+    );
+}
+
+/// FR-012-7d (j): what the generator's own cache paths do against a **shared** build directory.
+///
+/// The maintainer's U-2 amendment carried this into implementation rather than another
+/// feasibility round. A check whose units Cargo positively reports `Fresh` is a supported outcome
+/// that the record represents explicitly; the question this answers is whether `renvor new`'s
+/// staging ever *reaches* it, on this platform, when an absolute `CARGO_TARGET_DIR` already holds
+/// the artifacts of an identical tree.
+///
+/// It asserts an invariant rather than an outcome — the outcome is the measurement, and asserting
+/// one would be asserting what the platform happens to do. What must hold either way is that the
+/// record and the observation agree: a launch observed means an identity was queried, and no
+/// launch observed means the identity is absent rather than filled in from somewhere.
+///
+/// The observation is printed with a fixed prefix so that each platform leg's log carries the
+/// answer for `governance/phase-012-evidence.md` §1.2.
+#[test]
+fn a_second_generation_against_a_shared_build_directory_records_its_observation() {
+    let base = tempfile::tempdir().expect("tempdir");
+    let shared = base.path().join(".shared-target");
+    std::fs::create_dir_all(&shared).expect("mkdir");
+
+    let mut observations = Vec::new();
+    for pass in 0..2u8 {
+        let workspace = base.path().join(format!("pass-{pass}"));
+        std::fs::create_dir_all(&workspace).expect("mkdir");
+        let outcome = run(
+            env!("CARGO_BIN_EXE_renvor"),
+            &["new", "demo", "--yes"],
+            &workspace,
+            &shared,
+        );
+        assert!(
+            outcome.succeeded,
+            "generation failed against a shared build directory [{}]:\n{}",
+            outcome.status, outcome.output
+        );
+        let record = std::fs::read_to_string(workspace.join("demo/.renvor/generated.toml"))
+            .expect("the record is readable");
+        let value = |key: &str| {
+            record
+                .lines()
+                .find_map(|line| line.strip_prefix(key)?.strip_prefix(" = "))
+                .map(|text| text.trim_matches('"').to_owned())
+        };
+        let observation = value("observation").expect("the record records an observation");
+        // The invariant, whichever way the platform went: an observation and an identity agree.
+        match observation.as_str() {
+            "launched" | "mixed" => assert!(
+                value("rustc_release").is_some(),
+                "a launch was observed but no compiler identity was queried"
+            ),
+            "cached" => assert!(
+                value("rustc_release").is_none(),
+                "no launch was observed, yet an observed identity was recorded"
+            ),
+            _ => panic!("the record's observation is not one of the three named states"),
+        }
+        observations.push(observation);
+    }
+    // The measurement itself, for `phase-012-evidence.md` §1.2. `libtest` hides this for a passing
+    // test unless the run captures stdout, which is why the prefix is greppable in a CI log.
+    println!(
+        "MEASUREMENT renvor-new-shared-target: first={} second={}",
+        observations[0], observations[1]
     );
 }

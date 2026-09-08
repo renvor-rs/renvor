@@ -1,0 +1,26 @@
+[renvor]
+generator_version = "0.0.0"
+template_version = "8"
+
+[project]
+name = "fixture"
+target = "api"
+transport = "rest"
+auth = "none"
+local_domain = "fixture.test"
+container = false
+local_https = "off"
+example_domain = false
+seed_data = false
+
+[persistence]
+database = "postgres"
+orm = "sqlx"
+driver_feature = "db-postgres"
+
+[capabilities]
+cache = false
+jobs = false
+mail = false
+storage = false
+observability = false

@@ -14,7 +14,7 @@ use harness::renvor;
 ///
 /// One constant rather than a literal per assertion: a bump has to be a deliberate edit in one
 /// place, and two assertions that disagree about the version would let one of them rot silently.
-const TEMPLATE_VERSION: &str = "7";
+const TEMPLATE_VERSION: &str = "8";
 
 struct Generated {
     code: i32,
@@ -93,6 +93,7 @@ fn seaorm_generates_exactly_its_file_set() {
         "migrations/0001_create_item.down.sql",
         "migrations/0001_create_item.up.sql",
         "renvor.toml",
+        "rust-toolchain.toml",
         "src/entity.rs",
         "src/main.rs",
         "src/repository.rs",
@@ -314,6 +315,7 @@ fn the_direct_sqlx_tree_is_unchanged_apart_from_its_recorded_version() {
         "migrations/0001_create_item.down.sql",
         "migrations/0001_create_item.up.sql",
         "renvor.toml",
+        "rust-toolchain.toml",
         "src/domain.rs",
         "src/main.rs",
         "src/persistence.rs",

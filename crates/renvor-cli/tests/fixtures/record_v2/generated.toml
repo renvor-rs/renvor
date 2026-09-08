@@ -1,0 +1,92 @@
+# Written by `renvor new`; read by `renvor generate` to tell a file you changed from one
+# it generated. Digests only. Keep it with the project.
+record_version = 2
+generator_version = "0.0.0"
+template_version = "8"
+
+[toolchain]
+pinned = "1.94.0"
+rust_version = "1.94.0"
+
+[verified_with]
+operation = "new"
+verified_at = "2026-09-07T00:00:00Z"
+tree_scope = 1
+tree_digest = "sha256:af1d41fe094ce54fc3a171057dd51bdc03b28c91ff24016b429f7459179cef3d"
+observation = "launched"
+# observed: absent when cached
+rustc_release = "1.94.0"
+rustc_commit = "4a4ef493e3d7d47ac7b5a2ac0ed5f1aa4ac7bf75"
+rustc_host = "aarch64-apple-darwin"
+# resolved: a resolution, never an observation
+resolved_rustc_release = "1.94.0"
+resolved_rustc_commit = "4a4ef493e3d7d47ac7b5a2ac0ed5f1aa4ac7bf75"
+# configured: optional, labelled
+cargo_release = "1.94.0"
+cargo_commit = "85eff7c80c1a7f5d6e0c6f5e57a8a6b5a2ac0ed5"
+rustup = "1.29.0"
+proxy = true
+selected_by = "toolchain_file"
+rustc_override = false
+wrapper = false
+rustflags = false
+rustdocflags = false
+
+[verified_with.checks.fmt]
+outcome = "passed"
+
+[verified_with.checks.clippy]
+outcome = "passed"
+units_launched = 2
+units_fresh = 0
+driver_release = "0.1.94"
+driver_commit = "4a4ef493e3"
+
+[verified_with.checks.build]
+outcome = "passed"
+units_launched = 1
+units_fresh = 0
+
+[verified_with.checks.test]
+outcome = "passed"
+units_launched = 2
+units_fresh = 0
+
+[verified_with.checks.run]
+outcome = "passed"
+
+[[file]]
+path = "Cargo.toml"
+sha256 = "6d98b3e0d4d6ab0555a4b66f1c762c79d1324d3f341d1174d2f761fdd44ca053"
+
+[[file]]
+path = "README.md"
+sha256 = "24b21540b8141d133dce2adea4940e247c479a897c10e184cc5b891b182a863a"
+
+[[file]]
+path = "migrations/0001_create_item.down.sql"
+sha256 = "c0091b87e1251c6978367130da1412139d7674529510068df129de7b5b843fda"
+
+[[file]]
+path = "migrations/0001_create_item.up.sql"
+sha256 = "c7501a09840f61ee9b0f115ced1ff8653a5ddc4891365986aa1455672507228a"
+
+[[file]]
+path = "renvor.toml"
+sha256 = "74fc56a16d94a47708aa495a8b469f3a6d468fabcda3ccc4a38430914dec4900"
+
+[[file]]
+path = "rust-toolchain.toml"
+sha256 = "f2e51a6af181e326180b4ce05bcb0db5f14397edddbb4325d57be1540bc4f24f"
+
+[[file]]
+path = "src/main.rs"
+sha256 = "7933e51179daa1a02003d368cd380783ab2fe2b59c553dd09d2a7e1964e63226"
+
+[[file]]
+path = "src/routes.rs"
+sha256 = "690067ead7a1909f0ec48071d324e28d3a4fb1d73d2746180fd4bef4fb7d3189"
+
+[[file]]
+path = "tests/smoke.rs"
+sha256 = "372feb0d68f34326078eb15230aeaa4cda18b91283905fab591371b6da38c283"

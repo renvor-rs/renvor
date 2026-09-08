@@ -20,15 +20,17 @@
 //! selects the auth starter or the jobs capability — which is how a project that adopts either
 //! later composes the two sets in its one directory (Phase 010 limitation L-7).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use cap_std::fs::Dir;
 
 use crate::commands::check;
 use crate::exit::{CliError, Code, Exit};
 use crate::generate::apply::{self, Action as Applied, Planned};
+use crate::generate::verify::Sealed;
 use crate::output::Reporter;
 use crate::output::layout::{Report, Status};
+use crate::toolchain::{self, Expectations, Resolution, notice};
 
 /// What to generate.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,27 +302,171 @@ fn planned_import(engine: &str, set: &str) -> Result<Vec<Planned>, CliError> {
 const MERGE_MAX_FILES: usize = 20_000;
 const MERGE_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
-/// Copies the project into `into`, without `target/`, `.git/`, or any symbolic link, applies the
-/// plan's writes on top, runs the same verification `renvor new` runs on a starter, and returns
-/// the lockfile the build resolved.
+/// A scratch copy of the project, beside the project (FR-012-13).
+///
+/// # Why not the system temporary directory, which it was until Phase 012
+///
+/// Because the selection of a compiler is a property of a directory's **ancestors**: a
+/// `rust-toolchain.toml` above the project, a `rustup override` on a parent, a `.cargo/config.toml`
+/// two levels up. A copy under `/tmp` shares none of them, so the tree that was verified could be
+/// built by a different compiler from the tree that is written — silently. A sibling shares every
+/// ancestor the project has, which is what makes the two resolutions comparable at all.
+///
+/// The name is C-5's residue naming, so `renvor doctor` finds one this process leaves behind and
+/// reports it under `orphanedStaging` like any other.
+struct Scratch {
+    root: PathBuf,
+    removed: bool,
+}
+
+impl Scratch {
+    /// Creates the scratch directory beside `project`.
+    ///
+    /// # Errors
+    ///
+    /// [`Code::StagingFailed`] when the project has no parent directory, or the parent is not
+    /// writable.
+    fn beside(project: &Path) -> Result<Self, CliError> {
+        let failed = |why: String| CliError::new(Code::StagingFailed, why);
+        let absolute = std::fs::canonicalize(project).map_err(|error| {
+            failed(format!(
+                "the project directory could not be resolved for verification: {error}"
+            ))
+        })?;
+        let parent = absolute
+            .parent()
+            .ok_or_else(|| {
+                failed(
+                    "the project directory has no parent to stage the verification copy in"
+                        .to_owned(),
+                )
+            })?
+            .to_path_buf();
+        // The same three parts as `Staging::create`, for the same three reasons: the pid
+        // separates processes, the clock separates runs across pid reuse, and the counter
+        // separates threads within one process.
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let name = format!(
+            ".renvor-staging-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        let root = parent.join(&name);
+        std::fs::create_dir(&root).map_err(|error| {
+            failed(format!(
+                "a scratch directory could not be created beside the project: {error}. This \
+                 usually means the project's parent directory is not writable"
+            ))
+        })?;
+        Ok(Self {
+            root,
+            removed: false,
+        })
+    }
+
+    /// Where the merged copy lives.
+    fn merged(&self) -> PathBuf {
+        self.root.join("merged")
+    }
+
+    /// Removes the scratch tree, and reports a failure to do so as a warning rather than as the
+    /// command's outcome — the verification either succeeded or did not, and neither answer
+    /// changes because a directory could not be unlinked.
+    fn remove(&mut self, reporter: &Reporter) {
+        if self.removed {
+            return;
+        }
+        self.removed = true;
+        if std::fs::remove_dir_all(&self.root).is_err() {
+            reporter.note(
+                "the verification copy beside the project could not be removed; \
+                 `renvor doctor` lists it under orphanedStaging",
+            );
+        }
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        // THE LAST RESORT, for the paths `remove` was not reached on — a `?` between creation
+        // and the explicit removal, or a panic. It cannot report, so it does not try.
+        if !self.removed {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+}
+
+/// What `generate auth`'s verification established: the lockfile it resolved, and the two record
+/// tables that describe it.
+struct VerifiedMerge {
+    /// The `Cargo.lock` the merged build resolved.
+    lock: Vec<u8>,
+    /// `[toolchain]` — the record's own pin, or `none` twice for a legacy tree (FR-012-10a).
+    toolchain: crate::generate::record::Toolchain,
+    /// `[verified_with]`, `operation = "auth"`.
+    verified_with: crate::generate::record::VerifiedWith,
+}
+
+/// Copies the project into a sibling scratch directory, applies the plan's writes on top, runs the
+/// same verification `renvor new` runs on a starter, and returns the lockfile the build resolved
+/// together with the two record tables it measured.
+///
+/// # The two resolutions, and why they must agree (FR-012-13)
+///
+/// The compiler is resolved **first in the project directory** — the tree that will actually be
+/// written — and then again in the scratch copy that is about to be verified. A sibling shares the
+/// project's ancestors, so the two should be the same compiler; if they are not, the verification
+/// would be evidence about a tree nobody is going to build, and the run refuses with
+/// `toolchain_resolution_diverged` having written nothing. The record keeps the **project
+/// directory's** attribution, because that is the directory whose selection the record describes.
 ///
 /// # Errors
 ///
 /// [`Code::BoundExceeded`] past the copy bound; [`Code::ProjectVerificationFailed`] when the
-/// merged project does not build, lint, format, test, or start; [`Code::StagingFailed`] when the
-/// scratch copy cannot be made.
+/// merged project does not build, lint, format, test, or start, or when the two resolutions
+/// disagree; [`Code::StagingFailed`] when the scratch copy cannot be made; [`Code::ToolMissing`]
+/// for the FR-012-7a/7b refusals.
 fn verify_merged(
     reporter: &Reporter,
     project_path: &Path,
     plan: &apply::Plan,
-) -> Result<Vec<u8>, CliError> {
-    let scratch = tempfile::tempdir().map_err(|error| {
-        CliError::new(
-            Code::StagingFailed,
-            format!("a scratch directory could not be created: {error}"),
-        )
-    })?;
-    let merged = scratch.path().join("merged");
+    record: Option<&crate::generate::record::Record>,
+) -> Result<VerifiedMerge, CliError> {
+    // ONE snapshot of the parent environment for the preflight and for the checks, as in
+    // `renvor new`.
+    let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let sealed = crate::generate::verify::seal(parent.iter().cloned());
+    // IDENTIFY FIRST (FR-012-7a): before the scratch copy exists, so a refusal leaves the
+    // project's parent directory exactly as it was.
+    let classification = toolchain::identify(&sealed)?;
+
+    // A legacy tree expects nothing: it pins no channel and its manifest declares no
+    // `rust-version`, so the resolution is measured and reported, never held to a figure the
+    // project does not state (FR-012-10a).
+    let toolchain = record
+        .and_then(|found| found.toolchain.clone())
+        .unwrap_or_else(|| crate::generate::record::Toolchain {
+            pinned: "none".to_owned(),
+            rust_version: "none".to_owned(),
+        });
+    let expectations = auth_expectations(&toolchain)?;
+
+    // THE PROJECT DIRECTORY'S RESOLUTION, first and on its own.
+    let in_project = toolchain::resolve(project_path, &sealed, &classification, &expectations)?;
+    if let Some(line) = notice::resolution(
+        &in_project.rustc,
+        in_project.selected_by,
+        expectations.pinned.as_deref(),
+    ) {
+        reporter.note(&line);
+    }
+
+    let mut scratch = Scratch::beside(project_path)?;
+    let merged = scratch.merged();
     copy_project(project_path, &merged)?;
     for (planned, action) in &plan.decisions {
         if *action == Applied::Unchanged {
@@ -348,24 +494,127 @@ fn verify_merged(
             )
         })?;
     }
+
+    // THE SCRATCH COPY'S RESOLUTION, and the comparison the whole arrangement exists for.
+    let in_scratch = toolchain::resolve(&merged, &sealed, &classification, &expectations)?;
+    if diverged(&in_project, &in_scratch) {
+        scratch.remove(reporter);
+        return Err(refuse_divergence());
+    }
+
     let progress = crate::output::progress::Progress::start(
         "verifying the project with the auth starter",
         reporter,
     );
-    let verified = crate::generate::verify::in_staging(
+    // The same parent snapshot the preflight above was sealed from.
+    let verified = crate::generate::verify::in_staging_with(
         &merged,
         &progress,
         crate::generate::verify::Smoke::AnswersDumpRequest,
+        parent.into_iter(),
     );
     progress.finish();
-    verified?;
-    std::fs::read(merged.join("Cargo.lock")).map_err(|error| {
+    let verified = verified?;
+    crate::commands::new::announce(reporter, &verified, &in_project);
+
+    let lock = std::fs::read(merged.join("Cargo.lock")).map_err(|error| {
         CliError::new(
             Code::ProjectVerificationFailed,
             format!("the verified project has no `Cargo.lock` to record: {error}"),
         )
         .with("check", "Cargo.lock is resolved")
+    })?;
+    // THE DIGEST IS TAKEN LAST: after the planned bytes were written over the copy and after the
+    // checks resolved `Cargo.lock` into it, so it covers the tree the checks actually passed on
+    // — which is the tree the commit is about to reproduce in the project.
+    let merged_dir =
+        Dir::open_ambient_dir(&merged, cap_std::ambient_authority()).map_err(|_| {
+            CliError::new(
+                Code::ProjectVerificationFailed,
+                "the verified copy could not be re-opened to digest what was verified",
+            )
+            .with("check", "tree digest")
+        })?;
+    let tree_digest = crate::generate::digest::tree(&merged_dir)?;
+    // `in_project`, not `in_scratch`: FR-012-13 records the project directory's attribution, and
+    // the two were just proved equal in release, commit, and `selected_by`.
+    let verified_with = crate::commands::new::verified_with(
+        crate::generate::record::Operation::Auth,
+        &in_project,
+        &verified,
+        tree_digest,
+    );
+    scratch.remove(reporter);
+    Ok(VerifiedMerge {
+        lock,
+        toolchain,
+        verified_with,
     })
+}
+
+/// What the resolution probe holds the compiler to for `generate auth`: the record's own pin and
+/// `rust-version`, or nothing at all for a legacy tree (FR-012-10a).
+///
+/// # Errors
+///
+/// [`Code::ManifestInvalid`] when the record's `[toolchain].rust_version` is neither `none` nor a
+/// release — a record this generator wrote never holds anything else, so this names the record as
+/// the field at fault rather than the operator's command.
+fn auth_expectations(
+    toolchain: &crate::generate::record::Toolchain,
+) -> Result<Expectations, CliError> {
+    if toolchain.pinned == "none" && toolchain.rust_version == "none" {
+        return Ok(Expectations {
+            pinned: None,
+            rust_version: None,
+        });
+    }
+    let rust_version = semver::Version::parse(&toolchain.rust_version).map_err(|error| {
+        CliError::new(
+            Code::ManifestInvalid,
+            format!(
+                "the provenance record's `[toolchain].rust_version` is neither `none` nor a \
+                 release: {error}"
+            ),
+        )
+        .with("field", "toolchain.rust_version")
+    })?;
+    Ok(Expectations {
+        pinned: Some(toolchain.pinned.clone()),
+        rust_version: Some(rust_version),
+    })
+}
+
+/// The refusal for two resolutions that do not agree (FR-012-13): exit 3,
+/// `reason = toolchain_resolution_diverged`, nothing written.
+///
+/// Neither identity is quoted into the message. Both are compiler releases this generator parsed
+/// under FR-012-7e's grammar and could safely print, but the operator's next step is the same
+/// whichever they are — look at what differs between the two directories — and the record is
+/// where identities belong.
+#[must_use]
+fn refuse_divergence() -> CliError {
+    CliError::new(
+        Code::ProjectVerificationFailed,
+        "the compiler that resolves in the project directory is not the one that resolves in the \
+         verification copy beside it, so verifying the copy would say nothing about the project; \
+         nothing was written. A directory override, or a toolchain file that names one directory \
+         and not its sibling, is the usual cause",
+    )
+    .with("reason", "toolchain_resolution_diverged")
+    .with("stage", "pre-commit verification")
+}
+
+/// Whether two resolutions describe different compilers or different selections (FR-012-13).
+///
+/// Release, commit, and `selected_by` — the three the requirement names. Not the whole
+/// [`Resolution`]: `rustc_override`, the wrapper booleans, and the flag booleans are read from the
+/// same sealed environment for both directories and would only ever differ through Cargo
+/// configuration, which is not what this comparison is about.
+fn diverged(project: &Resolution, scratch: &Resolution) -> bool {
+    project.rustc.release != scratch.rustc.release
+        || project.rustc.commit != scratch.rustc.commit
+        || project.selected_by != scratch.selected_by
 }
 
 /// Copies every regular file under `from` to `into`, skipping `target` and `.git` at the root
@@ -496,8 +745,36 @@ pub fn run(
         )
     })?;
 
+    // THE RECORD IS READ BEFORE ANYTHING IS PLANNED (FR-012-5b). A `record_version` newer than
+    // this reader is `record_unsupported`, exit 3, and it has to be raised here — before a
+    // template is rendered, before a path is classified, and certainly before a byte is written —
+    // so the refusal leaves the working tree byte-identical. `apply::plan` and `plan_auth` read
+    // the record again for their own purposes; reading it once here is what fixes the ORDER.
+    let record = crate::generate::record::read(&project)?;
+    // Two different questions, and a tree can answer them differently. `legacy` is "written by a
+    // generator older than the record's version 2" — it drives the FR-012-10a notice. `declared`
+    // is "this record names a pin", which is what FR-012-10b's template group switches on: a
+    // legacy tree never declares, so `generate auth` re-renders `Cargo.toml` without a
+    // `rust-version` line and plans no `rust-toolchain.toml`.
+    let legacy = record
+        .as_ref()
+        .is_none_or(|found| found.record_version.is_none());
+    let declared = record
+        .as_ref()
+        .is_some_and(|found| found.toolchain.is_some());
+    if legacy {
+        // ONCE PER RUN, on stderr, whatever the action (FR-012-10a). There is no
+        // `renvor generate toolchain`, and inventing one would be the silent insertion FR-012-10b
+        // forbids; saying so is what stops an operator hunting for a command that does not exist.
+        reporter.note(LEGACY_TREE);
+    }
+
     let mut resource: Option<crate::generate::record::GeneratedResource> = None;
     let verifies = matches!(action, Action::Auth);
+    // Where `rustfmt` runs, and with what (FR-012-6, FR-012-14): sealed, in the project directory
+    // itself. Built once so both `plan_resource` and `plan_auth`'s re-render of every recorded
+    // resource use the one environment.
+    let formatting = Formatting::for_project(path);
     let (what, planned) = match action {
         Action::Migration { name, import } => {
             let Some(persistence) = manifest.persistence.as_ref() else {
@@ -549,11 +826,12 @@ pub fn run(
             }
         }
         Action::Resource { name, fields } => {
-            let (what, planned, definition) = plan_resource(&project, &manifest, &name, &fields)?;
+            let (what, planned, definition) =
+                plan_resource(&project, &manifest, &name, &fields, declared, &formatting)?;
             resource = Some(definition);
             (what, planned)
         }
-        Action::Auth => plan_auth(&project, &manifest)?,
+        Action::Auth => plan_auth(&project, &manifest, declared, &formatting)?,
     };
 
     let mut plan = apply::plan(&project, planned, overwrite_unchanged)?;
@@ -567,8 +845,12 @@ pub fn run(
         // command has reported success (found by the Codex review of Phase 011). The merged tree
         // is built and tested in a scratch copy, which is also what proves a resource module
         // rendered again with its guards still compiles beside everything the user wrote.
-        let lock = verify_merged(reporter, path, &plan)?;
-        plan = plan.with_edit(&project, "Cargo.lock", lock)?;
+        let verified = verify_merged(reporter, path, &plan, record.as_ref())?;
+        plan = plan.with_edit(&project, "Cargo.lock", verified.lock)?;
+        // FR-012-5a: `auth` ran the five checks, so it writes `[verified_with]` with
+        // `operation = "auth"` — and `[toolchain]`, which for a legacy tree says `none` twice
+        // rather than inserting a pin nothing rendered (FR-012-10a).
+        plan = plan.with_verified_with(verified.toolchain, verified.verified_with);
     }
     let decisions: Vec<(String, Applied)> = plan
         .summary()
@@ -607,6 +889,13 @@ pub fn run(
     for (path, action) in &decisions {
         human = human.row(action.as_str(), path.clone());
     }
+    // THE RECORD AS IT NOW STANDS, read back from the tree rather than assembled from what this
+    // run believes it wrote (C-2 §"`result.toolchain` and `result.verified_with`"). `historical`
+    // is recomputed against the working tree by the same rule `renvor check` applies, so
+    // `generate resource` — which verifies nothing and leaves `[verified_with]` byte-identical —
+    // reports the evidence it inherited as what it now is: evidence of an earlier tree
+    // (FR-012-10c).
+    let (toolchain_json, verified_with_json) = provenance_json(&project)?;
     Ok(reporter.finish(
         "generate",
         &human,
@@ -615,8 +904,373 @@ pub fn run(
             "project": crate::output::redact::path(path),
             "files": files,
             "written": if dry_run { 0 } else { writes },
+            "toolchain": toolchain_json,
+            "verified_with": verified_with_json,
         }),
     ))
+}
+
+/// The one sentence every `renvor generate` into a legacy tree prints, once (FR-012-10a).
+///
+/// A tree generated at template version 7 or earlier has no pin and a record without
+/// `record_version`. Nothing here refuses it, nothing inserts a pin into it, and **no
+/// `renvor generate toolchain` action exists** — L-11 is the row that names that gap. The two
+/// files a project would add by hand are shown by the README a new project gets, which is where
+/// this points rather than repeating them into every run's stderr.
+const LEGACY_TREE: &str = "this project was generated before template version 8 and pins no \
+                           toolchain; no renvor generate toolchain action exists — a new \
+                           project's README shows the two files to add by hand";
+
+/// `result.toolchain` and `result.verified_with` for a `generate` run, read back from the record
+/// in the tree and marked historical by FR-012-5d's rule.
+///
+/// Both are `null` for a project with no record, and for a legacy record whose two tables do not
+/// exist — never filled in.
+///
+/// # Errors
+///
+/// [`Code::RecordUnsupported`] for a record or a tree scope this generator does not know;
+/// [`Code::RenderFailed`] when a path in scope cannot be read.
+fn provenance_json(project: &Dir) -> Result<(serde_json::Value, serde_json::Value), CliError> {
+    let Some(record) = crate::generate::record::read(project)? else {
+        return Ok((serde_json::Value::Null, serde_json::Value::Null));
+    };
+    let toolchain = match record.toolchain.as_ref() {
+        Some(toolchain) => crate::commands::new::toolchain_json(toolchain)?,
+        None => serde_json::Value::Null,
+    };
+    let verified_with = match record.verified_with.as_ref() {
+        Some(verified) => {
+            let current = crate::generate::digest::tree_under(project, verified.tree_scope)?;
+            let mut value = crate::commands::new::verified_with_json(verified)?;
+            if let Some(object) = value.as_object_mut() {
+                object.insert(
+                    "historical".to_owned(),
+                    serde_json::Value::Bool(current != verified.tree_digest),
+                );
+            }
+            value
+        }
+        None => serde_json::Value::Null,
+    };
+    Ok((toolchain, verified_with))
+}
+
+#[cfg(test)]
+mod toolchain_tests {
+    use super::*;
+
+    /// This module's own source, for the assertions about ORDER and ABSENCE.
+    const THIS_SOURCE: &str = include_str!("generate.rs");
+
+    fn identity(release: &str, commit: &str) -> crate::toolchain::Identity {
+        crate::toolchain::Identity {
+            release: release.to_owned(),
+            commit: commit.to_owned(),
+            host: "fabricated-unknown-none".to_owned(),
+        }
+    }
+
+    fn resolution(
+        release: &str,
+        commit: &str,
+        selected_by: crate::toolchain::SelectedBy,
+    ) -> Resolution {
+        Resolution {
+            rustc: identity(release, commit),
+            cargo: crate::toolchain::CargoIdentity {
+                release: release.to_owned(),
+                commit: commit.to_owned(),
+            },
+            rustup: None,
+            proxy: false,
+            selected_by,
+            rustc_override: false,
+            wrapper: false,
+            rustflags: false,
+            rustdocflags: false,
+        }
+    }
+
+    /// FR-012-13: the scratch copy is a **sibling** of the project, under C-5's residue name, and
+    /// is removed on every path.
+    ///
+    /// The sibling is not a preference. A copy under the system temporary directory shares none
+    /// of the project's ancestors, so a `rust-toolchain.toml` or a directory override above the
+    /// project would not apply to it — and the tree that was verified would be built by a
+    /// different compiler from the tree that is written.
+    #[test]
+    fn a_scratch_copy_is_a_sibling_of_the_project_with_the_residue_name() {
+        let base = tempfile::tempdir().expect("tempdir");
+        let project = base.path().join("demo");
+        std::fs::create_dir_all(&project).expect("mkdir");
+
+        let root = {
+            let mut scratch = Scratch::beside(&project).expect("creates");
+            let root = scratch.root.clone();
+            assert_eq!(
+                root.parent(),
+                std::fs::canonicalize(&project).expect("canonical").parent(),
+                "the scratch copy is not a sibling of the project"
+            );
+            let name = root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("a name");
+            assert!(
+                name.starts_with(".renvor-staging-"),
+                "the scratch copy does not carry C-5's residue name, so `renvor doctor` would \
+                 not report one left behind"
+            );
+            // Three parts after the prefix: the pid, the clock, and the per-thread counter.
+            assert_eq!(
+                name.trim_start_matches(".renvor-staging-")
+                    .split('-')
+                    .count(),
+                3,
+                "the residue name does not carry the three parts that make it unique"
+            );
+            assert!(root.is_dir(), "the scratch directory was not created");
+            assert!(
+                scratch.merged().starts_with(&root),
+                "the merged copy is not inside the scratch directory"
+            );
+            scratch.remove(&Reporter::new(crate::output::Format::Human, true));
+            assert!(!root.exists(), "an explicit removal left the scratch tree");
+            root
+        };
+        // And again, through `Drop` alone.
+        let dropped = {
+            let scratch = Scratch::beside(&project).expect("creates");
+            scratch.root.clone()
+        };
+        assert!(!dropped.exists(), "Drop left the scratch tree behind");
+        assert!(!root.exists());
+    }
+
+    /// FR-012-13: the two resolutions must agree in release, commit, and `selected_by`, and a
+    /// disagreement is `toolchain_resolution_diverged` with nothing written.
+    #[test]
+    fn a_divergent_scratch_resolution_is_refused() {
+        use crate::toolchain::SelectedBy;
+        let project = resolution("1.94.0", "aaaaaaaaaa", SelectedBy::ToolchainFile);
+
+        assert!(
+            !diverged(
+                &project,
+                &resolution("1.94.0", "aaaaaaaaaa", SelectedBy::ToolchainFile)
+            ),
+            "two identical resolutions were called divergent"
+        );
+        for other in [
+            resolution("1.97.1", "aaaaaaaaaa", SelectedBy::ToolchainFile),
+            resolution("1.94.0", "bbbbbbbbbb", SelectedBy::ToolchainFile),
+            resolution("1.94.0", "aaaaaaaaaa", SelectedBy::DirectoryOverride),
+        ] {
+            assert!(
+                diverged(&project, &other),
+                "a difference the requirement names was not treated as divergence"
+            );
+        }
+
+        let error = refuse_divergence();
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(key, value)| key == "reason" && value == "toolchain_resolution_diverged"),
+            "the refusal does not carry the reason the requirement names"
+        );
+        // NOTHING WRITTEN: the refusal is raised before the checks run, and the scratch tree is
+        // removed on the way out.
+        let refusal_site = THIS_SOURCE
+            .find("return Err(refuse_divergence());")
+            .expect("the refusal site");
+        let verify_site = THIS_SOURCE
+            .find("crate::generate::verify::in_staging_with(")
+            .expect("the verification site");
+        assert!(
+            refusal_site < verify_site,
+            "the divergence refusal is raised after the checks have already run"
+        );
+    }
+
+    /// FR-012-5a: `generate auth` writes `[verified_with]` with `operation = "auth"`, and it is
+    /// the only `generate` action that writes one at all.
+    #[test]
+    fn generate_auth_rewrites_verified_with_with_operation_auth() {
+        let table = crate::commands::new::verified_with(
+            crate::generate::record::Operation::Auth,
+            &resolution(
+                "1.94.0",
+                "aaaaaaaaaa",
+                crate::toolchain::SelectedBy::ToolchainFile,
+            ),
+            &crate::toolchain::evidence::Verified {
+                fmt: true,
+                clippy: crate::toolchain::evidence::ClippyEvidence {
+                    units_launched: 1,
+                    units_fresh: 0,
+                    driver: None,
+                },
+                build: crate::toolchain::evidence::UnitEvidence {
+                    units_launched: 1,
+                    units_fresh: 0,
+                },
+                test: crate::toolchain::evidence::UnitEvidence {
+                    units_launched: 1,
+                    units_fresh: 0,
+                },
+                run: true,
+                observation: crate::toolchain::Observation::Launched,
+                rustc: Some(identity("1.94.0", "aaaaaaaaaa")),
+                cached_checks: Vec::new(),
+                wrapper_observed: false,
+            },
+            "sha256:beef".to_owned(),
+        );
+        assert_eq!(table.operation, crate::generate::record::Operation::Auth);
+        let rendered = crate::generate::record::render(&crate::generate::record::Record {
+            record_version: Some(crate::toolchain::RECORD_VERSION),
+            generator_version: "0.0.0".to_owned(),
+            template_version: crate::templates::VERSION.to_owned(),
+            toolchain: Some(crate::generate::record::Toolchain {
+                pinned: "none".to_owned(),
+                rust_version: "none".to_owned(),
+            }),
+            verified_with: Some(table),
+            files: Vec::new(),
+            resources: Vec::new(),
+        });
+        assert!(
+            rendered.contains("operation = \"auth\""),
+            "the rendered record does not name the operation that measured it"
+        );
+
+        // THE ONLY WRITER. `with_verified_with` appears once in this module, inside the branch
+        // guarded by `verifies` — which is `matches!(action, Action::Auth)`.
+        // SPELLED IN PIECES so this assertion's own source is not a hit for itself.
+        let replacement = format!("plan.with_{}_with(", "verified");
+        assert_eq!(
+            THIS_SOURCE.matches(replacement.as_str()).count(),
+            1,
+            "an action other than `auth` can replace the record's evidence tables"
+        );
+        let decides = format!("let verifies = matches!(action, {});", "Action::Auth");
+        assert_eq!(
+            THIS_SOURCE.matches(decides.as_str()).count(),
+            1,
+            "the set of verifying actions is decided somewhere else as well"
+        );
+    }
+
+    /// FR-012-10a: every `generate` into a legacy tree says, **once**, that no toolchain action
+    /// exists — whatever the action, and whether or not anything is written.
+    ///
+    /// The sentence is pinned literally because it is the same text in the requirement, and the
+    /// "once" is read off the source: one printing site, in the one branch that decides the tree
+    /// is legacy, before the action is dispatched. A behavioural assertion would need a reporter
+    /// whose stderr this process can read back, which `Reporter` does not offer.
+    #[test]
+    fn every_generate_into_a_legacy_tree_states_once_that_no_toolchain_action_exists() {
+        assert_eq!(
+            LEGACY_TREE,
+            "this project was generated before template version 8 and pins no toolchain; no \
+             renvor generate toolchain action exists — a new project's README shows the two \
+             files to add by hand"
+        );
+        // SPELLED IN PIECES so this assertion's own source is not a hit for itself.
+        let printing = format!("reporter.note({})", "LEGACY_TREE");
+        assert_eq!(
+            THIS_SOURCE.matches(printing.as_str()).count(),
+            1,
+            "the legacy sentence has more than one printing site, so a run could say it twice"
+        );
+        // BEFORE the dispatch, so every action says it and not only the ones that verify.
+        let notice_site = THIS_SOURCE
+            .find(printing.as_str())
+            .expect("the printing site");
+        let dispatch_site = THIS_SOURCE
+            .find("let (what, planned) = match action {")
+            .expect("the dispatch site");
+        assert!(
+            notice_site < dispatch_site,
+            "the legacy sentence is printed inside the dispatch, so some actions would not say it"
+        );
+        // AND the record is read before anything is planned (FR-012-5b), which is what makes the
+        // `legacy` decision available there at all.
+        let read_site = THIS_SOURCE
+            .find("let record = crate::generate::record::read(&project)?;")
+            .expect("the record read");
+        assert!(
+            read_site < dispatch_site,
+            "the record is read after the first plan, so a newer record would be refused too late"
+        );
+    }
+
+    /// FR-012-14 and FR-012-6: `generate resource`'s `rustfmt` is a sealed child in the project
+    /// directory, and no unsealed spawn of it survives beside the sealed one.
+    #[test]
+    fn rustfmt_at_generation_runs_under_the_seal() {
+        // SPELLED IN PIECES so these assertions' own source is not a hit for itself.
+        let unsealed = format!("Command::new({})", "\"rustfmt\"");
+        assert!(
+            !THIS_SOURCE.contains(unsealed.as_str()),
+            "`rustfmt` is spawned with the parent environment inherited"
+        );
+        let sealed_site = format!("crate::generate::verify::sealed_{}(", "command");
+        assert_eq!(
+            THIS_SOURCE.matches(sealed_site.as_str()).count(),
+            1,
+            "`rustfmt` is built somewhere other than the one sealed site"
+        );
+        let dir = tempfile::tempdir().expect("tempdir");
+        let formatting = Formatting::for_project(dir.path());
+        assert_eq!(formatting.directory, dir.path());
+        // The seal drops the two install-server variables and forces the third, whatever this
+        // process's own environment holds.
+        let environment = formatting.sealed.environment();
+        assert!(
+            environment
+                .iter()
+                .any(|(name, value)| name == "RUSTUP_AUTO_INSTALL" && value == "0"),
+            "the formatter's environment does not forbid provisioning"
+        );
+        for never in ["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"] {
+            assert!(
+                !environment.iter().any(|(name, _)| name == never),
+                "the formatter's environment carries an install-server variable"
+            );
+        }
+    }
+
+    /// FR-012-10a: a legacy tree expects nothing of the compiler, and a declared one expects its
+    /// own recorded pin.
+    #[test]
+    fn a_legacy_record_holds_the_compiler_to_nothing() {
+        let legacy = auth_expectations(&crate::generate::record::Toolchain {
+            pinned: "none".to_owned(),
+            rust_version: "none".to_owned(),
+        })
+        .expect("legacy expectations");
+        assert!(legacy.pinned.is_none() && legacy.rust_version.is_none());
+
+        let declared = auth_expectations(&crate::generate::record::Toolchain {
+            pinned: "1.94.0".to_owned(),
+            rust_version: "1.94.0".to_owned(),
+        })
+        .expect("declared expectations");
+        assert_eq!(declared.pinned.as_deref(), Some("1.94.0"));
+        assert_eq!(declared.rust_version, Some(semver::Version::new(1, 94, 0)));
+
+        let refused = auth_expectations(&crate::generate::record::Toolchain {
+            pinned: "1.94.0".to_owned(),
+            rust_version: "not-a-release".to_owned(),
+        })
+        .expect_err("a malformed record is refused by name");
+        assert_eq!(refused.code, Code::ManifestInvalid);
+    }
 }
 
 #[cfg(test)]
@@ -1302,6 +1956,29 @@ impl ResourceContext {
     }
 }
 
+/// Where `rustfmt` runs and with what environment (FR-012-6, FR-012-14).
+///
+/// `renvor generate resource` formats the module it renders. That is a tool child like any other,
+/// so it goes through the one builder every tool child in this crate goes through — the parent's
+/// environment cleared, the pass-through in its place, `RUSTUP_AUTO_INSTALL=0` forced, the two
+/// install-server variables absent. It runs **in the project directory itself** (FR-012-14), so
+/// the `rustfmt` it uses is the one the project's own pin selects rather than whichever the
+/// generator's working directory happens to resolve.
+pub(crate) struct Formatting {
+    sealed: Sealed,
+    directory: PathBuf,
+}
+
+impl Formatting {
+    /// Seals this process's environment for the tool children run in `directory`.
+    fn for_project(directory: &Path) -> Self {
+        Self {
+            sealed: crate::generate::verify::seal(std::env::vars_os()),
+            directory: directory.to_path_buf(),
+        }
+    }
+}
+
 /// Formats rendered Rust with the toolchain's `rustfmt`, so a module whose line widths follow
 /// the user's names is laid out the way `cargo fmt --check` will demand, deterministically.
 ///
@@ -1309,23 +1986,27 @@ impl ResourceContext {
 ///
 /// [`Code::ToolMissing`] when `rustfmt` cannot be run; [`Code::RenderFailed`] when it rejects
 /// the rendered source, which is a defect in the template.
-fn rustfmt(source: &str) -> Result<String, CliError> {
+fn rustfmt(source: &str, formatting: &Formatting) -> Result<String, CliError> {
     use std::io::Write as _;
-    let mut child = std::process::Command::new("rustfmt")
-        .args(["--edition", "2024", "--emit", "stdout", "--quiet"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|error| {
-            CliError::new(
-                Code::ToolMissing,
-                format!("`rustfmt` could not be run to format the generated module: {error}"),
-            )
-            .with("tool", "rustfmt")
-            .with("required", "true")
-            .with("found", "false")
-        })?;
+    let mut child = crate::generate::verify::sealed_command(
+        std::ffi::OsStr::new("rustfmt"),
+        &formatting.sealed,
+        &formatting.directory,
+    )
+    .args(["--edition", "2024", "--emit", "stdout", "--quiet"])
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .map_err(|error| {
+        CliError::new(
+            Code::ToolMissing,
+            format!("`rustfmt` could not be run to format the generated module: {error}"),
+        )
+        .with("tool", "rustfmt")
+        .with("required", "true")
+        .with("found", "false")
+    })?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(source.as_bytes()).map_err(|error| {
             CliError::new(
@@ -1432,7 +2113,11 @@ fn answers_from_manifest(
 }
 
 /// Renders the starter's generator-owned file at `path` exactly as `renvor new` would today.
-fn rerender_starter_file(manifest: &check::Manifest, path: &str) -> Result<Vec<u8>, CliError> {
+fn rerender_starter_file(
+    manifest: &check::Manifest,
+    path: &str,
+    declared: bool,
+) -> Result<Vec<u8>, CliError> {
     let scratch = tempfile::tempdir().map_err(|error| {
         CliError::new(
             Code::StagingFailed,
@@ -1442,9 +2127,13 @@ fn rerender_starter_file(manifest: &check::Manifest, path: &str) -> Result<Vec<u
     let answers = answers_from_manifest(manifest, scratch.path().join(&manifest.project.name))?;
     let (configuration, _destination) =
         crate::config::model::ProjectConfiguration::resolve(answers)?;
-    let context = crate::commands::new::Context::build(&configuration);
-    let renderer =
-        crate::generate::render::Renderer::new(crate::templates::select(&configuration))?;
+    // The one file this returns is not `Cargo.toml`, but the context and the selection are
+    // still built with the SAME switch (FR-012-10b) so a render here can never disagree with the
+    // one `plan_auth` performs beside it.
+    let context = crate::commands::new::Context::build_with_toolchain(&configuration, declared);
+    let renderer = crate::generate::render::Renderer::new(
+        crate::templates::select_with_toolchain(&configuration, declared),
+    )?;
     let render_root = scratch.path().join("render");
     std::fs::create_dir_all(&render_root).map_err(|error| {
         CliError::new(
@@ -1501,6 +2190,7 @@ fn render_resource(
     name: &str,
     fields: Vec<Field>,
     auth_session: bool,
+    formatting: &Formatting,
 ) -> Result<(ResourceContext, String, String), CliError> {
     let context = ResourceContext::build(
         name,
@@ -1514,16 +2204,14 @@ fn render_resource(
     } else {
         RESOURCE_SQLX
     };
-    let module = rustfmt(&crate::generate::render::render_body(
-        module_template,
-        &context,
-        true,
-    )?)?;
-    let test = rustfmt(&crate::generate::render::render_body(
-        RESOURCE_TEST,
-        &context,
-        true,
-    )?)?;
+    let module = rustfmt(
+        &crate::generate::render::render_body(module_template, &context, true)?,
+        formatting,
+    )?;
+    let test = rustfmt(
+        &crate::generate::render::render_body(RESOURCE_TEST, &context, true)?,
+        formatting,
+    )?;
     Ok((context, module, test))
 }
 
@@ -1535,6 +2223,8 @@ fn plan_resource(
     manifest: &check::Manifest,
     name: &str,
     field_specs: &[String],
+    declared: bool,
+    formatting: &Formatting,
 ) -> Result<
     (
         String,
@@ -1573,7 +2263,8 @@ fn plan_resource(
     }
     let fields = parse_fields(field_specs, &persistence.database)?;
     let auth_session = manifest.project.auth.as_deref() == Some("session");
-    let (context, module, test) = render_resource(persistence, name, fields, auth_session)?;
+    let (context, module, test) =
+        render_resource(persistence, name, fields, auth_session, formatting)?;
     let up = crate::generate::render::render_body(RESOURCE_UP, &context, true)?;
     let down = crate::generate::render::render_body(RESOURCE_DOWN, &context, true)?;
     let migration_name = format!("create_{}", context.snake);
@@ -1602,7 +2293,7 @@ fn plan_resource(
             context.snake
         ),
     )?;
-    let support = rerender_starter_file(manifest, "tests/support/mod.rs")?;
+    let support = rerender_starter_file(manifest, "tests/support/mod.rs", declared)?;
 
     let what = format!("resource `{name}` at `/{}`", context.plural);
     let definition = crate::generate::record::GeneratedResource {
@@ -1829,6 +2520,8 @@ const MARKED: [(&str, &str, &str); 2] = [
 fn plan_auth(
     project: &Dir,
     manifest: &check::Manifest,
+    declared: bool,
+    formatting: &Formatting,
 ) -> Result<(String, Vec<Planned>), CliError> {
     let scratch = tempfile::tempdir().map_err(|error| {
         CliError::new(
@@ -1842,9 +2535,16 @@ fn plan_auth(
     answers.auth = Some("session".to_owned());
     let (configuration, _destination) =
         crate::config::model::ProjectConfiguration::resolve(answers)?;
-    let context = crate::commands::new::Context::build(&configuration);
-    let renderer =
-        crate::generate::render::Renderer::new(crate::templates::select(&configuration))?;
+    // FR-012-10b — NO SILENT INSERTION. `declared` is the record's answer to "does this project
+    // pin a toolchain", and it switches the render context and the template selection TOGETHER:
+    // with it off, `Cargo.toml` is rendered again WITHOUT a `rust-version` line and no
+    // `rust-toolchain.toml` is planned at all. Passing it to only one of the two would render a
+    // context the selection disagrees with, which is how a pin gets inserted into a tree that
+    // never asked for one.
+    let context = crate::commands::new::Context::build_with_toolchain(&configuration, declared);
+    let renderer = crate::generate::render::Renderer::new(
+        crate::templates::select_with_toolchain(&configuration, declared),
+    )?;
     let render_root = scratch.path().join("render");
     std::fs::create_dir_all(&render_root).map_err(|error| {
         CliError::new(
@@ -1926,7 +2626,7 @@ fn plan_auth(
             validate_type_name(&resource.name)?;
             let fields = parse_fields(&resource.fields, &persistence.database)?;
             let (context, module, test) =
-                render_resource(persistence, &resource.name, fields, true)?;
+                render_resource(persistence, &resource.name, fields, true, formatting)?;
             planned.push(Planned::file(
                 format!("src/resources/{}.rs", context.snake),
                 module.into_bytes(),
@@ -1944,13 +2644,26 @@ fn plan_auth(
 mod auth_tests {
     use super::*;
 
-    /// A workspace-shaped directory `--framework-path` accepts; nothing in it is built.
+    /// The sealed environment and directory `rustfmt` runs under in a unit test: this process's
+    /// own, in the project the test just built.
+    fn formatting(path: &std::path::Path) -> Formatting {
+        Formatting::for_project(path)
+    }
+
+    /// A workspace-shaped directory `--framework-path` accepts — its MSRV and its pin included
+    /// (Phase 012); nothing in it is built.
     fn fake_framework(base: &std::path::Path) -> std::path::PathBuf {
         let root = base.join("framework");
         std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
         std::fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n\n[workspace.package]\n\
+             rust-version = \"1.94.0\"\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\n",
         )
         .expect("write");
         std::fs::write(
@@ -2001,7 +2714,18 @@ mod auth_tests {
         std::fs::create_dir_all(&destination).expect("mkdir");
         let dir = Dir::open_ambient_dir(&destination, cap_std::ambient_authority()).expect("opens");
         renderer.render_into(&dir, &context).expect("renders");
-        crate::generate::record::write(&dir, "0.0.0", crate::templates::VERSION).expect("record");
+        // A version-2 record with a launched observation, so these tests exercise the reader
+        // and the round-trip rather than the legacy path; `generate auth`'s own wiring builds a
+        // real one from what the checks reported.
+        crate::generate::record::write(
+            &dir,
+            "0.0.0",
+            crate::templates::VERSION,
+            &crate::generate::record::fixtures::toolchain(),
+            Some(&crate::generate::record::fixtures::launched()),
+            &[],
+        )
+        .expect("record");
         (destination, dir)
     }
 
@@ -2020,7 +2744,7 @@ mod auth_tests {
             .expect("the item migration");
         assert!(!item_up.contains("owner_id"), "{item_up}");
 
-        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
         let paths: Vec<&str> = planned.iter().map(|p| p.path.as_str()).collect();
         assert!(
             !paths.iter().any(|p| p.starts_with("migrations/0001_")),
@@ -2065,7 +2789,7 @@ mod auth_tests {
         let base2 = tempfile::tempdir().expect("tempdir");
         let (path2, dir2) = starter_without_auth(base2.path(), false);
         let manifest2 = check::load(&path2).expect("loads");
-        let (_, planned2) = plan_auth(&dir2, &manifest2).expect("plans");
+        let (_, planned2) = plan_auth(&dir2, &manifest2, true, &formatting(&path2)).expect("plans");
         assert!(
             !planned2.iter().any(|p| p.path.contains("_add_item_owner")),
             "a forward migration for a table that does not exist"
@@ -2082,9 +2806,15 @@ mod auth_tests {
         let base = tempfile::tempdir().expect("tempdir");
         let (path, dir) = starter_without_auth(base.path(), true);
         let manifest = check::load(&path).expect("loads");
-        let (_, planned, definition) =
-            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
-                .expect("plans the resource");
+        let (_, planned, definition) = plan_resource(
+            &dir,
+            &manifest,
+            "Post",
+            &["title:string".to_owned()],
+            true,
+            &formatting(&path),
+        )
+        .expect("plans the resource");
         let plan = apply::plan(&dir, planned, false)
             .expect("a resource creates and edits: no flag needed")
             .with_resource(definition);
@@ -2092,7 +2822,7 @@ mod auth_tests {
         let before = dir.read_to_string("src/resources/post.rs").expect("module");
         assert!(!before.contains("require_session"), "{before}");
 
-        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
         let module = planned
             .iter()
             .find(|p| p.path == "src/resources/post.rs")
@@ -2121,7 +2851,7 @@ mod auth_tests {
         edited.push_str("\n// mine\n");
         dir.write("src/resources/post.rs", edited.as_bytes())
             .expect("write");
-        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
         let error = apply::plan(&dir, planned, true).expect_err("an edited module is a conflict");
         assert_eq!(error.code, Code::GenerationConflict);
         assert!(
@@ -2162,9 +2892,15 @@ mod auth_tests {
         let base = tempfile::tempdir().expect("tempdir");
         let (path, dir) = starter_without_auth(base.path(), true);
         let manifest = check::load(&path).expect("loads");
-        let (_, planned, definition) =
-            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
-                .expect("plans the resource");
+        let (_, planned, definition) = plan_resource(
+            &dir,
+            &manifest,
+            "Post",
+            &["title:string".to_owned()],
+            true,
+            &formatting(&path),
+        )
+        .expect("plans the resource");
         let plan = apply::plan(&dir, planned, false)
             .expect("a resource creates and edits: no flag needed")
             .with_resource(definition);
@@ -2176,7 +2912,7 @@ mod auth_tests {
         );
         let main_before = dir.read_to_string("src/main.rs").expect("main");
 
-        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
         let error = apply::plan(&dir, planned, false).expect_err("regenerable files need the flag");
         assert_eq!(error.code, Code::GenerationConflict);
         assert_eq!(detail(&error, "reason"), Some("overwrite_required"));
@@ -2196,7 +2932,7 @@ mod auth_tests {
             "a refusal replaced a regenerable file"
         );
 
-        let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+        let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
         let plan =
             apply::plan(&dir, planned, true).expect("with the flag, regenerable regenerates");
         assert!(
@@ -2237,9 +2973,15 @@ mod auth_tests {
         let original = dir.read_to_string("src/routes.rs").expect("routes");
         dir.write("src/routes.rs", format!("{original}{mine}"))
             .expect("write");
-        let (_, planned, definition) =
-            plan_resource(&dir, &manifest, "Post", &["title:string".to_owned()])
-                .expect("plans the resource");
+        let (_, planned, definition) = plan_resource(
+            &dir,
+            &manifest,
+            "Post",
+            &["title:string".to_owned()],
+            true,
+            &formatting(&path),
+        )
+        .expect("plans the resource");
         let plan = apply::plan(&dir, planned, false)
             .expect("an edit of the block is not a conflict")
             .with_resource(definition);
@@ -2262,7 +3004,7 @@ mod auth_tests {
         );
 
         for flag in [false, true] {
-            let (_, planned) = plan_auth(&dir, &manifest).expect("plans");
+            let (_, planned) = plan_auth(&dir, &manifest, true, &formatting(&path)).expect("plans");
             let error =
                 apply::plan(&dir, planned, flag).expect_err("a changed file refuses the re-render");
             assert_eq!(error.code, Code::GenerationConflict, "flag = {flag}");

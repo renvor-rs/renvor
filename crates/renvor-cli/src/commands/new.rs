@@ -6,15 +6,26 @@
 //! 1. VALIDATE   every choice and the destination boundary — nothing has touched the filesystem
 //! 2. STAGE      a directory the process owns, INSIDE the destination's parent
 //! 3. RENDER     bounded template expansion into staging
-//! 4. VERIFY     the generated project's own fmt, build, and tests — still in staging
-//! 5. MANIFEST   walk the staged tree, sorted
-//! 6. PLACE      one rename
-//! 7. REPORT
+//! 4. VERIFY     the generated project's own fmt, lint, build, tests, and start — still in staging
+//! 5. RECORD     the provenance record, from what step 4 resolved and observed
+//! 6. MANIFEST   walk the staged tree, sorted
+//! 7. REVIEW     the screen the operator confirms
+//! 8. PLACE      one rename
+//! 9. REPORT
 //! ```
 //!
-//! Failure anywhere from 1 to 5 removes the staging directory and leaves the destination exactly as
-//! it was — enforced by `Staging`'s `Drop`, so it holds on paths nobody wrote a cleanup for,
+//! Failure anywhere before PLACE removes the staging directory and leaves the destination exactly
+//! as it was — enforced by `Staging`'s `Drop`, so it holds on paths nobody wrote a cleanup for,
 //! including a panic.
+//!
+//! # Where the toolchain fits (Phase 012, FR-012-7a and FR-012-12)
+//!
+//! `toolchain::identify` runs **between VALIDATE and STAGE**, because FR-012-7a requires the
+//! identification to finish "before anything is staged": a refusal there returns with the
+//! destination's parent untouched. `toolchain::resolve` runs after RENDER, in the staging
+//! directory itself — staging is created inside the destination's parent (C-5), so the staged
+//! tree and the placed tree share every ancestor and the resolution measured in one is the
+//! resolution of the other, by construction (FR-012-12).
 
 use serde::Serialize;
 
@@ -28,6 +39,7 @@ use crate::output::Reporter;
 use crate::output::layout::{Report, Status};
 use crate::output::progress::Progress;
 use crate::templates;
+use crate::toolchain::{self, Expectations, Observation, Resolution, notice};
 
 /// The template context. A **separate** type from [`ProjectConfiguration`], deliberately.
 ///
@@ -194,6 +206,28 @@ pub(crate) struct Context {
     auth_engine: String,
     /// The path the generated test polls for readiness.
     ready_path: String,
+
+    // ── PHASE 012 (L-2): the toolchain declaration ───────────────────────────────────────
+    //
+    // Pre-computed like everything above. NONE CAN HOLD A SECRET: two exact releases read from
+    // the framework checkout's two files (or the generator's own MSRV), a constant, and a switch.
+    /// The exact release `rust-toolchain.toml` pins and the Dockerfile's builder tag derives
+    /// from: the checkout's `[toolchain].channel` for a starter, the generator's
+    /// `CARGO_PKG_RUST_VERSION` for a skeleton (D-L2-4). For a legacy render
+    /// (`toolchain_declared = false`) it is the generator's MSRV — the figure template version 7
+    /// hard-coded into the Dockerfile — and only the Dockerfile reads it.
+    toolchain_channel: String,
+    /// The MSRV `Cargo.toml`'s `rust-version` line carries: the checkout's
+    /// `[workspace.package].rust-version` for a starter, the generator's own for a skeleton.
+    rust_version: String,
+    /// The rustup release from which the pin is honoured and `RUSTUP_AUTO_INSTALL=0` is
+    /// understood (`toolchain::RUSTUP_FLOOR`), for the README and the pin file's comment.
+    rustup_floor: &'static str,
+    /// Whether the toolchain group renders (FR-012-10b): `true` for `renvor new`; at
+    /// `generate auth`, true iff the record's `[toolchain]` declares a pin. Off, `Cargo.toml`
+    /// carries no `rust-version` and both READMEs say the project pins nothing — the selection
+    /// built with the same flag (`templates::select_with_toolchain`) plans no pin file.
+    toolchain_declared: bool,
 }
 
 /// A path as a forward-slashed string.
@@ -236,6 +270,21 @@ impl Context {
     /// literals that eventually do not, and the one in the test is precisely the copy whose drift
     /// nothing would catch.
     pub(crate) fn build(configuration: &ProjectConfiguration) -> Self {
+        Self::build_with_toolchain(configuration, true)
+    }
+
+    /// [`Context::build`] with the toolchain group's switch exposed (Phase 012, FR-012-10b).
+    ///
+    /// `renvor new` always declares, which is what [`Context::build`] says. `generate auth`
+    /// passes `false` for a tree whose record has no `[toolchain]`: `Cargo.toml` then renders
+    /// without `rust-version`, both READMEs say the project pins nothing, and the Dockerfile's
+    /// builder falls back to the generator's MSRV — the figure template version 7 hard-coded.
+    /// The matching selection comes from `templates::select_with_toolchain` with the same flag;
+    /// the two are the one switch, seen from the context and from the plan.
+    pub(crate) fn build_with_toolchain(
+        configuration: &ProjectConfiguration,
+        toolchain_declared: bool,
+    ) -> Self {
         let container = configuration.container_settings();
         let database = container.and_then(|settings| {
             settings.database_version.map(|version| {
@@ -510,6 +559,20 @@ impl Context {
                 "/"
             }
             .to_owned(),
+
+            // A starter's two values were read from the checkout at validation (FR-012-1); a
+            // skeleton's are both the generator's MSRV (D-L2-4). A legacy render keeps the
+            // generator's MSRV for the one place that still reads it, the Dockerfile.
+            toolchain_channel: match configuration.framework() {
+                Some(source) if toolchain_declared => source.toolchain_channel().to_owned(),
+                _ => env!("CARGO_PKG_RUST_VERSION").to_owned(),
+            },
+            rust_version: match configuration.framework() {
+                Some(source) if toolchain_declared => source.rust_version().to_owned(),
+                _ => env!("CARGO_PKG_RUST_VERSION").to_owned(),
+            },
+            rustup_floor: crate::toolchain::RUSTUP_FLOOR,
+            toolchain_declared,
         }
     }
 }
@@ -732,6 +795,18 @@ pub fn run(
         ));
     }
 
+    // ── 1c. IDENTIFY THE TOOLCHAIN, BEFORE ANYTHING IS STAGED (FR-012-7a) ───────────
+    //
+    // ONE snapshot of the parent environment feeds both the preflight seal and the checks below,
+    // so the identification, the resolution, and the five checks cannot disagree about what the
+    // operator's shell held. `identify` takes no directory: every step of it runs nowhere, or in
+    // an exclusively created empty directory with no toolchain file above it, which is what lets
+    // it run here — before `Staging::create` has made anything. A refusal (an unusable rustup, an
+    // unidentified proxy) therefore returns with the destination's parent exactly as it was.
+    let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = std::env::vars_os().collect();
+    let sealed = crate::generate::verify::seal(parent.iter().cloned());
+    let classification = toolchain::identify(&sealed)?;
+
     // ── 2. STAGE ────────────────────────────────────────────────────────────────────
     //
     // Created even for a dry run. SC-006 requires the dry-run manifest to match the real run's
@@ -758,6 +833,25 @@ pub fn run(
     }
     crate::inject::fail_at("render")?;
 
+    // ── 3c. RESOLVE, IN THE STAGED TREE (FR-012-7b, FR-012-12) ──────────────────────
+    //
+    // In the staging directory rather than anywhere else, because the `rust-toolchain.toml` the
+    // render has just placed there is part of what selects the compiler — and staging lives
+    // inside the parent the project will be placed in, so every ancestor override applies to
+    // both trees alike. A refusal here — an uninstalled pin, a compiler below the manifest's
+    // `rust-version`, an absent `rustfmt` or `clippy` — drops `staging` on the way out and
+    // leaves the destination untouched.
+    let staging_path = destination.parent_display().join(staging.name());
+    let pin = pinned_channel(&configuration);
+    let expectations = expectations(&configuration)?;
+    let resolution = toolchain::resolve(&staging_path, &sealed, &classification, &expectations)?;
+    // FR-012-8 (1). One line, on stderr, describing the preflight resolution and nothing else —
+    // never Cargo's effective compiler. A difference is said, never refused: the operator or the
+    // CI chose it (SR-012-2).
+    if let Some(line) = notice::resolution(&resolution.rustc, resolution.selected_by, Some(&pin)) {
+        reporter.note(&line);
+    }
+
     // ── 4. VERIFY, STILL IN STAGING ─────────────────────────────────────────────────
     //
     // FR-030. A project that does not build is a generation failure, not a discovery the operator
@@ -777,7 +871,6 @@ pub fn run(
     //
     // `progress_visible` is already false in JSON mode and whenever `stderr` is not a terminal, so
     // a CI log gets a silent indicator rather than a bar drawn into it.
-    let staging_path = destination.parent_display().join(staging.name());
     let progress = Progress::start("verifying the generated project", reporter);
     // A skeleton is run bare and must exit; a starter is a server, so it is sent the route dump
     // request `renvor routes` sends and must answer it before Boot — see `verify::Smoke`.
@@ -786,15 +879,23 @@ pub fn run(
     } else {
         crate::generate::verify::Smoke::Exits
     };
-    let verified = crate::generate::verify::in_staging(&staging_path, &progress, smoke);
+    // `in_staging_with` rather than `in_staging`: the same parent snapshot the seal above was
+    // built from, so the checks and the preflight cannot be measuring two different shells.
+    let verified = crate::generate::verify::in_staging_with(
+        &staging_path,
+        &progress,
+        smoke,
+        parent.into_iter(),
+    );
     // Cleared BEFORE the error propagates, so a failure message is never written over a bar that
     // is still on screen. `Drop` would do this too, at the closing brace — this puts the ordering
     // where a reader can see it.
     progress.finish();
-    verified?;
+    let verified = verified?;
     crate::inject::fail_at("verify")?;
+    announce(reporter, &verified, &resolution);
 
-    // ── 4b. THE PROVENANCE RECORD ───────────────────────────────────────────────────
+    // ── 5. THE PROVENANCE RECORD ────────────────────────────────────────────────────
     //
     // AFTER verification, because verification is what resolves `Cargo.lock` — pruning the
     // seeded framework lock to this project's closure, or creating the file for a skeleton —
@@ -802,16 +903,40 @@ pub fn run(
     // digested a lockfile that no longer existed by the time the project did, so the first
     // `renvor generate` read the lockfile as changed by the user (found by the Codex review of
     // Phase 011). Before the manifest, so the manifest lists it.
-    crate::generate::record::write(staging.dir(), env!("CARGO_PKG_VERSION"), templates::VERSION)?;
+    //
+    // EVERY VALUE IN `[verified_with]` COMES FROM ONE OF TWO PLACES (FR-012-4): the `Resolution`
+    // the sealed preflight queried in this directory, and the `Verified` the five checks
+    // themselves reported. Nothing is read from this process's environment, from the pin, from a
+    // previous record, or from a cache — the digest below is taken from the staged tree as the
+    // checks left it.
+    let tree_digest = crate::generate::digest::tree(staging.dir())?;
+    let verified_with = verified_with(
+        crate::generate::record::Operation::New,
+        &resolution,
+        &verified,
+        tree_digest,
+    );
+    let toolchain = crate::generate::record::Toolchain {
+        pinned: pin.clone(),
+        rust_version: rust_version(&configuration),
+    };
+    crate::generate::record::write(
+        staging.dir(),
+        env!("CARGO_PKG_VERSION"),
+        templates::VERSION,
+        &toolchain,
+        Some(&verified_with),
+        &[],
+    )?;
 
-    // ── 5. MANIFEST ─────────────────────────────────────────────────────────────────
+    // ── 6. MANIFEST ─────────────────────────────────────────────────────────────────
     //
     // Taken AFTER verification, so it describes exactly the tree that will be renamed —
     // `Cargo.lock` included.
     let manifest = FileManifest::describe(staging.dir())?;
     crate::inject::fail_at("manifest")?;
 
-    // ── 6. REVIEW AND CONFIRM ───────────────────────────────────────────────────────
+    // ── 7. REVIEW AND CONFIRM ───────────────────────────────────────────────────────
     //
     // FR-009. After the manifest, because the screen must list the paths that WILL be created and
     // the only way to know those is to have rendered them. Declining drops `staging`, which
@@ -874,10 +999,10 @@ pub fn run(
         ));
     }
 
-    // ── 6. PLACE ────────────────────────────────────────────────────────────────────
+    // ── 8. PLACE ────────────────────────────────────────────────────────────────────
     staging.place(&destination)?;
 
-    // ── 7. REPORT ───────────────────────────────────────────────────────────────────
+    // ── 9. REPORT ───────────────────────────────────────────────────────────────────
     let human = Report::new()
         .status(
             Status::Done,
@@ -891,6 +1016,12 @@ pub fn run(
             "Destination",
             crate::output::redact::path(&destination.display_path()),
         )
+        // ONE LINE FOR THE TOOLCHAIN (FR-012-8, §5.8): the channel the project now pins, and
+        // whether the verification that stands behind it observed a compiler launch or reused
+        // cached artifacts. The two stderr notices say what *differed*; this row says what the
+        // record holds even when nothing differed, so the operator is not left inferring it from
+        // a silence.
+        .row("Toolchain", toolchain_row(&toolchain, &verified_with))
         .blank()
         .text(format!("next: cd {} && cargo run", destination.name()));
     Ok(reporter.finish(
@@ -902,8 +1033,234 @@ pub fn run(
             "templateVersion": templates::VERSION,
             "configuration": &configuration,
             "manifest": manifest.entries,
+            // C-2 §"`result.toolchain` and `result.verified_with`": the record's two tables, read
+            // back from the values just written rather than re-derived. `historical` is `false`
+            // by construction — this is the tree that was verified, a moment ago.
+            "toolchain": toolchain_json(&toolchain)?,
+            "verified_with": verified_with_json(&verified_with)?,
         }),
     ))
+}
+
+/// The channel a generated project pins (FR-012-1, D-L2-4): the framework checkout's own
+/// `[toolchain].channel` for a starter, the generator's `rust-version` for a skeleton.
+///
+/// Read from the validated [`ProjectConfiguration`], which is where the checkout's two files were
+/// parsed at step 1 — never from this process's environment and never from a probe.
+fn pinned_channel(configuration: &ProjectConfiguration) -> String {
+    configuration.framework().map_or_else(
+        || env!("CARGO_PKG_RUST_VERSION").to_owned(),
+        |source| source.toolchain_channel().to_owned(),
+    )
+}
+
+/// The `rust-version` a generated manifest declares — the same two sources as [`pinned_channel`].
+fn rust_version(configuration: &ProjectConfiguration) -> String {
+    configuration.framework().map_or_else(
+        || env!("CARGO_PKG_RUST_VERSION").to_owned(),
+        |source| source.rust_version().to_owned(),
+    )
+}
+
+/// What the resolution probe of FR-012-7b holds the compiler to: the channel this project pins,
+/// and the `rust-version` its manifest declares.
+///
+/// # Errors
+///
+/// [`Code::Internal`] when the release strings do not parse as versions. They came from
+/// `semver::Version::to_string` (the framework read) or from this crate's own
+/// `CARGO_PKG_RUST_VERSION`, so a failure here is a defect in the generator rather than anything
+/// the operator did — which is exactly what that code says.
+fn expectations(configuration: &ProjectConfiguration) -> Result<Expectations, CliError> {
+    let rust_version = rust_version(configuration);
+    let parsed = semver::Version::parse(&rust_version).map_err(|error| {
+        CliError::new(
+            Code::Internal,
+            format!("the generator's own `rust-version` is not a release: {error}"),
+        )
+    })?;
+    Ok(Expectations {
+        pinned: Some(pinned_channel(configuration)),
+        rust_version: Some(parsed),
+    })
+}
+
+/// Prints the two evidence lines of FR-012-7d (d) and FR-012-8 (2), each one line on stderr.
+///
+/// # Why both, rather than one or the other
+///
+/// They answer different questions and a run can owe both answers. FR-012-7d (d) requires the
+/// cached line whenever a check's own units were all `Fresh`; FR-012-8 (2) requires the
+/// observation line whenever a launch *was* observed and its queried identity differs from the
+/// resolution. A mixed run — clippy reused, the build launched an override — owes each of them,
+/// and printing only the second would drop a disclosure the requirement makes unconditional.
+/// A purely cached run prints only the first, because `observation` has nothing to compare.
+pub(crate) fn announce(
+    reporter: &Reporter,
+    verified: &crate::toolchain::evidence::Verified,
+    resolution: &Resolution,
+) {
+    if let Some(line) = notice::cached(&verified.cached_checks) {
+        reporter.note(&line);
+    }
+    if let Some(line) = notice::observation(verified.rustc.as_ref(), &resolution.rustc) {
+        reporter.note(&line);
+    }
+}
+
+/// Assembles `[verified_with]` from the only two things allowed to fill it (FR-012-4): the
+/// sealed preflight's [`Resolution`] and the checks' own [`crate::toolchain::evidence::Verified`].
+///
+/// Shared by `renvor new` and `renvor generate auth`, which differ only in their
+/// [`crate::generate::record::Operation`] and in the tree they digested — so the two cannot drift
+/// into recording different things about the same measurement.
+///
+/// # What is deliberately absent
+///
+/// - `configured_rustc_*` is `None`. FR-012-7d (d) makes Cargo's separately queried configuration
+///   identity optional and labelled; this revision does not query it, and a field nothing measured
+///   is left null rather than filled from the resolution it is explicitly not.
+/// - `rustc_*` is whatever the checks observed, which is `None` for a cached run. Nothing here
+///   substitutes the pin, the resolution, `PATH`, or a cache file for an observation that does not
+///   exist.
+pub(crate) fn verified_with(
+    operation: crate::generate::record::Operation,
+    resolution: &Resolution,
+    verified: &crate::toolchain::evidence::Verified,
+    tree_digest: String,
+) -> crate::generate::record::VerifiedWith {
+    use crate::generate::record::{Checks, ClippyCheck, Outcome, UnitCheck, VerifiedWith};
+
+    // `passed` from the check's own boolean rather than from the fact that we got here. A failed
+    // check is an error and never reaches this function; saying so from the value is what keeps
+    // that true if the type ever gains a third state.
+    let outcome = |passed: bool| Outcome {
+        outcome: if passed { "passed" } else { "failed" }.to_owned(),
+    };
+    VerifiedWith {
+        operation,
+        // The instant the five checks passed, to the second, in UTC.
+        verified_at: humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string(),
+        tree_scope: crate::toolchain::TREE_SCOPE,
+        tree_digest,
+        observation: verified.observation,
+        rustc_release: verified
+            .rustc
+            .as_ref()
+            .map(|identity| identity.release.clone()),
+        rustc_commit: verified
+            .rustc
+            .as_ref()
+            .map(|identity| identity.commit.clone()),
+        rustc_host: verified
+            .rustc
+            .as_ref()
+            .map(|identity| identity.host.clone()),
+        resolved_rustc_release: resolution.rustc.release.clone(),
+        resolved_rustc_commit: resolution.rustc.commit.clone(),
+        configured_rustc_release: None,
+        configured_rustc_commit: None,
+        cargo_release: resolution.cargo.release.clone(),
+        cargo_commit: resolution.cargo.commit.clone(),
+        rustup: resolution
+            .rustup
+            .as_ref()
+            .map_or_else(|| "absent".to_owned(), semver::Version::to_string),
+        proxy: resolution.proxy,
+        selected_by: resolution.selected_by,
+        rustc_override: resolution.rustc_override,
+        // Presence from the sealed environment and Cargo's configuration (FR-012-7b), OR a
+        // launch chain longer than the compiler alone (FR-012-7d): a workspace wrapper Cargo
+        // inserted is a wrapper whether or not this process could see the variable.
+        wrapper: resolution.wrapper || verified.wrapper_observed,
+        rustflags: resolution.rustflags,
+        rustdocflags: resolution.rustdocflags,
+        checks: Checks {
+            fmt: outcome(verified.fmt),
+            clippy: ClippyCheck {
+                outcome: "passed".to_owned(),
+                units_launched: verified.clippy.units_launched,
+                units_fresh: verified.clippy.units_fresh,
+                driver_release: verified
+                    .clippy
+                    .driver
+                    .as_ref()
+                    .map(|driver| driver.release.clone()),
+                driver_commit: verified
+                    .clippy
+                    .driver
+                    .as_ref()
+                    .map(|driver| driver.commit.clone()),
+            },
+            build: UnitCheck {
+                outcome: "passed".to_owned(),
+                units_launched: verified.build.units_launched,
+                units_fresh: verified.build.units_fresh,
+            },
+            test: UnitCheck {
+                outcome: "passed".to_owned(),
+                units_launched: verified.test.units_launched,
+                units_fresh: verified.test.units_fresh,
+            },
+            run: outcome(verified.run),
+        },
+    }
+}
+
+/// The `Toolchain` row of the human report: the pin, and what stands behind it.
+pub(crate) fn toolchain_row(
+    toolchain: &crate::generate::record::Toolchain,
+    verified_with: &crate::generate::record::VerifiedWith,
+) -> String {
+    // NO PATH, NO ENVIRONMENT VALUE, NO RAW CHILD OUTPUT: a release string parsed under
+    // FR-012-7e's grammar, and the pin the templates rendered.
+    let state = match verified_with.observation {
+        Observation::Launched | Observation::Mixed => {
+            verified_with.rustc_release.as_ref().map_or_else(
+                || "verification observed no compiler launch".to_owned(),
+                |release| format!("verification launched rustc {release}"),
+            )
+        }
+        Observation::Cached => "verification reused cached artifacts".to_owned(),
+    };
+    format!("pinned {}; {state}", toolchain.pinned)
+}
+
+/// `result.toolchain` (C-2 §"`result.toolchain` and `result.verified_with`").
+///
+/// # Errors
+///
+/// [`Code::Internal`] when the table cannot be serialised.
+pub(crate) fn toolchain_json(
+    toolchain: &crate::generate::record::Toolchain,
+) -> Result<serde_json::Value, CliError> {
+    serde_json::to_value(toolchain).map_err(unserialisable)
+}
+
+/// `result.verified_with`, with the computed `historical` flag C-2 requires.
+///
+/// `historical` is `false` here and only here without a recomputation: this is the tree the five
+/// checks just ran against, so the recorded digest is the current tree's by construction.
+/// `renvor check` recomputes it, because by then the tree may be anyone's.
+///
+/// # Errors
+///
+/// [`Code::Internal`] when the table cannot be serialised.
+pub(crate) fn verified_with_json(
+    verified_with: &crate::generate::record::VerifiedWith,
+) -> Result<serde_json::Value, CliError> {
+    let mut value = serde_json::to_value(verified_with).map_err(unserialisable)?;
+    if let Some(object) = value.as_object_mut() {
+        object.insert("historical".to_owned(), serde_json::Value::Bool(false));
+    }
+    Ok(value)
+}
+
+fn unserialisable(error: serde_json::Error) -> CliError {
+    CliError::new(
+        Code::Internal,
+        format!("the provenance record could not be serialised: {error}"),
+    )
 }
 
 #[cfg(test)]
@@ -911,6 +1268,287 @@ mod tests {
     use super::*;
     use crate::output::Format;
     use std::path::PathBuf;
+
+    // ── PHASE 012 (L-2): the record, and where its values are allowed to come from ────────
+
+    /// This module's own source, for the two assertions that are about ORDER and ABSENCE rather
+    /// than about a value — neither of which any value a function returns can express.
+    const THIS_SOURCE: &str = include_str!("new.rs");
+
+    /// A compiler identity nothing on this machine can be.
+    fn identity(release: &str, commit: &str) -> crate::toolchain::Identity {
+        crate::toolchain::Identity {
+            release: release.to_owned(),
+            commit: commit.to_owned(),
+            host: "fabricated-unknown-none".to_owned(),
+        }
+    }
+
+    /// A resolution whose every field is distinguishable from every other source a record could
+    /// wrongly be filled from.
+    fn resolution() -> Resolution {
+        Resolution {
+            rustc: identity("77.0.1", "aaaaaaaaaa"),
+            cargo: crate::toolchain::CargoIdentity {
+                release: "77.0.2".to_owned(),
+                commit: "bbbbbbbbbb".to_owned(),
+            },
+            rustup: Some(semver::Version::new(1, 29, 0)),
+            proxy: true,
+            selected_by: crate::toolchain::SelectedBy::ToolchainFile,
+            rustc_override: true,
+            wrapper: false,
+            rustflags: true,
+            rustdocflags: false,
+        }
+    }
+
+    /// What the checks reported: a compiler DIFFERENT from the resolution's, so a record that
+    /// confused the two would be visible in the assertion rather than merely possible.
+    fn observed() -> crate::toolchain::evidence::Verified {
+        crate::toolchain::evidence::Verified {
+            fmt: true,
+            clippy: crate::toolchain::evidence::ClippyEvidence {
+                units_launched: 2,
+                units_fresh: 0,
+                driver: Some(crate::toolchain::DriverIdentity {
+                    release: "0.77.3".to_owned(),
+                    commit: "cccccccccc".to_owned(),
+                }),
+            },
+            build: crate::toolchain::evidence::UnitEvidence {
+                units_launched: 1,
+                units_fresh: 0,
+            },
+            test: crate::toolchain::evidence::UnitEvidence {
+                units_launched: 3,
+                units_fresh: 0,
+            },
+            run: true,
+            observation: Observation::Launched,
+            rustc: Some(identity("88.0.4", "dddddddddd")),
+            cached_checks: Vec::new(),
+            wrapper_observed: true,
+        }
+    }
+
+    /// FR-012-4: `[verified_with]` is measured, never derived — and it is written **after** the
+    /// checks, from what they and the sealed preflight reported.
+    ///
+    /// Two assertions, because the requirement has two halves. The values half: every field of
+    /// the table traces to either the [`Resolution`] or the [`crate::toolchain::evidence::Verified`]
+    /// handed in, and the observed identity is the checks' rather than the resolution's. The
+    /// order half is read off this module's source, because "after verification" is a property of
+    /// the code's shape and no returned value can show it.
+    ///
+    /// RED before the wiring: the record was written with `verified_with: None` and a
+    /// `[toolchain]` of `none`/`none` — every field below was absent, and the process
+    /// environment was the only thing that could have filled them.
+    #[test]
+    fn the_record_is_written_after_verification_from_the_observed_evidence() {
+        let resolution = resolution();
+        let verified = observed();
+        let table = verified_with(
+            crate::generate::record::Operation::New,
+            &resolution,
+            &verified,
+            "sha256:feed".to_owned(),
+        );
+
+        // THE OBSERVATION is the checks', and is not the resolution's.
+        assert_eq!(table.rustc_release.as_deref(), Some("88.0.4"));
+        assert_eq!(table.rustc_commit.as_deref(), Some("dddddddddd"));
+        assert_eq!(table.rustc_host.as_deref(), Some("fabricated-unknown-none"));
+        // THE RESOLUTION is separately labelled, and is not the observation's.
+        assert_eq!(table.resolved_rustc_release, "77.0.1");
+        assert_eq!(table.resolved_rustc_commit, "aaaaaaaaaa");
+        assert_ne!(
+            table.rustc_release.as_deref(),
+            Some(table.resolved_rustc_release.as_str()),
+            "the observed and resolved identities were collapsed into one"
+        );
+        // THE CONFIGURATION identity is not queried in this revision, and a field nothing
+        // measured is null rather than filled from the resolution it is explicitly not.
+        assert!(table.configured_rustc_release.is_none());
+        assert!(table.configured_rustc_commit.is_none());
+        // THE REST of the resolution, carried through unchanged.
+        assert_eq!(table.cargo_release, "77.0.2");
+        assert_eq!(table.cargo_commit, "bbbbbbbbbb");
+        assert_eq!(table.rustup, "1.29.0");
+        assert!(table.proxy && table.rustc_override && table.rustflags);
+        assert!(!table.rustdocflags);
+        assert_eq!(
+            table.selected_by,
+            crate::toolchain::SelectedBy::ToolchainFile
+        );
+        // `wrapper` is the resolution's presence OR an observed chain longer than the compiler.
+        assert!(
+            table.wrapper,
+            "an observed wrapper chain did not reach the record"
+        );
+        // THE COUNTS, from the checks.
+        assert_eq!(table.checks.clippy.units_launched, 2);
+        assert_eq!(
+            table.checks.clippy.driver_release.as_deref(),
+            Some("0.77.3")
+        );
+        assert_eq!(table.checks.build.units_launched, 1);
+        assert_eq!(table.checks.test.units_launched, 3);
+        assert_eq!(table.tree_scope, crate::toolchain::TREE_SCOPE);
+        assert_eq!(table.tree_digest, "sha256:feed");
+        // RFC 3339 to the second, UTC.
+        assert!(
+            table.verified_at.ends_with('Z') && table.verified_at.len() == 20,
+            "verified_at is not an RFC 3339 second in UTC"
+        );
+
+        // THE ORDER. The verification call has to precede the record write, and the record write
+        // has to precede the manifest walk that lists it.
+        let verify_site = THIS_SOURCE
+            .find("crate::generate::verify::in_staging_with(")
+            .expect("the verification site");
+        let record_site = THIS_SOURCE
+            .find("crate::generate::record::write(")
+            .expect("the record site");
+        let manifest_site = THIS_SOURCE
+            .find("FileManifest::describe(staging.dir())")
+            .expect("the manifest site");
+        assert!(
+            verify_site < record_site,
+            "the record is written before the verification it describes"
+        );
+        assert!(
+            record_site < manifest_site,
+            "the manifest is walked before the record it must list"
+        );
+    }
+
+    /// A cached run records no observed identity, and nothing invents one (FR-012-7d (d)).
+    #[test]
+    fn a_cached_run_records_no_observed_identity() {
+        let mut verified = observed();
+        verified.observation = Observation::Cached;
+        verified.rustc = None;
+        verified.clippy.driver = None;
+        verified.clippy.units_launched = 0;
+        verified.clippy.units_fresh = 2;
+        let table = verified_with(
+            crate::generate::record::Operation::New,
+            &resolution(),
+            &verified,
+            "sha256:feed".to_owned(),
+        );
+        assert!(table.rustc_release.is_none());
+        assert!(table.rustc_commit.is_none());
+        assert!(table.rustc_host.is_none());
+        assert!(table.checks.clippy.driver_release.is_none());
+        // The resolution is still there: a cached run says what resolved, and says that nothing
+        // was observed — it does not go quiet about both.
+        assert_eq!(table.resolved_rustc_release, "77.0.1");
+        assert_eq!(table.observation, Observation::Cached);
+    }
+
+    /// FR-012-4: no field is ever filled from a cache file. The strongest statement a unit test
+    /// can make about a file that is never read is that neither command names it.
+    #[test]
+    fn a_stale_rustc_info_json_is_never_read() {
+        // SPELLED IN TWO PIECES so this assertion's own source is not a hit for itself. The
+        // same trick appears wherever a test below searches its own file.
+        let cache_file = format!("{}{}", "rustc_", "info.json");
+        // The two commands that write a record. `toolchain::evidence` is deliberately NOT in
+        // this list: its module doc names the file in order to say it never reads one, and an
+        // assertion that forbade the sentence would delete the statement rather than the
+        // behaviour.
+        for source in [THIS_SOURCE, include_str!("generate.rs")] {
+            assert!(
+                !source.contains(&cache_file),
+                "a command names Cargo's compiler cache file"
+            );
+        }
+    }
+
+    /// The `Toolchain` row states the pin and what stands behind it, and carries no path, no
+    /// environment value, and no raw child output.
+    #[test]
+    fn the_summary_names_the_pin_and_the_observed_or_cached_state() {
+        let toolchain = crate::generate::record::Toolchain {
+            pinned: "1.94.0".to_owned(),
+            rust_version: "1.94.0".to_owned(),
+        };
+        let launched = verified_with(
+            crate::generate::record::Operation::New,
+            &resolution(),
+            &observed(),
+            "sha256:feed".to_owned(),
+        );
+        assert_eq!(
+            toolchain_row(&toolchain, &launched),
+            "pinned 1.94.0; verification launched rustc 88.0.4"
+        );
+
+        let mut cached = observed();
+        cached.observation = Observation::Cached;
+        cached.rustc = None;
+        let cached = verified_with(
+            crate::generate::record::Operation::New,
+            &resolution(),
+            &cached,
+            "sha256:feed".to_owned(),
+        );
+        assert_eq!(
+            toolchain_row(&toolchain, &cached),
+            "pinned 1.94.0; verification reused cached artifacts"
+        );
+    }
+
+    /// C-2: `result.verified_with` carries `historical`, and it is `false` for the tree the
+    /// checks just ran against.
+    #[test]
+    fn the_json_tables_carry_historical_false_for_the_tree_just_verified() {
+        let table = verified_with(
+            crate::generate::record::Operation::New,
+            &resolution(),
+            &observed(),
+            "sha256:feed".to_owned(),
+        );
+        let value = verified_with_json(&table).expect("serialises");
+        assert_eq!(value["historical"], serde_json::Value::Bool(false));
+        assert_eq!(value["operation"], "new");
+        assert_eq!(value["resolved_rustc_release"], "77.0.1");
+        assert_eq!(value["rustc_release"], "88.0.4");
+        assert_eq!(value["configured_rustc_release"], serde_json::Value::Null);
+
+        let toolchain = crate::generate::record::Toolchain {
+            pinned: "1.94.0".to_owned(),
+            rust_version: "1.94.0".to_owned(),
+        };
+        let value = toolchain_json(&toolchain).expect("serialises");
+        assert_eq!(value["pinned"], "1.94.0");
+        assert_eq!(value["rust_version"], "1.94.0");
+    }
+
+    /// FR-012-7a: the identification finishes before anything is staged, and the resolution runs
+    /// in the staged tree. Both are properties of the order of two calls.
+    #[test]
+    fn the_toolchain_is_identified_before_staging_and_resolved_in_staging() {
+        let identify_site = THIS_SOURCE
+            .find("toolchain::identify(&sealed)")
+            .expect("the identification site");
+        let stage_site = THIS_SOURCE
+            .find("Staging::create(&destination)")
+            .expect("the staging site");
+        let resolve_site = THIS_SOURCE
+            .find("toolchain::resolve(&staging_path,")
+            .expect("the resolution site");
+        assert!(
+            identify_site < stage_site,
+            "a proxy could run before the identification, with something staged"
+        );
+        assert!(
+            stage_site < resolve_site,
+            "the resolution is measured somewhere other than the staged tree"
+        );
+    }
 
     /// Every database resolves a driver feature — the guard the `_` arm above depends on.
     #[test]
@@ -1207,13 +1845,19 @@ mod tests {
     }
 
     /// A framework checkout with exactly what `FrameworkSource::validate_path` reads: the
-    /// workspace manifest, the facade's manifest, and a lockfile.
+    /// workspace manifest with its MSRV, the facade's manifest, a lockfile, and the pin.
     fn fake_framework(base: &std::path::Path) -> PathBuf {
         let root = base.join("framework");
         std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
         std::fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n\n[workspace.package]\n\
+             rust-version = \"1.94.0\"\n",
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\n",
         )
         .expect("write");
         std::fs::write(

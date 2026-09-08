@@ -254,6 +254,20 @@ semver = { version = "1.0.28", default-features = false }
 # that can drift.
 wait-timeout = { version = "0.2.1", default-features = false }
 
+# Phase 012 (FR-012-7d). Cargo's `-vv` output prints each launch as one shell-quoted command —
+# `Running \`CARGO=… DYLD_FALLBACK_LIBRARY_PATH='…' …/rustc --crate-name …\`` — and the evidence
+# needs its tokens: the leading `NAME=value` pairs to discard, the executables that follow to
+# observe. Package-first over a hand-written splitter: quoting rules are exactly where a
+# hand-rolled one silently truncates a path with a space. Already in `Cargo.lock` as a
+# dev-only edge (via `portable-pty`); MIT OR Apache-2.0; no dependencies of its own.
+shell-words = { version = "1.1.1", default-features = false }
+
+# Phase 012 (FR-012-5d). `verified_at` is an RFC 3339 instant in UTC (`2026-09-07T00:00:00Z`),
+# which `std` cannot format. `chrono` and `time` are both in the graph but each is a large crate
+# pulled for one function; this one is tiny, has no dependencies, and is already in `Cargo.lock`
+# as a dev-only edge (via `trycmd`). MIT OR Apache-2.0.
+humantime = { version = "2.4.0", default-features = false }
+
 [dev-dependencies]
 # Phase 003 research §D14 — the command surface is a public contract, so it is tested as expected OUTPUT
 # rather than as assertions buried in Rust. A contract change then appears as a diff in review.

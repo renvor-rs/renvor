@@ -12,7 +12,60 @@ expression: "Value::Object(shapes)"
       "name": "<string>",
       "target": "<string>",
       "templateVersion": "<string>",
-      "transport": "<string>"
+      "toolchain": {
+        "pinned": "<string>",
+        "rust_version": "<string>"
+      },
+      "transport": "<string>",
+      "verified_with": {
+        "cargo_commit": "<string>",
+        "cargo_release": "<string>",
+        "checks": {
+          "build": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "clippy": {
+            "driver_commit": "<string>",
+            "driver_release": "<string>",
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "fmt": {
+            "outcome": "<string>"
+          },
+          "run": {
+            "outcome": "<string>"
+          },
+          "test": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          }
+        },
+        "configured_rustc_commit": null,
+        "configured_rustc_release": null,
+        "historical": "<boolean>",
+        "observation": "<string>",
+        "operation": "<string>",
+        "proxy": "<boolean>",
+        "resolved_rustc_commit": "<string>",
+        "resolved_rustc_release": "<string>",
+        "rustc_commit": "<string>",
+        "rustc_host": "<string>",
+        "rustc_override": "<boolean>",
+        "rustc_release": "<string>",
+        "rustdocflags": "<boolean>",
+        "rustflags": "<boolean>",
+        "rustup": "<string>",
+        "selected_by": "<string>",
+        "tree_digest": "<string>",
+        "tree_scope": "<integer>",
+        "verified_at": "<string>",
+        "wrapper": "<boolean>"
+      }
     },
     "schemaVersion": 2,
     "status": "success"
@@ -188,7 +241,60 @@ expression: "Value::Object(shapes)"
           "size": "<integer>"
         }
       ],
-      "templateVersion": "<string>"
+      "templateVersion": "<string>",
+      "toolchain": {
+        "pinned": "<string>",
+        "rust_version": "<string>"
+      },
+      "verified_with": {
+        "cargo_commit": "<string>",
+        "cargo_release": "<string>",
+        "checks": {
+          "build": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "clippy": {
+            "driver_commit": "<string>",
+            "driver_release": "<string>",
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "fmt": {
+            "outcome": "<string>"
+          },
+          "run": {
+            "outcome": "<string>"
+          },
+          "test": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          }
+        },
+        "configured_rustc_commit": null,
+        "configured_rustc_release": null,
+        "historical": "<boolean>",
+        "observation": "<string>",
+        "operation": "<string>",
+        "proxy": "<boolean>",
+        "resolved_rustc_commit": "<string>",
+        "resolved_rustc_release": "<string>",
+        "rustc_commit": "<string>",
+        "rustc_host": "<string>",
+        "rustc_override": "<boolean>",
+        "rustc_release": "<string>",
+        "rustdocflags": "<boolean>",
+        "rustflags": "<boolean>",
+        "rustup": "<string>",
+        "selected_by": "<string>",
+        "tree_digest": "<string>",
+        "tree_scope": "<integer>",
+        "verified_at": "<string>",
+        "wrapper": "<boolean>"
+      }
     },
     "schemaVersion": 2,
     "status": "success"
@@ -235,7 +341,60 @@ expression: "Value::Object(shapes)"
           "size": "<integer>"
         }
       ],
-      "templateVersion": "<string>"
+      "templateVersion": "<string>",
+      "toolchain": {
+        "pinned": "<string>",
+        "rust_version": "<string>"
+      },
+      "verified_with": {
+        "cargo_commit": "<string>",
+        "cargo_release": "<string>",
+        "checks": {
+          "build": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "clippy": {
+            "driver_commit": "<string>",
+            "driver_release": "<string>",
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          },
+          "fmt": {
+            "outcome": "<string>"
+          },
+          "run": {
+            "outcome": "<string>"
+          },
+          "test": {
+            "outcome": "<string>",
+            "units_fresh": "<integer>",
+            "units_launched": "<integer>"
+          }
+        },
+        "configured_rustc_commit": null,
+        "configured_rustc_release": null,
+        "historical": "<boolean>",
+        "observation": "<string>",
+        "operation": "<string>",
+        "proxy": "<boolean>",
+        "resolved_rustc_commit": "<string>",
+        "resolved_rustc_release": "<string>",
+        "rustc_commit": "<string>",
+        "rustc_host": "<string>",
+        "rustc_override": "<boolean>",
+        "rustc_release": "<string>",
+        "rustdocflags": "<boolean>",
+        "rustflags": "<boolean>",
+        "rustup": "<string>",
+        "selected_by": "<string>",
+        "tree_digest": "<string>",
+        "tree_scope": "<integer>",
+        "verified_at": "<string>",
+        "wrapper": "<boolean>"
+      }
     },
     "schemaVersion": 2,
     "status": "success"

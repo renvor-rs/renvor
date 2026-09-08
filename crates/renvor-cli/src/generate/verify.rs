@@ -43,12 +43,21 @@ use std::process::Command;
 
 use crate::exit::{CliError, Code};
 use crate::output::progress::Progress;
+use crate::toolchain::evidence::{self, CheckEvidence, EvidenceError};
+pub use crate::toolchain::evidence::{ClippyEvidence, UnitEvidence, Verified};
 
 /// The checks run before the smoke run, in order, each with the failure it reports.
 ///
 /// Ordered cheapest-first so the common failure is reported in a second rather than in a minute.
 /// The fifth check — that the project **starts** — depends on the project's shape and is chosen
 /// by [`Smoke`].
+///
+/// # `-vv` on the three that can launch a compiler (Phase 012, FR-012-7d (a))
+///
+/// The flag changes what Cargo **prints**, not what it compiles, runs, or requires: at `-vv`
+/// every launch is one `Running` line on stderr and every reuse one `Fresh` line, which
+/// [`crate::toolchain::evidence`] reads for the record's launch observation. `fmt` launches no
+/// compiler and `cargo run --quiet` launches nothing after `build`, so neither carries it.
 const CHECKS: [(&str, &[&str], &str); 4] = [
     ("cargo", &["fmt", "--check"], "is not correctly formatted"),
     // FR-029 names FOUR things — "formatting, **linting**, building, and testing" — and until
@@ -68,11 +77,11 @@ const CHECKS: [(&str, &[&str], &str); 4] = [
     // over a placed project's tests, which the binary-only check had never linted.
     (
         "cargo",
-        &["clippy", "--all-targets", "--", "-D", "warnings"],
+        &["clippy", "--all-targets", "-vv", "--", "-D", "warnings"],
         "does not pass its own lints",
     ),
-    ("cargo", &["build"], "does not compile"),
-    ("cargo", &["test"], "does not pass its own tests"),
+    ("cargo", &["build", "-vv"], "does not compile"),
+    ("cargo", &["test", "-vv"], "does not pass its own tests"),
 ];
 
 /// How the fifth check — FR-029's "and MUST start", contract C-5 step 5 — is run.
@@ -192,10 +201,16 @@ const PASSED_THROUGH: &[&str] = &[
     "CARGO_HOME",
     "RUSTUP_HOME",
     "RUSTUP_TOOLCHAIN",
-    "RUSTUP_DIST_SERVER",
-    "RUSTUP_UPDATE_ROOT",
+    // `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT` were here until Phase 012 (FR-012-6). They
+    // tell rustup where to download from, and the seal never needs a download: it forces
+    // `RUSTUP_AUTO_INSTALL=0` (see `Sealed::environment`), so a pinned-but-absent toolchain is a
+    // refusal by name rather than an installation from inside generation (SR-012-1). The
+    // isolated probes of FR-012-7a set both to an unroutable loopback address themselves.
     "RUSTC",
     "RUSTC_WRAPPER",
+    // The operator's trust, like `RUSTC_WRAPPER` (SR-012-3): a build cache or a lint wrapper
+    // configured through it must keep working, and its PRESENCE is what the record keeps.
+    "RUSTC_WORKSPACE_WRAPPER",
     "RUSTFLAGS",
     "RUSTDOCFLAGS",
     "CARGO_BUILD_JOBS",
@@ -240,13 +255,72 @@ const PROXY_VARIABLES: &[&str] = &[
     "https_proxy",
 ];
 
+/// The variable the seal forces, and its value (FR-012-6): rustup 1.28.0 introduced it, and `0`
+/// is what makes a rustup proxy answer "is not installed" instead of downloading.
+const FORCED_NO_INSTALL: (&str, &str) = ("RUSTUP_AUTO_INSTALL", "0");
+
+/// The two install-server variables no child ever receives from the seal (FR-012-6). They are
+/// not in [`PASSED_THROUGH`], so `seal` never keeps them; [`Sealed::environment`] removes them
+/// again so a `Sealed` built by hand cannot carry them either.
+const NEVER_PASSED: [&str; 2] = ["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"];
+
 /// The sealed environment, and the credentials the seal removed from it — so the output of a
 /// child that somehow learned one can be redacted before it is reported.
 pub struct Sealed {
-    /// The variables the checks run with.
+    /// The variables the checks run with: the pass-through, credentials stripped.
+    ///
+    /// **Not the whole environment a child receives.** The forced `RUSTUP_AUTO_INSTALL=0` is
+    /// added by [`Sealed::environment`], which is what [`sealed_command`] applies; a site that
+    /// copies this list into a `Command` by hand has bypassed the seal's no-provisioning
+    /// guarantee. The list is kept as the pass-through alone so a test can assert exactly what
+    /// the operator's shell contributed, in the operator's order.
     pub variables: Vec<(std::ffi::OsString, std::ffi::OsString)>,
     /// Every `user:password` removed from a proxy value.
     pub credentials: Vec<String>,
+}
+
+impl Sealed {
+    /// Everything a child receives (FR-012-6): the pass-through, then the forced
+    /// `RUSTUP_AUTO_INSTALL=0` — appended after the pass-through and replacing any value with
+    /// that name — with `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT` absent whatever the
+    /// caller set.
+    #[must_use]
+    pub fn environment(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = self
+            .variables
+            .iter()
+            .filter(|(name, _)| {
+                name != FORCED_NO_INSTALL.0 && !NEVER_PASSED.iter().any(|never| name == never)
+            })
+            .cloned()
+            .collect();
+        environment.push((
+            std::ffi::OsString::from(FORCED_NO_INSTALL.0),
+            std::ffi::OsString::from(FORCED_NO_INSTALL.1),
+        ));
+        environment
+    }
+}
+
+/// The one way a tool child is built in this crate (FR-012-6): `program` in `cwd`, with the
+/// parent's environment cleared and exactly [`Sealed::environment`] in its place — the
+/// pass-through, `RUSTUP_AUTO_INSTALL=0` forced, the install-server variables absent.
+///
+/// Every site that runs `cargo`, `rustc`, `rustfmt`, `rustup`, or a toolchain executable goes
+/// through here — the five checks, `generate resource`'s `rustfmt`, `doctor`'s probes, and the
+/// FR-012-7a/7b/7d probes — so the no-provisioning guarantee is one function rather than a
+/// convention each site remembers. The isolated probes of FR-012-7a build on it and add their
+/// own directories and the loopback server address.
+///
+/// `program` is a located path or a fixed literal; nothing here comes from user input.
+#[must_use]
+pub fn sealed_command(program: &OsStr, sealed: &Sealed, cwd: &Path) -> Command {
+    let mut command = Command::new(program);
+    command
+        .current_dir(cwd)
+        .env_clear()
+        .envs(sealed.environment());
+    command
 }
 
 /// Seals `parent`: keeps the variables [`PASSED_THROUGH`] names, in order, and strips the
@@ -345,13 +419,18 @@ fn redacted_output(text: &str, credentials: &[String]) -> String {
     crate::output::redact::for_terminal(&out)
 }
 
-/// Runs the generated project's own checks while it is still in staging.
+/// Runs the generated project's own checks while it is still in staging, and returns what was
+/// observed and queried while they passed (FR-012-7d).
 ///
 /// # Errors
 ///
 /// [`Code::ProjectVerificationFailed`] if any check fails — the project was generated and is
 /// **wrong**, which is a generation failure — or [`Code::ToolMissing`] if `cargo` cannot be run at
-/// all.
+/// all. Since Phase 012, the same code with `details.reason = evidence_capture_failed` when a
+/// passing check's `-vv` stream cannot be accounted for (FR-012-7d (e)), and with
+/// `details.reason = compiler_identity_unreadable` when an executable Cargo launched does not
+/// answer its version query under FR-012-7e's grammar. Neither is ever reported as a cached run,
+/// and nothing is placed either way.
 ///
 /// # Not `render_failed`, which it was until 2026-08-18
 ///
@@ -360,22 +439,38 @@ fn redacted_output(text: &str, credentials: &[String]) -> String {
 /// format, test, or start check. A consumer matching the registry would have looked for a template
 /// defect over a compile error. This is the same class of misreporting as A-R6's three sites, found
 /// in the same sweep and corrected with them.
-pub fn in_staging(staging: &Path, progress: &Progress, smoke: Smoke) -> Result<(), CliError> {
+#[cfg(test)]
+pub fn in_staging(staging: &Path, progress: &Progress, smoke: Smoke) -> Result<Verified, CliError> {
     in_staging_with(staging, progress, smoke, std::env::vars_os())
 }
 
-/// [`in_staging`] with the parent environment given rather than read — the seam the
-/// sealed-environment controls use to hand the checks a shell they can shape.
+/// The five checks in `staging`, with the parent environment **given rather than read**.
+///
+/// Every caller passes one snapshot of `std::env::vars_os()` here and seals the same snapshot for
+/// the preflight of FR-012-7a/7b, so the identification, the resolution, and the checks cannot be
+/// measuring two different shells; the sealed-environment controls pass a shell they shaped.
+///
+/// # What comes back, and where each piece is from
+///
+/// Every check ran and passed. For clippy, build, and test the stderr of that run — and nothing
+/// else: no cache file, no earlier record, no earlier stream — was parsed into the project's own
+/// units launched and reused; the last executable of the build/test chains was asked `-vV` and
+/// the `clippy-driver` of the clippy chains `--version`, each under the same seal in the same
+/// directory. What was queried is what the launched executable answered; what was observed is
+/// what Cargo printed. Neither is proof that a wrapper executed that compiler (SR-012-3).
 ///
 /// # Errors
 ///
-/// As [`in_staging`].
+/// [`Code::ProjectVerificationFailed`] when a check fails, when a passing check's `-vv` stream
+/// cannot be accounted for, or when a launched executable does not answer its version query under
+/// FR-012-7e's grammar; [`Code::ToolMissing`] when a tool cannot be started. Neither is ever
+/// reported as a cached run, and nothing is placed either way.
 pub fn in_staging_with(
     staging: &Path,
     progress: &Progress,
     smoke: Smoke,
     parent: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
-) -> Result<(), CliError> {
+) -> Result<Verified, CliError> {
     let parent: Vec<(std::ffi::OsString, std::ffi::OsString)> = parent.collect();
     let configured_target = parent
         .iter()
@@ -383,21 +478,24 @@ pub fn in_staging_with(
         .map(|(_, value)| value.clone());
     let target = target_directory(configured_target.as_deref())?;
     let sealed = seal(parent.into_iter());
+    // The name the `-vv` stream's `CARGO_PKG_NAME` and `Fresh` lines are matched against: the
+    // manifest the generator itself rendered, parsed and nothing more.
+    let own_package = own_package_name(staging)?;
 
+    let mut captured = Captured::default();
     for (program, arguments, complaint) in CHECKS.into_iter().chain(std::iter::once(smoke.check()))
     {
         // WHICH check is running, not merely THAT something is. `.output()` captures everything
         // cargo says, so without this the operator watches a spinner for a cold `cargo build` with
         // no way to tell a slow compile from a hung one — and no way to know, when it does hang,
         // which of the five to reproduce by hand.
-        progress.step(&format!("{program} {}", arguments.join(" ")));
-        let output = Command::new(program)
+        let label = format!("{program} {}", arguments.join(" "));
+        progress.step(&label);
+        // SEALED: `sealed_command` is the one way a tool child is built (FR-012-6). The build
+        // directory is set explicitly, after the seal, so the operator's `CARGO_TARGET_DIR`
+        // reaches cargo through `target` alone.
+        let output = sealed_command(OsStr::new(program), &sealed, staging)
             .args(arguments)
-            .current_dir(staging)
-            // SEALED: see `PASSED_THROUGH`. The build directory is set explicitly, after the
-            // seal, so the operator's `CARGO_TARGET_DIR` reaches cargo through `target` alone.
-            .env_clear()
-            .envs(sealed.variables.iter().cloned())
             .env("CARGO_TARGET_DIR", target.path())
             .output()
             .map_err(|error| {
@@ -424,12 +522,15 @@ pub fn in_staging_with(
             // REDACTED, not raw: a build script's or a compiler's output is text nobody
             // reviewed — every URL credential is removed, every credential the seal took out of
             // a proxy value is removed, every control character is escaped.
+            // WITHOUT THE `-vv` LAUNCH LINES (Phase 012): each is Cargo's rendering of a whole
+            // command — every variable it set, every `RUSTFLAGS`-derived argument, every path —
+            // and says nothing about why the check failed. The diagnostics that do stay.
             let stdout = redacted_output(
                 &String::from_utf8_lossy(&output.stdout),
                 &sealed.credentials,
             );
             let stderr = redacted_output(
-                &String::from_utf8_lossy(&output.stderr),
+                &evidence::without_launch_lines(&String::from_utf8_lossy(&output.stderr)),
                 &sealed.credentials,
             );
             let detail = format!("{}\n{}", stdout.trim(), stderr.trim());
@@ -441,12 +542,216 @@ pub fn in_staging_with(
                     detail.trim()
                 ),
             )
-            .with("check", format!("{program} {}", arguments.join(" ")))
+            .with("check", label)
             .with("stage", "pre-placement verification"));
+        }
+
+        // THE EVIDENCE OF THIS CHECK IS THIS CHECK'S STDERR. Parsed now, before the next check
+        // runs, from the bytes the child wrote to this pipe — never from a file.
+        if let Some(slot) = captured.slot(arguments.first().copied().unwrap_or("")) {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            *slot = Some(
+                evidence::parse_check(&stderr, &own_package, staging)
+                    .map_err(|error| capture_failed(&label, error))?,
+            );
         }
     }
 
-    Ok(())
+    let (Some(clippy), Some(build), Some(test)) = (captured.clippy, captured.build, captured.test)
+    else {
+        return Err(CliError::new(
+            Code::Internal,
+            "verification finished without running every check it records evidence for",
+        ));
+    };
+
+    // THE DRIVER'S OWN ANSWER (FR-012-7d (b), §4.3.2): the `clippy-driver` executable the
+    // `Running` line named, asked `--version` itself. Only when a unit was launched — a cached
+    // clippy check records no driver — and never from `cargo clippy --version`.
+    let driver = if clippy.units_launched > 0 {
+        progress.step("clippy-driver --version");
+        let drivers = distinct(
+            clippy
+                .chains
+                .iter()
+                .filter_map(evidence::clippy_driver)
+                .map(|driver| (driver, CLIPPY_LABEL)),
+        );
+        if drivers.is_empty() {
+            return Err(capture_failed(CLIPPY_LABEL, EvidenceError::NoDriver));
+        }
+        let mut identities = Vec::with_capacity(drivers.len());
+        for (driver, label) in drivers {
+            identities.push(
+                evidence::query_driver(driver, &sealed, staging)
+                    .map_err(|error| error.with("check", label))?,
+            );
+        }
+        if identities.windows(2).any(|pair| pair[0] != pair[1]) {
+            return Err(capture_failed(CLIPPY_LABEL, EvidenceError::Disagreement));
+        }
+        identities.into_iter().next()
+    } else {
+        None
+    };
+
+    // THE QUERIED IDENTITY (FR-012-7d (a)): the last executable of every launched build/test
+    // chain, asked `-vV` itself. One identity per check is representable; distinct executables
+    // are each asked, and a disagreement is a capture failure rather than a choice.
+    let compilers = distinct(
+        build
+            .chains
+            .iter()
+            .filter_map(evidence::trailing_compiler)
+            .map(|compiler| (compiler, BUILD_LABEL))
+            .chain(
+                test.chains
+                    .iter()
+                    .filter_map(evidence::trailing_compiler)
+                    .map(|compiler| (compiler, TEST_LABEL)),
+            ),
+    );
+    let rustc = if compilers.is_empty() {
+        None
+    } else {
+        progress.step("rustc -vV");
+        let mut identities = Vec::with_capacity(compilers.len());
+        for (compiler, label) in compilers {
+            identities.push(
+                evidence::query_rustc(compiler, &sealed, staging)
+                    .map_err(|error| error.with("check", label))?,
+            );
+        }
+        if identities.windows(2).any(|pair| pair[0] != pair[1]) {
+            return Err(capture_failed(
+                "cargo build -vv, cargo test -vv",
+                EvidenceError::Disagreement,
+            ));
+        }
+        identities.into_iter().next()
+    };
+
+    let observation = evidence::observation(&build, &test)
+        .map_err(|error| capture_failed("cargo build -vv, cargo test -vv", error))?;
+    let cached_checks: Vec<&'static str> =
+        [("clippy", &clippy), ("build", &build), ("test", &test)]
+            .into_iter()
+            .filter(|(_, check)| check.units_launched == 0 && check.units_fresh > 0)
+            .map(|(name, _)| name)
+            .collect();
+    let wrapper_observed = clippy
+        .chains
+        .iter()
+        .any(|chain| evidence::shows_wrapper(chain, true))
+        || build
+            .chains
+            .iter()
+            .chain(test.chains.iter())
+            .any(|chain| evidence::shows_wrapper(chain, false));
+
+    Ok(Verified {
+        fmt: true,
+        clippy: ClippyEvidence {
+            units_launched: clippy.units_launched,
+            units_fresh: clippy.units_fresh,
+            driver,
+        },
+        build: UnitEvidence::from(&build),
+        test: UnitEvidence::from(&test),
+        run: true,
+        observation,
+        rustc,
+        cached_checks,
+        wrapper_observed,
+    })
+}
+
+/// The check labels the evidence errors name, exactly as [`CHECKS`] spells them.
+const CLIPPY_LABEL: &str = "cargo clippy --all-targets -vv -- -D warnings";
+const BUILD_LABEL: &str = "cargo build -vv";
+const TEST_LABEL: &str = "cargo test -vv";
+
+/// The three checks' evidence as the loop fills them, by the check's first argument.
+#[derive(Default)]
+struct Captured {
+    clippy: Option<CheckEvidence>,
+    build: Option<CheckEvidence>,
+    test: Option<CheckEvidence>,
+}
+
+impl Captured {
+    /// The slot for a check, or `None` for the two that carry no evidence (`fmt`, `run`).
+    fn slot(&mut self, check: &str) -> Option<&mut Option<CheckEvidence>> {
+        match check {
+            "clippy" => Some(&mut self.clippy),
+            "build" => Some(&mut self.build),
+            "test" => Some(&mut self.test),
+            _ => None,
+        }
+    }
+}
+
+/// The distinct executables of an iterator, first label kept, in first-seen order.
+fn distinct<'a>(
+    executables: impl Iterator<Item = (&'a Path, &'static str)>,
+) -> Vec<(&'a Path, &'static str)> {
+    let mut seen: Vec<(&'a Path, &'static str)> = Vec::new();
+    for (executable, label) in executables {
+        if !seen.iter().any(|(known, _)| *known == executable) {
+            seen.push((executable, label));
+        }
+    }
+    seen
+}
+
+/// The `evidence_capture_failed` refusal (FR-012-7d (e)) for one check. Fixed vocabulary: the
+/// check's name, the failure class, nothing from the stream.
+fn capture_failed(check: &str, error: EvidenceError) -> CliError {
+    CliError::new(
+        Code::ProjectVerificationFailed,
+        format!(
+            "the verification of the generated project produced no usable launch evidence for \
+             `{check}`: {error}; nothing was written to the destination. A stream that cannot \
+             be accounted for is a capture failure, never a cached run"
+        ),
+    )
+    .with("reason", evidence::REASON_CAPTURE_FAILED)
+    .with("check", check)
+    .with("cause", error.as_str())
+    .with("stage", "pre-placement verification")
+}
+
+/// `[package].name` of the staged manifest — the one name the evidence is matched against.
+///
+/// The one file read during verification, and the same bounded exception as the process
+/// working directory: the path is `<staging>/Cargo.toml`, a file this generator rendered a
+/// moment ago, parsed with `toml` and nothing more. Not a cache, not a record, not a stream.
+fn own_package_name(staging: &Path) -> Result<String, CliError> {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        package: Package,
+    }
+    #[derive(serde::Deserialize)]
+    struct Package {
+        name: String,
+    }
+    let unreadable = |what: &str| {
+        CliError::new(
+            Code::ProjectVerificationFailed,
+            format!(
+                "the staged project's `Cargo.toml` {what}, so its checks' evidence cannot be \
+                 matched to it; nothing was written to the destination"
+            ),
+        )
+        .with("reason", evidence::REASON_CAPTURE_FAILED)
+        .with("check", "Cargo.toml [package].name")
+        .with("stage", "pre-placement verification")
+    };
+    let text = std::fs::read_to_string(staging.join("Cargo.toml"))
+        .map_err(|_| unreadable("could not be read"))?;
+    let manifest: Manifest =
+        toml::from_str(&text).map_err(|_| unreadable("does not parse as a package manifest"))?;
+    Ok(manifest.package.name)
 }
 
 #[cfg(test)]
@@ -518,7 +823,44 @@ mod tests {
         // POSITIVE CONTROL. Without it, a verifier that rejected everything would satisfy every
         // failure test below and make `renvor new` impossible to use.
         let dir = project("fn main() {}\n");
-        in_staging(dir.path(), &silent(), Smoke::Exits).expect("a correct project must verify");
+        let verified =
+            in_staging(dir.path(), &silent(), Smoke::Exits).expect("a correct project must verify");
+        // Phase 012 (FR-012-7d (h), the trivial case (vii)): a private, empty target launches
+        // every unit, so the observation is `launched`, the launched compiler and the clippy
+        // driver were each asked who they were, and nothing was cached.
+        assert_eq!(
+            verified.observation,
+            Observation::Launched,
+            "a private empty target launches every unit"
+        );
+        assert!(
+            verified.rustc.is_some(),
+            "a launched build/test unit has a queried compiler identity"
+        );
+        assert!(
+            verified.clippy.driver.is_some(),
+            "a launched clippy unit has a queried driver identity"
+        );
+        assert!(
+            verified.build.units_launched >= 1 && verified.test.units_launched >= 1,
+            "the build and test checks each launched at least one own unit"
+        );
+        assert!(
+            verified.clippy.units_launched >= 1,
+            "the clippy check launched at least one own unit"
+        );
+        assert!(
+            verified.cached_checks.is_empty(),
+            "nothing was cached on a private empty target"
+        );
+        assert!(
+            verified.fmt && verified.run,
+            "the two outcome booleans say the checks passed"
+        );
+        assert!(
+            !verified.wrapper_observed,
+            "no wrapper is configured in this environment"
+        );
     }
 
     #[test]
@@ -734,6 +1076,85 @@ mod tests {
     }
 
     #[test]
+    fn the_seal_forces_rustup_auto_install_0_and_drops_the_install_server_variables() {
+        // Phase 012 (FR-012-6, SR-012-1). Before this, `RUSTUP_DIST_SERVER` and
+        // `RUSTUP_UPDATE_ROOT` passed through the seal — the two variables that tell rustup where
+        // to download from — and nothing set `RUSTUP_AUTO_INSTALL`, so a rustup proxy run in a
+        // staged project pinned to an absent channel installed that channel from inside
+        // generation. Now every child the seal builds gets `RUSTUP_AUTO_INSTALL=0` whatever the
+        // caller set, and neither install-server variable at all. `RUSTC_WORKSPACE_WRAPPER`
+        // joins `RUSTC_WRAPPER` in the pass-through: the operator's trust, its presence
+        // recorded (SR-012-3).
+        use std::ffi::{OsStr, OsString};
+        let parent = [
+            ("PATH", "/usr/bin"),
+            ("RUSTUP_AUTO_INSTALL", "1"),
+            ("RUSTUP_DIST_SERVER", "https://mirror.example/rustup"),
+            ("RUSTUP_UPDATE_ROOT", "https://mirror.example/rustup"),
+            ("RUSTC_WORKSPACE_WRAPPER", "/opt/cache/wrapper"),
+        ]
+        .map(|(name, value)| (OsString::from(name), OsString::from(value)));
+        let sealed = seal(parent.into_iter());
+        let names: Vec<&str> = sealed
+            .variables
+            .iter()
+            .map(|(name, _)| name.to_str().expect("utf-8"))
+            .collect();
+        assert!(
+            !names.contains(&"RUSTUP_DIST_SERVER") && !names.contains(&"RUSTUP_UPDATE_ROOT"),
+            "an install-server variable passed through the seal"
+        );
+        assert!(
+            names.contains(&"RUSTC_WORKSPACE_WRAPPER"),
+            "the workspace wrapper is the operator's trust and passes through"
+        );
+        // THE CHILD'S VIEW, which is the one that matters: the command every tool child is built
+        // from carries the forced value — not the caller's `1` — and neither server variable.
+        let command = sealed_command(OsStr::new("cargo"), &sealed, Path::new("."));
+        let child: Vec<(&OsStr, Option<&OsStr>)> = command.get_envs().collect();
+        assert!(
+            child
+                .iter()
+                .any(|(name, value)| *name == "RUSTUP_AUTO_INSTALL"
+                    && *value == Some(OsStr::new("0"))),
+            "the child does not receive RUSTUP_AUTO_INSTALL=0"
+        );
+        assert!(
+            child
+                .iter()
+                .all(|(name, _)| *name != "RUSTUP_DIST_SERVER" && *name != "RUSTUP_UPDATE_ROOT"),
+            "the child receives an install-server variable"
+        );
+        assert_eq!(command.get_current_dir(), Some(Path::new(".")));
+        // And end to end, on the platforms with an `env` to ask: the child's whole environment
+        // is the sealed variables plus the forced one — `env_clear` is real, not implied.
+        #[cfg(unix)]
+        {
+            let output = sealed_command(OsStr::new("/usr/bin/env"), &sealed, Path::new("/"))
+                .output()
+                .expect("env runs");
+            let text = String::from_utf8_lossy(&output.stdout);
+            let seen: Vec<&str> = text
+                .lines()
+                .filter_map(|line| line.split_once('=').map(|(name, _)| name))
+                .collect();
+            assert!(
+                seen.contains(&"RUSTUP_AUTO_INSTALL"),
+                "the forced variable did not reach the child"
+            );
+            assert!(
+                text.lines().any(|line| line == "RUSTUP_AUTO_INSTALL=0"),
+                "the forced value is not 0"
+            );
+            let permitted = ["PATH", "RUSTC_WORKSPACE_WRAPPER", "RUSTUP_AUTO_INSTALL"];
+            assert!(
+                seen.iter().all(|name| permitted.contains(name)),
+                "the child saw a variable the seal did not pass"
+            );
+        }
+    }
+
+    #[test]
     fn a_build_script_cannot_observe_or_print_a_proxy_credential() {
         // STANDARDS AXIS (P1), the end-to-end control: a staged project's build script reads
         // every proxy variable it can see, prints them, and fails — so its output lands in the
@@ -868,5 +1289,627 @@ mod tests {
             ],
             "verification added or removed a file"
         );
+    }
+
+    // ── Phase 012, FR-012-7d: launch observation plus queried identity ──────────────
+
+    use std::ffi::OsString;
+
+    use crate::toolchain::{Identity, Observation};
+
+    const EVIDENCE_SOURCE: &str = include_str!("../toolchain/evidence.rs");
+    const VERIFY_SOURCE: &str = include_str!("verify.rs");
+
+    /// The test process's environment as `in_staging` would read it, minus any
+    /// `CARGO_TARGET_DIR`: every test below decides its own build directory, so an operator's
+    /// shared one cannot turn a launch into a `Fresh` report.
+    fn environment() -> Vec<(OsString, OsString)> {
+        std::env::vars_os()
+            .filter(|(name, _)| name != "CARGO_TARGET_DIR")
+            .collect()
+    }
+
+    /// `parent` with `name` set to `value`, replacing any earlier value.
+    fn with(
+        mut parent: Vec<(OsString, OsString)>,
+        name: &str,
+        value: &OsStr,
+    ) -> Vec<(OsString, OsString)> {
+        parent.retain(|(existing, _)| existing != name);
+        parent.push((OsString::from(name), value.to_os_string()));
+        parent
+    }
+
+    /// The compiler the test's own `PATH` resolves, asked itself — the same resolution the
+    /// staged checks get, since the seal passes `PATH` and `RUSTUP_TOOLCHAIN` through.
+    fn real_rustc() -> Identity {
+        let output = Command::new("rustc")
+            .arg("-vV")
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .output()
+            .expect("rustc runs");
+        crate::toolchain::grammar::parse_rustc_vv(&String::from_utf8_lossy(&output.stdout))
+            .expect("the real compiler answers under the grammar")
+    }
+
+    /// `<sysroot>/bin/<name>` of the compiler the test's `PATH` resolves.
+    fn toolchain_binary(name: &str) -> PathBuf {
+        let output = Command::new("rustc")
+            .args(["--print", "sysroot"])
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .output()
+            .expect("rustc runs");
+        let sysroot = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        Path::new(&sysroot).join("bin").join(name)
+    }
+
+    /// Writes `script` at `path` and marks it executable.
+    #[cfg(unix)]
+    fn executable(path: &Path, script: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(path, script).expect("write");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    /// The production half of a source file: everything before its test module, comment lines
+    /// dropped.
+    fn production(source: &str) -> String {
+        // SPLIT ON THE TEST MODULE, not on the first `#[cfg(test)]` in the file. A single
+        // test-only item above the module — `in_staging` became one when the two commands moved
+        // to `in_staging_with` — used to truncate the scan there, and the assertions below then
+        // passed over an empty string while still counting as green.
+        source
+            .split("#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap_or("")
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// An error's message and details as one text, for leak assertions.
+    fn rendered(error: &CliError) -> String {
+        let details: Vec<String> = error
+            .details
+            .iter()
+            .map(|(key, value)| format!("{key}={value}"))
+            .collect();
+        format!("{}\n{}\n{:?}", error.message, details.join("\n"), error)
+    }
+
+    #[test]
+    fn a_positively_fresh_run_passes_as_cached_with_no_observed_identity() {
+        // FR-012-7d (d), control (ix). A second verification against the SAME absolute target
+        // finds every own unit `Fresh`: the checks pass without a compiler launch, the record
+        // says `cached`, and the observed identities are ABSENT — never filled from the pin,
+        // `PATH`, the earlier run, or a cache file.
+        let dir = project("fn main() {}\n");
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let first = in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            parent.clone().into_iter(),
+        )
+        .expect("the first run verifies");
+        assert_eq!(
+            first.observation,
+            Observation::Launched,
+            "the first run against an empty target launches"
+        );
+        let second = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("the second run verifies");
+        assert_eq!(
+            second.observation,
+            Observation::Cached,
+            "every own unit is Fresh the second time"
+        );
+        assert_eq!(
+            second.rustc, None,
+            "no launch, no observed compiler identity"
+        );
+        assert_eq!(
+            second.clippy.driver, None,
+            "a cached clippy check records no driver identity"
+        );
+        assert_eq!(
+            second.cached_checks,
+            ["clippy", "build", "test"],
+            "every evidence-bearing check was cached"
+        );
+        assert!(
+            second.build.units_fresh >= 1
+                && second.test.units_fresh >= 1
+                && second.clippy.units_fresh >= 1,
+            "the Fresh reports are counted"
+        );
+        assert!(
+            second.build.units_launched == 0 && second.test.units_launched == 0,
+            "nothing was launched"
+        );
+    }
+
+    #[test]
+    fn a_mixed_run_records_both_counts_and_the_identity_for_the_launched_unit_only() {
+        // FR-012-7d (f), control (x). A warm target, then a new integration test file: `cargo
+        // build` reuses the bin (`Fresh`), `cargo test` launches the new unit. The observation
+        // is `mixed`, both counts are kept, and the queried identity belongs to the launched
+        // unit — the record never says one observed unit proves every unit used that compiler.
+        let dir = project("fn main() {}\n");
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            parent.clone().into_iter(),
+        )
+        .expect("the warming run verifies");
+        std::fs::create_dir_all(dir.path().join("tests")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("tests/extra.rs"),
+            "#[test]\nfn extra() {}\n",
+        )
+        .expect("write");
+        let mixed = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("the run with the new test verifies");
+        assert_eq!(
+            mixed.observation,
+            Observation::Mixed,
+            "the build is Fresh and the test launches the new unit"
+        );
+        assert!(
+            mixed.build.units_fresh >= 1 && mixed.build.units_launched == 0,
+            "the bin was reused by the build check"
+        );
+        assert!(
+            mixed.test.units_launched >= 1,
+            "the new integration test was launched by the test check"
+        );
+        assert!(
+            mixed.rustc.is_some(),
+            "the launched unit's compiler identity is queried"
+        );
+        assert_eq!(
+            mixed.cached_checks,
+            ["build"],
+            "only the build check was wholly cached"
+        );
+    }
+
+    #[test]
+    fn a_truncated_or_unaccounted_evidence_stream_is_evidence_capture_failed_never_cached() {
+        // FR-012-7d (e), control (xii). At the parser: a stream cut before `Finished`, an
+        // announced own package with no launch, an own package that appears nowhere — each an
+        // error, none a `Cached`. End to end (Unix): a `cargo` on `PATH` that runs the real one
+        // and drops its `Finished` line is `evidence_capture_failed`, naming the check.
+        let staging = tempfile::tempdir().expect("tempdir");
+        let cut = "   Compiling probe v0.1.0 (/x)\n     Running `CARGO_PKG_NAME=probe \
+                   /t/bin/rustc --crate-name probe src/main.rs`\n";
+        assert_eq!(
+            evidence::parse_check(cut, "probe", staging.path()),
+            Err(EvidenceError::Truncated),
+            "a stream cut before Finished is truncated"
+        );
+        let no_running = "   Compiling probe v0.1.0 (/x)\n    Finished `dev` profile in 0.1s\n";
+        assert_eq!(
+            evidence::parse_check(no_running, "probe", staging.path()),
+            Err(EvidenceError::Unaccounted),
+            "Compiling with no Running is unaccounted"
+        );
+        let absent = "       Fresh serde v1.0.0\n    Finished `dev` profile in 0.1s\n";
+        assert_eq!(
+            evidence::parse_check(absent, "probe", staging.path()),
+            Err(EvidenceError::Unaccounted),
+            "an own package that appears nowhere is unaccounted, not cached"
+        );
+
+        #[cfg(unix)]
+        {
+            let real_cargo = std::env::var_os("CARGO").expect("cargo sets CARGO for a test binary");
+            let stub = tempfile::tempdir().expect("tempdir");
+            executable(
+                &stub.path().join("cargo"),
+                &format!(
+                    "#!/bin/sh\ntmp=\"$(mktemp)\"\n\"{}\" \"$@\" 2>\"$tmp\"\nstatus=$?\ngrep -v \
+                     'Finished' \"$tmp\" >&2\nrm -f \"$tmp\"\nexit $status\n",
+                    real_cargo.to_string_lossy()
+                ),
+            );
+            let mut path = OsString::from(stub.path());
+            path.push(":");
+            path.push(std::env::var_os("PATH").unwrap_or_default());
+            let parent = with(environment(), "PATH", &path);
+            let dir = project("fn main() {}\n");
+            let error = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+                .expect_err("a truncated stream fails verification");
+            assert_eq!(error.code, Code::ProjectVerificationFailed);
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "reason" && v == "evidence_capture_failed"),
+                "the reason is evidence_capture_failed"
+            );
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .any(|(k, v)| k == "check" && v.contains("clippy")),
+                "the first evidence-bearing check is named"
+            );
+            // The message may SAY "never a cached run"; no detail may REPORT one.
+            assert!(
+                error
+                    .details
+                    .iter()
+                    .all(|(_, value)| value != "cached" && value != "mixed"),
+                "a capture failure must never carry a cached or mixed observation"
+            );
+        }
+    }
+
+    #[test]
+    fn stale_evidence_never_fills_a_field() {
+        // FR-012-7d (d), (e), control (xi). Two halves. AT THE SOURCE: the evidence path reads
+        // no cache file and no earlier stream — evidence.rs performs no file read at all, and
+        // the one read in this file is the staged manifest. END TO END: a planted rustc info
+        // cache naming another compiler in the build directory changes nothing; the observed
+        // identity is what the launched compiler itself answered.
+        let cache_file = format!("{}{}", ".rustc_info", ".json");
+        let evidence_code = production(EVIDENCE_SOURCE);
+        let verify_code = production(VERIFY_SOURCE);
+        assert!(
+            !evidence_code.is_empty() && !verify_code.is_empty(),
+            "the source scan found nothing to scan"
+        );
+        assert!(
+            !evidence_code.contains(&cache_file) && !verify_code.contains(&cache_file),
+            "the evidence path names the rustc info cache file"
+        );
+        assert!(
+            !evidence_code.contains("std::fs")
+                && !evidence_code.contains("fs::read")
+                && !evidence_code.contains("File::open"),
+            "evidence.rs reads a file; its only input is the check's own stderr"
+        );
+        let reads: Vec<&str> = verify_code
+            .lines()
+            .filter(|line| {
+                line.contains("read_to_string(")
+                    || line.contains("fs::read(")
+                    || line.contains("File::open(")
+            })
+            .collect();
+        assert_eq!(reads.len(), 1, "verify.rs performs exactly one file read");
+        assert!(
+            reads.iter().all(|line| line.contains("Cargo.toml")),
+            "the one read in verify.rs is not the staged manifest"
+        );
+
+        let dir = project("fn main() {}\n");
+        let target = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            target.path().join(&cache_file),
+            "{\"rustc_fingerprint\":1,\"outputs\":{},\"successes\":{},\"release\":\"1.0.0\",\
+             \"commit-hash\":\"deadbeefdeadbeef\"}",
+        )
+        .expect("plant");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("verifies with a planted cache file");
+        let real = real_rustc();
+        let observed = verified
+            .rustc
+            .expect("a launched unit has an observed identity");
+        assert_eq!(
+            observed.release, real.release,
+            "the observed release is the launched compiler's own answer"
+        );
+        assert_eq!(
+            observed.commit, real.commit,
+            "the observed commit is the launched compiler's own answer"
+        );
+    }
+
+    #[test]
+    fn incremental_off_binary_only_clippy_passes_with_the_driver_identity_and_no_artifact_requirement()
+     {
+        // FR-012-7d (c), control (viii). `CARGO_INCREMENTAL=0` on a bin-only package — the
+        // starter's shape under the repository's own harness — writes no artifact marker for
+        // clippy at all (T-012-08m extension). The mechanism needs none: the driver's identity is
+        // its own answer, and the launch is Cargo's own line.
+        let dir = project("fn main() {}\n");
+        let parent = with(environment(), "CARGO_INCREMENTAL", OsStr::new("0"));
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("a bin-only project verifies with incremental compilation off");
+        assert!(
+            verified.clippy.driver.is_some(),
+            "the driver identity is recorded without an artifact"
+        );
+        assert!(
+            verified.clippy.units_launched >= 1,
+            "the clippy check launched at least one own unit"
+        );
+        assert_eq!(
+            verified.observation,
+            Observation::Launched,
+            "a private empty target launches every unit"
+        );
+    }
+
+    #[test]
+    fn the_clippy_driver_is_identified_by_its_own_version_query_not_the_trailing_rustc() {
+        // FR-012-7d (b), §4.3.2. The recorded driver identity is what the toolchain's own
+        // `clippy-driver` answers to `--version` — a `0.1.x` clippy release, not the release of
+        // the trailing `rustc` argument, and not the answer of `cargo clippy --version`, which
+        // nothing in the evidence path spawns.
+        let dir = project("fn main() {}\n");
+        let verified = in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            environment().into_iter(),
+        )
+        .expect("verifies");
+        let driver = verified
+            .clippy
+            .driver
+            .expect("a launched clippy unit has a driver identity");
+        assert!(
+            driver.release.starts_with("0.1."),
+            "a clippy release, not a compiler release"
+        );
+        let rustc = verified
+            .rustc
+            .expect("a launched unit has a compiler identity");
+        assert_ne!(
+            driver.release, rustc.release,
+            "the driver identity was taken from the trailing compiler"
+        );
+        let binary = toolchain_binary(if cfg!(windows) {
+            "clippy-driver.exe"
+        } else {
+            "clippy-driver"
+        });
+        let answer = Command::new(&binary)
+            .arg("--version")
+            .env("RUSTUP_AUTO_INSTALL", "0")
+            .output()
+            .expect("the toolchain's clippy-driver runs");
+        let expected = crate::toolchain::grammar::parse_clippy_version(&String::from_utf8_lossy(
+            &answer.stdout,
+        ))
+        .expect("the toolchain's clippy-driver answers under the grammar");
+        assert_eq!(
+            driver, expected,
+            "the recorded driver identity is the executable's own answer"
+        );
+        // AT THE SOURCE: the one `--version` query in the evidence path is the driver's, and no
+        // line spawns `cargo clippy --version`.
+        let evidence_code = production(EVIDENCE_SOURCE);
+        let verify_code = production(VERIFY_SOURCE);
+        let version_queries = evidence_code
+            .lines()
+            .filter(|line| line.contains("\"--version\""))
+            .count();
+        assert_eq!(
+            version_queries, 1,
+            "exactly one --version query in evidence.rs"
+        );
+        assert!(
+            !verify_code.contains("\"--version\""),
+            "verify.rs spawns its own --version query"
+        );
+        for code in [&evidence_code, &verify_code] {
+            assert!(
+                !code.contains("clippy --version")
+                    && !code
+                        .lines()
+                        .any(|line| line.contains("\"clippy\"") && line.contains("\"--version\"")),
+                "the evidence path spawns cargo clippy --version"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_observed_clippy_driver_is_queried_itself_never_through_the_launcher() {
+        // FR-012-7d (h), control (xiv), the A-8 round. A stub toolchain whose `cargo clippy
+        // --version` answers identity A while the `clippy-driver` executable its `Running` line
+        // names answers identity B: the evidence carries B. The launcher's answer is never a
+        // substitute for the executable's own.
+        let stub = tempfile::tempdir().expect("tempdir");
+        let stub_dir = stub.path().display().to_string();
+        executable(
+            &stub.path().join("cargo"),
+            &format!(
+                r#"#!/bin/sh
+case "$1" in
+  clippy)
+    if [ "$2" = "--version" ]; then echo "clippy 0.1.90 (aaaaaaaaaa 2025-01-01)"; exit 0; fi
+    echo "    Checking probe v0.1.0 ($PWD)" >&2
+    echo "     Running \`CARGO={stub}/cargo CARGO_MANIFEST_DIR=$PWD CARGO_PKG_NAME=probe {stub}/clippy-driver {stub}/rustc --crate-name probe --edition=2024 src/main.rs\`" >&2
+    echo "    Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 0.10s" >&2
+    exit 0 ;;
+  build|test)
+    echo "   Compiling probe v0.1.0 ($PWD)" >&2
+    echo "     Running \`CARGO={stub}/cargo CARGO_MANIFEST_DIR=$PWD CARGO_PKG_NAME=probe {stub}/rustc --crate-name probe --edition=2024 src/main.rs\`" >&2
+    echo "    Finished \`dev\` profile [unoptimized + debuginfo] target(s) in 0.10s" >&2
+    exit 0 ;;
+  *) exit 0 ;;
+esac
+"#,
+                stub = stub_dir
+            ),
+        );
+        executable(
+            &stub.path().join("clippy-driver"),
+            "#!/bin/sh\necho \"clippy 0.1.77 (bbbbbbbbbb 2024-01-01)\"\n",
+        );
+        executable(
+            &stub.path().join("rustc"),
+            "#!/bin/sh\nprintf 'rustc 1.94.0 (0123456789 2026-01-01)\\nbinary: rustc\\ncommit-hash: \
+             0123456789abcdef0123456789abcdef01234567\\ncommit-date: 2026-01-01\\nhost: \
+             x86_64-unknown-linux-gnu\\nrelease: 1.94.0\\n'\n",
+        );
+        let path = format!("{stub_dir}:/usr/bin:/bin");
+        let parent = vec![
+            (OsString::from("PATH"), OsString::from(path)),
+            (
+                OsString::from("HOME"),
+                std::env::var_os("HOME").unwrap_or_default(),
+            ),
+        ];
+        let dir = project("fn main() {}\n");
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("the stub toolchain verifies");
+        let driver = verified
+            .clippy
+            .driver
+            .expect("a launched clippy unit has a driver identity");
+        assert_eq!(
+            driver.release, "0.1.77",
+            "the driver's own release, not the launcher's 0.1.90"
+        );
+        assert_eq!(driver.commit, "bbbbbbbbbb", "the driver's own commit");
+        let rustc = verified.rustc.expect("the stub compiler was queried");
+        assert_eq!(rustc.release, "1.94.0", "the trailing compiler's own -vV");
+        assert_eq!(
+            verified.observation,
+            Observation::Launched,
+            "the stub streams launched every unit"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_compiler_identity_is_project_verification_failed_and_redacted() {
+        // FR-012-7e. `RUSTC` names a shim that answers `-vV` with a commit hash carrying terminal
+        // control bytes and a credential — a shape Cargo itself accepts — and otherwise runs the
+        // real compiler, so every check passes. The identity query then fails the grammar:
+        // `compiler_identity_unreadable`, and neither the escape byte nor the credential, in any
+        // rendering, is anywhere in the error. The shim is named `rustc` because clippy-driver
+        // recognises its compiler argument by file name.
+        let real = real_rustc();
+        let real_binary = toolchain_binary("rustc");
+        let shim = tempfile::tempdir().expect("tempdir");
+        let shim_path = shim.path().join("rustc");
+        executable(
+            &shim_path,
+            &format!(
+                "#!/bin/sh\nif [ \"$#\" -eq 1 ] && [ \"$1\" = \"-vV\" ]; then\n  printf 'rustc \
+                 {release} (0000000 2026-01-01)\\nbinary: rustc\\ncommit-hash: \
+                 s3cr3t-proxy-pass\\033[31m\\ncommit-date: 2026-01-01\\nhost: {host}\\nrelease: \
+                 {release}\\n'\n  exit 0\nfi\nexec \"{real}\" \"$@\"\n",
+                release = real.release,
+                host = real.host,
+                real = real_binary.display()
+            ),
+        );
+        let parent = with(environment(), "RUSTC", shim_path.as_os_str());
+        let dir = project("fn main() {}\n");
+        let error = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect_err("an unreadable identity fails verification");
+        assert_eq!(error.code, Code::ProjectVerificationFailed);
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "reason" && v == "compiler_identity_unreadable"),
+            "the reason is compiler_identity_unreadable"
+        );
+        assert!(
+            error
+                .details
+                .iter()
+                .any(|(k, v)| k == "stage" && v == "pre-placement verification"),
+            "the failure says it happened before placement"
+        );
+        let text = rendered(&error);
+        let leaked: Vec<usize> = every_form_of("s3cr3t-proxy-pass")
+            .into_iter()
+            .enumerate()
+            .filter(|(_, form)| text.contains(form))
+            .map(|(rendering, _)| rendering)
+            .collect();
+        assert_eq!(
+            leaked,
+            Vec::<usize>::new(),
+            "the error carries the shim's credential: rendering indices"
+        );
+        assert!(
+            !text.contains('\u{1b}') && !text.contains("\\u{1b}") && !text.contains("[31m"),
+            "the error carries the escape byte in some rendering"
+        );
+    }
+
+    #[test]
+    fn no_flag_value_enters_the_record() {
+        // FR-012-7e, control: `RUSTFLAGS` carrying a marker and a manifest `repository` carrying
+        // another. Both reach the `-vv` stream — as a `--cfg` argument and as a `CARGO_PKG_*`
+        // value — and neither reaches the evidence, its Debug rendering, or a failure message.
+        let manifest = "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\
+                        publish = false\nrepository = \"https://marker-7a6b5c.example/\"\n\n\
+                        [dependencies]\n";
+        let dir = project("fn main() {}\n");
+        std::fs::write(dir.path().join("Cargo.toml"), manifest).expect("write");
+        let parent = with(
+            environment(),
+            "RUSTFLAGS",
+            OsStr::new("--cfg renvor_marker_9f8e7d"),
+        );
+        let verified = in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            parent.clone().into_iter(),
+        )
+        .expect("verifies with RUSTFLAGS set");
+        let text = format!("{verified:?}").to_ascii_lowercase();
+        assert!(
+            !text.contains("renvor_marker_9f8e7d") && !text.contains("marker-7a6b5c"),
+            "a flag value or a manifest value reached the evidence"
+        );
+        let broken = project("fn main() { this is not rust }\n");
+        std::fs::write(broken.path().join("Cargo.toml"), manifest).expect("write");
+        let error = in_staging_with(broken.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect_err("a broken project fails");
+        let text = rendered(&error).to_ascii_lowercase();
+        assert!(
+            !text.contains("renvor_marker_9f8e7d") && !text.contains("marker-7a6b5c"),
+            "a flag value or a manifest value reached the failure message"
+        );
+        assert!(
+            error.message.contains("error"),
+            "the compiler's own diagnostic still reaches the failure message"
+        );
+    }
+
+    #[test]
+    fn a_pre_existing_probe_keep_survives_byte_identical() {
+        // FR-012-7d (h), control (xiii). This mechanism uses no temporary storage in the
+        // project: a file that was there before verification is there after, unchanged, alone.
+        let dir = project("fn main() {}\n");
+        let probe = dir.path().join(".renvor").join("probe");
+        std::fs::create_dir_all(&probe).expect("mkdir");
+        let bytes: Vec<u8> = vec![0x6b, 0x65, 0x65, 0x70, 0x0a, 0x00, 0xff, 0x1b];
+        std::fs::write(probe.join("keep"), &bytes).expect("write");
+        in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            environment().into_iter(),
+        )
+        .expect("verifies");
+        assert_eq!(
+            std::fs::read(probe.join("keep")).expect("read"),
+            bytes,
+            "the keep file changed"
+        );
+        let entries = std::fs::read_dir(&probe).expect("read_dir").count();
+        assert_eq!(entries, 1, "verification left a file beside the keep");
     }
 }

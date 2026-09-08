@@ -6,11 +6,16 @@
 
 use std::io::Read;
 
+use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 
 use crate::exit::{CliError, Code, Exit};
+use crate::generate::digest;
+use crate::generate::record::{self, Record, Toolchain, VerifiedWith};
 use crate::output::Reporter;
+use crate::output::layout::{Report, Status};
 use crate::paths::validate_project_name;
+use crate::toolchain::Observation;
 
 /// The largest `renvor.toml` this command will read.
 ///
@@ -451,18 +456,313 @@ pub(crate) fn load(path: &std::path::Path) -> Result<Manifest, CliError> {
     Ok(manifest)
 }
 
+/// What the provenance record says, read once for the report and the JSON alike.
+///
+/// The freshness verdict is **computed by the reading command, never stored** (FR-012-5d): the
+/// tree digest is recomputed over the working tree under the recorded `tree_scope` and compared
+/// with the recorded one. The count of operations since the verification is not printed, because
+/// nothing in the tree records one.
+struct Provenance {
+    /// The record, or `None` when the project carries none.
+    record: Option<Record>,
+    /// `Some(true)` when the recorded digest is not the current tree's; `None` without evidence.
+    historical: Option<bool>,
+    /// What `rust-toolchain.toml` says, parsed and never evaluated.
+    pin_file: PinFile,
+}
+
+/// `rust-toolchain.toml` as `renvor check` reads it: only the channel, only if it parses.
+#[derive(Debug, PartialEq, Eq)]
+enum PinFile {
+    /// No such file.
+    Absent,
+    /// The file's `[toolchain].channel`, a channel name under the pin grammar.
+    Channel(String),
+    /// Present, but its channel could not be read as one — nothing else about the file is shown.
+    Unreadable,
+}
+
+/// The lenient shape of `rust-toolchain.toml`: everything but the channel is ignored.
+#[derive(Deserialize)]
+struct PinFileToml {
+    #[serde(default)]
+    toolchain: Option<PinTable>,
+}
+
+#[derive(Deserialize)]
+struct PinTable {
+    #[serde(default)]
+    channel: Option<String>,
+}
+
+/// The pin grammar of FR-012-1, applied before anything from the file is printed: a channel is
+/// ASCII letters, digits, `.`, `_`, and `-`, at most 64 of them.
+fn is_channel_name(candidate: &str) -> bool {
+    !candidate.is_empty()
+        && candidate.len() <= 64
+        && candidate
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+impl Provenance {
+    /// Reads the record under `path` through the reader rule of FR-012-5b, recomputes the
+    /// digest, and reads the pin file.
+    fn read(path: &std::path::Path) -> Result<Self, CliError> {
+        let dir = Dir::open_ambient_dir(path, cap_std::ambient_authority()).map_err(|error| {
+            CliError::new(
+                Code::ManifestInvalid,
+                format!(
+                    "`{}` could not be opened: {error}",
+                    crate::output::redact::path(path)
+                ),
+            )
+            .with("field", record::PATH)
+        })?;
+        let record = record::read(&dir)?;
+        let historical = match record
+            .as_ref()
+            .and_then(|found| found.verified_with.as_ref())
+        {
+            Some(verified) => {
+                let current = digest::tree_under(&dir, verified.tree_scope)?;
+                Some(current != verified.tree_digest)
+            }
+            None => None,
+        };
+        Ok(Self {
+            record,
+            historical,
+            pin_file: Self::pin_file(&dir),
+        })
+    }
+
+    /// `rust-toolchain.toml`, bounded like the manifest and parsed like Cargo config: never
+    /// evaluated, and never shown except as its parsed channel.
+    fn pin_file(dir: &Dir) -> PinFile {
+        let text = match dir.metadata("rust-toolchain.toml") {
+            Ok(metadata) if metadata.len() > MAX_MANIFEST_BYTES => return PinFile::Unreadable,
+            Ok(_) => match dir.read_to_string("rust-toolchain.toml") {
+                Ok(text) => text,
+                Err(_) => return PinFile::Unreadable,
+            },
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return PinFile::Absent,
+            Err(_) => return PinFile::Unreadable,
+        };
+        match toml::from_str::<PinFileToml>(&text) {
+            Ok(PinFileToml {
+                toolchain:
+                    Some(PinTable {
+                        channel: Some(channel),
+                    }),
+            }) if is_channel_name(&channel) => PinFile::Channel(channel),
+            _ => PinFile::Unreadable,
+        }
+    }
+
+    fn toolchain(&self) -> Option<&Toolchain> {
+        self.record.as_ref()?.toolchain.as_ref()
+    }
+
+    fn verified_with(&self) -> Option<&VerifiedWith> {
+        self.record.as_ref()?.verified_with.as_ref()
+    }
+
+    /// Why a table is unknown: the tree has no record, or a record written before version 2.
+    fn unknown(&self) -> &'static str {
+        if self.record.is_some() {
+            "unknown (a record written before template version 8)"
+        } else {
+            "unknown (no provenance record)"
+        }
+    }
+
+    /// What the pin file says beside the recorded pin: reported, never refused.
+    fn pin_file_row(&self) -> String {
+        match (&self.pin_file, self.toolchain()) {
+            (PinFile::Absent, _) => "absent".to_owned(),
+            (PinFile::Unreadable, _) => {
+                "present, but its channel could not be parsed as a channel name".to_owned()
+            }
+            (PinFile::Channel(channel), Some(toolchain)) if *channel == toolchain.pinned => {
+                format!("channel {channel} equals the recorded pin")
+            }
+            (PinFile::Channel(channel), Some(toolchain)) => format!(
+                "the file's channel {channel} differs from the recorded pin {}",
+                toolchain.pinned
+            ),
+            (PinFile::Channel(channel), None) => {
+                format!("channel {channel}; the record declares no pin")
+            }
+        }
+    }
+
+    /// The freshness line of FR-012-5d.
+    fn freshness_line(&self) -> Option<String> {
+        let verified = self.verified_with()?;
+        Some(if self.historical == Some(true) {
+            format!(
+                "verified_with: historical — the tree verified at {} ({}) is not the current \
+                 tree; not proof of the current tree",
+                verified.verified_at,
+                verified.operation.as_str()
+            )
+        } else {
+            "verified_with: current".to_owned()
+        })
+    }
+
+    /// The two tables, as rows, after the manifest's own.
+    fn describe(&self, mut human: Report) -> Report {
+        human = human.blank().text("[toolchain]");
+        human = match self.toolchain() {
+            Some(toolchain) => human
+                .row("pinned", toolchain.pinned.clone())
+                .row("rust_version", toolchain.rust_version.clone()),
+            None => human.text(self.unknown()),
+        };
+        human = human.row("rust-toolchain.toml", self.pin_file_row());
+        human = human.blank().text("[verified_with]");
+        let Some(verified) = self.verified_with() else {
+            return human.text(self.unknown());
+        };
+        let identity = |release: Option<&str>, commit: Option<&str>| match (release, commit) {
+            (Some(release), Some(commit)) => format!("{release} ({commit})"),
+            _ => "unavailable".to_owned(),
+        };
+        let observed = match (
+            verified.rustc_release.as_deref(),
+            verified.rustc_commit.as_deref(),
+            verified.rustc_host.as_deref(),
+        ) {
+            (Some(release), Some(commit), Some(host)) => format!("{release} ({commit}, {host})"),
+            _ if verified.observation == Observation::Cached => "unavailable (cached)".to_owned(),
+            _ => "unavailable".to_owned(),
+        };
+        let checks = &verified.checks;
+        let units = |outcome: &str, launched: u32, fresh: u32| {
+            format!("{outcome} ({launched} launched, {fresh} fresh)")
+        };
+        let driver = identity(
+            checks.clippy.driver_release.as_deref(),
+            checks.clippy.driver_commit.as_deref(),
+        );
+        human = human
+            .row("operation", verified.operation.as_str())
+            .row("verified_at", verified.verified_at.clone())
+            .row("tree_scope", verified.tree_scope.to_string())
+            .row("tree_digest", verified.tree_digest.clone())
+            .row("observation", verified.observation.as_str())
+            .row("rustc (observed)", observed)
+            .row(
+                "rustc (resolved before verification)",
+                identity(
+                    Some(&verified.resolved_rustc_release),
+                    Some(&verified.resolved_rustc_commit),
+                ),
+            )
+            .row(
+                "rustc (configured)",
+                identity(
+                    verified.configured_rustc_release.as_deref(),
+                    verified.configured_rustc_commit.as_deref(),
+                ),
+            )
+            .row(
+                "cargo",
+                identity(Some(&verified.cargo_release), Some(&verified.cargo_commit)),
+            )
+            .row("rustup", verified.rustup.clone())
+            .row("proxy", verified.proxy.to_string())
+            .row("selected_by", verified.selected_by.as_str())
+            .row("rustc_override", verified.rustc_override.to_string())
+            .row("wrapper", verified.wrapper.to_string())
+            .row("rustflags", verified.rustflags.to_string())
+            .row("rustdocflags", verified.rustdocflags.to_string())
+            .row("fmt", checks.fmt.outcome.clone())
+            .row(
+                "clippy",
+                format!(
+                    "{}; driver {driver}",
+                    units(
+                        &checks.clippy.outcome,
+                        checks.clippy.units_launched,
+                        checks.clippy.units_fresh
+                    )
+                ),
+            )
+            .row(
+                "build",
+                units(
+                    &checks.build.outcome,
+                    checks.build.units_launched,
+                    checks.build.units_fresh,
+                ),
+            )
+            .row(
+                "test",
+                units(
+                    &checks.test.outcome,
+                    checks.test.units_launched,
+                    checks.test.units_fresh,
+                ),
+            )
+            .row("run", checks.run.outcome.clone());
+        match self.freshness_line() {
+            Some(line) => human.text(line),
+            None => human,
+        }
+    }
+
+    /// `result.toolchain`: the table, or `null`.
+    fn toolchain_json(&self) -> Result<serde_json::Value, CliError> {
+        self.toolchain()
+            .map_or(Ok(serde_json::Value::Null), |toolchain| {
+                serde_json::to_value(toolchain).map_err(unserialisable)
+            })
+    }
+
+    /// `result.verified_with`: every field with `null` for an absent one, plus `historical`.
+    fn verified_with_json(&self) -> Result<serde_json::Value, CliError> {
+        let Some(verified) = self.verified_with() else {
+            return Ok(serde_json::Value::Null);
+        };
+        let mut value = serde_json::to_value(verified).map_err(unserialisable)?;
+        if let Some(object) = value.as_object_mut() {
+            object.insert(
+                "historical".to_owned(),
+                serde_json::Value::Bool(self.historical == Some(true)),
+            );
+        }
+        Ok(value)
+    }
+}
+
+fn unserialisable(error: serde_json::Error) -> CliError {
+    CliError::new(
+        Code::Internal,
+        format!("the provenance record could not be serialised: {error}"),
+    )
+}
+
 /// `renvor check`.
+///
+/// Validates `renvor.toml`; then reads the provenance record through the reader rule of
+/// FR-012-5b and prints its `[toolchain]` and `[verified_with]` tables — or *unknown* for a
+/// legacy record, never a value filled in — applies the freshness rule of FR-012-5d over the
+/// working tree, and reports whether `rust-toolchain.toml`'s channel still equals the recorded
+/// pin (an author's edit is reported, never refused). Nothing is built and no tool runs.
 ///
 /// # Errors
 ///
-/// [`Code::ManifestInvalid`] naming the field and the constraint.
+/// [`Code::ManifestInvalid`] naming the field and the constraint; [`Code::RecordUnsupported`]
+/// for a record version or a tree scope this generator does not know — exit 3, the versions in
+/// the details.
 pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError> {
     let manifest = load(path)?;
-    let human = crate::output::layout::Report::new()
-        .status(
-            crate::output::layout::Status::Done,
-            "The project manifest is valid",
-        )
+    let provenance = Provenance::read(path)?;
+    let human = Report::new()
+        .status(Status::Done, "The project manifest is valid")
         .row("Project", manifest.project.name.clone())
         .row("Target", manifest.project.target.clone())
         .row(
@@ -499,6 +799,7 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
                 None => "none (dependency-free skeleton)".to_owned(),
             },
         );
+    let human = provenance.describe(human);
     Ok(reporter.finish(
         "check",
         &human,
@@ -513,6 +814,8 @@ pub fn run(reporter: &Reporter, path: &std::path::Path) -> Result<Exit, CliError
                 "source": framework.source,
                 "path": crate::output::redact::path(std::path::Path::new(&framework.path)),
             })),
+            "toolchain": provenance.toolchain_json()?,
+            "verified_with": provenance.verified_with_json()?,
         }),
     ))
 }
@@ -911,6 +1214,297 @@ observability = false
         // FR-019 says "without building it". Asserted by the absence of any build artifact after
         // a successful check — a check that shelled out to cargo would leave `target/`.
         let dir = write(VALID);
+        run(&reporter(), dir.path()).expect("checks");
+        assert!(
+            !dir.path().join("target").exists(),
+            "check produced build output"
+        );
+    }
+
+    // ── PHASE 012: the record's two tables, the freshness verdict, and the pin file ─────
+
+    use crate::generate::record::fixtures;
+
+    fn open(dir: &tempfile::TempDir) -> Dir {
+        Dir::open_ambient_dir(dir.path(), cap_std::ambient_authority()).expect("opens")
+    }
+
+    /// A skeleton tree with a valid manifest, one source file, and one test.
+    fn project() -> tempfile::TempDir {
+        let dir = write(VALID);
+        std::fs::create_dir_all(dir.path().join("src")).expect("mkdir");
+        std::fs::create_dir_all(dir.path().join("tests")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("src/main.rs"),
+            "// renvor:resources:begin\n// renvor:resources:end\nfn main() {}\n",
+        )
+        .expect("write");
+        std::fs::write(
+            dir.path().join("tests/smoke.rs"),
+            "#[test]\nfn smoke() {}\n",
+        )
+        .expect("write");
+        dir
+    }
+
+    /// A version-2 record whose digest is the tree's own, so the evidence is current.
+    fn write_current_record(dir: &tempfile::TempDir, verified: &mut record::VerifiedWith) {
+        let root = open(dir);
+        verified.tree_digest = crate::generate::digest::tree(&root).expect("digests");
+        record::write(
+            &root,
+            "0.0.0",
+            "8",
+            &fixtures::toolchain(),
+            Some(verified),
+            &[],
+        )
+        .expect("record");
+    }
+
+    fn detail<'a>(error: &'a CliError, key: &str) -> Option<&'a str> {
+        error
+            .details
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    #[test]
+    fn a_tree_without_a_record_and_a_legacy_record_both_report_unknown_tables() {
+        // FR-012-5b: absent means legacy, and unknown is never filled in.
+        let dir = project();
+        assert_eq!(run(&reporter(), dir.path()).expect("checks"), Exit::Success);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert!(provenance.record.is_none());
+        assert_eq!(provenance.historical, None);
+        assert_eq!(provenance.unknown(), "unknown (no provenance record)");
+        assert_eq!(
+            provenance.toolchain_json().expect("json"),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            provenance.verified_with_json().expect("json"),
+            serde_json::Value::Null
+        );
+        assert_eq!(provenance.freshness_line(), None, "no evidence, no verdict");
+
+        let legacy = record::render(&Record {
+            record_version: None,
+            generator_version: "0.0.0".to_owned(),
+            template_version: "7".to_owned(),
+            toolchain: None,
+            verified_with: None,
+            files: Vec::new(),
+            resources: Vec::new(),
+        });
+        std::fs::create_dir_all(dir.path().join(record::DIRECTORY)).expect("mkdir");
+        std::fs::write(dir.path().join(record::PATH), legacy).expect("write");
+        assert_eq!(run(&reporter(), dir.path()).expect("checks"), Exit::Success);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert!(provenance.record.is_some());
+        assert_eq!(provenance.toolchain(), None, "unknown, not invented");
+        assert_eq!(provenance.verified_with(), None);
+        assert_eq!(
+            provenance.unknown(),
+            "unknown (a record written before template version 8)"
+        );
+        assert_eq!(
+            provenance.verified_with_json().expect("json"),
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn a_current_tree_is_current_and_any_in_scope_change_makes_it_historical() {
+        // FR-012-5d, computed by the reading command from the tree's contents.
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
+        assert_eq!(run(&reporter(), dir.path()).expect("checks"), Exit::Success);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert_eq!(provenance.historical, Some(false));
+        assert_eq!(
+            provenance.freshness_line().as_deref(),
+            Some("verified_with: current")
+        );
+        let json = provenance.verified_with_json().expect("json");
+        assert_eq!(json["historical"], false);
+        assert_eq!(json["operation"], "new");
+        assert_eq!(json["rustc_release"], "1.94.0");
+        assert_eq!(json["checks"]["clippy"]["driver_release"], "0.1.94");
+        assert_eq!(json["checks"]["fmt"]["outcome"], "passed");
+        assert_eq!(
+            provenance.toolchain_json().expect("json"),
+            serde_json::json!({ "pinned": "1.94.0", "rust_version": "1.94.0" })
+        );
+
+        // One byte inside the managed block, record untouched → historical; exit still 0.
+        std::fs::write(
+            dir.path().join("src/main.rs"),
+            "// renvor:resources:begin\nx\n// renvor:resources:end\nfn main() {}\n",
+        )
+        .expect("write");
+        assert_eq!(
+            run(&reporter(), dir.path()).expect("reported, never refused"),
+            Exit::Success
+        );
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert_eq!(provenance.historical, Some(true));
+        assert_eq!(
+            provenance.freshness_line().as_deref(),
+            Some(
+                "verified_with: historical — the tree verified at 2026-09-07T00:00:00Z (new) is \
+                 not the current tree; not proof of the current tree"
+            )
+        );
+        assert_eq!(
+            provenance.verified_with_json().expect("json")["historical"],
+            true
+        );
+        // A README edit alone would not have done that: outside the scope.
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
+        std::fs::write(dir.path().join("README.md"), "# edited\n").expect("write");
+        assert_eq!(
+            Provenance::read(dir.path()).expect("reads").historical,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_cached_record_reports_the_observed_identity_as_unavailable_and_null() {
+        let dir = project();
+        let mut verified = fixtures::cached();
+        write_current_record(&dir, &mut verified);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        let json = provenance.verified_with_json().expect("json");
+        assert_eq!(json["observation"], "cached");
+        assert_eq!(
+            json["rustc_release"],
+            serde_json::Value::Null,
+            "null, never filled in"
+        );
+        assert_eq!(json["rustc_host"], serde_json::Value::Null);
+        assert_eq!(json["configured_rustc_release"], serde_json::Value::Null);
+        assert_eq!(
+            json["checks"]["clippy"]["driver_release"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            json["resolved_rustc_release"], "1.94.0",
+            "the resolution stays labelled"
+        );
+        assert_eq!(run(&reporter(), dir.path()).expect("checks"), Exit::Success);
+    }
+
+    #[test]
+    fn a_newer_record_is_refused_by_name_with_exit_3() {
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
+        let path = dir.path().join(record::PATH);
+        let text = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(
+            &path,
+            text.replace("record_version = 2\n", "record_version = 3\n"),
+        )
+        .expect("write");
+        let error = run(&reporter(), dir.path()).unwrap_err();
+        assert_eq!(error.code, Code::RecordUnsupported);
+        assert_eq!(error.code.exit(), Exit::Validation);
+        assert_eq!(detail(&error, "record_version"), Some("3"));
+        assert_eq!(detail(&error, "supported"), Some("2"));
+    }
+
+    #[test]
+    fn an_unknown_tree_scope_is_record_unsupported() {
+        // A scope this generator does not know cannot be recomputed, so the verdict cannot be
+        // given — refused by name rather than guessed at.
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
+        let path = dir.path().join(record::PATH);
+        let text = std::fs::read_to_string(&path).expect("read");
+        std::fs::write(&path, text.replace("tree_scope = 1\n", "tree_scope = 9\n")).expect("write");
+        let error = run(&reporter(), dir.path()).unwrap_err();
+        assert_eq!(error.code, Code::RecordUnsupported);
+        assert_eq!(error.code.exit(), Exit::Validation);
+        assert_eq!(detail(&error, "tree_scope"), Some("9"));
+        assert_eq!(detail(&error, "supported"), Some("1"));
+    }
+
+    #[test]
+    fn the_pin_file_is_compared_with_the_recorded_pin_and_only_its_channel_is_shown() {
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
+        assert_eq!(
+            Provenance::read(dir.path()).expect("reads").pin_file_row(),
+            "absent"
+        );
+
+        let pin = dir.path().join("rust-toolchain.toml");
+        std::fs::write(
+            &pin,
+            "[toolchain]\nchannel = \"1.94.0\"\ncomponents = [\"rustfmt\"]\n",
+        )
+        .expect("write");
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert_eq!(provenance.pin_file, PinFile::Channel("1.94.0".to_owned()));
+        assert_eq!(
+            provenance.pin_file_row(),
+            "channel 1.94.0 equals the recorded pin"
+        );
+
+        // An author's edit is reported, never refused.
+        std::fs::write(&pin, "[toolchain]\nchannel = \"1.97.1\"\n").expect("write");
+        assert_eq!(
+            run(&reporter(), dir.path()).expect("reported"),
+            Exit::Success
+        );
+        assert_eq!(
+            Provenance::read(dir.path()).expect("reads").pin_file_row(),
+            "the file's channel 1.97.1 differs from the recorded pin 1.94.0"
+        );
+
+        // Nothing but the parsed channel is ever shown: a channel outside the grammar, a file
+        // without one, and a file that is not TOML all read as unreadable.
+        for text in [
+            "[toolchain]\nchannel = \"stable\u{1b}[31m\"\n",
+            "[toolchain]\nchannel = \"a channel with spaces\"\n",
+            "[toolchain]\nprofile = \"minimal\"\n",
+            "not toml at all = = =\n",
+        ] {
+            std::fs::write(&pin, text).expect("write");
+            let provenance = Provenance::read(dir.path()).expect("reads");
+            assert_eq!(provenance.pin_file, PinFile::Unreadable);
+            assert_eq!(
+                provenance.pin_file_row(),
+                "present, but its channel could not be parsed as a channel name"
+            );
+        }
+
+        // A legacy tree with a pin file added by hand: the channel, and that the record pins
+        // nothing.
+        let dir = project();
+        std::fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\n",
+        )
+        .expect("write");
+        assert_eq!(
+            Provenance::read(dir.path()).expect("reads").pin_file_row(),
+            "channel 1.94.0; the record declares no pin"
+        );
+    }
+
+    #[test]
+    fn check_reads_the_record_but_still_builds_nothing() {
+        let dir = project();
+        let mut verified = fixtures::launched();
+        write_current_record(&dir, &mut verified);
         run(&reporter(), dir.path()).expect("checks");
         assert!(
             !dir.path().join("target").exists(),

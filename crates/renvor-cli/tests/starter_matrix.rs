@@ -583,7 +583,14 @@ fn live(row: &Row, project: &Path) -> bool {
     true
 }
 
-/// Every file under `root`, sorted, with its bytes.
+/// Every file under `root`, sorted, with its bytes — except the provenance record's one measured
+/// table.
+///
+/// Phase 012 (FR-012-4): `[verified_with]` records the instant one run's checks passed and what
+/// that run observed Cargo launch. Two runs that produced byte-identical projects differ there,
+/// and a record that did **not** differ would be one filled in from something other than the run
+/// it describes. Only that table is stripped, by [`without_verified_with`]; `record_version`,
+/// `[toolchain]`, and every `[[file]]` digest are compared like any other file's bytes.
 fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -598,12 +605,39 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
                     .expect("relative")
                     .display()
                     .to_string();
-                files.push((relative, std::fs::read(&path).expect("read")));
+                let bytes = std::fs::read(&path).expect("read");
+                let bytes = if relative.replace('\\', "/") == ".renvor/generated.toml" {
+                    without_verified_with(&String::from_utf8_lossy(&bytes)).into_bytes()
+                } else {
+                    bytes
+                };
+                files.push((relative, bytes));
             }
         }
     }
     files.sort();
     files
+}
+
+/// The provenance record without its `[verified_with]` table and that table's sub-tables.
+///
+/// A top-level table ends the block; `[verified_with.checks.build]` and its siblings belong to it
+/// and go with it.
+fn without_verified_with(record: &str) -> String {
+    let mut kept = String::with_capacity(record.len());
+    let mut inside = false;
+    for line in record.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            inside =
+                trimmed.starts_with("[verified_with]") || trimmed.starts_with("[verified_with.");
+        }
+        if !inside {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    kept
 }
 
 macro_rules! row {
@@ -796,8 +830,33 @@ fn a_dry_run_of_a_starter_matches_the_real_run_and_writes_nothing() {
         "a dry run wrote something"
     );
     let (_project, real_document) = generate(base.path(), row);
+    // THE RECORD IS COMPARED BY PATH AND KIND, NOT BY DIGEST (Phase 012, FR-012-4), for the same
+    // reason `tree` strips one of its tables: `[verified_with]` measures the run that wrote it,
+    // so the two runs' records differ by the instant they happened and their digests differ with
+    // them. Every other entry, digest included, is compared — which is what SC-006 asserts.
+    let entries = |document: &serde_json::Value| -> Vec<serde_json::Value> {
+        document["result"]["manifest"]
+            .as_array()
+            .expect("a manifest")
+            .iter()
+            .map(|entry| {
+                if entry["path"] == ".renvor/generated.toml" {
+                    serde_json::json!({ "path": entry["path"], "kind": entry["kind"] })
+                } else {
+                    entry.clone()
+                }
+            })
+            .collect()
+    };
+    let (dry_entries, real_entries) = (entries(&dry_document), entries(&real_document));
+    assert!(
+        dry_entries
+            .iter()
+            .any(|entry| entry["path"] == ".renvor/generated.toml"),
+        "neither run listed a provenance record, so its exclusion above is hiding a missing file"
+    );
     assert_eq!(
-        dry_document["result"]["manifest"], real_document["result"]["manifest"],
+        dry_entries, real_entries,
         "the dry run's manifest differs from the real run's"
     );
 }
