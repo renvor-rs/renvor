@@ -1442,7 +1442,13 @@ mod tests {
         );
 
         // (c) A command the stream ends inside: nothing closes it, so nothing of it is kept.
-        let truncated = "     Running `SECRET='renvor_canary_truncated_e5f6\n";
+        //
+        // The variable is `CARGO_PKG_DESCRIPTION` like the two above, and not the `SECRET=` the
+        // first draft used. `SECRET=` followed by a high-entropy word is the shape gitleaks'
+        // `generic-api-key` rule keys on, and it failed step 8 of the gate — a test fixture that
+        // looks like a credential costs a scan finding for as long as the commit lives, whatever
+        // it actually holds. See FP-006 in `.gitleaks.toml`.
+        let truncated = "     Running `CARGO_PKG_DESCRIPTION='renvor_canary_truncated_e5f6\n";
         let kept = without_launch_lines(truncated);
         assert!(
             !kept.contains("renvor_canary_truncated"),

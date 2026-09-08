@@ -213,3 +213,50 @@ regexTarget = "match"
 description = "FP-005: the superseded 'carol-9f3a@example.test' fixture password line in the starter test template (commit 9dd5bc4), replaced by factory-drawn users in afab721"
 regexes = ['''"email":"carol-9f3a@example\.test","password":"''']
 regexTarget = "line"
+
+# ---------------------------------------------------------------------------
+# FP-006 — the truncated-launch-command canary in the evidence parser's tests
+# ---------------------------------------------------------------------------
+# Rule        : generic-api-key
+# Location    : crates/renvor-cli/src/toolchain/evidence.rs line 1332 at commit
+#               58602f10de2184bcd89ad8fe91ac014d22d1bbcf (Phase 012, B1 correction round)
+# Fingerprint : 58602f1…:crates/renvor-cli/src/toolchain/evidence.rs:generic-api-key:1332
+# Entropy     : 3.70
+#
+# The flagged value is `renvor_canary_truncated_e5f6`, one of three canaries in
+# `no_continuation_of_a_launch_command_reaches_a_failure_message`. Each stands in for the part
+# of a Cargo `-vv` launch command that a first-line-only filter used to publish into a failure
+# message, and each test asserts the canary appears in NO rendering of the refusal. It
+# authenticates nothing: it is a word chosen to be searchable, and the value the code under test
+# is proven to withhold.
+#
+# What actually tripped the rule was the variable NAME the first draft gave it — `SECRET='…'` —
+# which is the keyword-then-high-entropy shape `generic-api-key` keys on. The working tree now
+# writes `CARGO_PKG_DESCRIPTION='…'`, matching the other two canaries and Cargo's own output, so
+# `gitleaks dir .` reports nothing. The literal remains in commit 58602f1, which `gitleaks git .`
+# re-reads on every run, and this repository does not rewrite published history — the same
+# situation as FP-003, FP-004 and FP-005, with the same remedy.
+#
+# Scope: matched CONTENT only — the canary word itself, which appears nowhere else in the
+# repository. Deliberately no `paths` entry, for the reason FP-001 records and proved
+# empirically: a `paths` allowlist makes gitleaks skip the file before reading it, and this file
+# parses untrusted tool output, which is where a real credential is most likely to be pasted.
+#
+# Verification, performed 2026-09-08, to be repeated after any edit to this file: with this entry
+# active both scans report zero findings, and a canary injected into
+# `crates/renvor-cli/src/toolchain/evidence.rs` — the very file this entry covers — IS still
+# reported by `gitleaks dir .` as `generic-api-key`.
+#
+# CALIBRATE THE CANARY FIRST, as FP-002 records for the AWS rule. Two shapes tried here did NOT
+# trigger and would have produced a false "the allowlist is fine" reading: an `AKIA…`-prefixed
+# string, and `api_key = "<32 mixed-case chars>"` whose entropy fell under the rule's threshold.
+# What does trigger is a keyword immediately followed by a genuinely high-entropy run — the same
+# shape as the finding this entry suppresses. Prove the canary fires in a scratch file at the
+# repository root before concluding anything from its absence inside a covered one.
+#
+# Removable when: commit 58602f1 has left the scanned history. Renaming the fixture alone is not
+# sufficient, and it has already been renamed.
+[[allowlists]]
+description = "FP-006: the 'renvor_canary_truncated_e5f6' launch-command canary in renvor-cli's evidence parser tests, which the test requires to be absent from every rendering"
+regexes = ['''renvor_canary_truncated_e5f6''']
+regexTarget = "match"
