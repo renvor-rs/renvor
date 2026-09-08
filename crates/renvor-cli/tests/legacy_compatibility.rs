@@ -435,6 +435,12 @@ fn legacy_copy() -> tempfile::TempDir {
     copy_tree(&template_7_project(), dir.path());
     let root = workspace_root();
     let root = root.to_str().expect("a utf-8 workspace path");
+    // ESCAPED FOR A TOML BASIC STRING, because both files put the path inside one. On Windows the
+    // workspace root is `C:\\Users\\…`, and a raw backslash there is an escape sequence: the
+    // manifests became unparseable and every test in this file failed with a TOML error naming a
+    // column, not a missing pin. Found by the Windows platform legs on 2026-09-08.
+    let root = root.replace('\\', "\\\\").replace('"', "\\\"");
+    let root = root.as_str();
     for name in ["renvor.toml", "Cargo.toml"] {
         let path = dir.path().join(name);
         let text = std::fs::read_to_string(&path).expect("readable");

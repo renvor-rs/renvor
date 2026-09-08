@@ -268,7 +268,14 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 struct Run {
     succeeded: bool,
     status: String,
+    /// Both streams, for a failure message that should show everything the command said.
     output: String,
+    /// `stdout` **alone**. C-1 reserves it for the result, so parsing one JSON envelope must read
+    /// this and not the combination: a diagnostic on `stderr` is not a second document. The
+    /// FR-012-8 resolution notice prints on every leg whose toolchain is not the generated pin —
+    /// which is every `stable` leg — and reading the two together turned the envelope into
+    /// "trailing characters". Found by `verify (stable)` on 2026-09-08.
+    stdout: String,
 }
 
 fn run(program: &str, args: &[&str], directory: &Path, envs: &[(&str, String)]) -> Run {
@@ -287,12 +294,13 @@ fn run(program: &str, args: &[&str], directory: &Path, envs: &[(&str, String)]) 
     let output = command
         .output()
         .unwrap_or_else(|error| panic!("`{program}` could not be run: {error}"));
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     Run {
         succeeded: output.status.success(),
         status: format!("{}", output.status),
-        output: combined,
+        output: format!("{stdout}{stderr}"),
+        stdout,
     }
 }
 
@@ -317,7 +325,7 @@ fn attempt(base: &Path, row: &Row, extra: &[&str]) -> (Run, serde_json::Value) {
     let args = arguments(row, extra);
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     let outcome = run(env!("CARGO_BIN_EXE_renvor"), &borrowed, base, &[]);
-    let document: serde_json::Value = serde_json::from_str(&outcome.output).unwrap_or_else(|_| {
+    let document: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap_or_else(|_| {
         panic!(
             "not a JSON envelope for {} [{}]:\n{}",
             row.name, outcome.status, outcome.output
@@ -790,7 +798,7 @@ fn every_invalid_combination_is_refused_before_any_write() {
             "{flags:?} was accepted:\n{}",
             outcome.output
         );
-        let document: serde_json::Value = serde_json::from_str(&outcome.output)
+        let document: serde_json::Value = serde_json::from_str(&outcome.stdout)
             .unwrap_or_else(|_| panic!("not JSON for {flags:?}:\n{}", outcome.output));
         assert_eq!(document["error"]["code"], code, "{flags:?}: {document}");
         let details = document["error"]["details"].to_string();
@@ -941,7 +949,7 @@ fn generate_into(project: &Path, args: &[&str]) -> (Run, serde_json::Value) {
     full.extend_from_slice(args);
     full.extend_from_slice(&["--output", "json"]);
     let outcome = run(env!("CARGO_BIN_EXE_renvor"), &full, project, &[]);
-    let document: serde_json::Value = serde_json::from_str(&outcome.output).unwrap_or_else(|_| {
+    let document: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap_or_else(|_| {
         panic!(
             "not a JSON envelope for generate {args:?} [{}]:\n{}",
             outcome.status, outcome.output
