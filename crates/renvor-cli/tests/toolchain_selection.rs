@@ -111,6 +111,11 @@ enum Missing {
     /// A rustup home of this test's own could not be made, or `rustup override set` declined to
     /// write into it — so the control has no override to measure and refuses to invent one.
     NoPrivateRustup,
+    /// The legacy tree the auth control plans against could not be prepared: this machine has no
+    /// SHA-256 command to re-record the manifest's digest with, or the fixture's record is not the
+    /// shape this helper knows. A DIFFERENT cause from [`Missing::NoPrivateRustup`], and named
+    /// separately so a failure under the requirement points at the right thing.
+    NoAuthTree,
 }
 
 impl Missing {
@@ -133,6 +138,10 @@ impl Missing {
             Self::NoPrivateRustup => {
                 "a private rustup home with a directory override could not be created, and the \
                  operator's own rustup settings are never written to"
+            }
+            Self::NoAuthTree => {
+                "the legacy tree this control plans against could not be prepared: no sha256 \
+                 command, or an unexpected fixture record"
             }
         }
     }
@@ -167,6 +176,9 @@ fn unavailable<T>(test: &str, missing: Missing) -> Option<T> {
             ),
             Missing::NoPrivateRustup => panic!(
                 "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but a private rustup home with a directory override could not be created"
+            ),
+            Missing::NoAuthTree => panic!(
+                "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but the legacy tree this control plans against could not be prepared"
             ),
         }
     }
@@ -843,7 +855,7 @@ fn c_sel_2_a_directory_override_on_the_project_beats_its_file() {
         return;
     };
     let Some(root) = auth_planning_tree() else {
-        let _: Option<()> = unavailable(TEST, Missing::NoPrivateRustup);
+        let _: Option<()> = unavailable(TEST, Missing::NoAuthTree);
         return;
     };
     let project = root.path().join("legacy-api");

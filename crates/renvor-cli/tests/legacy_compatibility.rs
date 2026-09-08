@@ -646,7 +646,7 @@ fn generate_into_a_template_7_tree_inserts_no_pin_and_no_rust_version() {
 /// plan that group — `a_second_auth_on_a_verified_legacy_tree_plans_no_pin_and_no_rust_version`
 /// in `src/commands/generate.rs`, which fails under the wrong predicate — and the live pass, on a
 /// real tree with a real build, is the starter matrix's
-/// `a_legacy_tree_stays_pin_less_across_repeated_auth`. The record is written by hand here
+/// `c_sel_3_a_legacy_tree_resolves_its_ancestor_and_stays_pin_less_across_repeated_auth`. The record is written by hand here
 /// because a real `auth` needs the framework checkout and a full starter build.
 #[test]
 fn a_legacy_tree_that_has_already_been_verified_still_has_no_pin_inserted() {

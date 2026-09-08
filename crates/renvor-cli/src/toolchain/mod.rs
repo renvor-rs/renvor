@@ -266,10 +266,11 @@ pub fn unreadable(check: &str) -> CliError {
 ///
 /// # Which tools, and why `rustfmt` is one of them
 ///
-/// Every executable this crate looks up on the sealed `PATH` and then runs **in a directory a
-/// toolchain file may govern**: `rustc` and `cargo` for [`fn@resolve`]'s identity queries, and
-/// `rustfmt` — which `resolve` runs for the component check, and which `renvor generate resource`
-/// runs on the module it renders, both inside the project directory (FR-012-14). A layout where
+/// Every executable **the generating commands** — `renvor new` and `renvor generate` — look up on
+/// the sealed `PATH` and then run in a directory a toolchain file may govern: `rustc` and `cargo`
+/// for [`fn@resolve`]'s identity queries, and `rustfmt` — which `resolve` runs for the component
+/// check, and which `renvor generate resource` runs on the module it renders, both inside the
+/// project directory (FR-012-14). A layout where
 /// `rustc` and `cargo` are bare but `rustfmt` is a proxy is not exotic: a distribution compiler on
 /// `PATH` ahead of a `~/.cargo/bin` that still carries rustup's proxies produces exactly it, and
 /// then no `rustup` is located at all — so the floor of step 2 never runs, and step 3 classifies
@@ -283,6 +284,14 @@ pub fn unreadable(check: &str) -> CliError {
 /// so the toolchain they would resolve is the one that has just built and no absent toolchain is
 /// nameable. What runs them is stated in [`evidence`]; that they are within the seal's
 /// declared limits rather than outside them is the audit's answer, not an omission.
+///
+/// **`renvor doctor` is NOT covered, and the sentence above says "the generating commands" for
+/// that reason.** It probes `cargo --version` (and its other tools) with the same seal, in
+/// `std::env::current_dir()` — which may be pinned — and identifies nothing first. That is
+/// pre-existing and it is where `doctor`'s toolchain section is already deferred to B1f
+/// ([`command-surface.md`](../../../../contracts/command-surface.md) 1.5.0); it is written here
+/// so this doc cannot be read as a claim about the whole crate. `doctor` runs no build and writes
+/// no destination, which bounds the exposure without removing it.
 ///
 /// The [`Classification`] it returns carries what [`fn@resolve`] needs: the located rustup's path
 /// (for `rustup show active-toolchain`) and version, or `Bare`.

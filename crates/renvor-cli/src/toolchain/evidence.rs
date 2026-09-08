@@ -42,7 +42,7 @@
 //! A stream without a `Finished` line is truncated; a `Compiling`/`Checking` of the own package
 //! with no own `Running` line after it is unaccounted; a `Running` command that does not tokenise
 //! is malformed; a stream in which the own package never appears is unaccounted; a stream that
-//! reports the own package both `Fresh` and launched is contradictory. Each is an
+//! reports the own package both `Fresh` and **announced** is contradictory. Each is an
 //! [`EvidenceError`], which the caller reports as `project_verification_failed` with
 //! `reason = evidence_capture_failed` — never as a cached run.
 //!
@@ -55,8 +55,14 @@
 //! `clippy --all-targets` alike: a package with one dirty unit and one reused unit prints
 //! `Compiling`/`Checking`, the dirty unit's `Running` line, and **nothing whatsoever** for the
 //! reused unit. `Fresh <pkg>` is all-or-nothing — it appears only when every unit of the package
-//! was reused, and never in the same stream as that package's announcement — and no line anywhere
-//! carries a unit count or a total.
+//! was reused, and never in the same stream as that package's **announcement** — and no line
+//! anywhere carries a unit count or a total.
+//!
+//! `Fresh` beside a *launch* is a different matter and is **legitimate**: a fully cached
+//! `cargo test -vv` on a crate with a doctest prints `Fresh` and then a `Running` line for the
+//! rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name` and so is the project's own by
+//! every rule here (measured the same day on the same cargo, on a lib+bin crate with one
+//! doctest). The announcement is `Fresh`'s complement; the launch count is not.
 //!
 //! Two consequences, both stated rather than worked around:
 //!
@@ -67,7 +73,7 @@
 //!
 //! So this module establishes the strongest accounting the evidence *does* support — an announced
 //! package must launch, a package that appears nowhere is refused, a truncated or malformed stream
-//! is refused, and a package reported both reused and launched is refused — and claims nothing
+//! is refused, and a package reported both reused and **announced** is refused — and claims nothing
 //! beyond it. The control that measures the limit rather than asserting past it is
 //! `one_of_several_own_launches_may_go_missing_and_this_names_the_limit`. **The contract text is
 //! not narrowed here**: whether C-5's sentence is corrected, or the guarantee is bought with
@@ -179,13 +185,21 @@ pub enum EvidenceError {
     /// identities. One identity per check is representable; a disagreement is not, and picking
     /// one would be a claim about units it was not queried for.
     Disagreement,
-    /// One check's stream reports the own package **both** `Fresh` and launched. Cargo emits
+    /// One check's stream reports the own package **both** `Fresh` and **announced**. Cargo emits
     /// `Fresh <pkg>` only when every unit of that package was reused, and announces
-    /// `Compiling`/`Checking <pkg>` only when at least one was not — so the two never appear for
+    /// `Compiling`/`Checking <pkg>` only when at least one was not — so those two never appear for
     /// one package in one stream (measured 2026-09-08 on cargo 1.97.1, for `build`, `test`, and
     /// `clippy --all-targets`, including the partially-fresh case of each). A stream that shows
     /// both is not a stream this parser can account for, and calling it `mixed` would report a
     /// state Cargo never described.
+    ///
+    /// # `Fresh` beside a *launch* is NOT this, and the distinction is measured
+    ///
+    /// A fully cached `cargo test -vv` on a crate with a doctest prints `Fresh` and then a
+    /// `Running` line for the rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name` and
+    /// so counts as the project's own. That is an ordinary, legitimate stream. The refusal is
+    /// therefore keyed to the ANNOUNCEMENT, which is `Fresh`'s true complement, and never to the
+    /// launch count.
     Contradictory,
 }
 
@@ -310,6 +324,9 @@ pub fn parse_check(
     };
     let mut finished = false;
     let mut announced = false;
+    // Whether the own package was EVER announced, as distinct from `announced`, which a launch
+    // discharges. The contradiction check below is about the announcement's existence.
+    let mut announced_ever = false;
     let mut lines = stderr.lines();
     while let Some(raw) = lines.next() {
         let line = without_sgr(raw);
@@ -348,6 +365,7 @@ pub fn parse_check(
         {
             if package_of(rest) == own_package {
                 announced = true;
+                announced_ever = true;
             }
         } else if line.starts_with("Finished ") {
             finished = true;
@@ -359,11 +377,20 @@ pub fn parse_check(
     if announced || (evidence.units_launched == 0 && evidence.units_fresh == 0) {
         return Err(EvidenceError::Unaccounted);
     }
-    // `Fresh` is all-or-nothing per package, and the announcement is its complement, so one
-    // check's stream says one of the two about the own package and never both. See
-    // [`EvidenceError::Contradictory`] for the measurement, and the module header for what this
-    // accounting can and cannot establish.
-    if evidence.units_launched > 0 && evidence.units_fresh > 0 {
+    // `Fresh` is all-or-nothing per package and the ANNOUNCEMENT is its complement: a stream says
+    // one of those two about the own package, never both.
+    //
+    // THE PREDICATE IS THE ANNOUNCEMENT, NOT THE LAUNCH COUNT, and the difference is a state
+    // Cargo really emits. `cargo test -vv` on a fully cached crate with a doctest prints `Fresh`
+    // AND a `Running` line — the rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name`
+    // and is therefore the project's own by every rule above (measured 2026-09-08, cargo 1.97.1,
+    // a lib+bin crate with one doctest). A first version of this check compared the launch count
+    // and would have refused that run. The measurement that first version rested on was taken on
+    // a crate with no doc comments, so the shape never appeared.
+    //
+    // See [`EvidenceError::Contradictory`], and the module header for what this accounting can
+    // and cannot establish.
+    if announced_ever && evidence.units_fresh > 0 {
         return Err(EvidenceError::Contradictory);
     }
     Ok(evidence)
@@ -1363,7 +1390,30 @@ mod tests {
         assert_eq!(
             parse_check(&both, "probe", Path::new("/x")),
             Err(EvidenceError::Contradictory),
-            "a package reported both reused and launched was accepted"
+            "a package reported both reused and announced was accepted"
+        );
+
+        // AND THE SHAPE THAT IS NOT THAT, which a launch-count predicate refuses by mistake.
+        //
+        // A fully cached `cargo test -vv` on a crate with a doctest prints `Fresh` and then a
+        // `Running` line for the rustdoc unit — own by `CARGO_PKG_NAME` and `--crate-name`, and
+        // with no announcement anywhere. Measured 2026-09-08 on cargo 1.97.1; the first version of
+        // the check above compared `units_launched` and would have refused this ordinary run,
+        // because the measurement it rested on was taken on a crate that had no doc comments.
+        let cached_with_a_doctest = concat!(
+            "       Fresh probe v0.1.0 (/x)
+",
+            "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.00s
+",
+            "     Running `CARGO_PKG_NAME=probe /t/bin/rustdoc --edition=2021 --crate-name probe              src/lib.rs`
+",
+        );
+        let evidence = parse_check(cached_with_a_doctest, "probe", Path::new("/x"))
+            .expect("a cached run with a doctest unit is ordinary evidence, not a contradiction");
+        assert_eq!(evidence.units_fresh, 1);
+        assert_eq!(
+            evidence.units_launched, 1,
+            "the rustdoc doctest unit is the project's own by every rule this module applies"
         );
     }
 

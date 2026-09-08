@@ -556,6 +556,17 @@ fn verify_merged(
 /// What the resolution probe holds the compiler to for `generate auth`: the record's own pin and
 /// `rust-version`, or nothing at all for a legacy tree (FR-012-10a).
 ///
+/// # One predicate, and the half-declared record it changes
+///
+/// The test was `pinned == "none" && rust_version == "none"`; it is now
+/// [`crate::generate::record::Toolchain::declares`], which reads `pinned` alone — so the two
+/// callers cannot drift. A record with `pinned = "none"` and a real `rust_version` therefore now
+/// expects **nothing** where it used to parse that version and hold the compiler to it. This
+/// generator never writes that shape (both fields are written together), and of the two readings
+/// this is the safe one: it holds an undeclared tree to nothing rather than to a figure the tree
+/// does not state. Recorded because the change is real and the rationale above is about the other
+/// direction.
+///
 /// # Errors
 ///
 /// [`Code::ManifestInvalid`] when the record's `[toolchain].rust_version` is neither `none` nor a
@@ -2862,7 +2873,7 @@ mod auth_tests {
     /// The record is written into a starter here because `plan_auth` needs a project that can be
     /// re-rendered; the shape written is the one `apply::commit` writes. The live pass, on a real
     /// legacy tree with a real build, is the starter matrix's
-    /// `a_legacy_tree_stays_pin_less_across_repeated_auth`.
+    /// `c_sel_3_a_legacy_tree_resolves_its_ancestor_and_stays_pin_less_across_repeated_auth`.
     #[test]
     fn a_second_auth_on_a_verified_legacy_tree_plans_no_pin_and_no_rust_version() {
         use crate::generate::record::Toolchain;

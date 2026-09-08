@@ -200,11 +200,11 @@ The conclusion is right for a different and larger reason. Measured 2026-09-08 o
 | State | What Cargo prints for the own package |
 |---|---|
 | every unit dirty | `Compiling`/`Checking`, one `Running` per unit, **no** `Fresh` |
-| every unit reused | one `Fresh`, **no** announcement and no `Running` |
+| every unit reused | one `Fresh`, **no** announcement — and, for `test` on a crate with a doctest, a `Running` line for the rustdoc unit |
 | **one unit dirty, one reused** | `Compiling`/`Checking`, **one** `Running` — and **nothing at all** for the reused unit |
 
 So: `Fresh` is all-or-nothing per package and never shares a stream with that package's
-announcement; no line anywhere carries a unit count or a total. Two consequences —
+**announcement**; no line anywhere carries a unit count or a total. Two consequences —
 
 1. C-5 1.2.0's sentence *"every unit of the project's own package(s) must be accounted for by a
    `Running` line or a positive `Fresh` report"* **describes a state Cargo does not report**. The
@@ -215,10 +215,31 @@ announcement; no line anywhere carries a unit count or a total. Two consequences
 **The contract text is not narrowed here.** What was done instead: the strongest accounting the
 evidence *does* support was established — an announced package must launch, a package that appears
 nowhere is refused, a truncated or malformed stream is refused, and (new) a stream reporting the own
-package **both** `Fresh` and launched is refused as `EvidenceError::Contradictory` rather than
+package **both** `Fresh` and **announced** is refused as `EvidenceError::Contradictory` rather than
 recorded as `mixed`, a shape Cargo never emits. The control
 `one_of_several_own_launches_may_go_missing_and_this_names_the_limit` asserts the limit and the four
 refusals together, so a later reading of C-5 finds the measurement rather than an assumption.
+
+**A correction to this section, from the independent validation.** The refusal was first keyed to
+the **launch count** — `units_launched > 0 && units_fresh > 0` — and this record first claimed Cargo
+never prints `Fresh` beside a launch. That is **false**, and the counter-example is ordinary: a fully
+cached `cargo test -vv` on a crate with a doctest prints `Fresh` and then a `Running` line for the
+rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name` and is therefore the project's own by
+every rule the parser applies (reproduced 2026-09-08, cargo 1.97.1, lib+bin with one doctest). The
+first measurement missed it because the probe crate had no doc comments, so no doctest unit existed.
+The invariant that IS measured — `Fresh` never shares a stream with the package's *announcement* —
+held in every shape checked, and the predicate is now that. The control above includes the
+cached-doctest stream and fails against the launch-count form. **U-2 was not breached in a shipped
+configuration** — starters render no `lib.rs`, so no census row emits a doctest unit — but the refusal
+would have rejected a legitimate run of any lib-bearing project, and the margin rested on a
+measurement that was wrong.
+
+**A related limitation, surfaced by the same counter-example and NOT fixed here.** In a lib-bearing
+project the doctest unit's launch chain ends in `rustdoc`, and FR-012-7e's identity query parses
+`rustc -vV`'s shape — so `rustdoc -vV` fails the grammar and the run is
+`compiler_identity_unreadable`. Generated starters are bin-only, so nothing shipped meets it. Whether
+a doctest unit should count as an own launch at all, or be recognised and skipped, is a design
+question this round did not open.
 
 **For decision.** Whether C-5's sentence is corrected to what Cargo's output can carry, or the
 guarantee is bought with evidence outside that output, is a maintainer's decision. It is not taken
@@ -228,7 +249,7 @@ here, and U-2's ban on mandatory artifact witnesses is not reopened.
 
 | Control | Where | State |
 |---|---|---|
-| **C-sel-2** — a directory override on the project directory beats its own `rust-toolchain.toml` | `tests/toolchain_selection.rs` | **Runs.** A directory override is a row in `$RUSTUP_HOME/settings.toml`, so the question was whose file it goes in: a temporary `RUSTUP_HOME` whose `toolchains` is a symlink to the real one takes the write, installs nothing, and the control re-reads the operator's own `settings.toml` to assert it was not opened. The run refuses with `toolchain_resolution_diverged` — the override governs the project directory and not the sibling scratch copy — **after** printing the FR-012-8 (1) notice this control is about, which is also what keeps it cheap: with the override removed the same test takes 47 s because the run proceeds to a real build. Unix only, for the symlink |
+| **C-sel-2** — a directory override on the project directory beats its own `rust-toolchain.toml` | `tests/toolchain_selection.rs` | **Runs.** A directory override is a row in `$RUSTUP_HOME/settings.toml`, so the question was whose file it goes in: a temporary `RUSTUP_HOME` whose `toolchains` is a symlink to the real one takes the write, installs nothing, and the control re-reads the operator's own `settings.toml` to assert it does not name the project directory (that check is skipped, not failed, if the file cannot be read). The run refuses with `toolchain_resolution_diverged` — the override governs the project directory and not the sibling scratch copy — **after** printing the FR-012-8 (1) notice this control is about, which is also what keeps it cheap: with the override removed the same test takes 47 s because the run proceeds to a real build. Unix only, for the symlink |
 | **C-sel-3** — a legacy pin-less tree under an ancestor pinning `Z` | `tests/starter_matrix.rs`, census row | **Runs.** `generate auth` resolves `Z` in the project directory and in the sibling scratch copy alike (they agree, or FR-012-13 refuses), records `selected_by = "toolchain_file"` and `Z`'s release, inserts no pin — and the **repeat** `auth`, which reads the `[toolchain]` `none` the first one wrote, still inserts none and leaves the applied migrations alone. Proved locally before it reached CI: **76 s**, against a real PostgreSQL and mail sink and a second installed toolchain, on a dedicated probe database created and dropped for the run |
 
 **Why C-sel-2 could not be a `renvor new` control.** `renvor new` resolves in its **staging**
@@ -246,7 +267,7 @@ Asked separately, as instructed, and the answer is the one the question anticipa
 |---|---|---|
 | Is CodeQL configured? | Yes — default setup, `rust` and `actions`, default query suite, weekly | `GET /repos/renvor-rs/renvor/code-scanning/default-setup` → `{"state":"configured",…}` |
 | Has PR #72's head been scanned? | **No** | `GET …/code-scanning/analyses?ref=refs/pull/72/head` returns nothing; no analysis anywhere carries commit `23a8729…` |
-| What was scanned? | PR #65 only, at `6c0d780` and `4eac0eaa` | the analyses list, newest first |
+| What was scanned? | PR #65 only — `6c0d780`, `4eac0eaa` and `eedd9ed`, all on `refs/pull/65/head` | the analyses list, newest first |
 | Why | Default setup scans the default branch and pull requests **targeting** it. PR #72 targets `docs/phase-012-decision-brief`, not `main` | `gh pr view 72` → `base: docs/phase-012-decision-brief`; default branch `main` |
 
 **So a green check list on #72 does not mean this code was scanned, and this record says so.** The
