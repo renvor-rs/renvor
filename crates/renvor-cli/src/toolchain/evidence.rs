@@ -1319,6 +1319,23 @@ mod tests {
             Err(EvidenceError::Unaccounted),
             "the split announcement was not recognised, so its guarantee was switched off"
         );
+
+        // (c) THE SPELLING CARGO ACTUALLY USES, ACROSS THE SPLIT. The two above build the stream
+        // from the same `staging` the caller passes, so both sides agree and the raw-vs-canonical
+        // question never arises — while a real macOS run has Cargo printing `/private/var/…` and
+        // the caller holding `/var/…`. That combination is what needs `begins_with` to try both
+        // spellings: a PARTIAL path cannot be canonicalised, so a single-spelling viability test
+        // would refuse every legitimate own line whose directory also carried a newline.
+        let canonical = staging
+            .canonicalize()
+            .expect("the staging directory resolves");
+        let cached_canonically = format!(
+            "       Fresh probe v0.1.0 ({})\n    Finished `dev` profile in 0.0s\n",
+            canonical.display()
+        );
+        let evidence = parse_check(&cached_canonically, "probe", &staging)
+            .expect("the canonical spelling of a split path is still the project's own");
+        assert_eq!(evidence.units_fresh, 1);
     }
 
     /// A project directory whose NAME CONTAINS PARENTHESES is still the project's own.

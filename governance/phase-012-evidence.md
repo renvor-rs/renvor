@@ -277,9 +277,27 @@ Measured: without that guard, the dependency's line swallows the rest of the str
 reports `Truncated`. Control: `a_closing_bracket_before_a_newline_does_not_end_the_location`, which
 asserts both halves.
 
-Three triggers on one function in one round is itself the finding: a delimiter test over text the
-operator controls is a guess, and each of these was found by an independent reader rather than by a
-gate.
+**A fourth trigger, measured and DEFERRED — a decision, not an oversight.** `parse_check` trims the
+first physical line before the status branch, so whitespace immediately before the newline is lost
+from the rejoined path and the prefix can never complete. Two real-cargo measurements, one
+whitespace character away from the shape `tests/redaction.rs` already generates into:
+
+| Directory name | Result |
+|---|---|
+| `above␣␣␣<newline>FORGED-LINE` | rejoined, own = **false**, `units_fresh` = 0 |
+| `above<CR><newline>FORGED-LINE` | rejoined, own = **false**, `units_fresh` = 0 — `str::lines()` strips the `\r` too |
+
+Same silent double failure as the three above. **Not a regression**: the suffix form behaved
+identically, because the join happened and the final comparison failed on the same missing
+characters. It is the pre-existing trim asymmetry, shared with `rejoin` on the launch side, and the
+narrow fix — feed the branches the untrimmed remainder — touches `rejoin` as well. That is wider
+than a bounded correction round should reach, so it is recorded here **with its measurements** for
+the maintainer rather than carried as an intuition.
+
+Four triggers on one function in one round is itself the finding: a delimiter test over text the
+operator controls is a guess, and every one of these was found by an independent reader rather than
+by a gate. Nothing in `cargo fmt`, `clippy`, `rustdoc`, the workspace suite or CI could see any of
+them, because each failure is either silent or needs a directory name no fixture had.
 
 And the bound: the location is now **necessary** for a status line but remains only **sufficient**
 for a `Running` line, where `launch` accepts `CARGO_PKG_NAME` alone. A same-named dependency's
