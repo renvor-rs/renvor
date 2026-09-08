@@ -294,6 +294,13 @@ narrow fix — feed the branches the untrimmed remainder — touches `rejoin` as
 than a bounded correction round should reach, so it is recorded here **with its measurements** for
 the maintainer rather than carried as an intuition.
 
+**And a fifth CI-only defect, from the controls themselves.** The two newline controls called
+`create_dir` on a name Windows will not accept — `ERROR_INVALID_NAME` (123) on both
+`windows-latest` legs, while every macOS and Linux leg was green. They are now `#[cfg(unix)]` with
+the reason stated, which is the pattern `tests/redaction.rs` already uses for its own newline
+fixture: the trigger cannot occur on Windows because that filesystem will not produce the shape.
+The bracket control, whose directory name IS legal there, still runs everywhere.
+
 Four triggers on one function in one round is itself the finding: a delimiter test over text the
 operator controls is a guess, and every one of these was found by an independent reader rather than
 by a gate. Nothing in `cargo fmt`, `clippy`, `rustdoc`, the workspace suite or CI could see any of

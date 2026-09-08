@@ -1254,7 +1254,16 @@ mod tests {
     ///
     /// The second half is the guard that makes the oracle safe: a `Fresh` line for a **same-named
     /// dependency**, whose path is not a prefix of staging, must consume nothing — or a rejoin
-    /// would eat the project's own lines that follow it.
+    /// would eat the project's own lines that follow it.    ///
+    /// # Unix only, and not as a shrug
+    ///
+    /// Windows refuses to create a directory whose name contains a newline —
+    /// `ERROR_INVALID_NAME` (123), measured on both `windows-latest` legs. So the trigger cannot
+    /// occur there: the shape this guards against is one that platform's filesystem will not
+    /// produce. `tests/redaction.rs` excludes its own newline fixture for the same reason and says
+    /// so. The parsing itself is platform-independent, and the bracket control beside this one —
+    /// whose directory name IS legal on Windows — runs everywhere.
+    #[cfg(unix)]
     #[test]
     fn a_closing_bracket_before_a_newline_does_not_end_the_location() {
         let root = tempfile::tempdir().expect("tempdir");
@@ -1296,7 +1305,16 @@ mod tests {
     /// a cached check is refused, and every other run silently loses its announcement.
     ///
     /// `rejoin` has done this for launch commands since the census found the shape; this is the
-    /// status line's half of it.
+    /// status line's half of it.    ///
+    /// # Unix only, and not as a shrug
+    ///
+    /// Windows refuses to create a directory whose name contains a newline —
+    /// `ERROR_INVALID_NAME` (123), measured on both `windows-latest` legs. So the trigger cannot
+    /// occur there: the shape this guards against is one that platform's filesystem will not
+    /// produce. `tests/redaction.rs` excludes its own newline fixture for the same reason and says
+    /// so. The parsing itself is platform-independent, and the bracket control beside this one —
+    /// whose directory name IS legal on Windows — runs everywhere.
+    #[cfg(unix)]
     #[test]
     fn a_project_directory_whose_name_carries_a_newline_is_still_the_project() {
         let root = tempfile::tempdir().expect("tempdir");
