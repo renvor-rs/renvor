@@ -13,11 +13,14 @@ against — both **open**)
 `feat/phase-012-b1-toolchain`, stacked on `docs/phase-012-decision-brief` (pull request #65,
 unmerged) — the planning branch's head at the time of drafting is `6c0d780`; `origin/main` is
 `7281e4f91aeb56695d6eceb322065e5f5fca04ef` (the squash of pull request #64)
-**Status**: **in progress — B1 not merged.** Nothing here is closed. No limitation is closed, no
-decision record is accepted (ADR-0038 is `proposed`), no waiver is created or granted, nothing is
-tagged, published, or deployed. Every `__PLACEHOLDER__` below is filled by the batch that earns
-it, with the head, the run identifiers, and the compiler identities of the legs that proved it —
-and until it is filled the row claims nothing.
+**Revised**: 2026-09-08, when B1 reached its review checkpoint with every required check green on
+`3369e09`; §1's fact table, §1.1, and §1.2 are filled from that run.
+**Status**: **B1 at its review checkpoint — not merged.** Nothing here is closed. No limitation is
+closed, no decision record is accepted (ADR-0038 is `proposed`), no waiver is created or granted,
+nothing is tagged, published, or deployed. A row is filled by the batch that earns it, with the
+head, the run identifiers, and the compiler identities of the legs that proved it — and a row
+whose measurement exists but whose transport does not says **not captured**, and names what would
+capture it, rather than claiming a value.
 **Convention**: a head is a full commit SHA with its tree; a run is a GitHub Actions run
 identifier with the job and leg named; a compiler identity is the leg's `rustc -vV` release,
 commit, and host and its `cargo -vV` release and commit — three fields and two, never one string.
@@ -30,15 +33,15 @@ as proof of execution through a wrapper.
 | Item | Value |
 |---|---|
 | Branch | `feat/phase-012-b1-toolchain`, stacked on `docs/phase-012-decision-brief` (#65) |
-| Head at the review checkpoint | `__HEAD__` (tree `__TREE__`) |
-| CI run identifiers | `__RUN__` — `verify (1.94.0)`, `verify (stable)`, the four `platform (…)` legs, `security`, `docs`, CodeQL |
-| Compiler identity, MSRV leg (`verify (1.94.0)`) | `__IDENTITY_MSRV__` — `rustc -vV` release, commit, host; `cargo -vV` release, commit |
-| Compiler identity, stable leg (`verify (stable)`) | `__IDENTITY_STABLE__` — the same five values; the release CI resolved for the current stable channel on that day |
-| Control toolchain per leg (U-10) | the MSRV leg's control is `stable`; the stable leg's control is `1.94.0`; the `Control toolchain identity` step proves the two differ in release **and** commit — run identifiers and the two identities: `__CONTROL_IDENTITIES__` |
+| Head at the review checkpoint | `3369e0981f3ad5cf555ee289b7761708d993765d` (tree `65829420dd50f0c4c36345b9139cdf4357e08320`), pull request #72 |
+| CI run identifiers | `34184656201` (`ci`), `34184656203`, `34184656226`, `34184656250` (`docs`, `security`, `release-dry-run`) — **all green**: `verify (1.94.0)`, `verify (stable)`, the four `platform (…)` legs, `security`, `docs`, `dependency-review`, and `package and verify without publishing` |
+| Compiler identity, MSRV leg (`verify (1.94.0)`) | `rustc 1.94.0` commit `4a4ef493e3a1488c6e321570238084b38948f6db` host `x86_64-unknown-linux-gnu`; `cargo 1.94.0` commit `85eff7c80277b57f78b11e28d14154ab12fcf643` |
+| Compiler identity, stable leg (`verify (stable)`) | `rustc 1.98.1` commit `48a229ceaefd4985c50990b14116b6d856af0985` host `x86_64-unknown-linux-gnu`; `cargo 1.98.1` commit `797e8a9bca276c1c9f9f738d2a20f484fa4eea9d` — the release CI resolved for `stable` on 2026-09-08 |
+| Control toolchain per leg (U-10) | the MSRV leg's control is `stable`; the stable leg's control is `1.94.0`; the `Control toolchain identity` step proves the two differ in release **and** commit — run identifiers and the two identities: on the stable leg, leg `rustc 1.98.1 (48a229cea…)` against control `rustc 1.94.0 (4a4ef493e3a…)`, the control carrying `rustfmt 1.8.0-stable` and `clippy 0.1.94 (4a4ef493e3 2026-03-02)`, and the checkout still resolving the leg after the second install; the MSRV leg is the mirror image. Run `34184656201` |
 | What the batch delivers | the contract revisions C-4 1.3.0, C-5 1.2.0, C-1 1.5.0, C-2 (additive), `support-policy.md` 1.2.0 (T-012-02); ADR-0038 `proposed` (T-012-01); templates at version 8 with the `toolchain` group (T-012-03); the framework-checkout reads (T-012-04); the version-2 record with `[toolchain]` and `[verified_with]` and the reader dispatch (T-012-05); the seal that forces `RUSTUP_AUTO_INSTALL=0` and drops the install-server pair (T-012-06); the identify-before-invoking preflight (T-012-07); the evidence mechanism as amended (T-012-08); the two notices (T-012-09); selection across staging and placement (T-012-10); legacy trees (T-012-11); no provisioning, offline preserved (T-012-12) |
 | What the batch does **not** deliver | `doctor`'s toolchain section, xtask step 1's identity line, the census assertion, the dated `SUPPORT.md`/`rust-toolchain.toml` sentences, and the limitations ledger — all **B1f** (T-012-13 … T-012-17); `verification-sequence.md` 2.4.0 moves with B1f, because its step-1 text describes an xtask change B1 does not make |
-| Acceptance tests, RED then GREEN | the tests named in `phase-012-task-plan.md` §1.1 for every requirement above; the refusal envelopes retained under `__ENVELOPES__`; the `SKIPPED:` lines observed locally for the two-toolchain controls and their required runs on both CI legs under `RENVOR_TEST_REQUIRE_TOOLCHAINS=1` |
-| Contract numbers confirmed against the brief's §8 | `__SECTION_8_DIFF__` — the revision texts diffed against the compatibility table in the pull request body; the maintainer's disposition of the old-reader/new-record item (1.3.0 recommended; 2.0.0 the alternative) |
+| Acceptance tests, RED then GREEN | the tests named in `phase-012-task-plan.md` §1.1 for every requirement above; the refusal envelopes are asserted in place by the tests that produce them rather than retained as files — every refusal this batch adds is checked for its code, its `details.reason`, and the absence of anything staged, in the test that provokes it; the `SKIPPED:` lines observed locally for the two-toolchain controls and their required runs on both CI legs under `RENVOR_TEST_REQUIRE_TOOLCHAINS=1` |
+| Contract numbers confirmed against the brief's §8 | the revision texts are diffed against the brief's §8 in the pull request body of #72; the old-reader/new-record item is **still the maintainer's**: C-4 **1.3.0** is written on the recommendation, and **2.0.0** is the alternative if source-built readers are inside the compatibility promise |
 | Out-of-repo evidence cited | §2 below; `/Users/ahmedanbar/Documents/renvor/renvor-t-012-08m-evidence/2026-09-07-eedd9ed/` |
 
 ### 1.1 `clippy-driver` identity query
@@ -71,7 +74,14 @@ What is and is not established by this:
 - The answers on 1.90.0, 1.95.0, and 1.97.1 are not quoted here because they were not handed
   over as strings; they are retained by T-012-08's per-leg test
   `clippy_driver_version_answers_under_the_grammar_on_this_toolchain`, whose output on both CI
-  legs is: `__CLIPPY_DRIVER_ANSWERS__`.
+  legs is **not separately captured**, and the reason is worth stating rather than leaving as a
+  gap: the gate runs `cargo test`, and `libtest` prints a passing test's stdout to nobody. What
+  the green legs do establish is narrower and real — every starter row on both legs placed a
+  record carrying `driver_release` and `driver_commit`, and a driver answer outside FR-012-7e's
+  grammar is a refusal (`compiler_identity_unreadable`), not a blank field. So the query parsed
+  under the grammar on `1.94.0` and on `1.98.1`; the strings themselves are quoted above only for
+  the four toolchains measured by hand. Capturing them per leg costs one `--nocapture` run of that
+  test in the gate, which is an `xtask` change and therefore **B1f**.
 - Nothing about a `clippy-driver` built from another channel, or about a toolchain outside the
   four, is claimed.
 
@@ -86,12 +96,13 @@ cached-representation rule was written for, and it must be measured rather than 
 
 | Platform leg | `renvor new` staging against a shared target: `observation` | `generate auth` scratch copy against a shared target: `observation` | Run identifier | Notes |
 |---|---|---|---|---|
-| `ubuntu-latest`, 1.94.0 | `__NEW_LINUX_MSRV__` | `__AUTH_LINUX_MSRV__` | `__RUN__` | |
-| `ubuntu-latest`, stable | `__NEW_LINUX_STABLE__` | `__AUTH_LINUX_STABLE__` | `__RUN__` | |
-| `macos-latest`, 1.94.0 | `__NEW_MACOS_MSRV__` | `__AUTH_MACOS_MSRV__` | `__RUN__` | `fs::copy` preserves mtime here (§2) |
-| `macos-latest`, stable | `__NEW_MACOS_STABLE__` | `__AUTH_MACOS_STABLE__` | `__RUN__` | |
-| `windows-latest`, 1.94.0 | `__NEW_WINDOWS_MSRV__` | `__AUTH_WINDOWS_MSRV__` | `__RUN__` | |
-| `windows-latest`, stable | `__NEW_WINDOWS_STABLE__` | `__AUTH_WINDOWS_STABLE__` | `__RUN__` | |
+| local: `macos`, 1.94.0 | **`launched`**, `units_fresh = 0` for clippy, build, and test | not measured — needs a framework checkout and a full starter build | — (local, 2026-09-07) | `fs::copy` preserves mtime here (§2) |
+| `ubuntu-latest`, 1.94.0 | not captured | not captured | `34184656201` | |
+| `ubuntu-latest`, stable | not captured | not captured | `34184656201` | |
+| `macos-latest`, 1.94.0 | not captured | not captured | `34184656201` | |
+| `macos-latest`, stable | not captured | not captured | `34184656201` | |
+| `windows-latest`, 1.94.0 | not captured | not captured | `34184656201` | |
+| `windows-latest`, stable | not captured | not captured | `34184656201` | |
 
 **Local measurement (macOS 14, `aarch64-apple-darwin`, rustc 1.94.0, 2026-09-07).** Two
 consecutive `renvor new` runs against one absolute `CARGO_TARGET_DIR` both recorded
@@ -110,6 +121,15 @@ no launch means the identity is absent rather than filled in — and prints the 
 prefix `MEASUREMENT renvor-new-shared-target:` so each platform leg's log carries the answer.
 `generate auth`'s scratch copy is not measured locally: it needs a framework checkout and a full
 starter build, and the local disk budget did not allow one. Its cells are filled from the CI legs.
+
+**Why the per-leg cells say *not captured* rather than a value.** The test that measures this,
+`tests/generated.rs::a_second_generation_against_a_shared_build_directory_records_its_observation`,
+runs and passes on every leg — it asserts the invariant that an observation and an identity agree —
+but it reports the measurement by printing it, and `libtest` shows a passing test's stdout to
+nobody. The gate runs plain `cargo test`. Two changes would fill these cells, both **B1f**: a
+`--nocapture` run of that one test in `xtask`'s step 4, or AC-012-5's census assertion, which reads
+`observation` out of every placed record on every leg. Recording the cells as *not captured*, with
+the mechanism named, is the honest state: the measurement exists, the transport does not.
 
 Each cell is `launched`, `cached`, or `mixed`, read from the placed record's `[verified_with]`,
 with the `units_launched`/`units_fresh` counts of the build and test checks beside it when the
