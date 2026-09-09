@@ -1129,7 +1129,9 @@ pub(crate) fn verified_with(
     verified: &crate::toolchain::evidence::Verified,
     tree_digest: String,
 ) -> crate::generate::record::VerifiedWith {
-    use crate::generate::record::{Checks, ClippyCheck, Outcome, UnitCheck, VerifiedWith};
+    use crate::generate::record::{
+        Checks, ClippyCheck, DoctestCheck, Outcome, UnitCheck, VerifiedWith,
+    };
 
     // `passed` from the check's own boolean rather than from the fact that we got here. A failed
     // check is an error and never reaches this function; saying so from the value is what keeps
@@ -1202,6 +1204,23 @@ pub(crate) fn verified_with(
                 units_launched: verified.test.units_launched,
                 units_fresh: verified.test.units_fresh,
             },
+            // ABSENT WHEN NONE WAS LAUNCHED, never a zeroed table: the record must not say a
+            // doctest unit was reused when the project simply has no library target.
+            doctest: verified.doctest.as_ref().map(|doctest| DoctestCheck {
+                outcome: "passed".to_owned(),
+                units_launched: doctest.units_launched,
+                units_fresh: doctest.units_fresh,
+                // THE OBSERVED RUSTDOC'S OWN ANSWER. Never `rustc_*`, never the pin, never an
+                // old record — the same discipline as `driver_*` for clippy.
+                rustdoc_release: doctest
+                    .rustdoc
+                    .as_ref()
+                    .map(|identity| identity.release.clone()),
+                rustdoc_commit: doctest
+                    .rustdoc
+                    .as_ref()
+                    .map(|identity| identity.commit.clone()),
+            }),
             run: outcome(verified.run),
         },
     }
@@ -1324,6 +1343,7 @@ mod tests {
                 units_launched: 3,
                 units_fresh: 0,
             },
+            doctest: None,
             run: true,
             observation: Observation::Launched,
             rustc: Some(identity("88.0.4", "dddddddddd")),

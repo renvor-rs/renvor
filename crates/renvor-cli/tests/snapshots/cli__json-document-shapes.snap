@@ -33,6 +33,7 @@ expression: "Value::Object(shapes)"
             "units_fresh": "<integer>",
             "units_launched": "<integer>"
           },
+          "doctest": null,
           "fmt": {
             "outcome": "<string>"
           },
@@ -262,6 +263,7 @@ expression: "Value::Object(shapes)"
             "units_fresh": "<integer>",
             "units_launched": "<integer>"
           },
+          "doctest": null,
           "fmt": {
             "outcome": "<string>"
           },
@@ -362,6 +364,7 @@ expression: "Value::Object(shapes)"
             "units_fresh": "<integer>",
             "units_launched": "<integer>"
           },
+          "doctest": null,
           "fmt": {
             "outcome": "<string>"
           },

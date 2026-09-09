@@ -1176,6 +1176,7 @@ mod toolchain_tests {
                     units_launched: 1,
                     units_fresh: 0,
                 },
+                doctest: None,
                 run: true,
                 observation: crate::toolchain::Observation::Launched,
                 rustc: Some(identity("1.94.0", "aaaaaaaaaa")),

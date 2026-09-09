@@ -44,7 +44,7 @@ use std::process::Command;
 use crate::exit::{CliError, Code};
 use crate::output::progress::Progress;
 use crate::toolchain::evidence::{self, CheckEvidence, EvidenceError};
-pub use crate::toolchain::evidence::{ClippyEvidence, UnitEvidence, Verified};
+pub use crate::toolchain::evidence::{ClippyEvidence, DoctestEvidence, UnitEvidence, Verified};
 
 /// The checks run before the smoke run, in order, each with the failure it reports.
 ///
@@ -663,14 +663,73 @@ pub fn in_staging_with(
         identities.into_iter().next()
     };
 
+    // THE DOCTEST BUCKET'S QUERIED IDENTITY (finding 4). The `rustdoc` executable every launched
+    // own doctest chain ended in, asked `-vV` ITSELF and parsed under its own tool name. Never
+    // `rustc`'s answer reused, and never inferred from it: `RUSTC` redirects rustc and leaves
+    // rustdoc on the toolchain's own, so the two legitimately differ and each is recorded where
+    // it belongs.
+    //
+    // Gathered from all three checks. Only `cargo test -vv` has ever been observed to launch a
+    // doctest unit; the other two are included so a Cargo that did would be recorded rather than
+    // silently dropped.
+    let doctest_chains = || {
+        clippy
+            .doctest_chains
+            .iter()
+            .chain(build.doctest_chains.iter())
+            .chain(test.doctest_chains.iter())
+    };
+    let doctest_launched = clippy.doctest_launched + build.doctest_launched + test.doctest_launched;
+    let doctest = if doctest_launched == 0 {
+        None
+    } else {
+        progress.step("rustdoc -vV");
+        let executables = distinct(
+            doctest_chains()
+                .filter_map(evidence::trailing_rustdoc)
+                .map(|rustdoc| (rustdoc, DOCTEST_LABEL)),
+        );
+        let mut identities = Vec::with_capacity(executables.len());
+        for (rustdoc, label) in executables {
+            identities.push(
+                evidence::query_rustdoc(rustdoc, &sealed, staging)
+                    .map_err(|error| error.with("check", label))?,
+            );
+        }
+        // Doctest units are compared with EACH OTHER, never with the compiler. Two rustdoc
+        // executables that answer differently are a disagreement one field cannot represent,
+        // exactly as for the build/test units; a rustdoc that differs from `rustc` is not.
+        if identities.windows(2).any(|pair| pair[0] != pair[1]) {
+            return Err(capture_failed(DOCTEST_LABEL, EvidenceError::Disagreement));
+        }
+        Some(DoctestEvidence {
+            units_launched: doctest_launched,
+            // NOT AN ASSUMPTION, AND NOT DERIVABLE FROM ANYTHING ELSE. Cargo's `Fresh` is a
+            // package-level report and is counted against the check whose stream carried it; no
+            // part of it is attributable to a doctest unit, because a package reported `Fresh`
+            // launches its doctest unit anyway. `a_cached_library_bearing_project_still_launches_
+            // its_doctest_unit` is the measurement this zero rests on — if Cargo ever stops
+            // launching that unit, that test fails and this line is what has to change.
+            units_fresh: 0,
+            rustdoc: identities.into_iter().next(),
+        })
+    };
+
     let observation = evidence::observation(&build, &test)
         .map_err(|error| capture_failed("cargo build -vv, cargo test -vv", error))?;
+    // THE DOCTEST CHECK IS NOT A CANDIDATE HERE, and that is a fact rather than an omission: the
+    // bucket exists only when a doctest unit was LAUNCHED, so `units_launched == 0` is never true
+    // of it and it could never be named. Its counts are still on the record, under
+    // `checks.doctest`, so a cached run that launched a doctest unit shows the launch there while
+    // this line truthfully names the checks that launched nothing of their own (C-5).
     let cached_checks: Vec<&'static str> =
         [("clippy", &clippy), ("build", &build), ("test", &test)]
             .into_iter()
             .filter(|(_, check)| check.units_launched == 0 && check.units_fresh > 0)
             .map(|(name, _)| name)
             .collect();
+    // A wrapper in front of `rustdoc` is a wrapper observed like any other, so the doctest chains
+    // are scanned under the same bare shape as a build/test chain: `[rustdoc]` is one executable.
     let wrapper_observed = clippy
         .chains
         .iter()
@@ -679,6 +738,7 @@ pub fn in_staging_with(
             .chains
             .iter()
             .chain(test.chains.iter())
+            .chain(doctest_chains())
             .any(|chain| evidence::shows_wrapper(chain, false));
 
     Ok(Verified {
@@ -690,6 +750,7 @@ pub fn in_staging_with(
         },
         build: UnitEvidence::from(&build),
         test: UnitEvidence::from(&test),
+        doctest,
         run: true,
         observation,
         rustc,
@@ -702,6 +763,9 @@ pub fn in_staging_with(
 const CLIPPY_LABEL: &str = "cargo clippy --all-targets -vv -- -D warnings";
 const BUILD_LABEL: &str = "cargo build -vv";
 const TEST_LABEL: &str = "cargo test -vv";
+/// The doctest units are launched by `cargo test -vv`; the label names the check an operator
+/// would rerun, not a command of its own, because there is no separate command to run.
+const DOCTEST_LABEL: &str = "cargo test -vv (doctest units)";
 
 /// The three checks' evidence as the loop fills them, by the check's first argument.
 #[derive(Default)]
@@ -814,6 +878,275 @@ mod tests {
         .expect("write");
         std::fs::write(dir.path().join("src/main.rs"), main).expect("write");
         dir
+    }
+
+    /// A project with a library target beside the binary — the shape no current starter has, and
+    /// the one whose `cargo test -vv` stream ends a unit's chain in `rustdoc` rather than
+    /// `rustc`. `lib` is the library's whole source, so a caller decides whether it carries a
+    /// doc test; the binary calls into it so that the smoke run exercises both targets.
+    fn library_project(lib: &str) -> tempfile::TempDir {
+        // The binary calls into the library so that both targets are real, and does it WITHOUT
+        // the stream macros: `presentation.rs`'s reporter gate scans every line under `src/` as
+        // text, test fixtures included, so one of those tokens in a string literal here fails a
+        // gate about something else entirely.
+        let dir = project("fn main() {\n    let _ = probe::answer();\n}\n");
+        std::fs::write(dir.path().join("src/lib.rs"), lib).expect("write");
+        dir
+    }
+
+    /// A library whose only item carries a doc test.
+    const LIB_WITH_DOCTEST: &str = "//! Probe.\n\n/// Answers.\n///\n/// ```\n/// assert_eq!(probe::answer(), 42);\n/// ```\n#[must_use]\npub fn answer() -> i32 {\n    42\n}\n";
+
+    #[test]
+    fn a_library_bearing_project_records_its_doctest_unit_apart_from_the_compiler_units() {
+        // FINDING 4, the defect itself and the shape that closes it. `cargo test -vv` on a
+        // package with a library target ends one unit's chain in `rustdoc`, not `rustc` —
+        // measured on macOS/aarch64 and on Linux/aarch64 under both 1.94.0 and 1.98.1. That unit
+        // was counted as a build/test unit and asked `rustc -vV`, which rustdoc does not answer
+        // under the `rustc` grammar, so EVERY library-bearing project failed verification with
+        // `compiler_identity_unreadable`. Every shipped starter is binary-only, which is the only
+        // reason no gate saw it.
+        //
+        // The correction does not disown the unit — it carries the staging `CARGO_MANIFEST_DIR`
+        // and IS the project's own. It records it as what it is, in its own bucket, asked with
+        // its own query.
+        let dir = library_project(LIB_WITH_DOCTEST);
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("a library-bearing project verifies");
+        let doctest = verified
+            .doctest
+            .clone()
+            .expect("a launched doctest unit is recorded");
+        assert_eq!(doctest.units_launched, 1, "one own doctest unit launched");
+        assert_eq!(
+            doctest.units_fresh, 0,
+            "Cargo attributes no `Fresh` report to a doctest unit"
+        );
+        assert_eq!(
+            verified.observation,
+            Observation::Launched,
+            "a private empty target launches every build/test unit"
+        );
+        // THE IDENTITY IS RUSTDOC'S OWN ANSWER, not the compiler's copied across.
+        assert_eq!(
+            doctest.rustdoc.as_ref(),
+            Some(&real_rustdoc()),
+            "the recorded rustdoc identity is the executable's own `-vV` answer"
+        );
+        assert_eq!(
+            verified.rustc.as_ref(),
+            Some(&real_rustc()),
+            "the compiler identity is still the compiler's own answer"
+        );
+        // AND THE COMPILER UNITS ARE STILL COUNTED SEPARATELY: the doctest unit left the
+        // build/test counts, it did not join them.
+        assert!(
+            verified.test.units_launched >= 1,
+            "the test check still launched compiler units of its own"
+        );
+    }
+
+    #[test]
+    fn a_library_target_with_no_doc_comments_still_launches_a_doctest_unit() {
+        // The trigger is the LIBRARY TARGET, not a doc comment — measured 2026-09-09 on cargo
+        // 1.94.0, where a `src/lib.rs` carrying no `///` at all still launches one rustdoc unit.
+        // Stated because the natural assumption is the opposite, and because a fix tested only
+        // against a crate with doc tests would leave the commoner shape failing.
+        let dir = library_project("pub fn answer() -> i32 {\n    42\n}\n");
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("a library with no doc comments verifies");
+        let doctest = verified.doctest.expect("a doctest unit is still launched");
+        assert_eq!(doctest.units_launched, 1, "one own doctest unit");
+        assert!(
+            doctest.rustdoc.is_some(),
+            "its identity was queried like any other"
+        );
+    }
+
+    #[test]
+    fn a_binary_only_project_records_no_doctest_bucket_at_all() {
+        // Compatibility test 6, and the shape of every starter this generator ships. No doctest
+        // unit is launched, so there is no bucket — and the record therefore writes no
+        // `[verified_with.checks.doctest]` table. Its ABSENCE must never be read as a claim that
+        // a doctest unit was reused, which is why this is `None` and not a zeroed table.
+        let dir = project("fn main() {}\n");
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("a binary-only project verifies");
+        assert_eq!(
+            verified.doctest, None,
+            "no doctest unit was launched, so there is no bucket"
+        );
+    }
+
+    #[test]
+    fn a_cached_library_bearing_project_still_launches_its_doctest_unit() {
+        // Compatibility test 7, and THE MEASUREMENT the doctest bucket's `units_fresh = 0` rests
+        // on. A second verification against the same target reports the package `Fresh` and
+        // launches ZERO compiler units — and still launches its doctest unit. So:
+        //
+        //   * `observation = "cached"` is truthful: it summarises the build and test units, and
+        //     none of those launched;
+        //   * `rustc_*` is absent, because no compiler was launched to ask;
+        //   * `rustdoc_*` is PRESENT, because rustdoc was launched and was asked.
+        //
+        // That combination — cached with an identity — is the row the design exists to make
+        // representable. Before the correction this run was `mixed`, because the rustdoc launch
+        // was counted as a compiler launch, and it then failed the identity query anyway.
+        //
+        // If Cargo ever stops launching that unit for a cached package, THIS test fails, and the
+        // `units_fresh: 0` in `in_staging_with` is what has to change. The zero is pinned to a
+        // measurement rather than to an assumption.
+        let dir = library_project(LIB_WITH_DOCTEST);
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        let first = in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            parent.clone().into_iter(),
+        )
+        .expect("the first run verifies");
+        assert_eq!(first.observation, Observation::Launched, "the first run");
+        let second = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("the second run verifies");
+        assert_eq!(
+            second.observation,
+            Observation::Cached,
+            "every build and test unit was Fresh the second time"
+        );
+        assert_eq!(
+            second.rustc, None,
+            "no compiler launch, no compiler identity"
+        );
+        assert_eq!(
+            second.build.units_launched, 0,
+            "the build check launched nothing"
+        );
+        assert_eq!(
+            second.test.units_launched, 0,
+            "the test check launched no compiler unit of its own"
+        );
+        let doctest = second
+            .doctest
+            .expect("the doctest unit launched even though the package was cached");
+        assert_eq!(
+            doctest.units_launched, 1,
+            "one doctest unit, still launched"
+        );
+        assert_eq!(doctest.units_fresh, 0, "and none of it reported Fresh");
+        assert_eq!(
+            doctest.rustdoc.as_ref(),
+            Some(&real_rustdoc()),
+            "its identity is present on a cached run, because it really was launched"
+        );
+        // AND THE CACHED-ARTIFACTS LINE STAYS TRUE (C-5). The named checks are those that
+        // launched nothing of their own; the doctest check is not among them and never can be,
+        // because its bucket exists only when a unit launched.
+        assert_eq!(
+            second.cached_checks,
+            ["clippy", "build", "test"],
+            "the line names the checks that launched nothing of their own"
+        );
+    }
+
+    #[test]
+    fn a_mixed_library_bearing_run_keeps_the_doctest_unit_out_of_the_observation() {
+        // FR-012-7d (f) for the library-bearing shape. A warm target plus a new integration test
+        // file: the build check reuses, the test check launches. `mixed` is decided by the build
+        // and test units alone — the doctest unit contributes to neither side of it.
+        let dir = library_project(LIB_WITH_DOCTEST);
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(environment(), "CARGO_TARGET_DIR", target.path().as_os_str());
+        in_staging_with(
+            dir.path(),
+            &silent(),
+            Smoke::Exits,
+            parent.clone().into_iter(),
+        )
+        .expect("the warming run verifies");
+        std::fs::create_dir_all(dir.path().join("tests")).expect("mkdir");
+        std::fs::write(
+            dir.path().join("tests/extra.rs"),
+            b"#[test]\nfn extra() {\n    assert_eq!(probe::answer(), 42);\n}\n",
+        )
+        .expect("write");
+        let mixed = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("the mixed run verifies");
+        assert_eq!(
+            mixed.observation,
+            Observation::Mixed,
+            "one check reused and one launched"
+        );
+        let doctest = mixed.doctest.expect("the doctest unit launched");
+        assert_eq!(doctest.units_launched, 1, "one doctest unit");
+        assert!(
+            mixed.rustc.is_some(),
+            "the launched build/test units still carry a compiler identity"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_rustdoc_identity_differing_from_the_compilers_is_recorded_not_refused() {
+        // Compatibility test 8, and the case that makes option (a) behaviourally incomplete.
+        // `RUSTC` redirects rustc ONLY; rustdoc stays on the toolchain's own (measured on macOS
+        // and on Linux: one run launched 1.94.0's rustdoc beside 1.98.1's rustc). A shim named
+        // `rustc` that answers `-vV` with another release and otherwise execs the real compiler
+        // reproduces that divergence on any host, with one toolchain installed.
+        //
+        // The two identities then DISAGREE — and that is recorded, in two separate fields,
+        // not refused. It is the truthful result of a legitimate operator override. Had rustdoc
+        // stayed inside the compiler's identity set, this ordinary run would have been refused as
+        // `evidence_capture_failed` / `disagreement`.
+        let real = real_rustc();
+        let real_binary = toolchain_binary("rustc");
+        let shim = tempfile::tempdir().expect("tempdir");
+        let shim_path = shim.path().join("rustc");
+        // A release the real toolchain cannot be, so the assertion below cannot pass by accident.
+        let forged = "1.0.0";
+        assert_ne!(
+            real.release, forged,
+            "the forged release is distinguishable"
+        );
+        executable(
+            &shim_path,
+            &format!(
+                "#!/bin/sh\nif [ \"$#\" -eq 1 ] && [ \"$1\" = \"-vV\" ]; then\n  printf 'rustc \
+                 {forged} (0000000 2026-01-01)\\nbinary: rustc\\ncommit-hash: \
+                 0000000000000000000000000000000000000000\\ncommit-date: 2026-01-01\\nhost: \
+                 {host}\\nrelease: {forged}\\n'\n  exit 0\nfi\nexec \"{real}\" \"$@\"\n",
+                forged = forged,
+                host = real.host,
+                real = real_binary.display()
+            ),
+        );
+        let dir = library_project(LIB_WITH_DOCTEST);
+        let target = tempfile::tempdir().expect("tempdir");
+        let parent = with(
+            with(environment(), "RUSTC", shim_path.as_os_str()),
+            "CARGO_TARGET_DIR",
+            target.path().as_os_str(),
+        );
+        let verified = in_staging_with(dir.path(), &silent(), Smoke::Exits, parent.into_iter())
+            .expect("a divergent RUSTC and rustdoc is recorded, not refused");
+        let rustc = verified.rustc.clone().expect("the override was queried");
+        let doctest = verified.doctest.clone().expect("the doctest unit launched");
+        let rustdoc = doctest.rustdoc.clone().expect("rustdoc was queried");
+        assert_eq!(rustc.release, forged, "`rustc_*` is the override's answer");
+        assert_eq!(
+            rustdoc, real,
+            "`rustdoc_*` is the toolchain's own, untouched by RUSTC"
+        );
+        assert_ne!(
+            rustc.release, rustdoc.release,
+            "the two identities really did diverge"
+        );
     }
 
     #[test]
@@ -1406,6 +1739,23 @@ mod tests {
             .expect("rustc runs");
         crate::toolchain::grammar::parse_rustc_vv(&String::from_utf8_lossy(&output.stdout))
             .expect("the real compiler answers under the grammar")
+    }
+
+    /// The `rustdoc` beside that compiler, asked itself. Its `-vV` prints the same shape as
+    /// `rustc -vV` under its own first word (measured 2026-09-09 on 1.94.0), which is why the
+    /// generic parser reads it under a second tool name rather than a second parser.
+    fn real_rustdoc() -> Identity {
+        let output = Command::new(toolchain_binary(if cfg!(windows) {
+            "rustdoc.exe"
+        } else {
+            "rustdoc"
+        }))
+        .arg("-vV")
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .output()
+        .expect("rustdoc runs");
+        crate::toolchain::grammar::parse_vv(&String::from_utf8_lossy(&output.stdout), "rustdoc")
+            .expect("the toolchain's rustdoc answers under the grammar")
     }
 
     /// `<sysroot>/bin/<name>` of the compiler the test's `PATH` resolves.

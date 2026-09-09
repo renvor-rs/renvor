@@ -653,8 +653,10 @@ fn a_legacy_tree_that_has_already_been_verified_still_has_no_pin_inserted() {
     let project = legacy_copy();
     let record_path = project.path().join(".renvor").join("generated.toml");
     let record = std::fs::read_to_string(&record_path).expect("readable");
-    // Exactly what `apply::commit` renders for a legacy tree that has just been verified: the
-    // version marker, then the table that says the tree declares nothing.
+    // A VERSION-2 record: what `apply::commit` rendered for a legacy tree verified by an earlier
+    // generator — the version marker, then the table that says the tree declares nothing. It is
+    // deliberately not re-labelled to the version this generator writes: a historical record must
+    // keep reading, and an operation that verifies nothing must carry its version unchanged.
     let verified = record.replace(
         "generator_version = \"0.0.0\"",
         "record_version = 2\ngenerator_version = \"0.0.0\"",
@@ -759,7 +761,7 @@ fn a_current_tree_is_not_treated_as_legacy() {
     let record =
         std::fs::read_to_string(project.join(".renvor").join("generated.toml")).expect("readable");
     assert!(
-        record.contains("record_version = 2"),
+        record.contains("record_version = 3"),
         "a generation dropped the record version it read:\n{record}"
     );
 

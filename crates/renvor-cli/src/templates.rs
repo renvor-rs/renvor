@@ -29,7 +29,11 @@ use crate::generate::render::{TemplateEntry, TemplateSet, VerbatimEntry};
 /// the generator's `CARGO_PKG_RUST_VERSION` (D-L2-4). Both READMEs gain a toolchain section
 /// (FR-012-3); the Dockerfile's builder tag is derived from the pin and its builder stage sets
 /// `ENV RUSTUP_AUTO_INSTALL=0` (FR-012-9). The provenance record — written by `generate::record`,
-/// not by a template — moves to `record_version = 2` with `[toolchain]` and `[verified_with]`.
+/// not by a template — moved to `record_version = 2` with `[toolchain]` and `[verified_with]` at
+/// this template version, and to `record_version = 3` on 2026-09-09 (finding 4) WITHOUT a template
+/// version of its own: version 3 adds `[verified_with.checks.doctest]` to a file the generator
+/// owns and changes no file a generation renders. The two are different axes (C-4), and this list
+/// tracks the tree's shape — so the record's version moving again does not appear here.
 /// The group is gated on the record at `generate auth` (FR-012-10b): a legacy tree is re-rendered
 /// through [`select_with_toolchain`] with the group off, so nothing is inserted silently. A
 /// project rendered at 8 is **not readable by a generator built before this revision**

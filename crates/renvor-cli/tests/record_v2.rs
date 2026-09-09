@@ -286,15 +286,18 @@ fn an_unknown_tree_scope_is_record_unsupported() {
 #[test]
 fn a_newer_record_is_refused_by_name_before_any_plan() {
     let dir = project();
-    rewrite_record(dir.path(), "record_version = 2\n", "record_version = 3\n");
+    // 4, BECAUSE 3 IS NOW READ (finding 4): the fixture on disk stays version 2 — a
+    // historical record that must keep reading — and only this copy is re-labelled to the
+    // first version this reader does not know.
+    rewrite_record(dir.path(), "record_version = 2\n", "record_version = 4\n");
     let before = snapshot(dir.path());
 
     // Through `check`.
     let (code, document) = check_json(dir.path());
     assert_eq!(code, 3, "exit 3 — U-1");
     assert_eq!(document["error"]["code"], "record_unsupported");
-    assert_eq!(document["error"]["details"]["record_version"], "3");
-    assert_eq!(document["error"]["details"]["supported"], "2");
+    assert_eq!(document["error"]["details"]["record_version"], "4");
+    assert_eq!(document["error"]["details"]["supported"], "3");
     assert!(
         document["error"]["message"]
             .as_str()
@@ -320,8 +323,8 @@ fn a_newer_record_is_refused_by_name_before_any_plan() {
         let document: serde_json::Value =
             serde_json::from_str(stdout.trim()).expect("one JSON document");
         assert_eq!(document["error"]["code"], "record_unsupported");
-        assert_eq!(document["error"]["details"]["record_version"], "3");
-        assert_eq!(document["error"]["details"]["supported"], "2");
+        assert_eq!(document["error"]["details"]["record_version"], "4");
+        assert_eq!(document["error"]["details"]["supported"], "3");
         assert_eq!(
             snapshot(dir.path()),
             before,
@@ -370,10 +373,13 @@ fn record_unsupported_is_one_string_across_contract_registry_fixture_and_help() 
     );
     let document: serde_json::Value = serde_json::from_str(expected).expect("the fixture parses");
     assert_eq!(document["error"]["code"], "record_unsupported");
-    assert_eq!(document["error"]["details"]["record_version"], "3");
-    assert_eq!(document["error"]["details"]["supported"], "2");
+    assert_eq!(document["error"]["details"]["record_version"], "4");
+    assert_eq!(document["error"]["details"]["supported"], "3");
     let dir = project();
-    rewrite_record(dir.path(), "record_version = 2\n", "record_version = 3\n");
+    // 4, BECAUSE 3 IS NOW READ (finding 4): the fixture on disk stays version 2 — a
+    // historical record that must keep reading — and only this copy is re-labelled to the
+    // first version this reader does not know.
+    rewrite_record(dir.path(), "record_version = 2\n", "record_version = 4\n");
     let (_, stdout, _) = renvor(&["--output", "json", "check", "."], dir.path(), &[]);
     assert_eq!(
         stdout, expected,

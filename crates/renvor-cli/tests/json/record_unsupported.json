@@ -4,11 +4,11 @@
   "command": "check",
   "error": {
     "code": "record_unsupported",
-    "message": "the provenance record `.renvor/generated.toml` is version 3; this renvor reads up to version 2 — rebuild the generator, not the project",
+    "message": "the provenance record `.renvor/generated.toml` is version 4; this renvor reads up to version 3 — rebuild the generator, not the project",
     "details": {
       "field": ".renvor/generated.toml",
-      "record_version": "3",
-      "supported": "2"
+      "record_version": "4",
+      "supported": "3"
     }
   }
 }

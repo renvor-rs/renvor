@@ -1068,7 +1068,7 @@ mod tests {
         let (keep, dir) = project(&[("src/main.rs", b"fn main() {}\n")]);
         write_record(&dir);
         let before = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
-        assert!(before.contains("\nrecord_version = 2\n"));
+        assert!(before.contains(&format!("\nrecord_version = {RECORD_VERSION}\n")));
         assert!(
             evidence_span(&before)
                 .ends_with("\n[verified_with.checks.run]\noutcome = \"passed\"\n"),
@@ -1098,7 +1098,7 @@ mod tests {
             "[toolchain] through [verified_with.checks.run] is byte-identical"
         );
         assert!(
-            after.contains("\nrecord_version = 2\n"),
+            after.contains(&format!("\nrecord_version = {RECORD_VERSION}\n")),
             "the version is carried"
         );
         assert!(
@@ -1150,12 +1150,47 @@ mod tests {
         .with_verified_with(none.clone(), record::fixtures::cached());
         commit(&dir, ok, "9.9.9", "99").expect("commits");
         let upgraded = record::read(&dir).expect("reads").expect("present");
-        assert_eq!(upgraded.record_version, Some(2));
+        assert_eq!(upgraded.record_version, Some(RECORD_VERSION));
         assert_eq!(upgraded.toolchain, Some(none));
         assert_eq!(upgraded.verified_with, Some(record::fixtures::cached()));
         let text = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
         assert!(text.contains("\noperation = \"auth\"\n"));
         assert!(text.contains("\npinned = \"none\"\n"));
+
+        // AND A VERSION-2 RECORD STAYS VERSION 2 (finding 4). An operation that verifies nothing
+        // carries the version it found, exactly as it carries a legacy record's absence of one.
+        // Re-labelling it version 3 would claim, in version 3's vocabulary, that no doctest unit
+        // was launched during a verification that never looked for one — fabricated evidence.
+        let (keep, dir) = project(&[("src/main.rs", b"fn main() {}\n")]);
+        let older = Record {
+            // The literal 2, not `RECORD_VERSION_2`, because this test is about a record written
+            // by an EARLIER generator: the number is the document's, not this crate's constant.
+            record_version: Some(2),
+            generator_version: "0.0.0".to_owned(),
+            template_version: "8".to_owned(),
+            toolchain: Some(record::fixtures::toolchain()),
+            verified_with: Some(record::fixtures::launched()),
+            files: Vec::new(),
+            resources: Vec::new(),
+        };
+        dir.create_dir_all(record::DIRECTORY).expect("mkdir");
+        dir.write(record::PATH, record::render(&older).as_bytes())
+            .expect("write");
+        let ok = plan(&dir, vec![planned("migrations/0003.up.sql", b"x\n")], false).expect("plans");
+        commit(&dir, ok, "9.9.9", "99").expect("commits");
+        let carried = std::fs::read_to_string(keep.path().join(record::PATH)).expect("read");
+        assert!(
+            carried.contains("\nrecord_version = 2\n"),
+            "a version-2 record carried by an unverifying operation stays version 2"
+        );
+        assert_eq!(
+            record::read(&dir)
+                .expect("reads")
+                .expect("present")
+                .record_version,
+            Some(2),
+            "and reads back as version 2"
+        );
     }
 
     #[test]

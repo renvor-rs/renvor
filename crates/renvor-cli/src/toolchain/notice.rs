@@ -75,6 +75,12 @@ pub fn observation(observed: Option<&Identity>, resolved: &Identity) -> Option<S
 
 /// The cached-artifacts line (FR-012-7d (d)) for the checks whose own units were all `Fresh`,
 /// or `None` when there is none.
+///
+/// The doctest check is never among the names, and that is a fact rather than an omission: its
+/// bucket exists only when a doctest unit was LAUNCHED, so `units_launched == 0` is never true of
+/// it. A cached library-bearing project therefore prints this line naming `clippy, build, test` —
+/// truthfully, because none of those launched a unit of its own — while `checks.doctest` on the
+/// record shows the rustdoc launch that did happen (C-5).
 #[must_use]
 pub fn cached(checks: &[&str]) -> Option<String> {
     if checks.is_empty() {

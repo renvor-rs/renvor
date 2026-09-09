@@ -55,7 +55,17 @@ pub const RUSTUP_FLOOR: &str = "1.28.1";
 pub const TREE_SCOPE: u32 = 1;
 
 /// The record format this generator writes and the newest it reads (FR-012-5b).
-pub const RECORD_VERSION: u32 = 2;
+///
+/// **3** since finding 4: `[verified_with.checks.doctest]` is a fourth check table, and the
+/// version-2 reader — `deny_unknown_fields` throughout, already shipped inside generated projects
+/// — REFUSES a version-2 record that carries it. That is a measured incompatibility, not a
+/// judgement call, so the schema gets a version of its own rather than changing version 2 in
+/// place. Version 2 keeps its exact semantics and its own strict reader; see
+/// [`crate::generate::record`].
+pub const RECORD_VERSION: u32 = 3;
+
+/// The record format before [`RECORD_VERSION`], still read under its own strict layout.
+pub const RECORD_VERSION_2: u32 = 2;
 
 /// A compiler identity parsed under FR-012-7e: `release`, `commit`, and `host`, never one string
 /// and never raw child output.

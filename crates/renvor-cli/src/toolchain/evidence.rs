@@ -17,10 +17,20 @@
 //!     Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.31s
 //! ```
 //!
-//! A **unit** is a `Running` line whose command carries `--crate-name`: a compiler launch. Cargo
-//! also prints backticked `Running` lines for a build script it executes and, under `cargo test`,
-//! for each test binary it runs; neither carries `--crate-name` and neither is a compiler, so
-//! neither is a unit. `Compiling` and `Checking` are per package, not per unit — `cargo test -vv`
+//! A **unit** is a `Running` line whose command carries `--crate-name`. Cargo also prints
+//! backticked `Running` lines for a build script it executes and, under `cargo test`, for each
+//! test binary it runs; neither carries `--crate-name`, so neither is a unit.
+//!
+//! **Not every unit is a compiler launch, and that distinction is the whole of finding 4.**
+//! `cargo test -vv` on a package with a **library target** launches one unit with `rustdoc` — the
+//! trigger is the library target alone, no doc comment required — and `rustdoc` does not answer
+//! `rustc -vV`. Such a unit is still the project's own, so it is counted; it is counted in a
+//! SECOND bucket ([`CheckEvidence::doctest_launched`]) and asked its own question
+//! ([`query_rustdoc`]). Counting it with the compiler units put a rustdoc executable into the set
+//! queried under the `rustc` grammar, and every library-bearing project therefore failed
+//! verification with `compiler_identity_unreadable`. Which bucket a unit lands in is decided by
+//! the chain's TRAILING executable, never by a flag: both the `rustc` test-harness units and the
+//! `rustdoc` unit carry `--test`. `Compiling` and `Checking` are per package, not per unit — `cargo test -vv`
 //! on a bin package prints one `Compiling` and two `Running` lines — so units are counted from
 //! `Running` lines, never from the announcement. `Fresh` is printed once per package, and only
 //! when every unit of it was reused.
@@ -33,8 +43,8 @@
 //! are read to decide whether the unit is the project's own and then **discarded** — no name and
 //! no value, whatever it carried: a `RUSTFLAGS`-derived argument, a `CARGO_PKG_*` value, the
 //! manifest's `repository`. The **chain** is the run of executables before the first `-`
-//! argument: `[rustc]` for a plain build, `[clippy-driver, rustc]` for clippy, one more in front
-//! when a wrapper is configured. The chain stays in memory for the identity queries and enters
+//! argument: `[rustc]` for a plain build, `[clippy-driver, rustc]` for clippy, `[rustdoc]` for a
+//! doctest unit, one more in front when a wrapper is configured. The chain stays in memory for the identity queries and enters
 //! no record, no JSON, and no stream; [`Chain`]'s `Debug` prints a count and nothing else.
 //!
 //! # Capture failure is not caching (FR-012-7d (e))
@@ -158,14 +168,34 @@ impl fmt::Debug for Chain {
 }
 
 /// What one check's `-vv` stream said about the project's own package.
+///
+/// # Two buckets, because two tools
+///
+/// An own unit whose chain ends in `rustdoc` is a **doctest** unit, and it is kept apart from the
+/// build and test units for one measured reason: it does not answer `rustc -vV`. Counting it as a
+/// build/test unit put a rustdoc executable into the set the identity query asks under the `rustc`
+/// grammar, and every library-bearing project therefore failed verification with
+/// `compiler_identity_unreadable` (finding 4; reproduced on macOS/aarch64 and on Linux/aarch64
+/// under 1.94.0 and 1.98.1). The unit IS the project's own — it carries the staging
+/// `CARGO_MANIFEST_DIR` — so the correction is not to disown it but to record it as what it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckEvidence {
-    /// Own units Cargo launched a compiler for — one per `Running` line with `--crate-name`.
+    /// Own build/test units Cargo launched a compiler for — one per `Running` line with
+    /// `--crate-name` whose chain does **not** end in `rustdoc`.
     pub units_launched: u32,
     /// `Fresh` reports for the own package — Cargo prints one when every unit of it was reused.
+    ///
+    /// Cargo emits this per PACKAGE, not per unit, and it is counted here, against the check
+    /// whose stream carried it. None of it is attributed to [`Self::doctest_launched`]: a fully
+    /// cached package prints `Fresh` and still launches its doctest unit (measured), so the
+    /// report demonstrably does not cover that unit.
     pub units_fresh: u32,
-    /// The chain of every launched own unit, in stream order.
+    /// The chain of every launched own build/test unit, in stream order.
     pub chains: Vec<Chain>,
+    /// Own units whose chain ended in `rustdoc` — the doctest units.
+    pub doctest_launched: u32,
+    /// The chain of every launched own doctest unit, in stream order.
+    pub doctest_chains: Vec<Chain>,
 }
 
 /// Why a check's stream is not evidence. Each is reported as `evidence_capture_failed`; none is
@@ -183,9 +213,16 @@ pub enum EvidenceError {
     /// A launched clippy unit whose chain names no `clippy-driver`: there is no executable to
     /// ask, and the launcher's answer is not a substitute (§4.3.2).
     NoDriver,
-    /// The distinct executables a check's launched units ended in answered with different
-    /// identities. One identity per check is representable; a disagreement is not, and picking
-    /// one would be a claim about units it was not queried for.
+    /// The distinct executables a check's launched **build/test** units ended in answered with
+    /// different identities. One identity per check is representable; a disagreement is not, and
+    /// picking one would be a claim about units it was not queried for.
+    ///
+    /// The doctest bucket is outside this, and deliberately. `RUSTC` redirects `rustc` and leaves
+    /// `rustdoc` on the toolchain's own (measured on macOS and Linux: one run launches 1.94.0's
+    /// rustdoc beside 1.98.1's rustc), so a rustdoc identity differing from the compiler's is the
+    /// truthful result of a legitimate operator override, not a contradiction. It is RECORDED, in
+    /// the doctest bucket's own fields, and never refused. Doctest units are still compared with
+    /// each OTHER — two rustdoc executables that disagree are a disagreement like any other.
     Disagreement,
     /// One check's stream reports the own package **both** `Fresh` and **announced**. Cargo emits
     /// `Fresh <pkg>` only when every unit of that package was reused, and announces
@@ -199,9 +236,11 @@ pub enum EvidenceError {
     ///
     /// A fully cached `cargo test -vv` on a crate with a doctest prints `Fresh` and then a
     /// `Running` line for the rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name` and
-    /// so counts as the project's own. That is an ordinary, legitimate stream. The refusal is
-    /// therefore keyed to the ANNOUNCEMENT, which is `Fresh`'s true complement, and never to the
-    /// launch count.
+    /// so is the project's own. That is an ordinary, legitimate stream. The refusal is therefore
+    /// keyed to the ANNOUNCEMENT, which is `Fresh`'s true complement, and never to the launch
+    /// count. Since finding 4 that rustdoc launch is counted in
+    /// [`CheckEvidence::doctest_launched`] rather than in `units_launched`, which removes the
+    /// coincidence but not the rule: the rule is about the announcement either way.
     Contradictory,
 }
 
@@ -274,6 +313,34 @@ pub struct ClippyEvidence {
     pub driver: Option<DriverIdentity>,
 }
 
+/// The doctest check's evidence: its counts, and the observed `rustdoc` executable's own answer
+/// to `-vV`. Present only when a doctest unit was launched; `rustdoc` is `None` only if one was
+/// launched and every launched chain named no executable to ask, which [`parse_check`] cannot
+/// produce.
+///
+/// It is kept beside [`ClippyEvidence`] rather than folded into [`UnitEvidence`] for the same
+/// reason clippy is: the tool that runs it is not `rustc`, so its identity is its own and is
+/// never inferred from the compiler's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DoctestEvidence {
+    /// Own doctest units launched.
+    pub units_launched: u32,
+    /// Own `Fresh` reports attributable to a doctest unit.
+    ///
+    /// Always `0` as Cargo behaves today, and derived rather than assumed: Cargo's `Fresh` is a
+    /// package-level report, counted against the check whose stream carried it, and a fully
+    /// cached package still launches its doctest unit (measured on macOS/aarch64 under cargo 1.94.0 and on Linux/aarch64 under 1.94.0 and 1.98.1). The
+    /// field exists so the record states that positively instead of leaving a reader to infer it,
+    /// and so a Cargo that ever did report one has somewhere truthful to put it.
+    ///
+    /// The platforms are named rather than a run count given: the finding-4 proposal says "ten
+    /// times: five on macOS, and on Linux three runs each on 1.94.0 and 1.98.1", which is eleven.
+    /// The platform list is what the retained evidence supports.
+    pub units_fresh: u32,
+    /// What the `rustdoc` executable the chain named answered to `-vV`.
+    pub rustdoc: Option<Identity>,
+}
+
 /// What pre-placement verification established (FR-012-7d): every check passed, and what was
 /// observed and queried while it did. A failed check is an error, never a `Verified` with a
 /// `false` in it — the two outcome booleans exist so the record can say `passed` from a value
@@ -288,6 +355,11 @@ pub struct Verified {
     pub build: UnitEvidence,
     /// The test check.
     pub test: UnitEvidence,
+    /// The doctest check, or `None` when no check launched a doctest unit — a binary-only
+    /// project, which is every starter this generator ships. `None` means the record writes no
+    /// `[verified_with.checks.doctest]` table at all, so its absence is never read as a claim
+    /// that a doctest unit was reused.
+    pub doctest: Option<DoctestEvidence>,
     /// The smoke run passed. `cargo run --quiet` takes no `-vv` and launches nothing after
     /// `build`.
     pub run: bool,
@@ -325,6 +397,8 @@ pub fn parse_check(
         units_launched: 0,
         units_fresh: 0,
         chains: Vec::new(),
+        doctest_launched: 0,
+        doctest_chains: Vec::new(),
     };
     let mut finished = false;
     let mut announced = false;
@@ -375,9 +449,22 @@ pub fn parse_check(
             if let Some(unit) = launch(&tokens, own_package, &own_crate, &staging)?
                 && unit.own
             {
-                evidence.units_launched += 1;
-                evidence.chains.push(unit.chain);
-                announced = false;
+                if ends_in_rustdoc(&unit.chain) {
+                    // A DOCTEST LAUNCH DOES NOT DISCHARGE THE ANNOUNCEMENT, and the asymmetry is
+                    // deliberate. `Compiling`/`Checking <own>` says at least one unit of the
+                    // package was NOT reused, and Cargo has never been observed to announce the
+                    // package for the doctest unit alone: a fully cached package prints
+                    // `Fresh <own>` and launches its doctest unit anyway. So an announcement is
+                    // still owed a build/test launch, and letting rustdoc settle that debt would
+                    // let a stream where the library was announced and never compiled pass as
+                    // accounted for.
+                    evidence.doctest_launched += 1;
+                    evidence.doctest_chains.push(unit.chain);
+                } else {
+                    evidence.units_launched += 1;
+                    evidence.chains.push(unit.chain);
+                    announced = false;
+                }
             }
         } else if word == "Fresh" {
             // A path may carry a newline, so a status line may be two physical lines — the same
@@ -415,8 +502,12 @@ pub fn parse_check(
     // AND a `Running` line — the rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name`
     // and is therefore the project's own by every rule above (measured 2026-09-08, cargo 1.97.1,
     // a lib+bin crate with one doctest). A first version of this check compared the launch count
-    // and would have refused that run. The measurement that first version rested on was taken on
-    // a crate with no doc comments, so the shape never appeared.
+    // and would have refused that run. The measurement that first version rested on was taken on a
+    // BINARY-ONLY crate, which launches no doctest unit at all, so the shape never appeared. (An
+    // earlier revision of this comment blamed the absence of doc comments. That is false: a
+    // library target with no `///` anywhere still launches one — measured, and pinned by
+    // `a_library_target_with_no_doc_comments_still_launches_a_doctest_unit`. The trigger is the
+    // library target alone, as the module header says.)
     //
     // See [`EvidenceError::Contradictory`], and the module header for what this accounting can
     // and cannot establish.
@@ -428,6 +519,13 @@ pub fn parse_check(
 
 /// The observation over the build and test checks (FR-012-7d (d), (f)): every own unit launched
 /// is `launched`, every one positively `Fresh` is `cached`, both is `mixed`.
+///
+/// It summarises the **build and test** units and nothing else. Clippy was already excluded — the
+/// signature takes only two checks — and the doctest bucket is excluded the same way and for the
+/// same reason: neither is launched with `rustc`, so neither can contribute to a statement about
+/// `rustc_*`. A cached library-bearing project therefore records `cached` truthfully while its
+/// doctest unit launched, and the stderr line FR-012-7d (d) requires must say which checks it
+/// means (C-5) rather than imply that nothing at all ran.
 ///
 /// # Errors
 ///
@@ -467,6 +565,34 @@ pub fn clippy_driver(chain: &Chain) -> Option<&Path> {
                 .is_some_and(|name| name == "clippy-driver" || name == "clippy-driver.exe")
         })
         .map(PathBuf::as_path)
+}
+
+/// Whether a launched unit's chain ends in `rustdoc` — the doctest unit's shape.
+///
+/// The test is the TRAILING executable's file name, the same discipline [`clippy_driver`] uses for
+/// its own executable, so a wrapper in front of rustdoc does not hide it. Measured 2026-09-09 on
+/// cargo 1.94.0: a `cargo test -vv` on a lib+bin package launches three `rustc` units and one
+/// `rustdoc` unit, and both kinds carry `--test` — so the flag is NOT the discriminator and the
+/// executable is.
+///
+/// An operator who points `build.rustdoc` at an executable under another name is not recognised
+/// here. That unit is then asked `rustc -vV` and the run ends at `compiler_identity_unreadable`,
+/// exactly as it did before this correction: the failure is loud, and nothing is attributed to a
+/// tool that was not asked. `a_doctest_unit_under_an_unrecognised_name_stays_a_compiler_unit` pins it.
+fn ends_in_rustdoc(chain: &Chain) -> bool {
+    chain.executables.last().is_some_and(|executable| {
+        executable
+            .file_name()
+            .is_some_and(|name| name == "rustdoc" || name == "rustdoc.exe")
+    })
+}
+
+/// The `rustdoc` executable a launched doctest chain ends in — the one queried with `-vV`.
+#[must_use]
+pub fn trailing_rustdoc(chain: &Chain) -> Option<&Path> {
+    ends_in_rustdoc(chain)
+        .then(|| chain.executables.last().map(PathBuf::as_path))
+        .flatten()
 }
 
 /// Whether a chain names more executables than the bare shape — `[rustc]` for a build or test
@@ -559,6 +685,26 @@ pub fn query_driver(
     command.arg("--version");
     let text = answer(&mut command, QUERY_TIMEOUT).map_err(|failure| unreadable(QUERY, failure))?;
     grammar::parse_clippy_version(&text)
+        .map_err(|error| unreadable(QUERY, QueryFailure::Grammar(error)))
+}
+
+/// Runs `<rustdoc> -vV` under the seal in `cwd`, bounded, and parses the answer under FR-012-7e's
+/// grammar with `rustdoc` as the tool name.
+///
+/// `rustdoc -vV` prints the same shape as `rustc -vV` under its own name (measured 2026-09-09 on
+/// 1.94.0), so this is the existing generic parser under a second tool name — not a second parser,
+/// and not the `rustc` answer reused. The identity it returns is written only to the doctest
+/// bucket's own fields; it is never copied into `rustc_*` and never inferred from it.
+///
+/// # Errors
+///
+/// As [`query_rustc`].
+pub fn query_rustdoc(rustdoc: &Path, sealed: &Sealed, cwd: &Path) -> Result<Identity, CliError> {
+    const QUERY: &str = "rustdoc -vV";
+    let mut command = sealed_command(rustdoc.as_os_str(), sealed, cwd);
+    command.arg("-vV");
+    let text = answer(&mut command, QUERY_TIMEOUT).map_err(|failure| unreadable(QUERY, failure))?;
+    grammar::parse_vv(&text, "rustdoc")
         .map_err(|error| unreadable(QUERY, QueryFailure::Grammar(error)))
 }
 
@@ -1784,16 +1930,22 @@ mod tests {
             units_launched: 1,
             units_fresh: 0,
             chains: Vec::new(),
+            doctest_launched: 0,
+            doctest_chains: Vec::new(),
         };
         let fresh = CheckEvidence {
             units_launched: 0,
             units_fresh: 1,
             chains: Vec::new(),
+            doctest_launched: 0,
+            doctest_chains: Vec::new(),
         };
         let nothing = CheckEvidence {
             units_launched: 0,
             units_fresh: 0,
             chains: Vec::new(),
+            doctest_launched: 0,
+            doctest_chains: Vec::new(),
         };
         assert_eq!(
             observation(&launched, &launched),
@@ -1901,7 +2053,10 @@ mod tests {
         // `Running` line for the rustdoc unit — own by `CARGO_PKG_NAME` and `--crate-name`, and
         // with no announcement anywhere. Measured 2026-09-08 on cargo 1.97.1; the first version of
         // the check above compared `units_launched` and would have refused this ordinary run,
-        // because the measurement it rested on was taken on a crate that had no doc comments.
+        // because the measurement it rested on was taken on a BINARY-ONLY crate, which launches no
+        // doctest unit at all. Not "a crate with no doc comments", which an earlier revision of
+        // this comment said and which is false: a library target with no `///` anywhere still
+        // launches one.
         let cached_with_a_doctest = concat!(
             "       Fresh probe v0.1.0 (/x)
 ",
@@ -1913,9 +2068,18 @@ mod tests {
         let evidence = parse_check(cached_with_a_doctest, "probe", Path::new("/x"))
             .expect("a cached run with a doctest unit is ordinary evidence, not a contradiction");
         assert_eq!(evidence.units_fresh, 1);
+        // OWNERSHIP IS UNCHANGED; THE BUCKET IS NOT. The rustdoc unit is still the project's own
+        // by every rule this module applies — that is what `doctest_launched` counting it says.
+        // Since finding 4 it is counted apart from the compiler units, because it does not answer
+        // `rustc -vV`: this assertion moved buckets, it did not weaken. The refusal above is
+        // still keyed to the announcement, so the stream is still accepted for the same reason.
         assert_eq!(
-            evidence.units_launched, 1,
+            evidence.doctest_launched, 1,
             "the rustdoc doctest unit is the project's own by every rule this module applies"
+        );
+        assert_eq!(
+            evidence.units_launched, 0,
+            "and it is not one of the units that answer `rustc -vV`"
         );
     }
 
@@ -2310,5 +2474,175 @@ mod tests {
         let evidence = parse_check(cached, "probe", Path::new("C:\\s\\project"))
             .expect("a Windows-shaped path is an ordinary location");
         assert_eq!(evidence.units_fresh, 1);
+    }
+
+    // --- FINDING 4: the doctest unit is a unit of a DIFFERENT TOOL ----------------------------
+    //
+    // Every test below is platform-neutral and touches no filesystem, so a Windows-shaped stream
+    // is exercised on every platform and a Unix-shaped one likewise.
+
+    /// FINDING 4, at the parser. `cargo test -vv` on a package with a library target launches one
+    /// unit whose chain ends in `rustdoc`. It carries the staging `CARGO_MANIFEST_DIR` and IS the
+    /// project's own — so it must be counted, but not among the units that answer `rustc -vV`.
+    #[test]
+    fn a_rustdoc_launch_is_counted_in_the_doctest_bucket_not_among_the_compiler_units() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe \
+                      src/lib.rs`\n     Running `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe \
+                      /t/bin/rustdoc --crate-name probe --test src/lib.rs`\n    Finished `test` \
+                      profile in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(
+            evidence.units_launched, 1,
+            "only the rustc unit is a compiler unit"
+        );
+        assert_eq!(evidence.chains.len(), 1, "and only its chain is asked -vV");
+        assert_eq!(evidence.doctest_launched, 1, "the rustdoc unit is counted");
+        assert_eq!(
+            evidence.doctest_chains.len(),
+            1,
+            "and its chain is kept, to be asked `rustdoc -vV`"
+        );
+        assert_eq!(
+            trailing_rustdoc(&evidence.doctest_chains[0]),
+            Some(Path::new("/t/bin/rustdoc")),
+            "the executable the doctest bucket queries is the rustdoc the line named"
+        );
+    }
+
+    /// The `.exe` spelling and the Windows `set NAME=value&&` environment shape, exercised on
+    /// every platform.
+    ///
+    /// THE SEPARATOR IS THE HOST'S, and deliberately so. `Path::file_name` splits on the running
+    /// platform's separator, so a `C:\bin\rustdoc.exe` fixture names no file on Unix and the
+    /// assertion would be about `Path`, not about this module — the same property
+    /// [`clippy_driver`] has always had. Windows parses a Windows stream, where the split is
+    /// right; what is portable, and what this pins, is that the `.exe` NAME is recognised and
+    /// that the Windows environment shape reaches the same bucketing.
+    #[test]
+    fn the_exe_spelling_and_the_windows_environment_shape_reach_the_same_bucket() {
+        // The cached shape, so the stream is complete without a compiler launch: an
+        // announcement answered only by a doctest launch is `Unaccounted` by design, and
+        // `an_announcement_answered_only_by_a_doctest_launch_is_still_unaccounted` asserts that.
+        let stream = "       Fresh probe v0.1.0 (/s)\n    Finished `test` profile in 0.0s\n     \
+                      Running `set CARGO_MANIFEST_DIR=/s&& set CARGO_PKG_NAME=probe&& \
+                      /t/bin/rustdoc.exe --crate-name probe --test src/lib.rs`\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.doctest_launched, 1, "`rustdoc.exe` is rustdoc");
+        assert_eq!(evidence.units_launched, 0, "and it is not a compiler unit");
+    }
+
+    /// A wrapper in front of rustdoc must not hide it: the test is the TRAILING executable, the
+    /// same discipline `clippy_driver` uses. Bucketed by the wrong end, the wrapper's path would
+    /// be asked `rustc -vV` and the run would fail on an ordinary configuration.
+    #[test]
+    fn a_wrapper_in_front_of_rustdoc_does_not_hide_the_doctest_unit() {
+        let stream = "       Fresh probe v0.1.0 (/s)\n    Finished `test` profile in 0.0s\n     \
+                      Running `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /w/wrap \
+                      /t/bin/rustdoc --crate-name probe --test src/lib.rs`\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(
+            evidence.doctest_launched, 1,
+            "the trailing executable decides"
+        );
+        assert!(
+            shows_wrapper(&evidence.doctest_chains[0], false),
+            "and the wrapper in front of it is still observed"
+        );
+    }
+
+    /// NEGATIVE CONTROL. `build.rustdoc` pointed at an executable under another name is NOT
+    /// recognised as a doctest unit — it stays a compiler unit and is asked `rustc -vV`, which
+    /// fails loudly at `compiler_identity_unreadable` exactly as it did before this correction.
+    /// The bound is stated rather than silently widened: recognising it would mean guessing which
+    /// executables are rustdoc, and a wrong guess would attribute an identity to a tool that was
+    /// never asked.
+    #[test]
+    fn a_doctest_unit_under_an_unrecognised_name_stays_a_compiler_unit() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /t/bin/my-rustdoc \
+                      --crate-name probe --test src/lib.rs`\n    Finished `test` profile in \
+                      0.0s\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.doctest_launched, 0, "the name is not recognised");
+        assert_eq!(
+            evidence.units_launched, 1,
+            "so it stays a compiler unit and the failure is loud, not silent"
+        );
+    }
+
+    /// `--test` is NOT the discriminator, and the difference is measured: on cargo 1.94.0 a
+    /// `cargo test -vv` launches rustc units that ALSO carry `--test` (the lib's and the bin's
+    /// test harnesses). Deciding by the flag would have moved two compiler units into the doctest
+    /// bucket and left the compiler unqueried.
+    #[test]
+    fn a_rustc_unit_carrying_test_is_still_a_compiler_unit() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe \
+                      --test src/lib.rs`\n    Finished `test` profile in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(
+            evidence.units_launched, 1,
+            "the executable decides, not the flag"
+        );
+        assert_eq!(evidence.doctest_launched, 0);
+    }
+
+    /// THE CACHED SHAPE, at the parser. A fully cached package prints `Fresh` and still launches
+    /// its doctest unit (measured). That stream must parse: the announcement is `Fresh`'s
+    /// complement and there is no announcement here, so it is neither `Contradictory` nor
+    /// `Unaccounted` — and the counts land in different buckets.
+    #[test]
+    fn a_fresh_package_that_still_launches_its_doctest_unit_is_an_ordinary_stream() {
+        let stream = "       Fresh probe v0.1.0 (/s)\n    Finished `test` profile in 0.0s\n     \
+                      Running `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /t/bin/rustdoc \
+                      --crate-name probe --test src/lib.rs`\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.units_fresh, 1, "the package was reported Fresh");
+        assert_eq!(evidence.units_launched, 0, "no compiler unit launched");
+        assert_eq!(evidence.doctest_launched, 1, "and the doctest unit did");
+    }
+
+    /// A DOCTEST LAUNCH DOES NOT DISCHARGE THE ANNOUNCEMENT. `Compiling <own>` says a unit of the
+    /// package was not reused; only a compiler launch answers for it. Letting rustdoc settle that
+    /// debt would accept a stream where the library was announced and never compiled.
+    #[test]
+    fn an_announcement_answered_only_by_a_doctest_launch_is_still_unaccounted() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s CARGO_PKG_NAME=probe /t/bin/rustdoc --crate-name \
+                      probe --test src/lib.rs`\n    Finished `test` profile in 0.0s\n";
+
+        assert_eq!(
+            parse_check(stream, "probe", Path::new("/s")),
+            Err(EvidenceError::Unaccounted),
+            "a compiler unit was announced and never launched"
+        );
+    }
+
+    /// THE INTERACTION WITH FINDING 2, which must survive. A same-named path dependency's own
+    /// rustdoc unit carries `CARGO_PKG_NAME=probe` but a different `CARGO_MANIFEST_DIR`: the
+    /// location disowns it, and it reaches neither bucket. Bucketing happens after ownership,
+    /// never instead of it.
+    #[test]
+    fn a_same_named_dependencys_rustdoc_unit_reaches_neither_bucket() {
+        let stream = "   Compiling probe v0.1.0 (/s/outer)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s/inner CARGO_PKG_NAME=probe /t/bin/rustdoc \
+                      --crate-name probe --test src/lib.rs`\n     Running \
+                      `CARGO_MANIFEST_DIR=/s/outer CARGO_PKG_NAME=probe /t/bin/rustc \
+                      --crate-name probe src/main.rs`\n    Finished `test` profile in 0.0s\n";
+
+        let evidence =
+            parse_check(stream, "probe", Path::new("/s/outer")).expect("an ordinary stream");
+        assert_eq!(evidence.units_launched, 1, "our compiler unit");
+        assert_eq!(
+            evidence.doctest_launched, 0,
+            "the dependency's doctest unit is not ours to record"
+        );
     }
 }

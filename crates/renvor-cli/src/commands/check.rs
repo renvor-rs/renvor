@@ -706,8 +706,29 @@ impl Provenance {
                     checks.test.units_launched,
                     checks.test.units_fresh,
                 ),
-            )
-            .row("run", checks.run.outcome.clone());
+            );
+        // THE DOCTEST ROW EXISTS ONLY WHEN THE RECORD HAS ONE (finding 4). A project with no
+        // library target launched no doctest unit and carries no table, so naming the check with
+        // zeroes would report a unit that was reused when none was ever scheduled. The row sits
+        // where the units ran: inside `cargo test`, after it and before the smoke run.
+        if let Some(doctest) = &checks.doctest {
+            human = human.row(
+                "doctest",
+                format!(
+                    "{}; rustdoc {}",
+                    units(
+                        &doctest.outcome,
+                        doctest.units_launched,
+                        doctest.units_fresh
+                    ),
+                    identity(
+                        doctest.rustdoc_release.as_deref(),
+                        doctest.rustdoc_commit.as_deref(),
+                    )
+                ),
+            );
+        }
+        human = human.row("run", checks.run.outcome.clone());
         match self.freshness_line() {
             Some(line) => human.text(line),
             None => human,
@@ -1247,7 +1268,16 @@ observability = false
         dir
     }
 
-    /// A version-2 record whose digest is the tree's own, so the evidence is current.
+    /// The `[verified_with]` section of the human report as text, so an assertion can say what an
+    /// operator would read rather than what the JSON holds.
+    fn rendered_report(provenance: &Provenance) -> String {
+        provenance
+            .describe(Report::new())
+            .render(crate::output::style::Permission::denied(), Some(120))
+    }
+
+    /// A record at the version this generator writes, whose digest is the tree's own, so the
+    /// evidence reads as current.
     fn write_current_record(dir: &tempfile::TempDir, verified: &mut record::VerifiedWith) {
         let root = open(dir);
         verified.tree_digest = crate::generate::digest::tree(&root).expect("digests");
@@ -1400,22 +1430,68 @@ observability = false
     }
 
     #[test]
+    fn the_doctest_bucket_reaches_both_the_human_report_and_the_json() {
+        // FINDING 4. The record carries the doctest units; a reader that enumerates the checks
+        // and silently omits one is reporting less than the record holds. The human table names
+        // the check and the observed rustdoc, and the JSON carries the object.
+        let dir = project();
+        let mut verified = fixtures::library_bearing();
+        write_current_record(&dir, &mut verified);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+
+        let json = provenance.verified_with_json().expect("json");
+        assert_eq!(json["checks"]["doctest"]["units_launched"], 1);
+        assert_eq!(json["checks"]["doctest"]["units_fresh"], 0);
+        assert_eq!(json["checks"]["doctest"]["rustdoc_release"], "1.98.1");
+        // AND IT IS NOT THE COMPILER'S: the fixture's rustdoc differs from its `rustc_*`, so a
+        // reader that filled one from the other would fail here.
+        assert_eq!(json["rustc_release"], "1.94.0");
+
+        let human = rendered_report(&provenance);
+        assert!(
+            human.contains("doctest"),
+            "the human report names the check:\n{human}"
+        );
+        assert!(
+            human.contains("1.98.1"),
+            "and the observed rustdoc identity:\n{human}"
+        );
+
+        // A BINARY-ONLY RECORD NAMES NEITHER. The row is absent, not zeroed — its absence must
+        // not read as a doctest unit that was reused.
+        let dir = project();
+        let mut binary_only = fixtures::launched();
+        write_current_record(&dir, &mut binary_only);
+        let provenance = Provenance::read(dir.path()).expect("reads");
+        assert!(provenance.verified_with_json().expect("json")["checks"]["doctest"].is_null());
+        assert!(
+            !rendered_report(&provenance).contains("doctest"),
+            "a project with no library target names no doctest check"
+        );
+    }
+
+    #[test]
     fn a_newer_record_is_refused_by_name_with_exit_3() {
         let dir = project();
         let mut verified = fixtures::launched();
         write_current_record(&dir, &mut verified);
         let path = dir.path().join(record::PATH);
         let text = std::fs::read_to_string(&path).expect("read");
+        // 4, BECAUSE 3 IS NOW READ (finding 4): the number is "the first version this reader
+        // does not know", and it moved with `RECORD_VERSION`.
         std::fs::write(
             &path,
-            text.replace("record_version = 2\n", "record_version = 3\n"),
+            text.replace(
+                &format!("record_version = {}\n", crate::toolchain::RECORD_VERSION),
+                "record_version = 4\n",
+            ),
         )
         .expect("write");
         let error = run(&reporter(), dir.path()).unwrap_err();
         assert_eq!(error.code, Code::RecordUnsupported);
         assert_eq!(error.code.exit(), Exit::Validation);
-        assert_eq!(detail(&error, "record_version"), Some("3"));
-        assert_eq!(detail(&error, "supported"), Some("2"));
+        assert_eq!(detail(&error, "record_version"), Some("4"));
+        assert_eq!(detail(&error, "supported"), Some("3"));
     }
 
     #[test]
