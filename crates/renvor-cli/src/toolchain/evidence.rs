@@ -330,11 +330,31 @@ pub fn parse_check(
     // Whether the own package was EVER announced, as distinct from `announced`, which a launch
     // discharges. The contradiction check below is about the announcement's existence.
     let mut announced_ever = false;
-    let mut lines = stderr.lines();
+    // SPLIT ON `'\n'`, NOT `str::lines`. `lines` treats `\r\n` as one terminator and drops the
+    // `\r`. Every path in this stream comes from the operator's filesystem, a `\r` is legal in a
+    // Unix directory name, and Cargo prints the path raw — so a `\r` here is DATA, and `lines`
+    // silently deleted it. Deleting it moved the location off the staging path, which lost the
+    // announcement on a cold run and refused the same directory as `Unaccounted` on a cached one.
+    //
+    // This is not a second delimiter heuristic: it is the removal of one. `'\n'` is the only
+    // terminator Cargo writes, and whitespace that is genuinely Cargo's — anything after the
+    // closing backtick or the closing bracket — is discarded by `whole`, `backticked` and
+    // `location_of`, each of which trims its OWN end before testing for its delimiter. That keeps
+    // a trailing `\r` from a `\r\n`-terminated stream harmless without treating a `\r` inside a
+    // path as a terminator.
+    let mut lines = stderr.split('\n');
     while let Some(raw) = lines.next() {
-        let line = without_sgr(raw);
-        let line = line.trim();
-        if let Some(rest) = line.strip_prefix("Running ") {
+        // THE HEAD IS CARGO'S, THE REST IS THE OPERATOR'S. Colour and indentation are removed
+        // from the head only, and the remainder is carried RAW — the discipline
+        // [`without_launch_lines`] already follows. Stripping SGR from the WHOLE line deleted any
+        // escape byte that was part of a directory name, and `trim` deleted trailing spaces that
+        // were part of one; both then failed to equal the staging path. `tests/redaction.rs`
+        // creates exactly such a directory, so this is a shape the project already promises to
+        // survive rather than a hypothesis.
+        let Some((word, rest)) = status_and_rest(raw) else {
+            continue;
+        };
+        if word == "Running" {
             // A DIRECTORY NAME MAY LEGALLY CONTAIN A NEWLINE, and every path Cargo puts in this
             // line comes from the operator's filesystem: `CARGO_MANIFEST_DIR`, the compiler, the
             // output directory. One `Running` command then arrives as several physical lines,
@@ -358,7 +378,7 @@ pub fn parse_check(
                 evidence.chains.push(unit.chain);
                 announced = false;
             }
-        } else if let Some(rest) = line.strip_prefix("Fresh ") {
+        } else if word == "Fresh" {
             // A path may carry a newline, so a status line may be two physical lines — the same
             // cause `rejoin` handles for a launch command.
             let rejoined = rejoin_status(rest, own_package, &staging, &mut lines);
@@ -366,17 +386,14 @@ pub fn parse_check(
             if own_status_line(rest, own_package, &staging) {
                 evidence.units_fresh += 1;
             }
-        } else if let Some(rest) = line
-            .strip_prefix("Compiling ")
-            .or_else(|| line.strip_prefix("Checking "))
-        {
+        } else if word == "Compiling" || word == "Checking" {
             let rejoined = rejoin_status(rest, own_package, &staging, &mut lines);
             let rest = rejoined.as_deref().unwrap_or(rest);
             if own_status_line(rest, own_package, &staging) {
                 announced = true;
                 announced_ever = true;
             }
-        } else if line.starts_with("Finished ") {
+        } else if word == "Finished" {
             finished = true;
         }
     }
@@ -665,6 +682,32 @@ impl Location {
         starts(&self.raw) || self.canonical.as_deref().is_some_and(starts)
     }
 
+    /// Whether the location Cargo PRINTS can be compared with this one at all.
+    ///
+    /// Cargo removes ANSI escape sequences from a path before printing it, and the removal is
+    /// lossy. Measured 2026-09-09 on cargo 1.97.1, one directory per shape:
+    ///
+    /// | on disk | Cargo prints |
+    /// |---|---|
+    /// | `col<TAB>umn` | `col<TAB>umn` — raw |
+    /// | `above<NEWLINE>FORGED` | raw, which is why the rejoining above exists |
+    /// | `ESC[31mREDESC[0m` | `RED` |
+    /// | `esc<ESC>and<TAB>tab` | `escnd<TAB>tab` — the `ESC` **and the byte after it** are gone |
+    ///
+    /// The grammar of that removal is Cargo's, not ours, and the last row shows it is not merely
+    /// the SGR form this module already knows how to strip. Replicating it partly would be worse
+    /// than not replicating it: the comparison would succeed for one escape shape and fail for
+    /// another, with no principle a reader could apply.
+    ///
+    /// So the question is asked of OUR path, which is known exactly, rather than of Cargo's text:
+    /// a staging path containing an `ESC` has no reliable printed spelling, and the location
+    /// cannot discriminate for it. [`launch`] then falls back to the package name, as it did for
+    /// every path before this correction.
+    fn is_comparable(&self) -> bool {
+        let printable = |path: &Path| !path.to_string_lossy().contains('\u{1b}');
+        printable(&self.raw) && self.canonical.as_deref().is_none_or(printable)
+    }
+
     fn matches(&self, candidate: &str) -> bool {
         let candidate = Path::new(candidate);
         if candidate == self.raw {
@@ -718,9 +761,27 @@ fn launch(
     let Some(crate_name) = crate_name_of(arguments) else {
         return Ok(None);
     };
-    let own = package_name == Some(own_package)
-        || manifest_dir.is_some_and(|dir| staging.matches(dir))
-        || (package_name.is_none() && manifest_dir.is_none() && crate_name == own_crate);
+    // THE LOCATION IS NECESSARY WHEN IT IS PRESENT — the same test [`own_status_line`] applies,
+    // now applied the same way round. A package's identity is its name, version and source; the
+    // name alone is shared, and a renamed same-named path dependency
+    // (`inner = { path = "…", package = "probe" }`) carries `CARGO_PKG_NAME=<own>` on its own
+    // launch. Accepting the name as SUFFICIENT counted that dependency's units against the
+    // project and pushed its chain into the identity set, so a foreign compiler could be queried
+    // and a count that is not the project's could reach the provenance record.
+    //
+    // Two packages cannot share a manifest directory, so when `CARGO_MANIFEST_DIR` is present it
+    // is both necessary and sufficient, and the name adds nothing. The name and the crate name
+    // remain the fallbacks for a launch that carries no location — they are not removed, they are
+    // demoted to the case where the discriminator is absent.
+    // The location decides WHEN IT IS PRESENT AND COMPARABLE. See [`Location::is_comparable`]:
+    // a staging path carrying an `ESC` has no reliable printed spelling, so for that narrow case
+    // the name remains the only available test and finding 2's bound persists there — stated
+    // rather than silently reintroduced.
+    let own = match (manifest_dir, package_name) {
+        (Some(dir), _) if staging.is_comparable() => staging.matches(dir),
+        (_, Some(name)) => name == own_package,
+        (_, None) => crate_name == own_crate,
+    };
     Ok(Some(Unit { own, chain }))
 }
 
@@ -804,7 +865,9 @@ fn rejoin<'a>(rest: &str, lines: &mut impl Iterator<Item = &'a str>) -> Option<S
     for _ in 0..MAX_REJOINED_LINES {
         let Some(next) = lines.next() else { break };
         joined.push('\n');
-        joined.push_str(without_sgr(next).as_ref());
+        // RAW. A continuation is the middle of a path; Cargo colours only the status word,
+        // so anything escape-like here is the operator's data.
+        joined.push_str(next);
         if whole(&joined) {
             break;
         }
@@ -866,7 +929,9 @@ fn rejoin_status<'a>(
     for _ in 0..MAX_REJOINED_LINES {
         let Some(next) = lines.next() else { break };
         joined.push('\n');
-        joined.push_str(without_sgr(next).as_ref());
+        // RAW. A continuation is the middle of a path; Cargo colours only the status word,
+        // so anything escape-like here is the operator's data.
+        joined.push_str(next);
         if location_of(&joined).is_some_and(|at| staging.matches(at)) {
             break;
         }
@@ -879,10 +944,18 @@ fn rejoin_status<'a>(
 
 /// Whether a backtick-opened remainder is a complete, tokenisable command.
 fn whole(rest: &str) -> bool {
+    // Trailing whitespace is Cargo's, not the command's: the command ends at its closing
+    // backtick, and anything after that — including the `\r` of a `\r\n`-terminated stream — is
+    // padding. Trimming HERE, for the test only, is what lets `parse_check` stop trimming the
+    // physical line, where the same characters may be part of a directory name. `location_of`
+    // has always done exactly this for the closing bracket.
+    let rest = rest.trim_end();
     rest.len() > 1 && rest.ends_with('`') && tokenize(&rest[1..rest.len() - 1]).is_some()
 }
 
 fn backticked(rest: &str) -> Result<Option<&str>, EvidenceError> {
+    // The command's own end, not the line's — see [`whole`].
+    let rest = rest.trim_end();
     let Some(opened) = rest.strip_prefix('`') else {
         return Ok(None);
     };
@@ -1043,6 +1116,53 @@ pub fn windows_tokens(command: &str) -> Option<Vec<String>> {
 
 /// `text` without terminal colour sequences (`ESC [ … m`), which Cargo emits around the status
 /// word when `CARGO_TERM_COLOR=always` passes through the seal.
+/// The status word at the head of a physical line, and the RAW remainder after it.
+///
+/// Cargo colours the status word and only the status word —
+/// `ESC[1mESC[32m       Fresh ESC[0m probe v0.1.0 (…)` — so the colour, and Cargo's indentation,
+/// are removed from the head while everything after is returned untouched.
+///
+/// # Why not strip the whole line
+///
+/// An `ESC` is a legal character in a Unix directory name, and Cargo prints the path raw. Removing
+/// SGR sequences from the whole line therefore deleted part of the operator's own path, the
+/// location stopped equalling the staging directory, and the run was refused as
+/// `evidence_capture_failed` — the same failure `str::trim` caused with trailing spaces and
+/// `str::lines` caused with a `\r`. All three were the parser destroying operator-controlled text
+/// before comparing it. `renvor`'s own `tests/redaction.rs` creates a directory named
+/// `ESC[31mREDESC[0m`, so the shape is measured, not imagined.
+///
+/// `None` when the line has no leading word, which is every continuation and every diagnostic.
+fn status_and_rest(line: &str) -> Option<(&str, &str)> {
+    let head = past_colour_and_indent(line);
+    let end = head.find(|character: char| !character.is_ascii_alphabetic())?;
+    if end == 0 {
+        return None;
+    }
+    let (word, after) = head.split_at(end);
+    Some((word, past_colour_and_indent(after)))
+}
+
+/// Skips Cargo's own indentation and any SGR sequences at the head of `text`.
+fn past_colour_and_indent(text: &str) -> &str {
+    let mut rest = text;
+    loop {
+        let trimmed = rest.trim_start_matches([' ', '\t']);
+        match past_one_sgr(trimmed) {
+            Some(after) => rest = after,
+            None => return trimmed,
+        }
+    }
+}
+
+/// One complete `ESC[…m` sequence at the head of `text`, if there is one. A bare `ESC` that opens
+/// no sequence is data and is left alone.
+fn past_one_sgr(text: &str) -> Option<&str> {
+    let parameters = text.strip_prefix('\u{1b}')?.strip_prefix('[')?;
+    let end = parameters.find('m')?;
+    Some(&parameters[end + 1..])
+}
+
 fn without_sgr(text: &str) -> Cow<'_, str> {
     if !text.contains('\u{1b}') {
         return Cow::Borrowed(text);
@@ -1890,5 +2010,242 @@ mod tests {
         )
         .expect("the multiline launch is one accounted unit");
         assert_eq!(evidence.units_launched, 1);
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The coupled correction of findings 2 and 3 (PR #72 review round).
+    //
+    // These fixtures are PLATFORM-NEUTRAL and deliberately ungated. They never touch the
+    // filesystem, so a directory name that could not exist on Windows is still exercised there
+    // AS PARSER INPUT — which is the distinction that matters: `\n`, `\r` and trailing spaces
+    // are invalid in a *Windows path*, but they are ordinary bytes in a *stream this parser
+    // reads*, and the parser must agree about them on every platform. `Location::of` on a path
+    // that does not exist leaves `canonical` as `None`, and `matches` then compares the raw
+    // spelling — a string comparison every platform answers identically. The filesystem-bound
+    // counterparts stay `#[cfg(unix)]`, as the tests above already are.
+    // ---------------------------------------------------------------------------------------
+
+    /// FINDING 3, status side, WHITESPACE BEFORE A NEWLINE. `str::trim` on the physical line ate
+    /// the trailing spaces, so the rejoined location no longer equalled staging: the own
+    /// announcement was lost silently on a cold run, and the same directory was refused as
+    /// `Unaccounted` on a cached one.
+    #[test]
+    fn a_status_line_whose_path_ends_with_spaces_before_a_newline_keeps_them() {
+        let staging = Path::new("/s/above   \nFORGED-LINE");
+        let at = staging.display();
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+
+        let evidence = parse_check(&cached, "probe", staging)
+            .expect("spaces before the newline are part of the name, not Cargo's padding");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// FINDING 3, status side, CARRIAGE RETURN. `str::lines` treats `\r\n` as one terminator and
+    /// drops the `\r`, so a `\r` INSIDE a directory name was eaten and the location no longer
+    /// equalled staging. Splitting on `'\n'` alone keeps it, because in this stream a `\r` is
+    /// operator-controlled data, not a delimiter.
+    #[test]
+    fn a_status_line_whose_path_contains_a_carriage_return_keeps_it() {
+        let staging = Path::new("/s/above\r\nFORGED-LINE");
+        let at = staging.display();
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+
+        let evidence = parse_check(&cached, "probe", staging)
+            .expect("a carriage return in a directory name is data, not a line ending");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// FINDING 3, launch side, whitespace before a newline.
+    #[test]
+    fn a_running_command_whose_path_ends_with_spaces_before_a_newline_keeps_them() {
+        let staging = Path::new("/s/above   \nFORGED-LINE");
+        let at = staging.display();
+        let stream = format!(
+            "   Compiling probe v0.1.0 ({at})\n     Running `CARGO_MANIFEST_DIR=\"{at}\" \
+             CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe src/main.rs`\n    Finished \
+             `dev` profile in 0.0s\n"
+        );
+
+        let evidence = parse_check(&stream, "probe", staging)
+            .expect("a legal directory name is not a capture failure");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    /// FINDING 3, launch side, carriage return.
+    #[test]
+    fn a_running_command_whose_path_contains_a_carriage_return_keeps_it() {
+        let staging = Path::new("/s/above\r\nFORGED-LINE");
+        let at = staging.display();
+        let stream = format!(
+            "   Compiling probe v0.1.0 ({at})\n     Running `CARGO_MANIFEST_DIR=\"{at}\" \
+             CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe src/main.rs`\n    Finished \
+             `dev` profile in 0.0s\n"
+        );
+
+        let evidence = parse_check(&stream, "probe", staging)
+            .expect("a carriage return in a directory name is data");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    /// FINDING 2. A same-named renamed path dependency
+    /// (`inner = { path = "…", package = "probe" }`) carries `CARGO_PKG_NAME=<own>` on its own
+    /// launch. The name arm alone made that the project's own unit, so its count and its chain
+    /// reached the provenance record. The location is the discriminator, and it is present here.
+    #[test]
+    fn a_same_named_dependency_launch_is_not_counted_as_the_projects_own() {
+        let staging = Path::new("/s/outer");
+        let stream = "   Compiling probe v0.1.0 (/s/outer)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s/inner CARGO_PKG_NAME=probe /t/bin/rustc \
+                      --crate-name probe src/lib.rs`\n     Running \
+                      `CARGO_MANIFEST_DIR=/s/outer CARGO_PKG_NAME=probe /t/bin/rustc \
+                      --crate-name probe src/main.rs`\n    Finished `dev` profile in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", staging).expect("an ordinary build");
+        assert_eq!(
+            evidence.units_launched, 1,
+            "the dependency's launch is not the project's own unit"
+        );
+        assert_eq!(
+            evidence.chains.len(),
+            1,
+            "and its chain is not queried for identity"
+        );
+    }
+
+    /// THE INTERACTION, and the reason the two corrections ship together. Finding 2's name arm is
+    /// what currently rescues a whitespace-bearing directory whose location no longer matches:
+    /// removing it without finding 3's fix turns that silent miscount into `Unaccounted`. Both
+    /// causes are present in this one stream.
+    #[test]
+    fn removing_the_name_arm_does_not_refuse_a_whitespace_bearing_directory() {
+        let staging = Path::new("/s/above   \nFORGED-LINE");
+        let at = staging.display();
+        let stream = format!(
+            "   Compiling probe v0.1.0 ({at})\n     Running `CARGO_MANIFEST_DIR=/s/inner \
+             CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe src/lib.rs`\n     Running \
+             `CARGO_MANIFEST_DIR=\"{at}\" CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe \
+             src/main.rs`\n    Finished `dev` profile in 0.0s\n"
+        );
+
+        let evidence = parse_check(&stream, "probe", staging)
+            .expect("finding 3's fix must carry the case finding 2's name arm used to rescue");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    // --- NEGATIVE CONTROLS: what the correction must NOT change -------------------------------
+
+    /// The trailing trim is removed, so this proves whitespace AFTER the closing bracket is still
+    /// tolerated — it is Cargo's, not the path's, and `location_of` trims its own end.
+    #[test]
+    fn trailing_space_after_a_location_is_still_not_part_of_the_path() {
+        let cached = "       Fresh probe v0.1.0 (/s)   \n    Finished `dev` profile in 0.0s\n";
+
+        let evidence = parse_check(cached, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// The location is necessary WHEN PRESENT — not always present. A launch that carries the
+    /// name but no `CARGO_MANIFEST_DIR` must still be the project's own.
+    #[test]
+    fn a_launch_without_a_manifest_dir_still_falls_back_to_the_package_name() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running `CARGO_PKG_NAME=probe \
+                      /t/bin/rustc --crate-name probe src/main.rs`\n    Finished `dev` profile \
+                      in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    /// And with neither, the crate name still decides.
+    #[test]
+    fn a_launch_with_neither_name_nor_location_still_falls_back_to_the_crate_name() {
+        let stream = "   Compiling probe v0.1.0 (/s)\n     Running `/t/bin/rustc --crate-name \
+                      probe src/main.rs`\n    Finished `dev` profile in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", Path::new("/s")).expect("an ordinary stream");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    /// FINDING 3, third sub-cause, found by this correction rather than before it: an `ESC` is a
+    /// legal character in a Unix directory name, and stripping SGR from the WHOLE line deleted it
+    /// from the path as well as from Cargo's colour.
+    ///
+    /// This is a PARSER-FIDELITY test, and deliberately so: the fixture carries the escape in the
+    /// stream, which is the one thing this parser controls. Real Cargo does not print it — see
+    /// [`Location::is_comparable`] for the measurement — so the shape below is what the parser
+    /// must not corrupt if it is ever handed it, not what Cargo was observed to emit.
+    #[test]
+    fn a_status_line_whose_path_contains_an_escape_sequence_keeps_it() {
+        let esc = "\u{1b}";
+        let staging = PathBuf::from(format!("/s/{esc}[31mRED{esc}[0m"));
+        let at = staging.display();
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+
+        let evidence = parse_check(&cached, "probe", &staging)
+            .expect("an escape sequence in a directory name is data, not colour");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// And the two causes together: a path carrying BOTH a newline and an escape sequence, so the
+    /// escape lands in a CONTINUATION line, which is why continuations are joined raw.
+    #[test]
+    fn a_path_with_both_a_newline_and_an_escape_sequence_survives_rejoining() {
+        let esc = "\u{1b}";
+        let staging = PathBuf::from(format!("/s/above\nFORGED{esc}[31mRED{esc}[0m"));
+        let at = staging.display();
+        let cached =
+            format!("       Fresh probe v0.1.0 ({at})\n    Finished `dev` profile in 0.0s\n");
+
+        let evidence = parse_check(&cached, "probe", &staging)
+            .expect("a continuation is data and is joined without stripping");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// THE CONTROL FOR ALL THREE. Cargo's own colour, which brackets the status word, must still
+    /// be removed — otherwise "keep the operator's bytes" would have broken every coloured
+    /// stream. Paired with [`colour_sequences_around_the_status_word_are_ignored`].
+    #[test]
+    fn cargos_own_colour_around_the_status_word_is_still_removed() {
+        let esc = "\u{1b}";
+        let cached = format!(
+            "{esc}[1m{esc}[32m       Fresh{esc}[0m probe v0.1.0 (/s)\n{esc}[1m{esc}[32m    \
+             Finished{esc}[0m `dev` profile in 0.0s\n"
+        );
+
+        let evidence = parse_check(&cached, "probe", Path::new("/s"))
+            .expect("colour around the status word is Cargo's, not the path's");
+        assert_eq!(evidence.units_fresh, 1);
+    }
+
+    /// The narrow case the correction does NOT close, asserted so it cannot regress silently.
+    /// A staging path carrying an `ESC` has no reliable printed spelling, so the location cannot
+    /// discriminate and the package name decides — which is what every path did before this
+    /// change. Finding 2's bound therefore persists here, and only here.
+    #[test]
+    fn a_staging_path_cargo_cannot_print_losslessly_still_falls_back_to_the_name() {
+        let esc = "\u{1b}";
+        let staging = PathBuf::from(format!("/s/{esc}[31mRED{esc}[0m"));
+        // Cargo prints the sanitised spelling, which equals no path on disk.
+        let stream = "   Compiling probe v0.1.0 (/s/RED)\n     Running \
+                      `CARGO_MANIFEST_DIR=/s/RED CARGO_PKG_NAME=probe /t/bin/rustc --crate-name \
+                      probe src/main.rs`\n    Finished `dev` profile in 0.0s\n";
+
+        let evidence = parse_check(stream, "probe", &staging)
+            .expect("the name is the only test available for an unprintable staging path");
+        assert_eq!(evidence.units_launched, 1);
+    }
+
+    /// A Windows-shaped location goes through the same rules, on every platform.
+    #[test]
+    fn a_windows_shaped_location_is_read_by_the_same_rules() {
+        let cached =
+            "       Fresh probe v0.1.0 (C:\\s\\project)\n    Finished `dev` profile in 0.0s\n";
+
+        let evidence = parse_check(cached, "probe", Path::new("C:\\s\\project"))
+            .expect("a Windows-shaped path is an ordinary location");
+        assert_eq!(evidence.units_fresh, 1);
     }
 }
