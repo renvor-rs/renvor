@@ -99,8 +99,8 @@ behaviourally incomplete, and it is measured, not argued.
 | **C-1** `details.supported` | the highest record version this generator reads changes from `2` |
 | **C-5** `contracts/generation-transaction.md:217-218` | "the last binary of the build/test chain" must carve out the doctest chain |
 | **C-5** `:223-229` | must state what the doctest bucket reports when the build/test checks are cached |
-| **C-5** `:228` | **the sentence that must change.** `verification reused cached artifacts for <checks>: no compiler launch observed` names "the checks whose units were all `Fresh`". Today a cached lib project's test check is `mixed` (1 launched, 1 fresh), so it is never named and the line is TRUE as shipped. Under this proposal `checks.test` becomes all-`Fresh` and would be named — while a rustdoc launch **was** observed. The line must exclude the doctest bucket explicitly, or it becomes false on the ordinary cached lib case |
-| **C-5** `:229-230` | "every unit … accounted for" is **satisfied** by this design, but must say by what |
+| **C-5** `:227-229` | **the sentence that must change.** `verification reused cached artifacts for <checks>: no compiler launch observed` names "the checks whose units were all `Fresh`". Today a cached lib project's test check is `mixed` (1 launched, 1 fresh), so it is never named and the line is TRUE as shipped. Under this proposal `checks.test` becomes all-`Fresh` and would be named — while a rustdoc launch **was** observed. The line must exclude the doctest bucket explicitly, or it becomes false on the ordinary cached lib case |
+| **C-5** `:229-231` | "every unit … accounted for" is **satisfied** by this design, but must say by what |
 | **C-4** `contracts/template-contract.md:220` | "one table per check that can launch a compiler **(clippy, build, test)**" — the enumeration gains `doctest` |
 | **C-4** `:202-226` | gains `rustdoc_release`/`rustdoc_commit` with the ABSENT rule beside `driver_*` |
 | **C-4** `:162` | `record_version` — see below |
