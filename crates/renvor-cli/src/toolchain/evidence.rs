@@ -95,7 +95,6 @@
 //! Nothing here reads a file: not `.rustc_info.json`, not a fingerprint, not an earlier record.
 //! The evidence of a check is the stderr of that check and the answers of that run's queries.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -306,9 +305,11 @@ pub struct Verified {
 /// Parses one check's captured stderr into the evidence of the project's own package.
 ///
 /// `own_package` is the manifest's `[package].name`; `staging` is the directory the check ran in.
-/// A unit is the project's own when its environment tokens carried `CARGO_PKG_NAME=<own>` or
-/// `CARGO_MANIFEST_DIR=<staging>` (compared canonically), or — when neither token is present, as
-/// in a stub — its `--crate-name` is the package name with hyphens as underscores.
+/// A unit is the project's own when its environment tokens carried `CARGO_MANIFEST_DIR=<staging>`
+/// (compared canonically) — the LOCATION DECIDES WHENEVER IT IS PRESENT AND COMPARABLE. Only when
+/// the location is absent, or when Cargo cannot print this staging path faithfully (see
+/// [`Location::is_comparable`]), does `CARGO_PKG_NAME=<own>` decide; and only when neither token
+/// is present, as in a stub, does `--crate-name` — the package name with hyphens as underscores.
 ///
 /// # Errors
 ///
@@ -500,11 +501,19 @@ pub fn shows_wrapper(chain: &Chain, is_clippy: bool) -> bool {
 #[must_use]
 pub fn without_launch_lines(stderr: &str) -> String {
     let mut kept = String::with_capacity(stderr.len());
-    let mut lines = stderr.lines();
+    // THE SAME READING AS [`parse_check`]'S, AND IT HAS TO BE. This function decides what reaches
+    // a human failure message; `parse_check` decides where a launch command ended. If they split
+    // the stream differently, one can treat a line as a continuation while the other publishes it
+    // — and launch commands are exactly the lines that must never be published. So the splitter
+    // and the head-stripping are the same here as there: `'\n'` only, colour removed from the head
+    // only. (A trailing empty element is the tail after the last `'\n'`, not a line, and is
+    // dropped so this function's output shape is unchanged.)
+    let mut lines = stderr.split('\n').peekable();
     while let Some(raw) = lines.next() {
-        let line = without_sgr(raw);
-        let trimmed = line.trim_start();
-        if let Some(rest) = trimmed.strip_prefix("Running ")
+        if raw.is_empty() && lines.peek().is_none() {
+            break;
+        }
+        if let Some(("Running", rest)) = status_and_rest(raw)
             && rest.starts_with('`')
         {
             // Consumes this line and every continuation of it from the iterator; the joined text
@@ -758,6 +767,13 @@ fn launch(
     if chain.is_empty() {
         return Err(EvidenceError::Malformed);
     }
+    // A CONSEQUENCE WORTH NAMING. Now that the head-stripping leaves the rest of the line alone,
+    // an escape byte inside a `Running` command survives into `tokenize` and can therefore appear
+    // in these executables — where it previously would have been deleted. That is the correct
+    // direction (the bytes are the operator's), and it is bounded: such a path names no file, so
+    // the identity query spawns nothing and the run ends at `compiler_identity_unreadable`, and a
+    // chain's paths never reach the record or any human stream. Recorded rather than asserted:
+    // a test here would pin an implementation detail, not a guarantee.
     let Some(crate_name) = crate_name_of(arguments) else {
         return Ok(None);
     };
@@ -771,8 +787,13 @@ fn launch(
     //
     // Two packages cannot share a manifest directory, so when `CARGO_MANIFEST_DIR` is present it
     // is both necessary and sufficient, and the name adds nothing. The name and the crate name
-    // remain the fallbacks for a launch that carries no location — they are not removed, they are
-    // demoted to the case where the discriminator is absent.
+    // remain the fallbacks — they are not removed, they are demoted to the case where the
+    // discriminator is absent OR CANNOT BE COMPARED. Note the second half: with a location present
+    // but uncomparable and no `CARGO_PKG_NAME`, the crate-name arm now fires where the old code
+    // returned `false`. For the project's own unit that is strictly better (the old answer was
+    // `Unaccounted`); for a foreign unit whose `--crate-name` happens to equal ours it counts where
+    // it did not. Real `cargo -vv` always emits `CARGO_PKG_NAME`, so the widening is reachable only
+    // from a stub — stated rather than left for a reader to discover.
     // The location decides WHEN IT IS PRESENT AND COMPARABLE. See [`Location::is_comparable`]:
     // a staging path carrying an `ESC` has no reliable printed spelling, so for that narrow case
     // the name remains the only available test and finding 2's bound persists there — stated
@@ -946,9 +967,13 @@ fn rejoin_status<'a>(
 fn whole(rest: &str) -> bool {
     // Trailing whitespace is Cargo's, not the command's: the command ends at its closing
     // backtick, and anything after that — including the `\r` of a `\r\n`-terminated stream — is
-    // padding. Trimming HERE, for the test only, is what lets `parse_check` stop trimming the
-    // physical line, where the same characters may be part of a directory name. `location_of`
-    // has always done exactly this for the closing bracket.
+    // padding. Trimming HERE, for the CANDIDATE only, is what lets `parse_check` stop trimming
+    // the physical line, where the same characters may be part of a directory name.
+    //
+    // This runs at every join step, so a candidate ending in path data plus spaces is trimmed
+    // before the backtick test — and `tokenize` is what keeps that honest: a candidate whose
+    // quoting is still open fails to tokenise and the join continues. The trim decides nothing on
+    // its own. `location_of` has always done the same for the closing bracket.
     let rest = rest.trim_end();
     rest.len() > 1 && rest.ends_with('`') && tokenize(&rest[1..rest.len() - 1]).is_some()
 }
@@ -1027,16 +1052,19 @@ fn location_of(rest: &str) -> Option<&str> {
 ///
 /// # The same test as [`launch`]'s, applied the other way round
 ///
-/// [`launch`] also compares the staging directory — against a `Running` command's
-/// `CARGO_MANIFEST_DIR` — but as one arm of a **disjunction**, where the location is *sufficient*
-/// and `CARGO_PKG_NAME` alone is enough on its own. Here the location is *necessary*. The
-/// difference is not cosmetic and is stated because it bounds what this fix achieved: a status
-/// line for a same-named dependency is now excluded, while that dependency's `Running` lines are
-/// still counted as the project's own, because they carry `CARGO_PKG_NAME=<own>`. Its unit counts
-/// and its chain can therefore still reach the record. That is a **record that is wrong**, not a
-/// run that fails — the contradiction check no longer reads the launch count — and it predates
-/// this round; requiring the location on the launch side too is a change with a wider blast
-/// radius than this correction round opened.
+/// [`launch`] applies the SAME test, the same way round: the location is *necessary* on both
+/// sides. It was once one arm of a disjunction there, where `CARGO_PKG_NAME` alone sufficed, and
+/// a same-named renamed path dependency's `Running` lines were therefore counted as the
+/// project's own — its unit counts and its chain reaching the record. That asymmetry is gone.
+///
+/// ONE DIFFERENCE REMAINS, and it is deliberate. [`launch`] falls back to the package name when
+/// the staging path is one Cargo cannot print faithfully — see [`Location::is_comparable`] — so
+/// for a directory whose name carries an `ESC` the launch side still decides by name. This side
+/// has no such fallback, and deliberately: a status line whose location cannot be compared is
+/// simply not counted. The consequence is worth stating rather than implying — a check whose units
+/// are ALL `Fresh` in such a directory has nothing left to account for it and is refused as
+/// `Unaccounted`. That is loud rather than silent, it is the direction this module prefers, and it
+/// is unchanged by this correction: this side has required the location since it was written.
 fn own_status_line(rest: &str, own_package: &str, staging: &Location) -> bool {
     package_of(rest) == own_package && location_of(rest).is_some_and(|at| staging.matches(at))
 }
@@ -1114,8 +1142,6 @@ pub fn windows_tokens(command: &str) -> Option<Vec<String>> {
     Some(tokens)
 }
 
-/// `text` without terminal colour sequences (`ESC [ … m`), which Cargo emits around the status
-/// word when `CARGO_TERM_COLOR=always` passes through the seal.
 /// The status word at the head of a physical line, and the RAW remainder after it.
 ///
 /// Cargo colours the status word and only the status word —
@@ -1124,13 +1150,15 @@ pub fn windows_tokens(command: &str) -> Option<Vec<String>> {
 ///
 /// # Why not strip the whole line
 ///
-/// An `ESC` is a legal character in a Unix directory name, and Cargo prints the path raw. Removing
-/// SGR sequences from the whole line therefore deleted part of the operator's own path, the
-/// location stopped equalling the staging directory, and the run was refused as
-/// `evidence_capture_failed` — the same failure `str::trim` caused with trailing spaces and
-/// `str::lines` caused with a `\r`. All three were the parser destroying operator-controlled text
-/// before comparing it. `renvor`'s own `tests/redaction.rs` creates a directory named
-/// `ESC[31mREDESC[0m`, so the shape is measured, not imagined.
+/// An `ESC` is a legal character in a Unix directory name. Removing SGR sequences from the whole
+/// line WOULD delete part of the operator's own path if such a line reached this parser, exactly
+/// as `str::trim` did with trailing spaces and `str::lines` did with a `\r` — all three the same
+/// mistake of destroying operator-controlled text before comparing it.
+///
+/// It is stated conditionally on purpose. Cargo does NOT hand this parser such a line: it strips
+/// the escapes itself before printing, which is a different problem and is handled in
+/// [`Location::is_comparable`]. So this is parser fidelity — what must not be corrupted if the
+/// text ever arrives — and not a refusal that was observed here.
 ///
 /// `None` when the line has no leading word, which is every continuation and every diagnostic.
 fn status_and_rest(line: &str) -> Option<(&str, &str)> {
@@ -1161,27 +1189,6 @@ fn past_one_sgr(text: &str) -> Option<&str> {
     let parameters = text.strip_prefix('\u{1b}')?.strip_prefix('[')?;
     let end = parameters.find('m')?;
     Some(&parameters[end + 1..])
-}
-
-fn without_sgr(text: &str) -> Cow<'_, str> {
-    if !text.contains('\u{1b}') {
-        return Cow::Borrowed(text);
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut characters = text.chars().peekable();
-    while let Some(character) = characters.next() {
-        if character == '\u{1b}' && characters.peek() == Some(&'[') {
-            characters.next();
-            for parameter in characters.by_ref() {
-                if parameter == 'm' {
-                    break;
-                }
-            }
-            continue;
-        }
-        out.push(character);
-    }
-    Cow::Owned(out)
 }
 
 #[cfg(test)]
@@ -2238,7 +2245,63 @@ mod tests {
         assert_eq!(evidence.units_launched, 1);
     }
 
-    /// A Windows-shaped location goes through the same rules, on every platform.
+    /// THE TWO READINGS OF ONE STREAM MUST AGREE ABOUT WHERE A LAUNCH ENDED. [`parse_check`]
+    /// decides that for accounting; [`without_launch_lines`] decides it for what reaches a human
+    /// failure message. An SGR sequence AFTER the closing backtick used to split them: the
+    /// whole-line strip made the command look closed to the redactor and still open to the
+    /// parser, so the redactor published a line the parser was reading as part of the command —
+    /// and launch commands are exactly the lines that must never be published.
+    #[test]
+    fn both_readings_end_a_launch_at_the_same_place_when_colour_follows_the_backtick() {
+        let esc = "\u{1b}";
+        let stream = format!(
+            "     Running `CARGO_PKG_NAME=probe /t/bin/rustc --crate-name probe \
+             src/main.rs`{esc}[0m\nCONTINUATION\n    Finished `dev` profile in 0.0s\n"
+        );
+
+        let kept = without_launch_lines(&stream);
+        assert!(
+            !kept.contains("--crate-name"),
+            "the launch command itself must never reach a failure message"
+        );
+        assert!(
+            !kept.contains("CONTINUATION"),
+            "a line the parser reads as part of the command must not be published"
+        );
+    }
+
+    /// THE LAUNCH-SIDE TWIN of
+    /// [`a_path_with_both_a_newline_and_an_escape_sequence_survives_rejoining`], and the only test
+    /// that pins `rejoin`'s raw continuation: reverting that one line leaves every other test in
+    /// this file green.
+    ///
+    /// The escape is in the COMPILER PATH, not the staging path — deliberately. A staging path
+    /// carrying an `ESC` is not comparable (see [`Location::is_comparable`]) so the launch would
+    /// decide by name and the assertion would prove nothing about the join.
+    #[test]
+    fn an_escape_sequence_in_a_launch_continuation_survives_the_rejoin() {
+        let esc = "\u{1b}";
+        let stream = format!(
+            "   Compiling probe v0.1.0 (/s)\n     Running `CARGO_MANIFEST_DIR=/s \
+             CARGO_PKG_NAME=probe \"/t/bin\n{esc}[31mrustc\" --crate-name probe src/main.rs`\n    \
+             Finished `dev` profile in 0.0s\n"
+        );
+
+        let evidence = parse_check(&stream, "probe", Path::new("/s")).expect("one own unit");
+        assert_eq!(evidence.units_launched, 1);
+        let executable = evidence.chains[0]
+            .executables
+            .first()
+            .expect("the chain names the compiler it launched");
+        assert!(
+            executable.to_string_lossy().contains('\u{1b}'),
+            "a continuation is data and must be joined without stripping"
+        );
+    }
+
+    /// NEGATIVE CONTROL, and labelled as one because it passes with the correction reverted: it
+    /// asserts platform-neutrality, not the fix. A Windows-shaped location goes through the same
+    /// rules, on every platform.
     #[test]
     fn a_windows_shaped_location_is_read_by_the_same_rules() {
         let cached =
