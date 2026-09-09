@@ -1,7 +1,7 @@
 ---
 description: "Contract C-2 — machine-readable output envelope and error-code registry"
-version: "1.0.0"
-status: "normative — the wire payload carries its own `schemaVersion`, currently 2, which is independent of this document version. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.1.0"
+status: "normative — the wire payload carries its own `schemaVersion`, currently 2, which is independent of this document version. 1.1.0 (2026-09-09, Phase 012, finding 4): `result.verified_with.checks` gains a nullable `doctest` object, and the TOML record it mirrors moves to `record_version = 3`. **Neither is a `schemaVersion` bump**, by this document's own rules: the fields of §"`result.toolchain` and `result.verified_with`" are additive, and `record_version` is explicitly a different axis. A consumer pinned to `2` reads every document this revision emits. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-2 — Machine-readable output
@@ -105,7 +105,7 @@ value under an existing code is additive under the same rule. The success payloa
 fields of §"`result.toolchain` and `result.verified_with`" below, additive likewise.
 
 **The TOML record's `record_version` is a different axis.** It is the format version of a file
-the generator owns, governed by [`template-contract.md`](template-contract.md) §"Record version 2",
+the generator owns, governed by [`template-contract.md`](template-contract.md) §"Record versions 2 and 3",
 and its move from absent to `2` is not a `schemaVersion` change: the envelope's shape did not
 change, and a consumer pinned to `2` reads every document this revision emits.
 
@@ -167,7 +167,7 @@ this to match the real run's created set exactly.
 success payload, which this envelope has always called `result`, so the paths are
 `result.toolchain` and `result.verified_with`. Their fields are named as the brief names them —
 `snake_case`, mirroring the TOML record they are read from — and every value is **measured or
-read back, never derived** ([`template-contract.md`](template-contract.md) §"Record version 2").
+read back, never derived** ([`template-contract.md`](template-contract.md) §"Record versions 2 and 3").
 Both are `null` for a legacy record (no `record_version`), never filled in; `renvor new --dry-run`
 carries neither, because a dry run verifies nothing and writes no record.
 
@@ -220,8 +220,8 @@ carries neither, because a dry run verifies nothing and writes no record.
 | `verified_with.verified_at` | RFC 3339, UTC |
 | `verified_with.tree_scope`, `verified_with.tree_digest` | the scope number and the digest of FR-012-5d |
 | `verified_with.historical` | **boolean, computed by the reading command**, not stored: `true` when the tree digest recomputed over the current working tree under `tree_scope` differs from `tree_digest` — the evidence is of a tree that is not the current one; `false` when they are equal. `renvor new` and `generate auth` report `false` for the tree they just verified |
-| `verified_with.observation` | `launched` \| `cached` \| `mixed`, over the build and test units of the project's own package(s) |
-| `verified_with.rustc_release`, `rustc_commit`, `rustc_host` | the **observed** launched compiler's `-vV` answer — **`null` when `observation` is `cached`** (observed compiler identity unavailable), the launched units' identity only when `mixed`. Never filled from the pin, `PATH`, an old record, or `.rustc_info.json` |
+| `verified_with.observation` | `launched` \| `cached` \| `mixed`, over the **build and test** units of the project's own package(s) — and those only. Clippy is outside it, and so are the doctest units: neither is launched with `rustc`, so neither can contribute to a statement about `rustc_*`. A cached library-bearing project reads `cached` here while `checks.doctest` shows a launch |
+| `verified_with.rustc_release`, `rustc_commit`, `rustc_host` | the **observed** launched compiler's `-vV` answer — **`null` when `observation` is `cached`** (observed compiler identity unavailable), the launched units' identity only when `mixed`. Never filled from the pin, `PATH`, an old record, or `.rustc_info.json` — and never from `checks.doctest.rustdoc_*`, which is a different tool's answer and may legitimately differ |
 | `verified_with.resolved_rustc_release`, `resolved_rustc_commit` | the preflight resolution's identity, **always present**; a queried resolution, never an observation, never copied into `rustc_*`; not Cargo's effective compiler under `RUSTC`, `build.rustc`, or a wrapper |
 | `verified_with.configured_rustc_release`, `configured_rustc_commit` | **nullable** and labelled: Cargo's configured resolution, queried separately when it was; never an observation |
 | `verified_with.cargo_release`, `cargo_commit` | `cargo -vV` under the seal |
@@ -231,7 +231,8 @@ carries neither, because a dry run verifies nothing and writes no record.
 | `verified_with.rustc_override`, `wrapper`, `rustflags`, `rustdocflags` | booleans, **presence only** — no value, path, or flag text is ever carried |
 | `verified_with.checks.fmt`, `checks.run` | `outcome` only |
 | `verified_with.checks.clippy` | `outcome`, `units_launched`, `units_fresh`, and `driver_release`/`driver_commit` — the observed `clippy-driver` executable's own `--version` answer, **`null` when every clippy unit was `Fresh`**, never filled from `cargo clippy --version` |
-| `verified_with.checks.build`, `checks.test` | `outcome`, `units_launched`, `units_fresh` |
+| `verified_with.checks.build`, `checks.test` | `outcome`, `units_launched`, `units_fresh` — the units launched with `rustc`. A doctest unit is not among them |
+| `verified_with.checks.doctest` | **nullable object**: `outcome`, `units_launched`, `units_fresh`, and `rustdoc_release`/`rustdoc_commit` — the observed `rustdoc` executable's own `-vV` answer, **`null` when no doctest unit was launched**. **The whole object is `null` for a project with no library target** (every starter this generator ships), and that null is not a defect: it says no doctest unit was launched, never that one was reused. `units_fresh` is `0` — Cargo attributes no `Fresh` report to a doctest unit, and a package reported `Fresh` launches its doctest unit anyway |
 
 Every string is parsed under the identity grammar before it is emitted; the redaction rule above
 applies. **`result.toolchain` of `renvor doctor` is reserved** (the brief's `data.doctor.toolchain`):

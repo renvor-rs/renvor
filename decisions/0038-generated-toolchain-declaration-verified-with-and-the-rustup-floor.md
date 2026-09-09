@@ -88,16 +88,21 @@ decision record. That is the second reason this record exists.
    still refuses older compilers (FR-012-3); the Dockerfile's builder tag derives from the pin and
    its builder stage sets `RUSTUP_AUTO_INSTALL=0` (FR-012-9). The template version moves to 8.
 
-2. **The provenance record becomes version 2** (FR-012-4, FR-012-5): `record_version = 2`,
+2. **The provenance record becomes version 3** (FR-012-4, FR-012-5; version 2 in this ADR's first
+   draft, raised on 2026-09-09 by finding 4 — see item 8 below): `record_version = 3`,
    `[toolchain]` (`pinned`, `rust_version` — rendered values), and `[verified_with]` in the layout
-   of `contracts/template-contract.md` 1.3.0 §"Record version 2". Readers dispatch on
-   `record_version`: absent is a legacy record, accepted and reported *unknown*; `2` is validated
-   strictly; newer is `record_unsupported`, exit 3, before any plan. Only the operations that run
+   of `contracts/template-contract.md` 1.4.0 §"Record versions 2 and 3". Readers dispatch on
+   `record_version`: absent is a legacy record, accepted and reported *unknown*; `2` and `3` are
+   each validated strictly under their own layout; newer is `record_unsupported`, exit 3, before
+   any plan. `template_version` stays at **8**: version 3 adds a table to a file the generator
+   owns and changes no file a generation renders, and the two are different axes. Only the operations that run
    the five checks — `renvor new` and `renvor generate auth` — write `[verified_with]`; `resource`
    and `migration` leave it byte-identical. The verified tree is fingerprinted by contents
    (`tree_digest` over a fixed scope), and `renvor check` reports the evidence as `current` or
    `historical` — never a count of operations, which nothing records. A generator built before
-   this revision cannot read a version-2 record and says so through a generic parse error; the
+   this revision cannot read a version-2 record and says so through a generic parse error; a
+   generator whose newest version is 2 refuses a version-3 record by name, `record_unsupported`
+   with `details.supported = 2`, which is the disciplined failure the dispatch exists to give. The
    remedy is documented — *rebuild the generator, not the project* — not claimed away.
 
 3. **`[verified_with]` is launch observation plus queried identity, measured, never derived**

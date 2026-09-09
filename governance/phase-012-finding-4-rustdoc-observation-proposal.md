@@ -1,11 +1,16 @@
 # Finding 4 — rustdoc as a separate observation category
 
-**STATUS: PROPOSAL. NOT APPROVED, NOT IMPLEMENTED, NOT ACTIVATED.**
+**STATUS: APPROVED AND IMPLEMENTED, 2026-09-09. NOT MERGED.**
 
-No contract, schema, requirement, notice or code in this repository has been changed by this
-document. It exists so the maintainer can approve or reject one design before any of that happens.
-The maintainer's disposition of 2026-09-09 named option (d) the preferred **direction**, explicitly
-not implementation approval.
+The maintainer approved option (d) and `record_version = 3` for implementation in pull request #72
+on 2026-09-09, stating explicitly that this is **not merge approval and not blanket acceptance of
+every detail in this document**. The design below is therefore the approved one; §"As implemented"
+at the end records what shipped, what the implementation found that this document did not
+anticipate, and the two version questions that were **derived from the contracts' own rules**
+rather than decided here.
+
+The text between here and that section is the proposal as it stood when it was approved, kept
+unedited so the approval and the record refer to the same words.
 
 ## The defect this would close
 
@@ -157,3 +162,145 @@ reader; every contract line cited above, read in the tree at PR #72's head.
 **Reasoned, not measured**: the whole of this design. No part of it has been implemented, and the
 census impact (`verification-sequence.md` 2.3.0 counts 86 (row, test) pairs, 19 of them starter
 rows) is expected to be nil but has not been recomputed.
+
+
+---
+
+# As implemented (2026-09-09, pull request #72)
+
+Every claim in this section is from the working tree and the test run, not from the design above.
+
+## The defect, reproduced on the current head first
+
+`a_library_bearing_project_records_its_doctest_unit_apart_from_the_compiler_units` was written
+against `4cb4709` and failed there, with the defect verbatim:
+
+```
+ProjectVerificationFailed
+  reason = compiler_identity_unreadable
+  query  = rustc -vV
+  cause  = the answer is not a `rustc` answer
+  check  = cargo test -vv
+```
+
+## What shipped, beside the design above
+
+**The `Fresh` measurement was reproduced on this host before the design was built.** cargo 1.94.0,
+macOS/aarch64: a cold `cargo test -vv` on a lib+bin package launches three `rustc` units and one
+`rustdoc` unit; a fully cached one prints `Fresh probe`, launches **zero** `rustc` units and still
+launches **one** `rustdoc` unit. A library with **no doc comments at all** launches one too, so the
+trigger is the library target, exactly as the design says.
+
+**`--test` is not the discriminator, and the measurement says so.** Both the `rustc` test-harness
+units and the `rustdoc` unit carry `--test`. Deciding by the flag would have moved two compiler
+units into the doctest bucket and left the compiler unqueried. Recognition is by the chain's
+**trailing executable** (`rustdoc`/`rustdoc.exe`), the discipline `clippy_driver` already uses, so a
+wrapper in front of rustdoc does not hide it. `a_rustc_unit_carrying_test_is_still_a_compiler_unit`
+pins this.
+
+**A stated bound.** `build.rustdoc` pointed at an executable under another name is not recognised.
+That unit stays in the compiler set and fails loudly at `compiler_identity_unreadable`, exactly as
+before this change — the failure is loud, and nothing is attributed to a tool that was never asked.
+Recognising it would mean guessing which executables are rustdoc.
+`a_doctest_unit_under_an_unrecognised_name_stays_a_compiler_unit` is the negative control.
+
+**A rule the design did not anticipate: a doctest launch does not discharge a `Compiling`
+announcement.** `Compiling <own>` says a unit of the package was not reused, and Cargo has never
+been observed to announce a package for the doctest unit alone (the cached run above announces
+nothing and launches rustdoc anyway). Letting a rustdoc launch settle that debt would accept a
+stream in which the library was announced and never compiled, so the announcement is still owed a
+**compiler** launch. `an_announcement_answered_only_by_a_doctest_launch_is_still_unaccounted` pins
+it, and it is now stated in C-5 and FR-012-7d (e).
+
+**A defect the version bump would have introduced, found by a guard written before it.**
+`record::render` wrote the generator's own `RECORD_VERSION` for any versioned record, which was
+invisible while that constant was `2`. With `RECORD_VERSION = 3` it silently re-labelled a
+**carried** version-2 record — one an operation that verifies nothing passes through — as version
+3. In version 3's vocabulary an absent doctest table means no doctest unit was launched, so the
+re-label would have asserted something a version-2 verification never established: fabricated
+historical evidence. The renderer now writes the record's **own** version. Two tests caught it: the
+guard `a_carried_version_2_record_is_not_silently_upgraded`, and the shipped FR-012-5a guarantee
+`generate_resource_and_migration_leave_verified_with_byte_identical`.
+
+**A surface the design did not list: the human `check` report.** `commands::check::describe`
+enumerates the checks for an operator. It now prints a `doctest` row with the observed rustdoc —
+**only when the record carries the table**, because a row of zeroes would report a unit that was
+never scheduled as one that was reused.
+`the_doctest_bucket_reaches_both_the_human_report_and_the_json` covers both directions.
+
+**Version 2's strictness is enforced by serde, not by a hand-written list.** `ChecksVersion2` names
+exactly the five checks version 2 defines, and the version-2 arm parses the document through it. A
+hand-written guard would work today and rot the day someone adds a sixth check without thinking of
+it; this struct refuses that field too, without being edited.
+
+## The two version questions, derived rather than decided
+
+The maintainer's instruction was to derive contract bumps from the contracts' own compatibility
+rules and to stop and ask if a further product decision were needed. Neither of these needed one.
+
+**`template_version` stays at 8.** C-4's own table distinguishes the axes: `template_version`
+identifies the shape of the **tree** a generation rendered; `record_version` the shape of the
+**record file**. Version 3 adds a table to a file the generator owns and changes no file a
+generation renders. Conflating them would force every project rendered at template 8 to be
+re-rendered for a change none of its files felt.
+
+**`schemaVersion` stays at 2.** C-2 states that the fields of §"`result.toolchain` and
+`result.verified_with`" are additive, and that the TOML record's `record_version` is *"a different
+axis … not a `schemaVersion` change"*. `checks.doctest` is an added nullable field; a consumer
+pinned to `2` reads every document this revision emits.
+
+Contract **text** versions moved as minor revisions under each document's own policy: C-1 1.6.0,
+C-2 1.1.0, C-4 1.4.0, C-5 1.3.0.
+
+## The eight compatibility tests
+
+All eight are implemented and green; 1–6 and the reader-direction control are in
+`generate/record.rs`, 7 and 8 are end-to-end in `generate/verify.rs` against a real toolchain.
+
+1. `a_version_2_record_carrying_a_doctest_table_is_refused_by_name` — **the test that makes the
+   bump a measurement.** Had it passed, the table could have gone into version 2 in place.
+2. `a_version_3_record_round_trips_with_every_doctest_field_preserved` — and the fixture's rustdoc
+   release differs from its `rustc_*`, so a reader that filled one from the other fails here.
+3. `a_version_2_record_without_the_table_still_reads_unchanged`.
+4. `a_legacy_record_still_reads_as_legacy_under_the_version_3_reader`.
+5. `the_supported_version_is_three_and_a_version_4_record_is_refused_by_name` — exit 3 through the
+   approved unsupported-version path.
+6. `a_version_3_record_for_a_binary_only_project_writes_no_doctest_table`.
+7. `a_cached_library_bearing_project_still_launches_its_doctest_unit` — `observation = "cached"`,
+   `rustc_*` absent, `rustdoc_*` present. **This is the measurement `units_fresh = 0` rests on**: if
+   Cargo ever stops launching that unit for a cached package, this test fails and that zero is what
+   has to change.
+8. `a_rustdoc_identity_differing_from_the_compilers_is_recorded_not_refused` — a `RUSTC` shim
+   answering another release while rustdoc stays the toolchain's own. Recorded in two fields, not
+   refused. Under option (a) this ordinary run would have been refused as a disagreement.
+
+Plus the reader-direction control `a_reader_whose_newest_version_is_2_refuses_a_version_3_record`,
+which reconstructs the pre-`4cb4709` dispatch and shows the refusal rather than describing it, with
+positive controls that the same reader still reads version 2 and legacy records.
+
+## One number in the proposal above does not add up, and is not repeated
+
+The design section says the doctest unit never reaching `Fresh` was **"measured ten times: five on
+macOS, and on Linux three runs each on 1.94.0 and 1.98.1"**. Five plus three plus three is eleven.
+The proposal text is left as the maintainer approved it, but no code comment, contract or
+requirement written for this implementation repeats the count. They name the platforms instead —
+*macOS/aarch64 under cargo 1.94.0, and Linux/aarch64 under 1.94.0 and 1.98.1* — which is what the
+retained evidence supports, and the behaviour was reproduced again on macOS/aarch64 on 2026-09-09
+before the design was built.
+
+## Untested boundaries, stated
+
+- **A Cargo that reports a doctest unit `Fresh`** has never been observed, so
+  `checks.doctest.units_fresh` has only ever been `0` in a real run. If that changed, a doctest
+  bucket with `units_launched = 0` and `units_fresh = 0` would be indistinguishable from "no
+  library target", because the table is absent in both. Test 7 is the tripwire.
+- **A doctest unit launched by a check other than `cargo test`.** The implementation aggregates
+  doctest chains from all three `-vv` checks so such a unit would be recorded rather than dropped,
+  but only `cargo test` has ever been observed to launch one, so the other two paths are
+  unexercised by any measurement.
+- **`Path::file_name` on a foreign separator.** A `C:\…\rustdoc.exe` chain is split correctly on
+  Windows and not on Unix, and the reverse; the parser only ever reads a stream produced on its own
+  host, so this is a property of `Path` rather than a gap here. The portable half — the `.exe` name
+  and the Windows `set NAME=value&&` environment shape — is asserted on every platform.
+- **A wrapper in front of rustdoc** is recognised and counted toward `wrapper_observed`, but no
+  measurement of a real rustdoc wrapper exists; cargo has no `RUSTDOC_WRAPPER`.

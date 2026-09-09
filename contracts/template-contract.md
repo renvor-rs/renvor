@@ -1,7 +1,7 @@
 ---
 description: "Contract C-4 — template delivery, rendering bounds, and containment"
-version: "1.3.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.3.0 (2026-09-07, Phase 012, L-2): every generated tree declares its toolchain — `rust-toolchain.toml` (an exact release, the framework checkout's channel for a starter, the generator's MSRV for a skeleton) and `rust-version` (the MSRV) — as a template group gated on the record; the provenance record gains `record_version = 2`, `[toolchain]`, and `[verified_with]` (measured after verification, never derived); readers dispatch on `record_version`; the generator now reads THREE files from the framework checkout it validates (`Cargo.toml`, `rust-toolchain.toml`, and `Cargo.lock`) and one it copies (`Cargo.lock`); a checkout whose pin is malformed, an alias, or below its own MSRV is refused by name; the Dockerfile builder tag derives from the pin. A project rendered at template version 8 is not readable by a generator built before this revision. **The number 1.3.0 was reviewed and retained** (maintainer decision, 2026-09-08): the reader keeps accepting every record it accepted before and no promise of 1.2.0 is withdrawn, so the bump is minor under this document's own versioning policy — the incompatibility runs the other way, from an OLDER generator to a version-2 record, which is a property of the record and is disclosed as its own rule rather than encoded in this number. The three numbers that move in this phase — this contract text 1.3.0, `template_version` 8, `record_version` 2 — are distinguished in the body. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.4.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.4.0 (2026-09-09, Phase 012, finding 4): the provenance record gains `record_version = 3` and one optional table, `[verified_with.checks.doctest]` — the units `cargo test` launches with **rustdoc** rather than `rustc`, with the observed rustdoc's own `-vV` identity in `rustdoc_release`/`rustdoc_commit`. Version 2 could not carry it: version 2 is validated with `deny_unknown_fields` everywhere inside, so a version-2 record with a fourth check table is REFUSED by a reader already shipped inside generated projects — a measured incompatibility, not a judgement call. Version 2 therefore keeps its exact semantics and its own strict layout, and readers now dispatch on 2 and 3 alike; `details.supported` becomes `3`. `template_version` does NOT move: no file a generation renders changed, and the two are different axes by this table's own rule. Before this revision every library-bearing project failed verification outright — the rustdoc unit was asked `rustc -vV`, which it does not answer — so the table is the record of a defect being closed, not a new option. **The number 1.4.0 is minor by this document's own policy**: the reader keeps accepting every record it accepted before (legacy and version 2), and no promise of 1.3.0 is withdrawn; the incompatibility again runs the other way, from an OLDER generator to a version-3 record, and is disclosed as its own rule rather than encoded in this number. 1.3.0 (2026-09-07, Phase 012, L-2): every generated tree declares its toolchain — `rust-toolchain.toml` (an exact release, the framework checkout's channel for a starter, the generator's MSRV for a skeleton) and `rust-version` (the MSRV) — as a template group gated on the record; the provenance record gains `record_version = 2`, `[toolchain]`, and `[verified_with]` (measured after verification, never derived); readers dispatch on `record_version`; the generator now reads THREE files from the framework checkout it validates (`Cargo.toml`, `rust-toolchain.toml`, and `Cargo.lock`) and one it copies (`Cargo.lock`); a checkout whose pin is malformed, an alias, or below its own MSRV is refused by name; the Dockerfile builder tag derives from the pin. A project rendered at template version 8 is not readable by a generator built before this revision. **The number 1.3.0 was reviewed and retained** (maintainer decision, 2026-09-08): the reader keeps accepting every record it accepted before and no promise of 1.2.0 is withdrawn, so the bump is minor under this document's own versioning policy — the incompatibility runs the other way, from an OLDER generator to a version-2 record, which is a property of the record and is disclosed as its own rule rather than encoded in this number. The three numbers that move in this phase — this contract text 1.3.0, `template_version` 8, `record_version` 2 — are distinguished in the body. 1.2.0 (2026-09-05, Phase 011 correction round): the provenance record is written after verification, digests marked files without their block, and carries `[[resource]]` definitions; the snapshot policy pins the paths of `Cargo.lock` and the record but not their digests. 1.1.0 (2026-09-05, Phase 011): adds the starter template groups and the VERBATIM files a starter copies (the framework's embedded migration sets), the snapshot stability policy, and the provenance record `.renvor/generated.toml`; every bound and containment rule is unchanged. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-4 — Templates
@@ -157,15 +157,17 @@ and a reader who conflates them will look for a compatibility rule in the wrong 
 
 | Number | What it identifies | Phase 012 value | Who reads it |
 |---|---|---|---|
-| **This contract's text version** | the revision of *this document* — what the generator promises about templates, records, and containment | **1.3.0** | people, in review; nothing in the code |
+| **This contract's text version** | the revision of *this document* — what the generator promises about templates, records, and containment | **1.4.0** | people, in review; nothing in the code |
 | **`template_version`** | the shape of the *tree* a generation rendered, recorded in `renvor.toml` and in the record | **8** | `renvor check` and `renvor generate`, to know which files a tree has |
-| **`record_version`** | the shape of the *provenance record file* `.renvor/generated.toml` | **2** | the record reader, which dispatches on it (the Reader rule below) |
+| **`record_version`** | the shape of the *provenance record file* `.renvor/generated.toml` | **3** | the record reader, which dispatches on it (the Reader rule below) |
+
+**`template_version` did not move with `record_version` in 1.4.0, and this table is why.** `template_version` identifies the shape of the *tree*; version 3 of the record adds a table to a *file the generator owns* and changes no file a generation renders. A reader that wants to know which files a tree has still reads `8`; a reader of the record still dispatches on the record's own number. Conflating them here would have forced every project rendered at template 8 to be re-rendered for a change none of its files felt.
 
 **The contract version is not a compatibility axis.** It is the maintainer's number for this text,
 and it is a MINOR bump — the record's *reader* keeps accepting every record it accepted before
 (the Reader rule: an absent `record_version` is a legacy record, read and reported as such), and no
-promise made by 1.2.0 is withdrawn. What a newer generator does with an older project is unchanged
-and is the compatible direction.
+promise made by 1.2.0 — or, for 1.4.0, by 1.3.0 — is withdrawn. What a newer generator does with an
+older project is unchanged and is the compatible direction.
 
 **The incompatible direction is real, and it is a property of the record, not of this number.** An
 older generator — one built from source at or before `7281e4f`, since nothing has been published —
@@ -176,16 +178,28 @@ has no `record_version` rule to refuse by name with. That is stated as its own r
 writes, and it is the reason the bump is announced loudly here even though the number itself is
 minor. *Rebuild the generator, not the project.*
 
-### Record version 2 (Phase 012, L-2)
+### Record versions 2 and 3 (Phase 012, L-2 and finding 4)
 
 The record gains a format version of its own — **`record_version`**, a different axis from
 [`json-output.md`](json-output.md)'s `schemaVersion`: it versions a file the generator owns, and
 this contract governs it. Version 2 adds `[toolchain]` (what was rendered) and `[verified_with]`
-(what the five checks observed and what the seal queried). The layout, with every field's meaning
-beside it:
+(what the five checks observed and what the seal queried). **Version 3** adds one optional table,
+`[verified_with.checks.doctest]`, and nothing else.
+
+**Why version 3 rather than a sixth field in version 2.** `cargo test` on a package with a library
+target launches one unit with **rustdoc**, not `rustc` — the trigger is the library target alone,
+not a doc comment. That unit does not answer `rustc -vV`, so before 1.4.0 every library-bearing
+project failed verification with `compiler_identity_unreadable`. Recording it needed a table; and
+version 2 is validated with `deny_unknown_fields` **everywhere inside**, so a version-2 record
+carrying that table is refused by a reader already shipped inside generated projects. That is a
+measurement, not a preference, and "nothing has been published yet" does not license changing
+version 2's meaning in place — the constraint is the strict reader in the tree.
+
+The layout below is version 3's, with every field's meaning beside it; version 2 is the same
+document without the `doctest` table:
 
 ```toml
-record_version = 2               # absent in every record written before this revision (FR-012-5b)
+record_version = 3               # absent in every record written before 1.3.0 (FR-012-5b); 3 since 1.4.0 (finding 4)
 generator_version = "0.0.0"
 template_version = "8"
 
@@ -198,7 +212,10 @@ operation = "new"                # new | auth — the operation whose five check
 verified_at = "2026-09-07T00:00:00Z"   # RFC 3339, UTC: the instant the five checks passed
 tree_scope = 1                   # the scope rule of FR-012-5d that tree_digest was computed under
 tree_digest = "sha256:…"         # over the contents of every in-scope file at that verification (FR-012-5d)
-observation = "launched"         # launched | cached | mixed — for the build and test units of the project's own package(s) (FR-012-7d)
+observation = "launched"         # launched | cached | mixed — for the BUILD AND TEST units of the project's own package(s) (FR-012-7d).
+                                 #   Clippy is outside it, and so are the doctest units: neither is launched with rustc, so neither can
+                                 #   contribute to a statement about rustc_*. A cached library-bearing project therefore records "cached"
+                                 #   truthfully while its doctest unit launched — see [verified_with.checks.doctest] below
 rustc_release = "1.98.1"         # the launched rustc's answer to `-vV` (three fields, never one string, D-L2-3); ABSENT when observation = cached;
 rustc_commit = "48a229cea"       #   for mixed, the launched units' identity only. Never filled from the pin, PATH, an old record, or .rustc_info.json
 rustc_host = "x86_64-unknown-linux-gnu"
@@ -217,7 +234,7 @@ wrapper = false                  # RUSTC_WRAPPER/RUSTC_WORKSPACE_WRAPPER in the 
 rustflags = false                # RUSTFLAGS present
 rustdocflags = false             # RUSTDOCFLAGS present
 
-[verified_with.checks.clippy]    # one table per check that can launch a compiler (clippy, build, test); fmt and run carry `outcome` only
+[verified_with.checks.clippy]    # one table per check that can launch a compiler (clippy, build, test, doctest); fmt and run carry `outcome` only
 outcome = "passed"
 units_launched = 2               # Cargo `Running` lines for the project's own units
 units_fresh = 0                  # units Cargo positively reported `Fresh`
@@ -235,6 +252,18 @@ units_fresh = 0
 outcome = "passed"
 units_launched = 2
 units_fresh = 0
+
+[verified_with.checks.doctest]   # VERSION 3 AND LATER, and OPTIONAL within the version: absent entirely when no doctest unit was
+outcome = "passed"               #   launched, which is every project with no library target — including every starter this generator
+units_launched = 1               #   ships. Its ABSENCE is never a claim that a doctest unit was reused.
+units_fresh = 0                  # Cargo attributes no `Fresh` report to a doctest unit: a package reported `Fresh` launches its
+                                 #   doctest unit anyway (measured on macOS/aarch64 under cargo 1.94.0 and on Linux/aarch64 under 1.94.0 and 1.98.1), so a
+                                 #   cached run legitimately records this table with units_fresh = 0 and an identity present
+rustdoc_release = "1.98.1"       # the observed rustdoc EXECUTABLE (the one Cargo's Running line names), from its own `-vV` query under
+rustdoc_commit = "48a229cea"     #   the seal, parsed under FR-012-7e's grammar with `rustdoc` as the tool name; ABSENT when no doctest
+                                 #   unit was launched. NEVER filled from rustc_*, the pin, PATH, or an old record, and never inferred
+                                 #   from the compiler: `RUSTC` redirects rustc and leaves rustdoc on the toolchain's own, so the two
+                                 #   legitimately differ. A difference is RECORDED, not refused
 ```
 
 The `[[file]]` and `[[resource]]` entries follow, unchanged from 1.2.0. The section references in
@@ -245,8 +274,8 @@ Four rules govern the table:
 | Rule | Statement |
 |---|---|
 | **Write rule** (FR-012-5a) — which operations write `[verified_with]` | `renvor new` (a real run; a dry run writes nothing) and `renvor generate auth` (its scratch verification) — the two operations that run the five checks — write `[verified_with]` with their `operation`. `renvor generate resource` and `renvor generate migration` run no build; they **leave `[verified_with]` byte-identical** and rewrite only the `[[file]]`/`[[resource]]` entries they own. The table is **measured, never derived** (FR-012-4): its values are what the five checks reported and what the seal queried, recorded separately — launch observations from the checks themselves as they ran in the staged (or scratch) tree under the sealed environment, and queried identities of the tools those launches named; nothing in it is inferred from `PATH`, from the generator's own process environment, from the pin, from a previous record, or from a configuration value the checks did not act on. A check whose units were positively `Fresh` is recorded as cached with the observed identity **unavailable**, never filled in. What the table carries is **launch observation plus queried identity**, never proof of fresh compiler execution through a wrapper |
-| **Reader rule** (FR-012-5b, D-L2-9) — dispatch on `record_version` | A reader reads `record_version` first: **absent** → a legacy (version 1) record: accepted; `[toolchain]` and `[verified_with]` are reported as *unknown*, never filled in; **2** → the whole document is validated strictly (`deny_unknown_fields` within the version); **greater than the reader knows** → refused by name — `record_unsupported`, `details.record_version`, `details.supported = 2` — **before any file is planned or modified**, **exit 3** ([`command-surface.md`](command-surface.md)'s row 3, a validation failure: an unsupported *input* record, not a missing environment tool; U-1, approved 2026-09-07). A `tree_scope` the reader does not know is the same refusal. The reason string and the two `details` keys are one text across C-1's table, C-2's registry, the `tests/json/record_unsupported.json` fixture, and the help and README sentences that name them |
-| **The incompatibility the other way** (FR-012-5c) — documented, not claimed away | A `renvor` built from source at or before `7281e4f` reads a version-2 record through `#[serde(deny_unknown_fields)]` and fails with serde's unknown-field error inside the existing read failure — a generic parse error, **not** `record_unsupported`, because those binaries do not have this rule. Nothing has been published, but people may have generated projects from source, so this contract's revision text and the README of every new project both say: *a project generated at template version 8 or later is not readable by a generator built before this revision; rebuild the generator, not the project* |
+| **Reader rule** (FR-012-5b, D-L2-9) — dispatch on `record_version` | A reader reads `record_version` first: **absent** → a legacy (version 1) record: accepted; `[toolchain]` and `[verified_with]` are reported as *unknown*, never filled in; **2** or **3** → the whole document is validated strictly (`deny_unknown_fields` within the version), each under ITS OWN layout: version 2 defines five check tables and version 3 defines six, so a `[verified_with.checks.doctest]` table inside a version-2 record is refused, by name, as a key that version does not have (that refusal is what made version 3 necessary rather than optional); **greater than the reader knows** → refused by name — `record_unsupported`, `details.record_version`, `details.supported = 3` — **before any file is planned or modified**, **exit 3** ([`command-surface.md`](command-surface.md)'s row 3, a validation failure: an unsupported *input* record, not a missing environment tool; U-1, approved 2026-09-07). A `tree_scope` the reader does not know is the same refusal. The reason string and the two `details` keys are one text across C-1's table, C-2's registry, the `tests/json/record_unsupported.json` fixture, and the help and README sentences that name them |
+| **The incompatibility the other way** (FR-012-5c) — documented, not claimed away | **Two generations of it since 1.4.0, and neither is claimed away.** A `renvor` whose newest version is **2** refuses a version-3 record by name — `record_unsupported`, `details.supported = 2` — which is the disciplined failure this dispatch exists to give; there is no backward compatibility for version 3 and none is asserted. Further back, a `renvor` built from source at or before `7281e4f` reads a version-2 record through `#[serde(deny_unknown_fields)]` and fails with serde's unknown-field error inside the existing read failure — a generic parse error, **not** `record_unsupported`, because those binaries do not have this rule. Nothing has been published, but people may have generated projects from source, so this contract's revision text and the README of every new project both say: *a project generated at template version 8 or later is not readable by a generator built before this revision; rebuild the generator, not the project* |
 | **Freshness rule** (FR-012-5d, D-L2-10) — the verified tree, compared by contents | At the verification — after the five checks pass, before the manifest is written — the generator computes `tree_digest` = SHA-256 over the sorted lines `<relative path>\0<sha256 of the file's bytes>\n` for **every regular file in scope found by walking the staged (or scratch) tree**, and records it with `tree_scope = 1` and `verified_at`. **Scope (`tree_scope = 1`)** — what the five checks compile or read: `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `build.rs`, `renvor.toml`, `.cargo/config.toml`, and every file under `src/`, `tests/`, `benches/`, `examples/`, and `migrations/`; **excluded**: `README.md`, `Dockerfile`, `.dockerignore`, `.gitignore`, `.env*`, the `.renvor/` directory (the record and the manifest themselves), `target/`, and every other path. A symlink in scope is recorded as `<path>\0symlink:<link text>\n`, never followed. **Additions and deletions count**: the scope is a pattern over the tree, not the `[[file]]` list, so a file added under `src/` or deleted from `tests/` changes the digest. **Freshness is not ownership**: the managed blocks above decide what the generator owns and may rewrite; for freshness the whole file's bytes count — an edit inside a managed block and an edit outside one both change compiled source, and both make the evidence **historical**; ownership never hides a change. `renvor check` recomputes the digest over the current working tree under the recorded `tree_scope` and compares: equal → `verified_with: current`; different → `verified_with: historical — the tree verified at <verified_at> (<operation>) is not the current tree; not proof of the current tree`, and `--output json` carries `historical = true`. **No count of operations is printed**: nothing in the tree records how many operations ran since the verification, and a number nothing supports is not printed. Earlier evidence is **retained**, never deleted and never re-dated. Because the files `generate resource` and `generate migration` add are inside the scope, the evidence becomes historical the moment they run — by the tree digest, not by a counter — and stays historical until an operation that verifies (`generate auth`, or a fresh `renvor new`) writes new evidence (FR-012-10c) |
 
 ## Output paths

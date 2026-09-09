@@ -226,7 +226,12 @@ never prints `Fresh` beside a launch. That is **false**, and the counter-example
 cached `cargo test -vv` on a crate with a doctest prints `Fresh` and then a `Running` line for the
 rustdoc unit, which carries `CARGO_PKG_NAME` and `--crate-name` and is therefore the project's own by
 every rule the parser applies (reproduced 2026-09-08, cargo 1.97.1, lib+bin with one doctest). The
-first measurement missed it because the probe crate had no doc comments, so no doctest unit existed.
+first measurement missed it because the probe crate was **binary-only**, which launches no doctest
+unit at all. (**Corrected 2026-09-09**: this sentence previously blamed the absence of doc comments.
+That is false. A library target with no `///` anywhere still launches a doctest unit — measured on
+macOS/aarch64 under cargo 1.94.0 and 1.97.1, and pinned by
+`a_library_target_with_no_doc_comments_still_launches_a_doctest_unit`. The trigger is the library
+target alone.)
 The invariant that IS measured — `Fresh` never shares a stream with the package's *announcement* —
 held in every shape checked, and the predicate is now that. The control above includes the
 cached-doctest stream and fails against the launch-count form. **U-2 was not breached in a shipped
@@ -313,12 +318,34 @@ a record that is wrong rather than a run that fails, since the contradiction che
 the launch count. That conflation predates this round and requiring the location on the launch side
 has a wider blast radius than a correction round should take; it is left for the maintainer.
 
+> **CORRECTED 2026-09-09 — the paragraph above is out of date and is kept only as the state at
+> `c7a0a6a`, the last commit that touched this file before the fix.** The maintainer authorised
+> findings 2 and 3 as one coupled correction on 2026-09-09, and `5de5b2f` made the location
+> **necessary** on the launch side as well: `launch` now takes `CARGO_MANIFEST_DIR` as decisive
+> wherever it is present and comparable, and falls back to `CARGO_PKG_NAME` only where it is absent
+> or where Cargo cannot print the staging path losslessly (a path containing an `ESC`, measured —
+> Cargo's own removal is lossy and replicating it partly would be worse than not replicating it).
+> `a_same_named_dependency_launch_is_not_counted_as_the_projects_own` pins the fix and
+> `a_staging_path_cargo_cannot_print_losslessly_still_falls_back_to_the_name` pins the residual
+> bound.
+
 **A related limitation, surfaced by the same counter-example and NOT fixed here.** In a lib-bearing
 project the doctest unit's launch chain ends in `rustdoc`, and FR-012-7e's identity query parses
 `rustc -vV`'s shape — so `rustdoc -vV` fails the grammar and the run is
 `compiler_identity_unreadable`. Generated starters are bin-only, so nothing shipped meets it. Whether
 a doctest unit should count as an own launch at all, or be recognised and skipped, is a design
 question this round did not open.
+
+> **CORRECTED 2026-09-09 — this is finding 4, and it is now fixed.** The maintainer approved option
+> (d) and `record_version = 3` for implementation on 2026-09-09. Neither of the two options this
+> paragraph imagined was taken: the doctest unit is **not** skipped (skipping it would drop evidence
+> of a real launch) and it does **not** count as a compiler launch. It is counted in its own bucket,
+> asked its own question (`rustdoc -vV`, parsed by the same grammar under a second tool name), and
+> kept outside the `observation` and outside the compiler's identity set — so a `RUSTC` override
+> that redirects `rustc` and leaves `rustdoc` alone is recorded rather than refused as a
+> disagreement. `governance/phase-012-finding-4-rustdoc-observation-proposal.md` §"As implemented"
+> is the record; the trigger is the **library target alone**, not a doc comment, which this
+> paragraph did not know.
 
 **For decision.** Whether C-5's sentence is corrected to what Cargo's output can carry, or the
 guarantee is bought with evidence outside that output, is a maintainer's decision. It is not taken

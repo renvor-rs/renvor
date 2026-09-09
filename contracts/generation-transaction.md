@@ -1,7 +1,7 @@
 ---
 description: "Contract C-5 — the generation transaction and its destination-safety guarantees"
-version: "1.2.0"
-status: "normative — the safety core of the generator. 1.2.0 (2026-09-07, Phase 012, L-2): the sealed environment forces `RUSTUP_AUTO_INSTALL=0`, no longer passes `RUSTUP_DIST_SERVER` or `RUSTUP_UPDATE_ROOT`, refuses rustup below 1.28.1, an unidentifiable proxy, and a pinned-but-absent toolchain by name before any check runs, records, per check, the outcome, the launch observation, and the queried identities (release, commit, host; override and wrapper presence only) — or that cached artifacts were reused with no launch observed — and applies the same seal to `rustfmt` at generation and to `doctor`'s probes; `generate auth` stages its scratch copy beside the project so the project's toolchain selection is preserved. The protocol, atomicity, and residue rules are unchanged; the seal is not a sandbox for trusted wrappers or build scripts. The protocol block is CORRECTED to the order the implementation has followed since C-4 1.2.0 — VERIFY, then RECORD (the provenance record is written after verification and before the manifest), then MANIFEST, then the review, then PLACE — and renumbered: VERIFY is step 4 (step 5 in 1.1.0's numbering, which the Phase 012 brief cites); its verb is unchanged and its reading is stated in the body (A-8, 2026-09-07). 1.1.0 (2026-09-05, Phase 011 correction round): the sealed environment strips proxy credentials and a check's output is redacted before it is reported. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.3.0"
+status: "normative — the safety core of the generator. 1.3.0 (2026-09-09, Phase 012, finding 4): `cargo test -vv` on a package with a library target launches one unit with **rustdoc**, not `rustc`, and that unit is now accounted for in its own bucket — its own counts, its own `rustdoc -vV` identity, outside the `observation` and outside the compiler's identity set. Before this revision it was asked `rustc -vV`, which it does not answer, and every library-bearing project failed verification. No destination-safety guarantee, seal rule, or rollback rule changes. 1.2.0 (2026-09-07, Phase 012, L-2): the sealed environment forces `RUSTUP_AUTO_INSTALL=0`, no longer passes `RUSTUP_DIST_SERVER` or `RUSTUP_UPDATE_ROOT`, refuses rustup below 1.28.1, an unidentifiable proxy, and a pinned-but-absent toolchain by name before any check runs, records, per check, the outcome, the launch observation, and the queried identities (release, commit, host; override and wrapper presence only) — or that cached artifacts were reused with no launch observed — and applies the same seal to `rustfmt` at generation and to `doctor`'s probes; `generate auth` stages its scratch copy beside the project so the project's toolchain selection is preserved. The protocol, atomicity, and residue rules are unchanged; the seal is not a sandbox for trusted wrappers or build scripts. The protocol block is CORRECTED to the order the implementation has followed since C-4 1.2.0 — VERIFY, then RECORD (the provenance record is written after verification and before the manifest), then MANIFEST, then the review, then PLACE — and renumbered: VERIFY is step 4 (step 5 in 1.1.0's numbering, which the Phase 012 brief cites); its verb is unchanged and its reading is stated in the body (A-8, 2026-09-07). 1.1.0 (2026-09-05, Phase 011 correction round): the sealed environment strips proxy credentials and a check's output is redacted before it is reported. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-5 — The generation transaction
@@ -215,7 +215,18 @@ launches none after `build`). For each check the record carries the **outcome**;
 launch chains** of the project's own units, parsed from Cargo's `Running` lines (every
 `NAME=value` token stripped; wrapper presence as a boolean; paths never); and, separately, the
 **queried identity** of the launched compiler — the last binary of the build/test chain, run once
-with `-vV` under the same seal. For clippy the launch chain is `[clippy-driver, rustc]` and the
+with `-vV` under the same seal. **A doctest unit is not part of that chain.** `cargo test -vv` on a
+package with a library target launches one unit with **rustdoc** — the trigger is the library
+target alone, not a doc comment — and rustdoc does not answer `rustc -vV`. That unit is the
+project's own and is recorded as its own bucket, `checks.doctest`, with its own counts and the
+observed rustdoc executable's own `-vV` answer in `rustdoc_release`/`rustdoc_commit`, parsed under
+the identity grammar with `rustdoc` as the tool name. Recognition is by the chain's TRAILING
+executable, so a wrapper in front of rustdoc does not hide it; an executable under some other name
+is not recognised, stays in the compiler set, and fails loudly at
+`compiler_identity_unreadable` rather than being attributed to a tool that was never asked.
+`rustdoc_*` is never filled from `rustc_*` and never inferred from it: `RUSTC` redirects `rustc`
+and leaves rustdoc on the toolchain's own, so the two legitimately differ, and a difference is
+recorded rather than refused. For clippy the launch chain is `[clippy-driver, rustc]` and the
 trailing `rustc` argument is **not** clippy's executing compiler, so the observed `clippy-driver`
 **executable** — the one the `Running` line names — is queried **itself**, with
 `clippy-driver --version`, under the seal and after the identification safeguards above; `cargo
@@ -226,9 +237,22 @@ launch, and the record then says `observation = "cached"` (or `"mixed"`, with bo
 the observed identity **absent** — observed compiler identity unavailable, never filled from the
 pin, `PATH`, an old record, or `.rustc_info.json` — and one stderr line names the checks whose
 units were all `Fresh`: `verification reused cached artifacts for <checks>: no compiler launch
-observed`. A cached clippy check records no driver identity. **Capture failure is not caching**:
-every unit of the project's own package(s) must be accounted for by a `Running` line or a positive
-`Fresh` report; a missing line, a truncated or malformed stream, a parse failure, or a `-vV`
+observed`. A cached clippy check records no driver identity. **The doctest bucket is excluded from
+both the `observation` and that line, explicitly.** `observation` summarises the build and test
+units — the source of `rustc_*` — and a unit launched with rustdoc cannot contribute to a
+statement about `rustc`. The line's `<checks>` are those whose own units were all `Fresh`, and the
+doctest check is never among them because its table exists only when a unit was launched. So a
+fully cached library-bearing project records `observation = "cached"` with `rustc_*` absent AND
+`checks.doctest` present with an identity — a combination that is truthful in every part, and the
+one this bucket exists to make representable: Cargo reports the package `Fresh` and launches its
+doctest unit anyway (measured on macOS/aarch64 under cargo 1.94.0 and on Linux/aarch64 under 1.94.0 and 1.98.1), so no
+`Fresh` report is ever attributed to a doctest unit and `checks.doctest.units_fresh` is `0`. **Capture failure is not caching**:
+every unit of the project's own package(s) must be accounted for by a `Running` line — in the
+compiler bucket or the doctest bucket, according to what the chain ends in — or by a positive
+`Fresh` report for that package. A `Compiling`/`Checking` announcement is answered only by a
+COMPILER launch: a doctest launch does not discharge it, because Cargo has never been observed to
+announce a package for the doctest unit alone, and letting rustdoc settle that debt would accept a
+stream in which the library was announced and never compiled. A missing line, a truncated or malformed stream, a parse failure, or a `-vV`
 answer outside the identity grammar is `project_verification_failed`,
 `details.reason = evidence_capture_failed` (an identity outside the grammar keeps
 `compiler_identity_unreadable`), redacted as above, nothing placed — and **never** recorded as
