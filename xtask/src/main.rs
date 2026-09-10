@@ -229,10 +229,11 @@ fn census() -> i32 {
         report_missing(&missing_tools, &missing_databases);
         return code;
     }
+    let identity = compiler_identity();
     step_ok(
         1,
         "prerequisite probe",
-        "all required tooling present, and the four-row database environment is set",
+        &prerequisite_detail(identity.as_deref()),
     );
     if !the_four_rows_all_ran(&root, &environment) {
         return EXIT_STEP_FAILED;
@@ -572,6 +573,45 @@ fn humanise(elapsed: Duration) -> String {
 /// things parse. Nothing here can fail the sequence; it only reports.
 fn timing(label: &str, elapsed: Duration) {
     println!("       timing  {label}: {}", humanise(elapsed));
+}
+
+/// `release (commit-hash)` pulled out of a `rustc -vV` report.
+fn identity_from_vv(text: &str) -> Option<String> {
+    let field = |name: &str| {
+        text.lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+            .map(str::trim)
+    };
+    let release = field("release")?;
+    match field("commit-hash") {
+        Some(hash) if hash != "unknown" => Some(format!("rustc {release} ({hash})")),
+        _ => Some(format!("rustc {release}")),
+    }
+}
+
+/// The compiler this run is about to use, asked directly rather than assumed.
+fn compiler_identity() -> Option<String> {
+    let output = Command::new("rustc").arg("-vV").output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    identity_from_vv(&String::from_utf8(output.stdout).ok()?)
+}
+
+/// Step 1's detail line, which names the compiler the rest of the sequence will use.
+///
+/// The identity is ASKED (`rustc -vV`), never inferred from `rust-toolchain.toml`,
+/// `RUSTUP_TOOLCHAIN`, or the job's name — inferring it is how a `stable` leg reported success
+/// for four weeks while compiling the pinned 1.94.0. A compiler that will not answer is said so
+/// plainly rather than guessed at.
+fn prerequisite_detail(identity: Option<&str>) -> String {
+    let base = "all required tooling present, and the four-row database environment is set";
+    match identity {
+        Some(identity) => format!("{base}; compiling with {identity}"),
+        None => {
+            format!("{base}; the compiler did not answer `rustc -vV`, so this run is unattributed")
+        }
+    }
 }
 
 fn step_ok(number: usize, title: &str, detail: &str) {
@@ -4533,6 +4573,58 @@ mod tests {
              declares one and the parser must be able to see it"
         );
     }
+    /// Step 1 names the compiler the run is about to use (AC-012-4).
+    ///
+    /// # The failure this refuses
+    ///
+    /// From 2026-08-11 to `7281e4f` the CI contexts named `stable` compiled the pinned 1.94.0,
+    /// because `rust-toolchain.toml` beats `rustup default`. Every step reported `ok`, the badge
+    /// went green, and nothing in the gate's own output said which compiler produced that green.
+    /// The defect was invisible for four weeks precisely because the sequence never said.
+    ///
+    /// A gate that does not name its compiler cannot be audited from its log. This asserts the
+    /// first line of the sequence carries the identity, queried from `rustc -vV` rather than
+    /// inferred from a pin, an environment variable, or the job's name.
+    #[test]
+    fn step_1_prints_the_compiler_identity() {
+        let identity = super::compiler_identity();
+        assert!(
+            identity.is_some(),
+            "`rustc -vV` did not answer, so step 1 cannot name its compiler"
+        );
+
+        let detail = super::prerequisite_detail(identity.as_deref());
+        let named = identity.expect("checked above");
+        assert!(
+            detail.contains(&named),
+            "step 1's detail does not name the compiler. It said:\n  {detail}\nand the compiler \
+             is `{named}`. A green gate whose log does not say what compiled it is the exact \
+             shape of the 2026-08-11 defect"
+        );
+    }
+
+    /// The identity is parsed from `rustc -vV`, including the shape that has no commit hash.
+    #[test]
+    fn the_compiler_identity_is_read_from_every_shape_rustc_prints() {
+        let full = "rustc 1.94.0 (4a4ef493e 2026-03-02)\nbinary: rustc\ncommit-hash: 4a4ef493e\n\
+                    commit-date: 2026-03-02\nhost: aarch64-apple-darwin\nrelease: 1.94.0\n";
+        assert_eq!(
+            super::identity_from_vv(full).as_deref(),
+            Some("rustc 1.94.0 (4a4ef493e)")
+        );
+
+        // A distribution build with no commit metadata: `unknown` is not a hash, and printing
+        // `rustc 1.94.0 (unknown)` would read as a hash the reader could look up.
+        let unknown = "binary: rustc\ncommit-hash: unknown\nrelease: 1.94.0\n";
+        assert_eq!(
+            super::identity_from_vv(unknown).as_deref(),
+            Some("rustc 1.94.0")
+        );
+
+        // No release line at all is not an identity, and must not be reported as one.
+        assert_eq!(super::identity_from_vv("binary: rustc\n"), None);
+    }
+
     /// `SUPPORT.md` and `rust-toolchain.toml` carry the dated note about current stable.
     ///
     /// # The claim that was false for four weeks
