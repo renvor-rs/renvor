@@ -215,48 +215,101 @@ regexes = ['''"email":"carol-9f3a@example\.test","password":"''']
 regexTarget = "line"
 
 # ---------------------------------------------------------------------------
-# FP-006 — the truncated-launch-command canary in the evidence parser's tests
+# FP-006 — a truncated-launch-command canary in the evidence parser's tests
 # ---------------------------------------------------------------------------
 # Rule        : generic-api-key
-# Location    : crates/renvor-cli/src/toolchain/evidence.rs line 1332 at commit
-#               58602f10de2184bcd89ad8fe91ac014d22d1bbcf (Phase 012, B1 correction round)
-# Fingerprint : 58602f1…:crates/renvor-cli/src/toolchain/evidence.rs:generic-api-key:1332
+# Location    : crates/renvor-cli/src/toolchain/evidence.rs line 1332, in commit
+#               58602f10de2184bcd89ad8fe91ac014d22d1bbcf (2026-09-08) and NOWHERE ELSE
+# Fingerprint : 58602f10de2184bcd89ad8fe91ac014d22d1bbcf:crates/renvor-cli/src/toolchain/evidence.rs:generic-api-key:1332
 # Entropy     : 3.70
 #
-# The flagged value is `renvor_canary_truncated_e5f6`, one of three canaries in
-# `no_continuation_of_a_launch_command_reaches_a_failure_message`. Each stands in for the part
-# of a Cargo `-vv` launch command that a first-line-only filter used to publish into a failure
-# message, and each test asserts the canary appears in NO rendering of the refusal. It
-# authenticates nothing: it is a word chosen to be searchable, and the value the code under test
-# is proven to withhold.
+# HISTORY ONLY, TODAY. No tree at any current branch head contains the flagged line, and
+# `gitleaks dir .` reports nothing. It was in a branch tip for about two hours on 2026-09-08
+# (09:09 to 11:14), between the commit that introduced it and
+# 5673bf75d33c21d8543271ccd9416034fad2e00f, which renamed the variable and added this
+# entry's broader ancestor in the same commit; a working-tree scan inside that window would
+# have reported it, and this entry does not claim otherwise. What keeps it reachable now is
+# that `gitleaks git` reads refs beyond the ancestry of HEAD — measured on 8.30.1 with no
+# `--log-opts`: 731 commits scanned in this clone against the 70 reachable from `main`. That
+# is why a scan run ON `main` reports a finding that lives on an unmerged branch.
 #
-# What actually tripped the rule was the variable NAME the first draft gave it — `SECRET='…'` —
-# which is the keyword-then-high-entropy shape `generic-api-key` keys on. The working tree now
-# writes `CARGO_PKG_DESCRIPTION='…'`, matching the other two canaries and Cargo's own output, so
-# `gitleaks dir .` reports nothing. The literal remains in commit 58602f1, which `gitleaks git .`
-# re-reads on every run, and this repository does not rewrite published history — the same
-# situation as FP-003, FP-004 and FP-005, with the same remedy.
+# WHY IT IS NOT A SECRET. The flagged value is `renvor_canary_truncated_e5f6`, a Rust string
+# literal inside the test `no_continuation_of_a_launch_command_reaches_a_failure_message`.
+# The test builds three synthetic fragments of a Cargo `-vv` stream and asserts, for each,
+# that the canary appears in NO rendering of a failure message — it is the value the code
+# under test is required to withhold. It authenticates nothing, names no service, and
+# matches no credential format; the word is chosen to be greppable.
 #
-# Scope: matched CONTENT only — the canary word itself, which appears nowhere else in the
-# repository. Deliberately no `paths` entry, for the reason FP-001 records and proved
-# empirically: a `paths` allowlist makes gitleaks skip the file before reading it, and this file
-# parses untrusted tool output, which is where a real credential is most likely to be pasted.
+# What tripped the rule was the variable NAME the fragment used — `SECRET='…'` — which is
+# `generic-api-key`'s keyword-then-high-entropy shape. The other two fragments in the same
+# test spell it `CARGO_PKG_DESCRIPTION='…'`, matching Cargo's own output, and neither was
+# ever flagged; 5673bf7 made the third match them.
 #
-# Verification, performed 2026-09-08, to be repeated after any edit to this file: with this entry
-# active both scans report zero findings, and a canary injected into
-# `crates/renvor-cli/src/toolchain/evidence.rs` — the very file this entry covers — IS still
-# reported by `gitleaks dir .` as `generic-api-key`.
+# WHY THE ENTRY IS SHAPED THIS WAY — three conditions, all measured on gitleaks 8.30.1, the
+# version this repository pins, against throwaway repositories outside it:
 #
-# CALIBRATE THE CANARY FIRST, as FP-002 records for the AWS rule. Two shapes tried here did NOT
-# trigger and would have produced a false "the allowlist is fine" reading: an `AKIA…`-prefixed
-# string, and `api_key = "<32 mixed-case chars>"` whose entropy fell under the rule's threshold.
-# What does trigger is a keyword immediately followed by a genuinely high-entropy run — the same
-# shape as the finding this entry suppresses. Prove the canary fires in a scratch file at the
-# repository root before concluding anything from its absence inside a covered one.
+#   * `commits` PLUS `regexes` PLUS `condition = "AND"` — ALL THREE. Measured: `commits`
+#     ALONE suppresses every finding in the named commit; a second, unrelated
+#     credential-shaped value added by the same commit was silently lost. `commits` plus
+#     `regexes` with NO `condition` behaves identically, because the criteria are OR-ed by
+#     default and the commit clause matches on its own.
+#     THE `condition` IS NOT ITSELF THE SAFEGUARD. Measured separately: an entry with
+#     `condition = "AND"` and `commits` as its ONLY criterion suppresses the whole commit
+#     exactly as a bare `commits` entry does — `AND` constrains only across the criteria that
+#     are actually present. So deleting the `regexes` line below silently converts this into a
+#     blanket exemption for 58602f1, and no scan output would say so. `xtask`'s
+#     `every_gitleaks_commits_allowlist_is_conjunctive` refuses both mistakes.
+#   * The regex carries the KEYWORD, not just the literal: `SECRET='<canary>`. Measured: the
+#     literal alone also suppresses the same canary written under a different keyword, in a
+#     different commit. This entry does not; that case is still reported.
+#   * Deliberately no `paths`, for the reason FP-001 records: a `paths` allowlist makes
+#     gitleaks skip the file before reading it, and this file parses untrusted tool output,
+#     which is where a real credential is most likely to be pasted.
 #
-# Removable when: commit 58602f1 has left the scanned history. Renaming the fixture alone is not
+# Together the two conditions allow exactly one line of one commit. A future `SECRET='…'`
+# carrying this same canary in NEW code is still a finding, because the commit will differ.
+#
+# Verification, performed 2026-09-10, to be repeated after any edit to this file: with this
+# entry active, `gitleaks git .` and `gitleaks dir .` both report zero findings; without it,
+# `gitleaks git .` reports exactly this one. Controls that MUST keep failing, each measured:
+# a different credential-shaped value in the same file and the same commit; the same canary
+# under a different keyword; and the canary with one character changed.
+#
+# CALIBRATE THE CANARY FIRST, as FP-002 records for the AWS rule: a control that does not fire
+# proves nothing about the allowlist. WHAT FIRES IS NOT PREDICTABLE FROM SHAPE, and the
+# clearest proof is a superset that goes quiet. Measured this round on 8.30.1 with the default
+# rule set, every value behind the same `SECRET=` keyword:
+#
+#   FIRED   the canary bare                        28 chars, Shannon 3.700
+#   FIRED   the canary with `Q7xV` appended        32 chars, Shannon 4.031
+#   FIRED   the canary with `ABCD` appended        32 chars, Shannon 4.031
+#   SILENT  the canary with `EXTRA` appended       33 chars, Shannon 4.104
+#   FIRED   a 32-character mixed-case value                 Shannon 5.000
+#   SILENT  a different 32-character mixed-case value
+#   SILENT  the canonical `AKIAIOSFODNN7EXAMPLE`   (the trap FP-002 already recorded)
+#
+# The fourth row is LONGER and HIGHER-entropy than the two above it and still does not fire.
+# The Shannon figures were computed independently and reproduce gitleaks' own reported entropy
+# to three decimals, so that is a property of the rule, not a measurement artefact. Two
+# 32-character mixed-case values disagree with each other. Do not reason from length, case,
+# character class, or entropy: write the candidate to a scratch file at the repository root,
+# confirm gitleaks reports it THERE, and only then read anything into its silence inside a
+# covered file.
+#
+# NOTE FOR WHOEVER MERGES PR #72: that branch carries its own FP-006, allowlisting the bare
+# literal with no `commits` condition — broader than this one, and measured above to also
+# suppress the canary under other keywords. Resolve the conflict in favour of this entry.
+#
+# Removable when: commit 58602f1 has left the scanned history. Renaming the variable is not
 # sufficient, and it has already been renamed.
+# SCOPE NOTE: the entry is rule-agnostic. It allows that line of that commit for ANY rule, not
+# only `generic-api-key` — measured with a synthetic extra rule matching the same text, which
+# fired without the entry and was suppressed with it. Acceptable, and recorded rather than
+# hidden, because 58602f1 is immutable and holds exactly one finding across the 731 commits a
+# scan reads, and the line's content is a known synthetic canary.
 [[allowlists]]
-description = "FP-006: the 'renvor_canary_truncated_e5f6' launch-command canary in renvor-cli's evidence parser tests, which the test requires to be absent from every rendering"
-regexes = ['''renvor_canary_truncated_e5f6''']
+description = "FP-006: the SECRET='renvor_canary_truncated_e5f6' launch-command fragment in renvor-cli's evidence parser tests, in commit 58602f1 only, which the test requires to be absent from every rendering"
+condition = "AND"
+commits = ['''58602f10de2184bcd89ad8fe91ac014d22d1bbcf''']
+regexes = ['''SECRET='renvor_canary_truncated_e5f6''']
 regexTarget = "match"
