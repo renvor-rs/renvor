@@ -11,9 +11,14 @@
 //! FR-043. Every probe below runs a local executable with `--version`. Nothing resolves a name or
 //! opens a socket, which is why the offline test needs no network stub.
 
+use std::path::Path;
+
+use cap_std::fs::Dir;
+
 use serde::Serialize;
 
 use crate::exit::{CliError, Exit};
+use crate::generate::verify::Sealed;
 use crate::output::Reporter;
 use crate::output::layout::{Mark, Report, Status};
 
@@ -218,6 +223,119 @@ fn compatible(minimum: Option<&semver::Version>, found: Option<&semver::Version>
 /// staging directory from one belonging to a `renvor new` running in another terminal **right
 /// now**. The remedy is printed for the operator to run, with the process id visible so they can
 /// check before removing anything.
+/// What `doctor` reports about the toolchain here (FR-012-11), or `None` outside a project.
+///
+/// Every field is REPORTED, never acted on: `doctor` installs nothing, sets no default, and runs
+/// no listing command (SR-012-4). A value it could not obtain is `None` and renders as *unknown*
+/// — it is never filled in from a neighbouring field, because the whole point of the section is
+/// to tell the operator what is actually true here rather than what ought to be.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolchainSection {
+    /// The channel `rust-toolchain.toml` pins in this directory.
+    pub pinned: Option<String>,
+    /// `rust-version` as the project's manifest declares it.
+    pub rust_version: Option<String>,
+    /// What the provenance record says verified the tree, or `None` for a record that predates
+    /// the field or a tree with no record at all.
+    pub verified_with: Option<String>,
+    /// rustup's own version, when a rustup could be located and asked.
+    pub rustup: Option<String>,
+    /// The floor below which the pin probes are not run at all.
+    pub floor: &'static str,
+    /// The compiler that resolves HERE, asked rather than inferred.
+    pub resolved: Option<String>,
+    /// Why that compiler and not another.
+    pub selected_by: Option<String>,
+    /// Whether the resolved compiler is a rustup proxy (FR-012-7c).
+    pub proxy: bool,
+}
+
+/// Is there a project in this directory?
+///
+/// `renvor.toml` OR `rust-toolchain.toml`: a tree generated before template version 8 has the
+/// first and not the second, and a hand-written crate may have the second and not the first.
+/// Requiring both would omit the section exactly where an operator is most likely to be asking.
+/// Builds the toolchain section for `dir`, or `None` when there is no project here.
+///
+/// The order is deliberate and is the reconciliation D-L2-7 asked for. Everything READ from
+/// files comes first and always happens. The probes come second and are **conditional**: below
+/// the rustup floor, or on a proxy whose rustup cannot be located, they are not run at all and
+/// the operator is told why rather than shown a blank.
+///
+/// `doctor` never runs `rustup toolchain list`, or any installing, updating, or default-setting
+/// command (SR-012-4). The operator's real question — "is the pin usable here, and what will
+/// actually run?" — is answered with proxy probes that cannot install anything.
+pub fn toolchain_section(dir: &Path, sealed: &Sealed) -> Option<ToolchainSection> {
+    if !is_project(dir) {
+        return None;
+    }
+
+    // ── READ ────────────────────────────────────────────────────────────────────────
+    let pinned = crate::toolchain::pin::read_channel(&dir.join("rust-toolchain.toml"))
+        .ok()
+        .map(|channel| channel.to_string());
+    let rust_version = crate::toolchain::pin::read_msrv(&dir.join("Cargo.toml"))
+        .ok()
+        .map(|version| version.to_string());
+    // The record is read through the SAME reader rule every other command uses (FR-012-5b), so a
+    // version this generator does not know is refused there rather than reported here as absent.
+    // A tree with no record at all is `None` — indistinguishable, deliberately, from a record
+    // that predates the field: both mean "this tree cannot tell you", and inventing a
+    // distinction the file cannot support is how a report starts lying.
+    let verified_with = Dir::open_ambient_dir(dir, cap_std::ambient_authority())
+        .ok()
+        .and_then(|opened| crate::generate::record::read(&opened).ok().flatten())
+        .and_then(|record| record.verified_with)
+        .and_then(|verified| {
+            let release = verified.rustc_release?;
+            Some(match verified.rustc_commit {
+                Some(commit) => format!("rustc {release} ({commit})"),
+                None => format!("rustc {release}"),
+            })
+        });
+
+    // ── PROBE ───────────────────────────────────────────────────────────────────────
+    //
+    // A classification failure is not a doctor failure: the section reports what it could not
+    // learn. `doctor` reports and changes nothing, including its own exit code (FR-012-11).
+    let classification = crate::toolchain::identify(sealed).ok();
+    let expectations = crate::toolchain::Expectations {
+        pinned: pinned.clone(),
+        rust_version: None,
+    };
+    let resolution = classification.as_ref().and_then(|classification| {
+        crate::toolchain::resolve(dir, sealed, classification, &expectations).ok()
+    });
+
+    Some(ToolchainSection {
+        pinned,
+        rust_version,
+        verified_with,
+        rustup: resolution
+            .as_ref()
+            .and_then(|resolution| resolution.rustup.as_ref())
+            .map(std::string::ToString::to_string),
+        floor: crate::toolchain::RUSTUP_FLOOR,
+        resolved: resolution.as_ref().map(|resolution| {
+            format!(
+                "rustc {} ({})",
+                resolution.rustc.release, resolution.rustc.commit
+            )
+        }),
+        selected_by: resolution
+            .as_ref()
+            .map(|resolution| resolution.selected_by.as_str().to_owned()),
+        proxy: resolution
+            .as_ref()
+            .is_some_and(|resolution| resolution.proxy),
+    })
+}
+
+fn is_project(dir: &Path) -> bool {
+    dir.join("renvor.toml").is_file() || dir.join("rust-toolchain.toml").is_file()
+}
+
 fn orphaned_staging() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(".") else {
         return Vec::new();
@@ -289,6 +407,7 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
     }
 
     let orphans = orphaned_staging();
+    let toolchain = toolchain_section(&here, &sealed);
 
     // ── THE READINESS TABLE ─────────────────────────────────────────────────────────
     //
@@ -352,6 +471,52 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
         }
     }
 
+    // ── THE TOOLCHAIN SECTION (FR-012-11) ───────────────────────────────────────────
+    //
+    // Omitted entirely outside a project. An operator running `doctor` in their home directory
+    // asked about their tooling, not about a pin that does not exist there, and a section of
+    // *unknown* rows would be noise dressed as information.
+    if let Some(section) = &toolchain {
+        let unknown = || "unknown".to_owned();
+        human = human
+            .blank()
+            .status(Status::Info, "Toolchain")
+            .row(
+                "pinned".to_owned(),
+                section.pinned.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "rust-version".to_owned(),
+                section.rust_version.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "verified with".to_owned(),
+                section.verified_with.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "resolves here".to_owned(),
+                section.resolved.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "selected by".to_owned(),
+                section.selected_by.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "rustup".to_owned(),
+                section.rustup.clone().map_or_else(
+                    || "not found".to_owned(),
+                    |version| format!("{version} (floor {})", section.floor),
+                ),
+            );
+        if section.proxy {
+            human = human.item(
+                "the resolved compiler is a rustup proxy, so what it runs depends on the \
+                 selection above"
+                    .to_owned(),
+            );
+        }
+    }
+
     if !orphans.is_empty() {
         human = human.blank().status(
             Status::Warn,
@@ -377,7 +542,11 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
     Ok(reporter.finish(
         "doctor",
         &human,
-        serde_json::json!({ "probes": probes, "orphanedStaging": orphans }),
+        serde_json::json!({
+            "probes": probes,
+            "orphanedStaging": orphans,
+            "toolchain": toolchain,
+        }),
     ))
 }
 
@@ -403,6 +572,58 @@ mod tests {
     /// The directory a unit test's probe runs in.
     fn here() -> std::path::PathBuf {
         std::env::current_dir().expect("a working directory")
+    }
+
+    /// Outside a project the section is omitted entirely, and the JSON carries `null`.
+    ///
+    /// An operator running `doctor` in their home directory asked about their tooling. A
+    /// toolchain section there would be six rows of *unknown* — noise that reads like a finding.
+    /// FR-012-11 omits it, and `data.doctor.toolchain` is `null` rather than an empty object,
+    /// so a consumer can tell "no project here" from "a project that told us nothing".
+    #[test]
+    fn doctor_outside_a_project_omits_the_section() {
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert!(
+            super::toolchain_section(empty.path(), &inherited()).is_none(),
+            "a directory with neither `renvor.toml` nor `rust-toolchain.toml` is not a project"
+        );
+
+        // Either file alone IS a project: a tree generated before template version 8 has the
+        // first and not the second, and a hand-written crate may have the second and not the
+        // first. Requiring both would omit the section exactly where it is most wanted.
+        for marker in ["renvor.toml", "rust-toolchain.toml"] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::write(dir.path().join(marker), "").expect("write");
+            assert!(
+                super::toolchain_section(dir.path(), &inherited()).is_some(),
+                "`{marker}` alone marks a project"
+            );
+        }
+    }
+
+    /// The section reports the pin it READ, and reports nothing it could not read.
+    ///
+    /// The pin is read from the file rather than inferred from what resolved: those two differ
+    /// exactly when the operator most needs to see both — an override, a stale environment
+    /// variable, a pin that is not installed.
+    #[test]
+    fn the_section_reports_the_pin_it_read_and_leaves_the_rest_unknown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+        )
+        .expect("write");
+
+        let section = super::toolchain_section(dir.path(), &inherited()).expect("a project");
+        assert_eq!(section.pinned.as_deref(), Some("1.94.0"));
+
+        // No manifest and no record in this tree, so both stay `None` — never filled in from the
+        // pin beside them. A record that says a compiler verified this tree is a measurement;
+        // copying the pin into that field would manufacture one.
+        assert_eq!(section.rust_version, None, "no manifest was read");
+        assert_eq!(section.verified_with, None, "no record was read");
+        assert_eq!(section.floor, crate::toolchain::RUSTUP_FLOOR);
     }
 
     /// FR-012-6 names `doctor`'s probes in its list of sealed children, and this is the assertion

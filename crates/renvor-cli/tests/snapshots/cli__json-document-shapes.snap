@@ -176,7 +176,8 @@ expression: "Value::Object(shapes)"
           "tool": "<string>",
           "version": "<string>"
         }
-      ]
+      ],
+      "toolchain": null
     },
     "schemaVersion": 2,
     "status": "success"
