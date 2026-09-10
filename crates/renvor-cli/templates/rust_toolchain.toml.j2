@@ -1,0 +1,22 @@
+# The toolchain this project was generated and verified against (renvor, FR-012-1).
+#
+# WHY THIS FILE EXISTS. A tree that passes `cargo clippy --all-targets -- -D warnings` on one
+# compiler can fail it on another: every stable release adds lints, and a lint that did not exist
+# when this project was verified is a build failure the day a newer compiler is used (the
+# framework's own Phase 011 limitation L-2). The pin below is the exact release this project
+# declares; `.renvor/generated.toml` records what actually verified the tree at generation.
+#
+# WHAT HONOURS IT. rustup {{ rustup_floor }} or later selects this release for every command run
+# in this directory, and — with `RUSTUP_AUTO_INSTALL=0` — refuses by name instead of downloading
+# it when it is absent. Without rustup the file is inert: a bare `cargo` ignores it, and only the
+# `rust-version` in `Cargo.toml` (the MSRV, which this pin is at or above) still refuses a compiler
+# that is too old.
+#
+# HOW TO CHANGE IT. Edit `channel` to another exact release, then run
+# `cargo clippy --all-targets -- -D warnings` and `cargo test`: the two commands that verified the
+# tree at generation are the two that prove the new compiler. Keep `components` explicit — a
+# toolchain installed under `profile = "minimal"` ships neither rustfmt nor clippy otherwise.
+[toolchain]
+channel = "{{ toolchain_channel }}"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

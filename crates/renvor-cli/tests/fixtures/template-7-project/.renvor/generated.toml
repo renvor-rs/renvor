@@ -1,0 +1,76 @@
+# Written by `renvor new`; read by `renvor generate` to tell a file you changed from one
+# it generated. Digests only. Keep it with the project.
+generator_version = "0.0.0"
+template_version = "7"
+
+[[file]]
+path = ".env.example"
+sha256 = "4c26ec9289bd8cb6b3406618d502a2892c3aaaca217ad3e18f943b52c9d84beb"
+
+[[file]]
+path = ".gitignore"
+sha256 = "74131cc0b1694a4761dae0ca262b411602db6eed948b8b90007906042af9452c"
+
+[[file]]
+path = "Cargo.toml"
+sha256 = "27824f936922e733ee7307126646ec62804495672b4282e86078208839e4ea6e"
+
+[[file]]
+path = "README.md"
+sha256 = "16cfa9b3dda25189dee546c6fbe298d5d1ef49adf2a48ee3b6ea6549689e8ef3"
+
+[[file]]
+path = "config/http.toml"
+sha256 = "7aa2e07266dde8b841219b6475f236f21fbab794699978a24fa185b7f27e2a5a"
+
+[[file]]
+path = "migrations/0001_create_item.down.sql"
+sha256 = "638ab467d67d59881682af9a597837f19b380f683d57cc2b16d8b51c1df20a3a"
+
+[[file]]
+path = "migrations/0001_create_item.up.sql"
+sha256 = "e584defc69a2832d9053e713479344be1e5c0c92c5a5c3ee33f07140350a1f54"
+
+[[file]]
+path = "migrations/README.md"
+sha256 = "e84aa381c8c47dd8a767d5b5b55879ba32c82bc1220c806d4c01b114af6fa4df"
+
+[[file]]
+path = "renvor.toml"
+sha256 = "7b0298878e4c648ea377238be41bd4d5d9b021f3c079bce6f9e04ad1d96a92a0"
+
+[[file]]
+path = "src/app.rs"
+sha256 = "c40630776149358f68cf5db81c0fadc6205b73d38fe4c2457ca4db2c9736a345"
+
+[[file]]
+path = "src/config.rs"
+sha256 = "4a4a883d24a3c09b55cdd42aaef3dd27eca16c8386acf0e5e373e6989375d8e3"
+
+[[file]]
+path = "src/domain.rs"
+sha256 = "548a4c355ed2b95b3208a9289519492d6d6d3f902920893957a18dfdbe7d9fe9"
+
+[[file]]
+path = "src/main.rs"
+sha256 = "ea12bf0e63bed2a35387ae64b0a6e77a718b8da797c3778f1db63a7c33963bc1"
+
+[[file]]
+path = "src/persistence.rs"
+sha256 = "21faddea45433ca197cf367c79fecb5f4cc4a4d6772deb0a6901d9310f139011"
+
+[[file]]
+path = "src/resources/mod.rs"
+sha256 = "0973c315e00c5b9ca10e391498a200527f733e97431d0cb5d9708b1270646396"
+
+[[file]]
+path = "src/routes.rs"
+sha256 = "12c00d2b1da6926026c1a8019071a856e1d2f9902b8c6a8e7ed5d517801c8d1e"
+
+[[file]]
+path = "tests/starter.rs"
+sha256 = "94708aec7ef285db66ef6bf959c321b4eb5fc18116818d5e9f207c174c066acc"
+
+[[file]]
+path = "tests/support/mod.rs"
+sha256 = "edf5c41aef934bd45cf102c1556fc70e302c87346e85db14917e51eea62c300a"

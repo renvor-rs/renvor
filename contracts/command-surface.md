@@ -1,7 +1,7 @@
 ---
 description: "Contract C-1 — CLI command surface, exit codes, and stream discipline"
-version: "1.4.0"
-status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.4.0 (2026-09-05, FR-048 decided): every `generate` action takes `--overwrite-unchanged`; a target that differs from the render but is unchanged since generation is REGENERABLE and is replaced only under the flag — without it the run is `generation_conflict` naming the flag; a changed file is refused with or without it; a dry run classifies exactly as a real run. No exit code or stream rule changed. 1.3.0 (2026-09-05, Phase 011 correction round): generation into an existing project is one change or none; marked files are untouched outside their markers; `auth` keeps applied migrations and adds the owner column forward, renders recorded resources again, verifies the merged tree, and writes the resolved lockfile; migration versions are allocated past the directory; a name beside `--import`, a version another migration holds, and a bare SQL keyword are refused. 1.2.0 (2026-09-05, Phase 011) HONOURS `--auth` (none|session) and ADDS `--capabilities` and `--framework-path`: a project with any of them is a framework-backed STARTER with real path dependencies, and the reserved table loses `--auth`. No exit code or stream rule changed. 1.1.0 (2026-08-29) CORRECTS the phase the reserved-flag paragraph names — Phase 011 delivers the flag, Phase 009 delivers only the library the flag would generate against — and adds the rule that a reserved message must name the phase that delivers the FLAG. No exit code, stream rule, or flag changed. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.6.0"
+status: "normative — public contract from the first release that ships it; nothing has been published yet. 1.6.0 (2026-09-09, Phase 012, finding 4) ADDS, with no exit code, stream rule, or notice string changed: `rustdoc -vV` to the probes whose answer can be `compiler_identity_unreadable`; a narrowing of `evidence_capture_failed`'s disagreement clause to the launched BUILD/TEST units, since a rustdoc identity differing from the compiler's is a legitimate operator override and is recorded, not refused; and `details.supported` moving from `2` to `3` as the record reader gains version 3. 1.5.0 (2026-09-07, Phase 012, L-2) ADDS, with no exit code or stream rule changed: the `tool_missing` details of the toolchain preflight (`details.tool` values `rustup >= 1.28.1`, `rustup toolchain <channel>`, `rustc >= <msrv>`, a component name; `details.remedy`; `details.reason` values `proxy_unidentified` and `no_install_guarantee_unconfirmed`); the `--framework-path` toolchain reasons `toolchain_pin_malformed`, `toolchain_pin_unsupported`, `toolchain_pin_below_msrv`, and `msrv_unreadable`; the `project_verification_failed` reasons `compiler_identity_unreadable`, `evidence_capture_failed`, `toolchain_resolution_diverged`, and `probe_isolation_unavailable`; the new refusal `record_unsupported` (exit 3, U-1 approved 2026-09-07 — an unsupported input record is a validation failure, not a missing tool; the same reason string and `details` keys as C-2's registry, the fixture, and the help text); the two FR-012-8 stderr notices — the resolution notice and the observation notice (each one line, stderr, never stdout) — and the cached-artifacts line; `renvor check`'s two record tables and the `historical` marker; and `renvor generate`'s once-per-run sentence into a legacy tree. `renvor doctor`'s toolchain section is named as a follow-up (B1f), not delivered here. **The two added refusal reasons `probe_isolation_unavailable` and `no_install_guarantee_unconfirmed` are approved** (maintainer decision, 2026-09-08) with the failure codes their rows below carry — `project_verification_failed` (exit 3) and `tool_missing` (exit 5) respectively — and with the property that makes them safe to add: each is a REFUSAL and neither has a fallback. Nothing is retried in a less isolated place, nothing is provisioned, and nothing is staged; the run stops and says which condition it could not establish. It also DOCUMENTS the existing `--framework-path` rule `framework_lockfile` — `Cargo.lock` must exist in the checkout, since the starter's resolution is seeded from it (FR-006) — which the generator has emitted since Phase 011 and this table omitted; documenting it changes no behaviour. 1.4.0 (2026-09-05, FR-048 decided): every `generate` action takes `--overwrite-unchanged`; a target that differs from the render but is unchanged since generation is REGENERABLE and is replaced only under the flag — without it the run is `generation_conflict` naming the flag; a changed file is refused with or without it; a dry run classifies exactly as a real run. No exit code or stream rule changed. 1.3.0 (2026-09-05, Phase 011 correction round): generation into an existing project is one change or none; marked files are untouched outside their markers; `auth` keeps applied migrations and adds the owner column forward, renders recorded resources again, verifies the merged tree, and writes the resolved lockfile; migration versions are allocated past the directory; a name beside `--import`, a version another migration holds, and a bare SQL keyword are refused. 1.2.0 (2026-09-05, Phase 011) HONOURS `--auth` (none|session) and ADDS `--capabilities` and `--framework-path`: a project with any of them is a framework-backed STARTER with real path dependencies, and the reserved table loses `--auth`. No exit code or stream rule changed. 1.1.0 (2026-08-29) CORRECTS the phase the reserved-flag paragraph names — Phase 011 delivers the flag, Phase 009 delivers only the library the flag would generate against — and adds the rule that a reserved message must name the phase that delivers the FLAG. No exit code, stream rule, or flag changed. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-1 — Command surface, exit codes, and stream discipline
@@ -68,6 +68,27 @@ untouched **outside the markers**: the record digests them with the lines betwee
 removed, so an edit of the block never claims the rest of the file, and a line the user added
 outside the block is a conflict for the next full re-render (found by the Codex review).
 
+**The record is read before anything is planned** (1.5.0, Phase 012, FR-012-5b). Every `generate`
+action reads `.renvor/generated.toml`'s `record_version` first: absent is a legacy record and is
+accepted; `2` is validated strictly; a version **newer than this generator reads** is refused by
+name — `record_unsupported`, exit `3`, `details.record_version` (the version found) and
+`details.supported` (the highest this generator reads, `2`) — **before any file is planned or
+modified**, and the working tree is byte-identical afterwards. The message says which versions
+and that the remedy is to *rebuild the generator, not the project*. A legacy record — a project
+generated at template version 7 or earlier, with no `record_version`, no pin, and no
+`[verified_with]` — does **not** refuse on that account (FR-012-10a); every `generate` action into
+such a tree states **once per run**, on stderr, that *this project was generated before template
+version 8 and pins no toolchain; no `renvor generate toolchain` action exists — a new project's
+README shows the two files to add by hand*. No pin is inserted into a legacy tree: `auth`'s
+re-render of `Cargo.toml` carries no `rust-version` and plans no `rust-toolchain.toml`
+(FR-012-10b). Which actions verify and write evidence is [`template-contract.md`](template-contract.md)
+§"Record versions 2 and 3": `auth` verifies its scratch copy and rewrites `[verified_with]` with
+`operation = "auth"`; `resource` and `migration` run `rustfmt` or nothing, print no toolchain
+notice, and leave `[verified_with]` byte-identical. `auth`'s scratch copy is staged **beside the
+project** — [`generation-transaction.md`](generation-transaction.md) §"Residue" — and its
+resolution must equal the project directory's, or the run is `project_verification_failed`,
+`details.reason = toolchain_resolution_diverged`, nothing written.
+
 | Flag | On | Effect |
 |---|---|---|
 | `--overwrite-unchanged` | every `generate` action | replace the regenerable targets — those that differ from the render and are unchanged since generation. Never a file you changed; never a waiver of validation or of a conflict |
@@ -80,6 +101,25 @@ outside the block is a conflict for the next full re-render (found by the Codex 
 | `auth` | the session authentication starter added to a starter that has none: every generator-owned file rendered again with `auth = "session"` — `renvor.toml`, `Cargo.toml`, `src/main.rs`, `src/app.rs`, `src/routes.rs`, `src/auth.rs`, `config/auth.toml`, the auth migration set, the generated test — with the marked blocks of `src/resources/mod.rs` and `src/routes.rs` carried over. **Applied migrations are never re-planned**: the project's `0001_create_item` pair stays byte-identical (its checksum is in the ledger), and the owner column arrives by a new forward pair `migrations/<version>_add_item_owner.{up,down}.sql` — rows that existed before belong to nobody, the all-zero identifier, as the seeds mark theirs. **Every recorded resource** (`[[resource]]`) is rendered again with the session guards its writes now need; one the user edited is a conflict, so the starter is refused rather than added beside a public write. The merged tree is **verified in a scratch copy** — the same five checks `renvor new` runs — before anything is committed, and the `Cargo.lock` that build resolves is written as an `edit`, so `cargo build --locked` passes on the tree the command leaves. A file the user changed is a `generation_conflict`. **Every generator-owned file it renders again is regenerable on a placed starter, so the action needs `--overwrite-unchanged`**; without it the run is refused naming the flag, and nothing is written | regenerable targets without `--overwrite-unchanged` (`generation_conflict`, `details.reason = overwrite_required`); exactly what `renvor new --auth session` refuses: no database, no `mail` capability (`unsupported_combination` naming the flag); a skeleton (`transport_not_wired`); a merged tree that does not build, lint, format, test, or start (`project_verification_failed`, nothing written) |
 
 `routes` **ships in Phase 004**, with the transport it inspects, and is held to the same rule.
+
+### `renvor check` — the record's two tables (1.5.0, Phase 012)
+
+`check` reads the record through the dispatch rule above and prints, beside the manifest it
+already reports, the record's **`[toolchain]`** table (`pinned`, `rust_version`) and its
+**`[verified_with]`** table (every field, the per-check tables included) — or *unknown* for a
+legacy record, never a value filled in. The `doctest` check is printed **only when the record
+carries it**: a project with no library target launched no doctest unit and has no table, and a
+row of zeroes there would report a unit that was never scheduled as one that was reused. It then applies the freshness rule of
+[`template-contract.md`](template-contract.md) §"Record versions 2 and 3": it recomputes the tree digest
+over the current working tree under the recorded `tree_scope` and prints either
+`verified_with: current` or `verified_with: historical — the tree verified at <verified_at>
+(<operation>) is not the current tree; not proof of the current tree`. A `tree_scope` it does not
+know is `record_unsupported`, exit `3`. If `rust-toolchain.toml` is present it reports whether the
+file's channel still equals `[toolchain].pinned` — an author's edit is **reported, never refused**.
+It prints **no count of operations** since the verification: nothing in the tree records one. With
+`--output json` the two tables are `result.toolchain` and `result.verified_with`, the marker is
+`result.verified_with.historical`, per [`json-output.md`](json-output.md) §"`result.toolchain` and
+`result.verified_with`". `check` still builds nothing and runs no tool.
 
 ### `renvor routes` — where its data comes from, and what it cannot do
 
@@ -125,9 +165,9 @@ is a different fact, and that *is* reported as a success saying so.
 | `0` | Success | The project was created |
 | `1` | **Unclassified or internal failure** | A panic, or an error no other code describes |
 | `2` | Usage error | Unknown flag, missing required argument |
-| `3` | Validation failure | Unsupported value, unsupported combination, reserved later-phase flag, invalid manifest |
+| `3` | Validation failure | Unsupported value, unsupported combination, reserved later-phase flag, invalid manifest; a provenance record newer than the generator reads (`record_unsupported`, 1.5.0); a framework checkout whose toolchain pin is malformed, an alias, or below its own MSRV (1.5.0) |
 | `4` | Cancelled by the operator | Ctrl-C or ESC at a prompt, or declining the review screen |
-| `5` | Environment failure | A required tool is missing; the container runtime is not running |
+| `5` | Environment failure | A required tool is missing; the container runtime is not running; rustup below 1.28.1, a rustup proxy whose rustup cannot be located, a pinned toolchain that is not installed, a resolved compiler below the MSRV, or a missing `rustfmt`/`clippy` component (`tool_missing`, 1.5.0) |
 
 **`1` is reserved on purpose.** A taxonomy without it absorbs unclassified failures into a general
 error code, and an unclassified failure is a **defect** rather than an outcome. Anything exiting `1`
@@ -146,6 +186,10 @@ Consequences that are part of the contract:
 - Progress rendering MUST degrade to nothing when `stderr` is not a terminal.
 - A closed `stdout` (`| head -1`) MUST NOT produce a panic; it exits `0` if the result was already
   written, and otherwise reports the write failure.
+- The toolchain notices of Phase 012 (§"Toolchain preflight, evidence, and notices" below) are
+  **diagnostics**: each is one line on `stderr`, never on `stdout`, so `renvor new --output json`
+  still carries exactly one JSON document and a shell script reading `stdout` sees nothing new
+  (1.5.0).
 
 ## Global flags
 
@@ -271,8 +315,9 @@ contradiction. The wizard asks for the list by name.
 
 **Local tooling: where the framework is, not what the project does.** No Renvor crate is published
 (Phase 013), so a generated project can depend on the framework only by **path**. The value names
-a checkout of the Renvor workspace and is validated **before any write** — two files are read,
-nothing is evaluated:
+a checkout of the Renvor workspace and is validated **before any write** — two files are read
+(`Cargo.toml` and `crates/renvor/Cargo.toml`; a third, `rust-toolchain.toml`, since 1.5.0), one
+is checked for existence (`Cargo.lock`), and nothing is evaluated:
 
 | Rule (`details.rule`) | Requirement |
 |---|---|
@@ -280,8 +325,12 @@ nothing is evaluated:
 | `framework_directory` | it resolves to an existing directory; recorded canonical and absolute |
 | `framework_manifest`, `framework_workspace` | its `Cargo.toml` exists, is under 64 KiB, parses, and declares `[workspace]` |
 | `framework_facade` | `crates/renvor/Cargo.toml` exists and names package `renvor` |
+| `framework_lockfile` *(emitted since Phase 011; documented in 1.5.0)* | `Cargo.lock` exists there. A generated starter starts from the framework's lockfile so that it resolves offline (FR-006), and a checkout without one cannot supply it — refused at validation with its own rule rather than discovered when staging tries to copy it |
+| `framework_toolchain` *(1.5.0, Phase 012, FR-012-1)* | its `rust-toolchain.toml` `[toolchain].channel` is an **exact release** `X.Y.Z`, its `Cargo.toml` `[workspace.package].rust-version` is `X.Y.Z`, and the channel is at or above that MSRV — **each parsed on its own, neither evaluated**, then compared; the pin becomes the starter's `rust-toolchain.toml` channel and the MSRV its `rust-version`. A refusal carries `details.reason`, one of `toolchain_pin_malformed` (not `X.Y.Z`; the file unreadable or missing the key), `toolchain_pin_unsupported` (a channel alias — `stable`, `beta`, `nightly`, a dated `nightly-YYYY-MM-DD` — a custom toolchain name, or a `path`: none is resolved to a version, silently or otherwise), `toolchain_pin_below_msrv` (`X.Y.Z` below the MSRV), or `msrv_unreadable` (the manifest key absent or not `X.Y.Z`), and `details.file` naming the file. A refused checkout is the framework's inconsistency, refused **before anything is staged** |
 
-Every refusal is `unsupported_value` with `details.flag = "--framework-path"`.
+Every refusal is `unsupported_value` with `details.flag = "--framework-path"`. *(The four
+`framework_toolchain` reasons are the Phase 012 brief's, FR-012-1; the rule name is this
+revision's, chosen to sit in the `framework_*` family the brief places them in.)*
 
 | Given | Shape generated |
 |---|---|
@@ -292,6 +341,79 @@ Every refusal is `unsupported_value` with `details.flag = "--framework-path"`.
 Recorded as `[framework] source = "path"`, `path = "<absolute>"`. The wizard asks for it **only**
 when a selection needs it. When the crates are published the same model gains a registry source
 and the path becomes optional; nothing else moves.
+
+## Toolchain preflight, evidence, and notices (1.5.0, Phase 012, L-2)
+
+Every generated tree declares its toolchain — `rust-toolchain.toml` and `rust-version` — and
+`renvor new` and `renvor generate auth` verify it with the compiler that **resolves** in the
+directory being verified, after a preflight that identifies the tools before it invokes them and
+provisions nothing ([`generation-transaction.md`](generation-transaction.md) §"What 'verify before
+placing' means"). What the operator meets on this surface — the refusals, their details, and the
+two notices — is listed here; the mechanism is C-5's. **No exit code changes, no stream rule
+changes, and nothing is refused for being different**: an override the operator or CI chose
+proceeds and is said aloud.
+
+### `tool_missing` (exit `5`) — the preflight's refusals
+
+| `details.tool` | When | `details.remedy` |
+|---|---|---|
+| `rustup >= 1.28.1` | the located `rustup`'s `--version` (run only under isolation, never in a pinned directory) is unparseable or below the floor — `details.found` carries the version or `unparseable`; **no proxy has run** | update rustup to 1.28.1 or later |
+| `rustup >= 1.28.1`, with `details.reason = proxy_unidentified` | `rustc`/`cargo` are rustup proxies whose rustup could not be located: the isolated identification probe answered in rustup's own words; **refused before any proxy runs in the pinned directory**, nothing downloaded | put the `rustup` that owns these proxies first on `PATH` |
+| `rustup >= 1.28.1`, with `details.reason = no_install_guarantee_unconfirmed` | an identified proxy at or above the floor, asked for a name that cannot be installed, answered anything but "is not installed" — the in-run witness of the no-install guarantee failed, so nothing more is run through it | the same as the row above; report the rustup version |
+| `rustup toolchain <channel>` | the project's pin is not installed: the resolution probe met rustup's "is not installed" text; **refused before any check, nothing staged, no download** | `rustup toolchain install <channel> --component rustfmt --component clippy --profile minimal` |
+| `rustc >= <msrv>` | the compiler the preflight resolution names is older than the project's `rust-version` — the generator's prerequisite check of the resolved compiler, **not** proof of Cargo's effective compiler under `RUSTC`, `build.rustc`, or a wrapper, and not a claim about what Cargo would do later | install or select a compiler at or above the MSRV |
+| `rustfmt`, `clippy` | the resolved toolchain lacks the component (`rustfmt --version`, `cargo clippy --version` under the seal) | `rustup component add <component>` (with `--toolchain <channel>` when the project pins one) |
+
+`details.found` and `details.required` keep the meanings [`json-output.md`](json-output.md)'s
+registry gives them. `<channel>` is taken from rustup's own message and sanitized to
+`[A-Za-z0-9._-]{1,64}` before it enters any stream.
+
+### `project_verification_failed` (exit `3`) — the added reasons
+
+| `details.reason` | Meaning |
+|---|---|
+| `compiler_identity_unreadable` | a `rustc -vV`, `rustdoc -vV`, `cargo -vV`, or `clippy-driver --version` answer outside the identity grammar (release `X.Y.Z[-pre]`, commit `[0-9a-f]{7,40}` or `unknown`, host `[A-Za-z0-9_.-]{1,64}`), or the isolated identification probe's timeout or unrecognised answer; the output is redacted, nothing placed |
+| `evidence_capture_failed` | a unit of the project's own package(s) accounted for by neither a `Running` line nor a positive `Fresh` report; a truncated, malformed, or unparseable `-vv` stream; or two launched **build/test** units whose queried identities disagree — or two launched **doctest** units whose identities disagree with each other. A rustdoc identity that differs from the compiler's is **not** this: `RUSTC` redirects `rustc` and leaves `rustdoc` on the toolchain's own, so the two legitimately differ, and the difference is recorded in separate fields rather than refused. **Never** reported as cached; nothing placed |
+| `toolchain_resolution_diverged` | `generate auth`: the resolution in the project directory and in its sibling scratch copy differ in release, commit, or attribution; nothing written |
+| `probe_isolation_unavailable` | no directory could be found under which to create the isolation the identification probe needs — one with no `rust-toolchain.toml` or `rust-toolchain` in any ancestor (the system temporary directory, then the home directory, are tried); nothing is probed and nothing is staged |
+
+`details.check` and `details.stage` keep their registry meanings where a check itself failed.
+
+### `record_unsupported` (exit `3`) — an unsupported input record
+
+A `.renvor/generated.toml` whose `record_version` is newer than this generator reads is a
+**validation** failure of an input, not a missing environment tool: `record_unsupported`, exit
+`3`, `details.record_version` (the version found), `details.supported` (the highest this generator
+reads, `3`); refused **before any plan**, the working tree untouched (U-1, approved 2026-09-07).
+The same refusal covers a `tree_scope` `check` does not know. The reason string and the two
+`details` keys are one text here, in C-2's registry, in `tests/json/record_unsupported.json`, and
+in the help and README sentences that name them. The message ends with the remedy: *rebuild the
+generator, not the project.*
+
+### The two notices, and the cached-artifacts line — `stderr`, never `stdout`
+
+Nothing here falls back silently, and nothing here refuses a difference the operator chose. Each
+line is a diagnostic on `stderr`, printed once, never on `stdout`; nothing at all is printed when
+the pin resolved, a launch was observed, and the observed identity matched.
+
+| Notice | Printed when | The line, verbatim |
+|---|---|---|
+| **Resolution notice** (FR-012-8 (1)) | the preflight resolution is not the pin — an override is active, rustup is absent, or the tree pins nothing. It describes the preflight resolution and **nothing else**: not Cargo's effective compiler | `toolchain resolved before verification: rustc <release> (<selected_by>); the project pins <channel>` — a bare toolchain: `toolchain resolved before verification: rustc <release> (no_rustup); the project pins <channel>, which cannot be selected here` — a legacy tree: `toolchain resolved before verification: rustc <release> (<selected_by>); the project pins nothing` |
+| **Observation notice** (FR-012-8 (2)) | a launch was observed and the observed identity differs from the resolved one in release or commit (`RUSTC`, `build.rustc`; a substituting wrapper is not visible to the observation) — **whether or not the resolution equals the pin**: a `PATH` probe equal to the pin never conceals an observed override that differs | `verification launched rustc <release> (<commit>), not the resolved rustc <release> (<commit>): launch observation plus queried identity` |
+| **Cached-artifacts line** (FR-012-7d (d)) | a successful check's relevant units were all positively `Fresh`, so no compiler launch was observed for it; the checks named are exactly those. A cached run prints this line and **no** observation notice, because no observation exists. **The doctest check is never among the names, and that is a fact rather than an omission**: its table exists only when a doctest unit was launched, so `units_launched == 0` is never true of it. A cached library-bearing project therefore prints this line naming `clippy, build, test` — truthfully, because none of those launched a unit of its own — while `checks.doctest` on the record shows the rustdoc launch that did happen | `verification reused cached artifacts for <checks>: no compiler launch observed` |
+
+`<selected_by>` is one of `environment`, `directory_override`, `toolchain_file`, `default`,
+`no_rustup`, `unknown` — taken from `rustup show active-toolchain`'s attribution text, `unknown`
+when the text is not one a test pins, never a guess. The record carries the pin, the resolution,
+and the observation, each labelled, so the notices and `.renvor/generated.toml` agree.
+
+### `renvor doctor` — a follow-up, not this revision
+
+The toolchain section of `renvor doctor` (the pin, the rustup floor, what resolves here and why,
+whether the pin is installed with both components, proxy detection — all without any listing or
+installing command) is specified in the Phase 012 brief §5.7 and is delivered by the follow-up
+batch B1f (FR-012-11). This revision names it so the JSON key is reserved
+([`json-output.md`](json-output.md)) and states nothing about its behaviour.
 
 ## Reserved flags
 

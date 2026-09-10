@@ -986,11 +986,14 @@ fn the_verification_step_names_each_check_as_it_runs() {
         visible.contains("verifying the generated project"),
         "the indicator must name the operation: {visible}"
     );
+    // The three checks that can launch a compiler carry `-vv` since Phase 012 (FR-012-7d (a)):
+    // the launch observation is read from Cargo's own verbose output. The indicator names the
+    // command it actually runs, so the flag is visible here rather than hidden from the operator.
     for check in [
         "cargo fmt --check",
-        "cargo clippy --all-targets -- -D warnings",
-        "cargo build",
-        "cargo test",
+        "cargo clippy --all-targets -vv -- -D warnings",
+        "cargo build -vv",
+        "cargo test -vv",
         "cargo run --quiet",
     ] {
         assert!(

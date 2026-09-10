@@ -56,8 +56,8 @@ jobs:
     # default the action sets. Set at job level it reaches the gate, the census, and the `cargo`
     # that `renvor new` runs inside its sealed environment (which passes the variable through), so
     # every leg compiles with the toolchain in its name. `RUSTUP_AUTO_INSTALL=0` makes a missing
-    # toolchain a named failure instead of a download in the middle of a step; the action below
-    # installs explicitly and is unaffected. The `Toolchain identity` step proves both.
+    # toolchain a named failure instead of a download in the middle of a step; the actions below
+    # install explicitly and are unaffected. The `Toolchain identity` step proves both.
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.toolchain }}
       RUSTUP_AUTO_INSTALL: "0"
@@ -71,6 +71,64 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      # ── THE CONTROL TOOLCHAIN (U-10, approved 2026-09-07; brief §5.4) ──────────────────
+      #
+      # The selection controls of brief §5.4 (C-sel-1…4) each need TWO installed toolchains:
+      # they prove which toolchain a resolution picked by comparing compiler identities, and
+      # there is nothing to compare with one. The second one is the OTHER leg's toolchain, and
+      # it is chosen here, in a step, not in the matrix — the matrix comment above says why: the
+      # required check names `verify (1.94.0)` and `verify (stable)` must not change.
+      #
+      # A `case` WITH A FAILING DEFAULT, as for the engine pair below. An `else` would hand an
+      # unmapped toolchain some control it was not written for — or none — and the controls
+      # would skip, or run against the leg itself, quietly. An unmapped toolchain fails the leg.
+      #
+      # `RENVOR_TEST_CONTROL_TOOLCHAIN` names the control exactly as rustup names it, and
+      # `RENVOR_TEST_REQUIRE_TOOLCHAINS=1` turns a control that would `SKIPPED:` locally for want
+      # of a second toolchain into a FAILURE here — the census pattern, closed from the other
+      # side, so deleting the install below breaks the build loudly instead of quietly restoring
+      # the gap. Both reach every later step, so the suite reads the toolchain this step named
+      # and the `Control toolchain identity` step below proved distinct.
+      - name: Control toolchain
+        id: control
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.toolchain }}" in
+            "1.94.0") control="stable" ;;
+            "stable") control="1.94.0" ;;
+            *)
+              echo "::error::no control toolchain is mapped for toolchain '${{ matrix.toolchain }}'." \
+                   "Add one here when the matrix gains a leg, or the selection controls of" \
+                   "brief §5.4 stop running against a second compiler." >&2
+              exit 1
+              ;;
+          esac
+          echo "toolchain=${{ matrix.toolchain }} control=$control"
+          echo "control=$control" >> "$GITHUB_OUTPUT"
+          {
+            echo "RENVOR_TEST_CONTROL_TOOLCHAIN=$control"
+            echo "RENVOR_TEST_REQUIRE_TOOLCHAINS=1"
+          } >> "$GITHUB_ENV"
+
+      # A DELIBERATE SECOND INSTALL (U-10, approved 2026-09-07; brief §5.4): the same action as
+      # above, told to install the control with the two components the sealed verification
+      # needs. It also runs `rustup default <control>`, so from here the runner's DEFAULT is the
+      # control. That is irrelevant, in the brief's words, "because the job-level
+      # `RUSTUP_TOOLCHAIN` selects and the identity step re-asserts it": the job-level variable
+      # is rustup's highest-precedence selection short of `+toolchain`, it is untouched, and so
+      # is `RUSTUP_AUTO_INSTALL=0`, which "stays in force for everything the suite runs". The
+      # action installs by name, explicitly, and is unaffected by it. `Toolchain identity` below
+      # runs AFTER this install and proves the checkout still resolves the leg; `Control
+      # toolchain identity` proves the two compilers differ.
+      #
+      # "No local toolchain installation is authorised": locally a control whose second
+      # toolchain is absent is `SKIPPED:`, never installed. This step is the CI half only.
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: ${{ steps.control.outputs.control }}
           components: rustfmt, clippy
 
       # WHICH COMPILER ACTUALLY RUNS (WI-012-4, 2026-09-06). The checkout pins 1.94.0 in
@@ -87,6 +145,18 @@ jobs:
         shell: bash
         run: .github/scripts/toolchain-identity.sh identity "${{ matrix.toolchain }}"
 
+      # THE TWO COMPILERS MUST DIFFER (U-10, approved 2026-09-07; brief §5.4). The selection
+      # controls compare identities; run against the same compiler twice they would pass
+      # whatever the resolution did. In the brief's words: "a control run against an identical
+      # identity proves nothing and fails the leg". This step records `rustc +<leg> -vV` and
+      # `rustc +<control> -vV` and fails unless they differ in release AND commit; fails unless
+      # the control has rustfmt and clippy; and re-asserts that the checkout still resolves the
+      # leg now that the second install has made the control the runner default. It reads the
+      # control's presence with `rustc +<control>` itself — under `RUSTUP_AUTO_INSTALL=0` an
+      # absent toolchain is refused by name — and installs, lists, and defaults nothing.
+      - name: Control toolchain identity
+        shell: bash
+        run: .github/scripts/toolchain-identity.sh control "${{ matrix.toolchain }}" "${{ steps.control.outputs.control }}"
 
       # No build cache action is used. The obvious candidate is LGPL-3.0 licensed, which
       # is not on the deny.toml allow-list, and dependency review correctly rejected it.

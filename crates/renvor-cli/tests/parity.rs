@@ -32,6 +32,16 @@ use harness::{Terminal, renvor};
 ///
 /// Compares **contents rather than hashes**, so a failure prints the differing text instead of two
 /// unequal hex strings.
+///
+/// # The one table that cannot be compared, and why the rest still is
+///
+/// Phase 012 (FR-012-4): the provenance record gained `[verified_with]`, which is a **measurement
+/// of one run** — the instant it happened, what that run observed Cargo launch, and what it
+/// queried. Two runs that produced byte-identical projects legitimately differ there, and a record
+/// that did *not* differ would be one filled in from something other than the run it describes.
+/// So that table alone is stripped, by [`without_verified_with`], and everything else the record
+/// carries — `record_version`, `[toolchain]`, and every `[[file]]` digest — is compared like any
+/// other file. Excluding the whole record would stop comparing the pin the two interfaces chose.
 fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
     let mut files = BTreeMap::new();
     fn walk(directory: &Path, prefix: &str, files: &mut BTreeMap<String, Vec<u8>>) {
@@ -50,15 +60,64 @@ fn tree(root: &Path) -> BTreeMap<String, Vec<u8>> {
             if entry.file_type().expect("a file type is readable").is_dir() {
                 walk(&entry.path(), &relative, files);
             } else {
-                files.insert(
-                    relative,
-                    std::fs::read(entry.path()).expect("a file is readable"),
-                );
+                let bytes = std::fs::read(entry.path()).expect("a file is readable");
+                let bytes = if relative.replace('\\', "/") == ".renvor/generated.toml" {
+                    without_verified_with(&String::from_utf8_lossy(&bytes)).into_bytes()
+                } else {
+                    bytes
+                };
+                files.insert(relative, bytes);
             }
         }
     }
     walk(root, "", &mut files);
     files
+}
+
+/// The provenance record without its `[verified_with]` table and that table's sub-tables.
+///
+/// A top-level table ends the block; `[verified_with.checks.build]` and its siblings belong to it
+/// and go with it. Everything before and after survives, so a caller still compares the record
+/// version, the toolchain the run declared, and every generated file's digest.
+fn without_verified_with(record: &str) -> String {
+    let mut kept = String::with_capacity(record.len());
+    let mut inside = false;
+    for line in record.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            inside =
+                trimmed.starts_with("[verified_with]") || trimmed.starts_with("[verified_with.");
+        }
+        if !inside {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    kept
+}
+
+#[test]
+fn stripping_the_measured_table_leaves_the_rest_of_the_record_comparable() {
+    // The control for [`tree`]'s one exclusion: a strip that removed more than the measurement
+    // would make every comparison below vacuous, and one that removed less would make them flake.
+    let record = concat!(
+        "record_version = 2\n",
+        "template_version = \"8\"\n",
+        "\n[toolchain]\npinned = \"1.94.0\"\n",
+        "\n[verified_with]\nverified_at = \"2026-09-07T00:00:00Z\"\nobservation = \"launched\"\n",
+        "\n[verified_with.checks.build]\noutcome = \"passed\"\n",
+        "\n[[file]]\npath = \"Cargo.toml\"\nsha256 = \"abc\"\n",
+    );
+    let kept = without_verified_with(record);
+    assert!(kept.contains("record_version = 2"), "the version survives");
+    assert!(kept.contains("[toolchain]"), "the declared pin survives");
+    assert!(kept.contains("[[file]]"), "the file digests survive");
+    assert!(!kept.contains("verified_at"), "the instant is stripped");
+    assert!(!kept.contains("observation"), "the observation is stripped");
+    assert!(
+        !kept.contains("[verified_with"),
+        "the table and its sub-tables are stripped"
+    );
 }
 
 /// Drives the wizard to completion, accepting every default, and returns the exit code.

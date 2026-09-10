@@ -14,6 +14,8 @@
 //! changes shape between phases is a compatibility question, and pretending Phase 003 shipped a
 //! watch loop would make Phase 004 look like a regression.
 
+use std::path::Path;
+
 use crate::exit::{CliError, Code, Exit};
 use crate::output::Reporter;
 use crate::output::layout::{Report, Status};
@@ -55,9 +57,7 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
          yet, so there is no server to reload)",
     );
 
-    let status = std::process::Command::new("cargo")
-        .arg("test")
-        .current_dir(path)
+    let status = cargo_test(path)
         // `cargo test` inherits this process's `stdout` unless told otherwise, which put libtest's
         // output ahead of the JSON envelope and made `--output json dev` unparseable on every run,
         // success included. See `Reporter::child_stdout`.
@@ -96,10 +96,65 @@ pub fn run(reporter: &Reporter, path: &std::path::Path, dry_run: bool) -> Result
     ))
 }
 
+/// The `cargo test` this command runs, built where a test can look at its environment.
+///
+/// **Inherited, not sealed** (FR-012-6's table): this is the operator's own project, run in the
+/// operator's own shell, and clearing that shell would break a project that legitimately needs
+/// something from it. What it does lose is the ability to provision — see
+/// [`crate::commands::no_provisioning`].
+fn cargo_test(path: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("cargo");
+    command.arg("test").current_dir(path);
+    crate::commands::no_provisioning(&mut command);
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::output::Format;
+
+    /// FR-012-6's table: neither of these two commands seals, and both refuse to provision.
+    ///
+    /// Read off the built `Command` rather than from a run, because the assertion is about what
+    /// the child would receive and running `cargo test` to find out costs a build.
+    #[test]
+    fn dev_and_routes_force_rustup_auto_install_0_without_sealing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for command in [
+            cargo_test(dir.path()),
+            crate::commands::relay::Invocation::for_project(dir.path(), "--flag").command(),
+        ] {
+            let overrides: Vec<(String, Option<String>)> = command
+                .get_envs()
+                .map(|(name, value)| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.map(|value| value.to_string_lossy().into_owned()),
+                    )
+                })
+                .collect();
+            assert!(
+                overrides.contains(&("RUSTUP_AUTO_INSTALL".to_owned(), Some("0".to_owned()))),
+                "a command did not force RUSTUP_AUTO_INSTALL=0"
+            );
+            for removed in ["RUSTUP_DIST_SERVER", "RUSTUP_UPDATE_ROOT"] {
+                assert!(
+                    overrides.contains(&(removed.to_owned(), None)),
+                    "a command did not remove an install-server variable"
+                );
+            }
+            // NOT SEALED. `sealed_command` puts the whole pass-through list into the child's
+            // environment, so a sealed command's overrides run to a dozen or more entries and
+            // carry no removals at all. Exactly three — one set, two removed — is the shape of an
+            // inherited environment that has only been forbidden to provision.
+            assert_eq!(
+                overrides.len(),
+                3,
+                "a command changed more of the inherited environment than the three overrides"
+            );
+        }
+    }
 
     #[test]
     fn a_dry_run_builds_nothing() {

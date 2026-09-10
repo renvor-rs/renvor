@@ -1,0 +1,59 @@
+---
+source: crates/renvor-cli/tests/snapshots.rs
+assertion_line: 94
+description: "Template version 8, variant `mysql-seaorm`. A change here is a change to a generated tree: bump `templates::VERSION` in crates/renvor-cli/src/templates.rs and record the new snapshot with `cargo insta review`; do not overwrite this one."
+---
+[
+  {
+    "digest": "a565fbc84fdc100740331de7893a78df444f12479bc7ed4c64e374f412d9aa39",
+    "path": ".gitignore"
+  },
+  {
+    "digest": null,
+    "path": ".renvor/generated.toml"
+  },
+  {
+    "digest": null,
+    "path": "Cargo.lock"
+  },
+  {
+    "digest": "290d97ec480ed432a0baa21763270ae9e97ec033821804947b24a021b72a7098",
+    "path": "Cargo.toml"
+  },
+  {
+    "digest": "5bbd9195d530ca54351a3700eb8027147ec0650eab867f3e00cb01c70dec27ce",
+    "path": "README.md"
+  },
+  {
+    "digest": "4b1908a06a2cda08e9ae9d3530f823c99d8c675d9482dd6bbd952529d35b003e",
+    "path": "migrations/0001_create_item.down.sql"
+  },
+  {
+    "digest": "fa9486fd69660612cfd8af9180ad6f9688cbc4fbc78aca5655dbbca70180ffad",
+    "path": "migrations/0001_create_item.up.sql"
+  },
+  {
+    "digest": "8a3466d901fa012abecf5378fd75a739a2ef90c8633ad2cc0775a74b0fd1f1dc",
+    "path": "renvor.toml"
+  },
+  {
+    "digest": "5660e37017174b033bd91c10414dc241b26c76c226246bcbb7be2ef43b22775b",
+    "path": "rust-toolchain.toml"
+  },
+  {
+    "digest": "fd4696664eb056c1ed87f231ea3f324dd38021e26900455a6648484b59d642b3",
+    "path": "src/domain.rs"
+  },
+  {
+    "digest": "1da3048dbafb09271bc1e684f9e5d2000cc9aecbc59c27ebb1cb7728ab222d01",
+    "path": "src/entity.rs"
+  },
+  {
+    "digest": "0aa6df022274de4633b0ab9af8f926067c3b84997114abad66334462fa8f6b5f",
+    "path": "src/main.rs"
+  },
+  {
+    "digest": "62981b3c44f7b654e02db4f67f0ea3114c7aaddd0a596cf554c5293242dd2714",
+    "path": "src/repository.rs"
+  }
+]

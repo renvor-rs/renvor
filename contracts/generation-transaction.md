@@ -1,7 +1,7 @@
 ---
 description: "Contract C-5 — the generation transaction and its destination-safety guarantees"
-version: "1.1.0"
-status: "normative — the safety core of the generator. 1.1.0 (2026-09-05, Phase 011 correction round): the sealed environment strips proxy credentials and a check's output is redacted before it is reported. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
+version: "1.3.0"
+status: "normative — the safety core of the generator. 1.3.0 (2026-09-09, Phase 012, finding 4): `cargo test -vv` on a package with a library target launches one unit with **rustdoc**, not `rustc`, and that unit is now accounted for in its own bucket — its own counts, its own `rustdoc -vV` identity, outside the `observation` and outside the compiler's identity set. Before this revision it was asked `rustc -vV`, which it does not answer, and every library-bearing project failed verification. No destination-safety guarantee, seal rule, or rollback rule changes. 1.2.0 (2026-09-07, Phase 012, L-2): the sealed environment forces `RUSTUP_AUTO_INSTALL=0`, no longer passes `RUSTUP_DIST_SERVER` or `RUSTUP_UPDATE_ROOT`, refuses rustup below 1.28.1, an unidentifiable proxy, and a pinned-but-absent toolchain by name before any check runs, records, per check, the outcome, the launch observation, and the queried identities (release, commit, host; override and wrapper presence only) — or that cached artifacts were reused with no launch observed — and applies the same seal to `rustfmt` at generation and to `doctor`'s probes; `generate auth` stages its scratch copy beside the project so the project's toolchain selection is preserved. The protocol, atomicity, and residue rules are unchanged; the seal is not a sandbox for trusted wrappers or build scripts. The protocol block is CORRECTED to the order the implementation has followed since C-4 1.2.0 — VERIFY, then RECORD (the provenance record is written after verification and before the manifest), then MANIFEST, then the review, then PLACE — and renumbered: VERIFY is step 4 (step 5 in 1.1.0's numbering, which the Phase 012 brief cites); its verb is unchanged and its reading is stated in the body (A-8, 2026-09-07). 1.1.0 (2026-09-05, Phase 011 correction round): the sealed environment strips proxy credentials and a check's output is redacted before it is reported. first explicit version assigned to this contract text on 2026-08-19; earlier revisions are in public Git history. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract C-5 — The generation transaction
@@ -48,7 +48,7 @@ and generation proceeded.
 
 ### The one residual, stated rather than designed around
 
-POSIX `rename(2)` **silently replaces an empty destination directory**. Steps 1 and 6 both check for
+POSIX `rename(2)` **silently replaces an empty destination directory**. Steps 1 and 7 both check for
 absence, but another process can create an empty directory in the window between the last check and
 the rename, and that directory is then replaced. Closing this needs an atomic
 create-directory-or-fail rename, which no portable API provides: `renameat2(RENAME_NOREPLACE)` is
@@ -63,14 +63,38 @@ I-17.
                  ── nothing has touched the filesystem yet ──
 2. STAGE         create a uniquely named directory INSIDE the destination's PARENT
 3. RENDER        expand templates into the staging directory, under bounds
-4. MANIFEST      walk the staging tree, produce the sorted manifest
-5. VERIFY        the generated project formats, compiles, tests, and starts
-6. PLACE         one rename: staging directory ──▶ destination
-7. REPORT        result to stdout, progress already on stderr
+4. VERIFY        the generated project formats, compiles, tests, and starts
+5. RECORD        write .renvor/generated.toml — after verification resolved the lockfile,
+                 from what step 4 observed and queried, before the manifest so it is listed
+6. MANIFEST      walk the staging tree, produce the sorted manifest
+   (REVIEW)      show the manifest and ask for consent — waived by --yes, absent on a dry run;
+                 declining is `cancelled`, exit 4, and drops the staging tree
+7. PLACE         one rename: staging directory ──▶ destination
+8. REPORT        result to stdout, progress already on stderr
 ```
 
-**Failure at any step from 1 to 5 removes the staging directory and leaves the destination exactly as
-it was.** Failure at 6 leaves the destination as it was and reports `placement_failed`.
+*(1.2.0 corrects the order and the numbering. 1.1.0 listed MANIFEST before VERIFY and had no
+RECORD line; the implementation has verified first since Phase 003 — the manifest must describe
+the tree that is placed, `Cargo.lock` included — and has written the record between the two since
+C-4 1.2.0. The review screen is shown in parentheses because it is conditional: it needs a
+terminal, `--yes` waives it, and a dry run has nothing to consent to. Where an older document
+says "C-5 step 5" it means VERIFY.)*
+
+**Failure at any step from 1 to 6 removes the staging directory and leaves the destination exactly
+as it was**, and so does a declined review. Failure at 7 leaves the destination as it was and
+reports `placement_failed`.
+
+**What step 4's — VERIFY's — "compiles" means** (step 5 in 1.1.0's numbering, which the Phase 012
+brief and ADR-0038 cite; 1.2.0; the maintainer's reading, A-8, 2026-09-07, recorded in
+[ADR-0038](../decisions/0038-generated-toolchain-declaration-verified-with-and-the-rustup-floor.md),
+which is `proposed`): *the required `cargo build` check succeeds, valid cache reuse included — no
+fresh compiler execution is asserted; format, lint, test, and start stay mandatory.* A check whose
+relevant units Cargo positively reports `Fresh` passes with its cached status stated explicitly and
+its observed compiler identity unavailable (see *What "verify before placing" means* below); a
+failure to capture the evidence stays a failure and is never read as caching. The verb in the
+protocol block is deliberately unchanged: a project that does not build is still a generation
+failure, and `CONSTITUTION.md`'s "Generated projects must format, **compile**, migrate, start, and
+execute representative operations" is read the same way, without editing the constitution.
 
 ## Why staging goes in the destination's parent
 
@@ -96,7 +120,7 @@ guarantee sufficient here. **The limit is documented rather than assumed away** 
 
 ## What "verify before placing" means
 
-Step 5 runs the generated project's own checks **while it is still in staging**. A project that does
+Step 4, VERIFY, runs the generated project's own checks **while it is still in staging**. A project that does
 not build is therefore a **generation failure**, reported as such, with nothing at the destination —
 rather than something the user discovers ten minutes later (FR-030).
 
@@ -122,9 +146,129 @@ the tool's stdout and stderr after every URL credential is replaced, every crede
 removed is replaced, and every control character is escaped — a build script cannot put a
 credential or a terminal sequence into the operator's error.
 
+**The seal provisions nothing** (1.2.0, Phase 012, FR-012-6). The sealed environment sets
+`RUSTUP_AUTO_INSTALL=0` **unconditionally** — whether or not the caller set it — and omits
+`RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT`, the two variables that configure where rustup
+installs from, for **every** child it spawns: the five checks, the floor check and the
+identification probe below, the resolution probe, the identity queries, the component query,
+`rustfmt` at `renvor generate resource`, and `renvor doctor`'s probes. `RUSTC_WORKSPACE_WRAPPER`
+joins the pass-through beside `RUSTC_WRAPPER` (the record's `wrapper` boolean covers both). No
+toolchain is installed, listed, updated, or set as a default by anything this contract runs
+(SR-012-1, SR-012-4). The seal's other rules — the allow-list, the credential strip, the redaction
+— are unchanged. **No provisioning is not no network**: `RUSTUP_AUTO_INSTALL=0` stops rustup from
+installing a toolchain; it does not stop Cargo from fetching crates, which stays governed by the
+seeded lockfile and `CARGO_NET_OFFLINE` exactly as before (SR-012-5).
+
+**Identify before invoking** (1.2.0, FR-012-7a/7b). A rustup proxy run in a pinned directory, or
+with an absent toolchain named, could — before rustup 1.28.0 — install that toolchain from a
+listing as innocent as `rustup --version`, which also resolves the active toolchain to report its
+`rustc`. So **nothing runs a proxy in a pinned directory, or with an absent toolchain, until that
+proxy's rustup is known to honour the no-install guarantee**, and this order is followed before
+any check runs — the identification (1–4) depends on no directory and precedes every invocation in
+the tree being verified; the resolution probe (5) runs in that tree:
+
+1. **Locate `rustup` without executing a proxy** — on `PATH`; else beside the `rustc` that `PATH`
+   resolves; else `$CARGO_HOME/bin/rustup`; else `~/.cargo/bin/rustup`.
+2. **The floor.** A located `rustup` answers `rustup --version` **under isolation** — an
+   exclusively created empty working directory with no toolchain file above it, `RUSTUP_HOME` and
+   `CARGO_HOME` pointed at exclusively created empty directories, `RUSTUP_TOOLCHAIN` unset,
+   `RUSTUP_AUTO_INSTALL=0`, `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT` set to an unroutable
+   loopback address in that child only, a bounded timeout — so it is never run where a toolchain
+   is named. Only the first stdout line is parsed. Unparseable, or below **1.28.1** (the release
+   that introduced `RUSTUP_AUTO_INSTALL`), is `tool_missing`, exit `5`,
+   `details.tool = "rustup >= 1.28.1"`, and no proxy is invoked.
+3. **Classify `rustc` and `cargo` without running them in the pinned directory** — each is a proxy
+   of the located rustup when it is the same file after symlinks are followed (same device and
+   inode on Unix; identical bytes on Windows, where the proxies are copies). A proxy of a rustup at
+   or above the floor is *identified*.
+4. **Otherwise, the isolated identification probe** — the binary is run once with `-vV` under the
+   same isolation as the floor check. A bare compiler ignores every `RUSTUP_*` variable and prints its identity:
+   *bare*, `proxy = false`. An answer in rustup's own words (no default toolchain, nothing
+   installed, `rustup` named) is *a proxy whose rustup could not be located* and is **refused
+   explicitly** — `tool_missing`, exit `5`, `details.tool = "rustup >= 1.28.1"`,
+   `details.reason = proxy_unidentified`, the remedy being to put the `rustup` that owns these
+   proxies first on `PATH`. Anything else, or the timeout, is `project_verification_failed`,
+   `details.reason = compiler_identity_unreadable`.
+5. **The resolution probe runs only after the tools are identified**: `rustc -vV` and `cargo -vV`
+   in the directory whose selection is being measured (the staging directory for `renvor new`;
+   the project directory and then the scratch copy for `generate auth`), under the seal, followed
+   by `rustup show active-toolchain` when rustup is located, and by `rustfmt --version` and
+   `cargo clippy --version` for the components. rustup's "is not installed" is `tool_missing`,
+   `details.tool = "rustup toolchain <channel>"`, with the exact `rustup toolchain install …`
+   remedy — **before step 4 VERIFY runs any check**: for `renvor new` the probe runs in the
+   staged tree, after step 3 RENDER has written the pin it measures, and a refusal removes the
+   staging directory like any other failure, so **nothing is placed**; a compiler below the
+   project's `rust-version` is `tool_missing`, `details.tool = "rustc >= <msrv>"` (the generator's
+   prerequisite, applied to the compiler the preflight resolution names — not a claim about
+   Cargo's effective compiler under `RUSTC`, `build.rustc`, or a wrapper); a missing component is
+   `tool_missing` naming it. On an identified proxy at or above the floor, one further in-run
+   witness — the resolved `rustc` run once with `RUSTUP_TOOLCHAIN` set to a name that cannot be
+   installed — confirms that this rustup answers "is not installed" and downloads nothing; any
+   other answer is `tool_missing`, `details.reason = no_install_guarantee_unconfirmed`. It is never
+   run on an unidentified binary.
+
+**The evidence — launch observation plus queried identity** (1.2.0, FR-012-7d as amended by the
+maintainer on 2026-09-07). The five checks run unchanged in what they compile, run, and require;
+the three that can launch a compiler take the output flag `-vv` (`cargo clippy --all-targets -vv
+-- -D warnings`, `cargo build -vv`, `cargo test -vv`; `fmt` launches none; `cargo run --quiet`
+launches none after `build`). For each check the record carries the **outcome**; the **observed
+launch chains** of the project's own units, parsed from Cargo's `Running` lines (every
+`NAME=value` token stripped; wrapper presence as a boolean; paths never); and, separately, the
+**queried identity** of the launched compiler — the last binary of the build/test chain, run once
+with `-vV` under the same seal. **A doctest unit is not part of that chain.** `cargo test -vv` on a
+package with a library target launches one unit with **rustdoc** — the trigger is the library
+target alone, not a doc comment — and rustdoc does not answer `rustc -vV`. That unit is the
+project's own and is recorded as its own bucket, `checks.doctest`, with its own counts and the
+observed rustdoc executable's own `-vV` answer in `rustdoc_release`/`rustdoc_commit`, parsed under
+the identity grammar with `rustdoc` as the tool name. Recognition is by the chain's TRAILING
+executable, so a wrapper in front of rustdoc does not hide it; an executable under some other name
+is not recognised, stays in the compiler set, and fails loudly at
+`compiler_identity_unreadable` rather than being attributed to a tool that was never asked.
+`rustdoc_*` is never filled from `rustc_*` and never inferred from it: `RUSTC` redirects `rustc`
+and leaves rustdoc on the toolchain's own, so the two legitimately differ, and a difference is
+recorded rather than refused. For clippy the launch chain is `[clippy-driver, rustc]` and the
+trailing `rustc` argument is **not** clippy's executing compiler, so the observed `clippy-driver`
+**executable** — the one the `Running` line names — is queried **itself**, with
+`clippy-driver --version`, under the seal and after the identification safeguards above; `cargo
+clippy --version` stays the component query of the preflight and **never** fills the driver's
+identity, whether or not its answer would match. **Cached checks are represented explicitly**: a
+successful check whose relevant units Cargo positively reports `Fresh` may pass without a compiler
+launch, and the record then says `observation = "cached"` (or `"mixed"`, with both counts), leaves
+the observed identity **absent** — observed compiler identity unavailable, never filled from the
+pin, `PATH`, an old record, or `.rustc_info.json` — and one stderr line names the checks whose
+units were all `Fresh`: `verification reused cached artifacts for <checks>: no compiler launch
+observed`. A cached clippy check records no driver identity. **The doctest bucket is excluded from
+both the `observation` and that line, explicitly.** `observation` summarises the build and test
+units — the source of `rustc_*` — and a unit launched with rustdoc cannot contribute to a
+statement about `rustc`. The line's `<checks>` are those whose own units were all `Fresh`, and the
+doctest check is never among them because its table exists only when a unit was launched. So a
+fully cached library-bearing project records `observation = "cached"` with `rustc_*` absent AND
+`checks.doctest` present with an identity — a combination that is truthful in every part, and the
+one this bucket exists to make representable: Cargo reports the package `Fresh` and launches its
+doctest unit anyway (measured on macOS/aarch64 under cargo 1.94.0 and on Linux/aarch64 under 1.94.0 and 1.98.1), so no
+`Fresh` report is ever attributed to a doctest unit and `checks.doctest.units_fresh` is `0`. **Capture failure is not caching**:
+every unit of the project's own package(s) must be accounted for by a `Running` line — in the
+compiler bucket or the doctest bucket, according to what the chain ends in — or by a positive
+`Fresh` report for that package. A `Compiling`/`Checking` announcement is answered only by a
+COMPILER launch: a doctest launch does not discharge it, because Cargo has never been observed to
+announce a package for the doctest unit alone, and letting rustdoc settle that debt would accept a
+stream in which the library was announced and never compiled. A missing line, a truncated or malformed stream, a parse failure, or a `-vV`
+answer outside the identity grammar is `project_verification_failed`,
+`details.reason = evidence_capture_failed` (an identity outside the grammar keeps
+`compiler_identity_unreadable`), redacted as above, nothing placed — and **never** recorded as
+cached. The generator forces no incremental compilation, adds no target, changes no emit flag,
+touches no timestamp, and clears no cache to manufacture an observation.
+
+**The seal is not a sandbox.** A wrapper, a `RUSTC` override, `RUSTFLAGS`, and every build script
+of every dependency still run with the operator's rights inside the "sealed" step. What the seal
+guarantees is narrower and stated exactly — no secret of the operator's shell reaches the child
+(1.1.0), no toolchain is provisioned (1.2.0), and what was launched and what was queried is
+recorded, a cached run recorded as such. A trusted wrapper may execute something else, and no
+field of the record claims otherwise (SR-012-3).
+
 ## Residue
 
-A process killed between steps 2 and 6 leaves a staging directory behind. That is unavoidable
+A process killed between steps 2 and 7 leaves a staging directory behind. That is unavoidable
 without a supervising process, and it is specified rather than ignored:
 
 - The staging directory name is **identifiable as Renvor's** and carries the process identity.
@@ -132,6 +276,15 @@ without a supervising process, and it is specified rather than ignored:
 - `renvor doctor` reports orphaned staging directories it finds beside a destination, and does not
   delete them without being asked. **Deleting a directory that merely looks like residue is exactly
   the class of action this whole contract exists to prevent.**
+- `renvor generate auth` verifies the merged tree in a **scratch copy staged beside the project**
+  — `<parent>/.renvor-staging-<pid>-…`, the same naming — never under the system temporary
+  directory (1.2.0, Phase 012, FR-012-13), so the copy shares the project's ancestors and
+  therefore the directory overrides and ancestor toolchain files that select its compiler; the
+  resolution probe runs first in the project directory and then in the copy, and the two must
+  agree or the run is `project_verification_failed`,
+  `details.reason = toolchain_resolution_diverged`, with nothing written. The copy is removed on
+  completion and on failure; killed mid-run, it is residue of the same kind, beside the project
+  and reported by `doctor` the same way.
 
 ## Concurrency
 

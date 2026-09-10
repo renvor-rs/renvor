@@ -245,3 +245,255 @@ fn a_starter_is_generated_with_networking_unavailable_from_the_cache_a_framework
         "the starter was not placed"
     );
 }
+
+// ───────────────────────────── Phase 012: no provisioning is not no network (SR-012-1, SR-012-5)
+
+/// The directory rustup keeps its toolchains in, read the way an operator would read it.
+///
+/// **Never `rustup toolchain list`.** Asking rustup what is installed runs the proxy, and on a
+/// pre-1.28 rustup — or in a pinned directory — the question can itself install what it is asked
+/// about (measured 2026-09-07). A control for "nothing was installed" that might install
+/// something is not a control. This reads the directory.
+fn toolchains_directory() -> Option<std::path::PathBuf> {
+    let home = std::env::var_os("RUSTUP_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| std::path::PathBuf::from(home).join(".rustup"))
+        })?;
+    let toolchains = home.join("toolchains");
+    toolchains.is_dir().then_some(toolchains)
+}
+
+/// The names under [`toolchains_directory`], sorted — the before-and-after of the control below.
+fn installed(toolchains: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(toolchains)
+        .expect("the toolchain directory is readable")
+        .map(|entry| {
+            entry
+                .expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// A channel that is plausible, exact, and **not installed here**, chosen by reading the
+/// directory.
+///
+/// Plausible matters: a name rustup would reject as malformed would be refused for the wrong
+/// reason, and the test would pass without ever reaching the question it asks. A released
+/// version that this machine happens not to have is the case an operator meets.
+fn an_absent_channel(toolchains: &std::path::Path) -> Option<String> {
+    let present = installed(toolchains);
+    ["1.72.0", "1.73.0", "1.74.0", "1.75.0", "1.76.0", "1.77.0"]
+        .into_iter()
+        .find(|candidate| {
+            !present
+                .iter()
+                .any(|name| name == candidate || name.starts_with(&format!("{candidate}-")))
+        })
+        .map(str::to_owned)
+}
+
+/// What one refusal of an absent pin, offline, with every download address unroutable, produced.
+struct Refusal {
+    exit: i32,
+    document: serde_json::Value,
+    stderr: String,
+    elapsed: std::time::Duration,
+    destination_exists: bool,
+    before: Vec<String>,
+    after: Vec<String>,
+}
+
+/// Runs `renvor new` with `RUSTUP_TOOLCHAIN` naming an absent channel and every download address
+/// pointed at a port nothing listens on.
+///
+/// `RUSTUP_DIST_SERVER` and `RUSTUP_UPDATE_ROOT` cover rustup's two download roots; the crates.io
+/// index covers cargo's. The seal does **not** forward the two rustup variables (D-L2-3), so they
+/// are set in the *test's* process environment and the run below also demonstrates that the
+/// refusal does not depend on them reaching the child.
+fn refuse_an_absent_pin(channel: &str, toolchains: &std::path::Path) -> Refusal {
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let unroutable = "http://127.0.0.1:9";
+    let mut environment = offline();
+    environment.push(("RUSTUP_TOOLCHAIN", channel));
+    environment.push(("RUSTUP_DIST_SERVER", unroutable));
+    environment.push(("RUSTUP_UPDATE_ROOT", unroutable));
+    environment.push((
+        "CARGO_REGISTRIES_CRATES_IO_INDEX",
+        "sparse+http://127.0.0.1:9/index/",
+    ));
+
+    let before = installed(toolchains);
+    let started = std::time::Instant::now();
+    let (exit, stdout, stderr) = renvor(
+        &["new", "absent-pin", "--yes", "--output", "json"],
+        base.path(),
+        &environment,
+    );
+    let elapsed = started.elapsed();
+    let after = installed(toolchains);
+
+    Refusal {
+        exit,
+        document: serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("not JSON:\n{stdout}")),
+        stderr,
+        elapsed,
+        destination_exists: base.path().join("absent-pin").exists(),
+        before,
+        after,
+    }
+}
+
+#[test]
+fn an_offline_generation_with_the_pin_installed_passes_and_records_it() {
+    // SR-012-5, the first of the two halves: `RUSTUP_AUTO_INSTALL=0` and an unreachable network
+    // change nothing about a generation whose pin is already here — which is every generation on
+    // a machine that has the toolchain. The pin IS the running toolchain, so "installed" needs no
+    // arranging and no second toolchain.
+    let base = tempfile::tempdir().expect("a temporary directory");
+    let (exit, _, stderr) = renvor(&["new", "pinned", "--yes"], base.path(), &offline());
+    assert_eq!(
+        exit, 0,
+        "an offline generation with the pin present:\n{stderr}"
+    );
+
+    let project = base.path().join("pinned");
+    let pin = std::fs::read_to_string(project.join("rust-toolchain.toml"))
+        .expect("the generated project carries a pin");
+    let channel = pin
+        .lines()
+        .find_map(|line| line.strip_prefix("channel = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("`rust-toolchain.toml` names a channel");
+
+    let record = std::fs::read_to_string(project.join(".renvor").join("generated.toml"))
+        .expect("the provenance record is readable");
+    assert!(
+        record.contains("[toolchain]"),
+        "an offline generation recorded no `[toolchain]`:\n{record}"
+    );
+    assert!(
+        record.contains(&format!("pinned = \"{channel}\"")),
+        "the record's pin is not the channel the tree declares ({channel}):\n{record}"
+    );
+    assert!(
+        record.contains("[verified_with]"),
+        "an offline generation ran its checks and recorded no evidence:\n{record}"
+    );
+    assert!(
+        record.contains("operation = \"new\""),
+        "the evidence does not name the operation that wrote it:\n{record}"
+    );
+}
+
+#[test]
+fn an_offline_generation_with_the_pin_absent_is_tool_missing_and_fetches_nothing() {
+    // SR-012-5's other half. `RUSTUP_AUTO_INSTALL=0` stops rustup installing a toolchain; it does
+    // not stop cargo fetching crates, and the two are separate promises. This one is: an absent
+    // pin is refused BEFORE any check, so no crate fetch is ever reached either — the destination
+    // is untouched and there is nothing in it to have resolved.
+    let Some(toolchains) = toolchains_directory() else {
+        println!(
+            "SKIPPED an_offline_generation_with_the_pin_absent_is_tool_missing_and_fetches_\
+             nothing: no rustup toolchain directory on this machine"
+        );
+        return;
+    };
+    let Some(channel) = an_absent_channel(&toolchains) else {
+        println!(
+            "SKIPPED an_offline_generation_with_the_pin_absent_is_tool_missing_and_fetches_\
+             nothing: every candidate channel is installed here"
+        );
+        return;
+    };
+
+    let refusal = refuse_an_absent_pin(&channel, &toolchains);
+    assert_eq!(
+        refusal.exit, 5,
+        "an absent pin is `tool_missing` (exit 5):\n{}\n{}",
+        refusal.document, refusal.stderr
+    );
+    assert_eq!(
+        refusal.document["status"], "failure",
+        "{}",
+        refusal.document
+    );
+    assert_eq!(
+        refusal.document["error"]["code"], "tool_missing",
+        "{}",
+        refusal.document
+    );
+    assert!(
+        refusal.document["error"]["details"]["tool"]
+            .as_str()
+            .is_some_and(|tool| tool.contains(&channel)),
+        "the refusal does not name the toolchain it wanted: {}",
+        refusal.document
+    );
+    assert!(
+        !refusal.destination_exists,
+        "a refusal before any check wrote to the destination"
+    );
+}
+
+#[test]
+fn an_absent_pin_with_an_unroutable_dist_server_is_refused_in_bounded_time_and_installs_nothing() {
+    // SR-012-1, the no-provisioning control, and the same run as the test above — stated as its
+    // own row because it is its own promise. Nothing about generation or verification may
+    // provision a toolchain, so with every download address pointed at a closed port the result
+    // must be a refusal BY NAME and not a timeout, and the toolchain directory must be exactly
+    // what it was.
+    //
+    // The listing is read from the filesystem, before and after. `rustup toolchain list` is not
+    // used, here or anywhere in this file: see `toolchains_directory`.
+    let Some(toolchains) = toolchains_directory() else {
+        println!(
+            "SKIPPED an_absent_pin_with_an_unroutable_dist_server_is_refused_in_bounded_time_and_\
+             installs_nothing: no rustup toolchain directory on this machine"
+        );
+        return;
+    };
+    let Some(channel) = an_absent_channel(&toolchains) else {
+        println!(
+            "SKIPPED an_absent_pin_with_an_unroutable_dist_server_is_refused_in_bounded_time_and_\
+             installs_nothing: every candidate channel is installed here"
+        );
+        return;
+    };
+
+    let refusal = refuse_an_absent_pin(&channel, &toolchains);
+    assert_eq!(
+        refusal.exit, 5,
+        "the probe did not refuse by name:\n{}\n{}",
+        refusal.document, refusal.stderr
+    );
+    assert_eq!(
+        refusal.document["error"]["code"], "tool_missing",
+        "{}",
+        refusal.document
+    );
+    // BOUNDED TIME, not "fast": the point is that nothing waited on a connection to a port that
+    // is closed. A download attempt against an unroutable address would retry and stall; a
+    // refusal by name answers from what rustup already knows.
+    assert!(
+        refusal.elapsed < std::time::Duration::from_secs(60),
+        "the refusal took {:?}, which is a network attempt rather than an answer by name",
+        refusal.elapsed
+    );
+    assert_eq!(
+        refusal.before, refusal.after,
+        "the toolchain directory changed during a run that must provision nothing"
+    );
+    assert!(
+        !refusal.after.iter().any(|name| name.starts_with(&channel)),
+        "the channel the run asked for was installed by the run: {:?}",
+        refusal.after
+    );
+}

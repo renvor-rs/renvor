@@ -345,10 +345,11 @@ fn a_failure_at_every_placement_boundary_leaves_the_project_byte_identical() {
     // STANDARDS AXIS (P2), and the rule the correction round made explicit: a generation into an
     // existing project either lands whole or leaves the tree exactly as it found it. The commit
     // stages every file as a temporary sibling, then renames each into place, then rewrites the
-    // record; a failure is injected after EVERY one of those steps — after each staged file,
-    // after each placed file, and before the record — and the whole project is compared byte for
-    // byte each time, the record and the migration directory included. `RENVOR_FAIL_AT` is
-    // honoured by debug builds only, which `cargo test` is.
+    // record, then builds the result it reports; a failure is injected after EVERY one of those
+    // steps — after each staged file, after each placed file, before the record, and after it —
+    // and the whole project is compared byte for byte each time, the record and the migration
+    // directory included. `RENVOR_FAIL_AT` is honoured by debug builds only, which `cargo test`
+    // is.
     let base = tempfile::tempdir().expect("tempdir");
     let project = project(base.path(), "mysql");
     for (label, args) in [
@@ -383,6 +384,11 @@ fn a_failure_at_every_placement_boundary_leaves_the_project_byte_identical() {
             boundaries.push(format!("generate-place-{index}"));
         }
         boundaries.push("generate-record".to_owned());
+        // AND AFTER THE RECORD, where the command's own result is constructed. That read walks
+        // the tree and can fail; before the correction it ran once `commit` had returned, so its
+        // failure was reported with every file already rewritten. It is a boundary of the
+        // transaction now, and the byte-for-byte comparison below is what says so.
+        boundaries.push("generate-result".to_owned());
         for step in &boundaries {
             let (ok, document, _) =
                 renvor_with(&args, &project, &[("RENVOR_FAIL_AT", step.as_str())]);

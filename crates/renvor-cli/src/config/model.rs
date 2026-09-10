@@ -512,8 +512,19 @@ const MAX_FRAMEWORK_MANIFEST_BYTES: u64 = 64 * 1024;
 /// nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameworkSource {
-    /// A checkout of the Renvor workspace, canonical and absolute.
-    Path(PathBuf),
+    /// A checkout of the Renvor workspace, canonical and absolute, with the two exact releases
+    /// its declaration carries (Phase 012, FR-012-1) — read at validation, each on its own, and
+    /// compared there. Neither is serialised: the JSON `configuration` shape is the source and
+    /// the path, as it was.
+    Path {
+        /// The checkout.
+        path: PathBuf,
+        /// `[toolchain].channel` of the checkout's `rust-toolchain.toml`: what a starter pins.
+        channel: String,
+        /// `[workspace.package].rust-version` of the checkout's `Cargo.toml`: a starter's
+        /// `rust-version`.
+        msrv: String,
+    },
 }
 
 impl FrameworkSource {
@@ -530,8 +541,10 @@ impl FrameworkSource {
     /// | `framework_workspace` | that manifest parses as TOML and declares `[workspace]` |
     /// | `framework_facade` | `crates/renvor/Cargo.toml` exists and names package `renvor` |
     /// | `framework_lockfile` | `Cargo.lock` exists there (the starter's resolution is seeded from it) |
+    /// | `framework_directory`, with `reason` and `file` | `rust-toolchain.toml` pins an exact release at or above the `rust-version` `Cargo.toml` declares under `[workspace.package]` — Phase 012, FR-012-1: `toolchain_pin_malformed`, `toolchain_pin_unsupported` (an alias is never resolved), `toolchain_pin_below_msrv`, `msrv_unreadable`; a refused checkout is the framework's inconsistency, and the message names the file |
     ///
-    /// Two files are read. Nothing is executed or evaluated.
+    /// Three files are read (`Cargo.toml`, `crates/renvor/Cargo.toml`, `rust-toolchain.toml`) and
+    /// one's presence is checked (`Cargo.lock`). Nothing is executed or evaluated.
     ///
     /// # Errors
     ///
@@ -656,14 +669,25 @@ impl FrameworkSource {
             ));
         }
 
-        Ok(Self::Path(canonical))
+        // FR-012-1: the checkout's pin and its MSRV, each parsed on its own and then compared —
+        // never evaluated, never resolved. A checkout whose declaration is inconsistent is
+        // refused HERE, before anything is staged, as the framework's inconsistency: exit 3, the
+        // `framework_directory` rule family, the named `reason`, and the `file`.
+        let pin = crate::toolchain::pin::read(&canonical)
+            .map_err(|error| error.into_cli_error(&shown))?;
+
+        Ok(Self::Path {
+            path: canonical,
+            channel: pin.channel.to_string(),
+            msrv: pin.msrv.to_string(),
+        })
     }
 
     /// The checkout.
     #[must_use]
     pub fn path(&self) -> &Path {
         match self {
-            Self::Path(path) => path,
+            Self::Path { path, .. } => path,
         }
     }
 
@@ -671,7 +695,23 @@ impl FrameworkSource {
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
-            Self::Path(_) => "path",
+            Self::Path { .. } => "path",
+        }
+    }
+
+    /// The exact release the checkout's `rust-toolchain.toml` pins: what a starter pins too.
+    #[must_use]
+    pub fn toolchain_channel(&self) -> &str {
+        match self {
+            Self::Path { channel, .. } => channel,
+        }
+    }
+
+    /// The checkout's `[workspace.package].rust-version`: a starter's `rust-version`.
+    #[must_use]
+    pub fn rust_version(&self) -> &str {
+        match self {
+            Self::Path { msrv, .. } => msrv,
         }
     }
 }
@@ -1872,13 +1912,15 @@ mod tests {
     // naming `AuthStarter`, `Capability`, `Capabilities`, and `FrameworkSource`), then made
     // green by the implementation above. Recorded in `specs/011-…/evidence/batch-a.md`.
 
-    /// A directory shaped like a Renvor workspace, for the framework-path rules.
+    /// A directory shaped like a Renvor workspace, for the framework-path rules: the workspace
+    /// manifest with its MSRV, the facade's manifest, a lockfile, and — Phase 012 — the pin.
     fn fake_framework(base: &std::path::Path) -> PathBuf {
         let root = base.join("framework");
         std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
         std::fs::write(
             root.join("Cargo.toml"),
-            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n\n[workspace.package]\n\
+             rust-version = \"1.94.0\"\n",
         )
         .expect("write");
         std::fs::write(
@@ -1887,7 +1929,147 @@ mod tests {
         )
         .expect("write");
         std::fs::write(root.join("Cargo.lock"), "# lock\nversion = 4\n").expect("write");
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+        )
+        .expect("write");
         root
+    }
+
+    // ── Phase 012, L-2: the checkout's pin is read at validation (T-012-04) ───────────────
+    //
+    // Written BEFORE `validate_path` read the pin (RED observed: `resolve` accepted the alias
+    // and the below-MSRV checkout, and `toolchain_channel` did not exist), then made green.
+
+    /// One `details` value of a refusal.
+    fn detail<'a>(error: &'a CliError, key: &str) -> Option<&'a str> {
+        error
+            .details
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// A starter's answers against `framework`, with the destination `demo` under `base`.
+    fn starter_answers(base: &std::path::Path, framework: PathBuf) -> Answers {
+        let mut a = answers(base.join("demo"));
+        a.database = Some("postgres".to_owned());
+        a.capabilities = Some("cache".to_owned());
+        a.framework_path = Some(framework);
+        a
+    }
+
+    #[test]
+    fn a_checkout_pinned_to_an_alias_is_refused_before_staging() {
+        // FR-012-1: `stable` is never resolved to a version; the checkout is refused as the
+        // framework's inconsistency, by name, before the destination exists.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        std::fs::write(
+            framework.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"stable\"\n",
+        )
+        .expect("write");
+        let error = ProjectConfiguration::resolve(starter_answers(base.path(), framework))
+            .expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert_eq!(detail(&error, "flag"), Some("--framework-path"));
+        assert_eq!(detail(&error, "rule"), Some("framework_directory"));
+        assert_eq!(detail(&error, "reason"), Some("toolchain_pin_unsupported"));
+        assert!(
+            detail(&error, "file").is_some_and(|file| file.ends_with("rust-toolchain.toml")),
+            "the refusal names the pin file"
+        );
+        assert!(
+            !base.path().join("demo").exists(),
+            "the destination was created by a refused checkout"
+        );
+    }
+
+    #[test]
+    fn a_checkout_below_its_own_msrv_is_refused() {
+        // FR-012-1: a pin below the manifest's `rust-version` is the checkout's inconsistency.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        std::fs::write(
+            framework.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.93.0\"\n",
+        )
+        .expect("write");
+        let error = ProjectConfiguration::resolve(starter_answers(base.path(), framework))
+            .expect_err("refused");
+        assert_eq!(error.code, Code::UnsupportedValue);
+        assert_eq!(detail(&error, "rule"), Some("framework_directory"));
+        assert_eq!(detail(&error, "reason"), Some("toolchain_pin_below_msrv"));
+        assert!(
+            !base.path().join("demo").exists(),
+            "the destination was created by a refused checkout"
+        );
+    }
+
+    #[test]
+    fn a_checkout_without_a_pin_or_an_msrv_is_refused_by_name() {
+        // The other two reasons of FR-012-1, through `resolve` rather than the reader alone.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        std::fs::remove_file(framework.join("rust-toolchain.toml")).expect("removed");
+        let error = ProjectConfiguration::resolve(starter_answers(base.path(), framework.clone()))
+            .expect_err("refused");
+        assert_eq!(detail(&error, "rule"), Some("framework_directory"));
+        assert_eq!(detail(&error, "reason"), Some("toolchain_pin_malformed"));
+
+        let framework = fake_framework(base.path());
+        std::fs::write(
+            framework.join("Cargo.toml"),
+            "[workspace]\nresolver = \"3\"\nmembers = [\"crates/renvor\"]\n",
+        )
+        .expect("write");
+        let error = ProjectConfiguration::resolve(starter_answers(base.path(), framework))
+            .expect_err("refused");
+        assert_eq!(detail(&error, "rule"), Some("framework_directory"));
+        assert_eq!(detail(&error, "reason"), Some("msrv_unreadable"));
+        assert!(
+            detail(&error, "file").is_some_and(|file| file.ends_with("Cargo.toml")),
+            "the refusal names the manifest"
+        );
+    }
+
+    #[test]
+    fn a_validated_checkout_carries_its_channel_and_its_msrv() {
+        // The two values a starter renders, read from two files and stored on the source.
+        let base = tempfile::tempdir().expect("a temporary directory");
+        let framework = fake_framework(base.path());
+        std::fs::write(
+            framework.join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.95.0\"\n",
+        )
+        .expect("write");
+        let source = FrameworkSource::validate_path(&framework).expect("validates");
+        assert_eq!(source.toolchain_channel(), "1.95.0");
+        assert_eq!(source.rust_version(), "1.94.0");
+        // The JSON shape is unchanged: the source, the path, and nothing else.
+        let json = serde_json::to_value(&source).expect("serialises");
+        let object = json.as_object().expect("an object");
+        assert_eq!(
+            object.len(),
+            2,
+            "the serialised source has exactly two keys"
+        );
+        assert!(object.contains_key("source") && object.contains_key("path"));
+    }
+
+    #[test]
+    fn the_frameworks_own_checkout_validates_with_its_pin() {
+        // POSITIVE CONTROL: the repository's own declaration passes every rule, the new one
+        // included, and its MSRV is this crate's `rust-version`.
+        let here = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let source = FrameworkSource::validate_path(&here).expect("the checkout validates");
+        assert_eq!(source.rust_version(), env!("CARGO_PKG_RUST_VERSION"));
+        assert!(
+            semver::Version::parse(source.toolchain_channel()).is_ok(),
+            "the checkout's pin is an exact release"
+        );
     }
 
     #[test]

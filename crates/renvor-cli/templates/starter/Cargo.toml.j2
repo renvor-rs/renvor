@@ -13,6 +13,9 @@
 name = "{{ name }}"
 version = "0.1.0"
 edition = "2024"
+{% if toolchain_declared %}
+rust-version = "{{ rust_version }}"
+{% endif %}
 publish = false
 
 [dependencies]

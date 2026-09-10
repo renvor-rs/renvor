@@ -127,6 +127,10 @@ pub enum Code {
     RenderFailed,
     /// A documented bound was exceeded.
     BoundExceeded,
+    /// The provenance record declares a `record_version` newer than this reader knows
+    /// (FR-012-5b, U-1 approved 2026-09-07): an unsupported *input* record is a validation
+    /// failure, not a missing tool — refused by name before any file is planned.
+    RecordUnsupported,
     /// The staging directory could not be created.
     ///
     /// Separate from [`Code::PlacementFailed`]: nothing has been staged yet, so nothing can have
@@ -162,6 +166,7 @@ impl Code {
             Self::ContainerControlsMissing => "container_controls_missing",
             Self::RenderFailed => "render_failed",
             Self::BoundExceeded => "bound_exceeded",
+            Self::RecordUnsupported => "record_unsupported",
             Self::StagingFailed => "staging_failed",
             Self::PlacementFailed => "placement_failed",
             Self::Internal => "internal",
@@ -190,6 +195,7 @@ impl Code {
             | Self::GenerationConflict
             | Self::RenderFailed
             | Self::BoundExceeded
+            | Self::RecordUnsupported
             | Self::StagingFailed
             | Self::PlacementFailed => Exit::Validation,
             Self::Cancelled => Exit::Cancelled,
@@ -203,7 +209,7 @@ impl Code {
     /// `#[cfg(test)]` because nothing at runtime iterates the registry; a shipped constant that no
     /// shipped code reads is dead weight that reads like an API.
     #[cfg(test)]
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Usage,
         Self::UnsupportedValue,
         Self::UnsupportedCombination,
@@ -222,6 +228,7 @@ impl Code {
         Self::GenerationConflict,
         Self::RenderFailed,
         Self::BoundExceeded,
+        Self::RecordUnsupported,
         Self::StagingFailed,
         Self::PlacementFailed,
         Self::Internal,
@@ -307,7 +314,10 @@ mod tests {
         // 19 -> 20 in Phase 004: `transport_not_wired`. The literal is updated deliberately rather
         // than derived, because deriving it from `ALL` would make this assertion vacuous — it
         // exists precisely so that growing the registry is a decision somebody records.
-        assert_eq!(Code::ALL.len(), 21);
+        //
+        // 21 -> 22 in Phase 012 (B1): `record_unsupported` — a provenance record newer than the
+        // reader is a validation failure of an input file (exit 3; U-1, approved 2026-09-07).
+        assert_eq!(Code::ALL.len(), 22);
     }
 
     /// The published registry, parsed out of the contract document itself.

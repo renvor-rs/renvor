@@ -116,7 +116,11 @@ fn each_selection_generates_exactly_its_file_set() {
         "Cargo.lock",
         "Cargo.toml",
         "README.md",
+        // PHASE 012 (FR-012-1, L-2): every generated tree declares the toolchain it was verified
+        // with — an exact channel, `rustfmt` and `clippy`, the minimal profile. It is a template
+        // group like any other, so a selection that renders nothing else still renders this.
         "renvor.toml",
+        "rust-toolchain.toml",
         "src/main.rs",
     ];
     let persistence = vec![

@@ -206,15 +206,31 @@ impl Invocation {
         self
     }
 
+    /// The child this invocation would spawn, built but not started.
+    ///
+    /// Separated from [`Invocation::run`] so a test can read the environment the child would
+    /// receive without paying for a build — which is how `renvor routes`' half of FR-012-6's
+    /// table is asserted.
+    ///
+    /// **Inherited, not sealed.** This runs the operator's own project, which may legitimately
+    /// need a variable from the operator's shell; what it loses is the ability to provision a
+    /// toolchain (SR-012-1) — see [`crate::commands::no_provisioning`].
+    #[must_use]
+    pub fn command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        command.args(&self.arguments).current_dir(&self.directory);
+        crate::commands::no_provisioning(&mut command);
+        command
+    }
+
     /// Runs the binary and returns everything it printed to `stdout`.
     ///
     /// # Errors
     ///
     /// Every variant of [`RelayFailure`]. **None of them is an empty success.**
     pub fn run(&self) -> Result<String, RelayFailure> {
-        let mut child = Command::new(&self.program)
-            .args(&self.arguments)
-            .current_dir(&self.directory)
+        let mut child = self
+            .command()
             .stdout(Stdio::piped())
             // `stderr` is INHERITED, not captured. A build takes time and prints progress, and
             // swallowing it would leave an operator watching a silent command. C-1 reserves

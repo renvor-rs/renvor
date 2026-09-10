@@ -17,6 +17,7 @@
 //! a cleanup for — including a panic.
 
 pub mod apply;
+pub mod digest;
 pub mod manifest;
 pub mod place;
 pub mod record;
