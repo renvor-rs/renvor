@@ -23,6 +23,10 @@ Options:
                              not a terminal
   -h, --help                 Print help
 
+A provenance record written by a newer generator is refused by name as `record_unsupported` (exit
+3), with `details.record_version` and `details.supported`, before anything is planned: rebuild the
+generator, not the project.
+
 ```
 
 ```

@@ -1,7 +1,7 @@
 ---
 description: "Contract — supported toolchains, platforms, MSRV floor, and change rules"
-version: "1.1.2"
-status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.1.2 (2026-08-21) corrects the provenance description of platform evidence: on a `pull_request` event CI validates GitHub's synthetic merge commit built from an exact base SHA and pull-request head SHA, not the isolated branch head. NO platform is added or withdrawn, the MSRV is unchanged, required-check enforcement is unchanged, and the CI workflows are unchanged. 1.1.1 (2026-08-21) corrects the platform-evidence rule, which 1.1.0 stated in a form no commit could satisfy; NO platform is added or withdrawn, and the MSRV is unchanged. 1.1.0 (2026-08-21) added macOS and Windows as supported platforms, named the six platform/toolchain contexts, and stated which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. This version identifies the contract text, not a stability promise"
+version: "1.2.0"
+status: "normative — a public promise and a release contract under principle V; no release has occurred. 1.2.0 (2026-09-07, Phase 012, L-2) adds the rustup floor row: rustup 1.28.1 or later is required to generate or verify a pinned project (the release that introduced `RUSTUP_AUTO_INSTALL`); older or unparseable versions are refused by name; this is a support floor for the generator's guarantee, not a statement about how older releases behave. The row is carried by ADR-0038, which is PROPOSED and accepted by nobody yet; NO platform is added or withdrawn, the MSRV is unchanged, required-check enforcement is unchanged, and the CI workflows are unchanged by this revision. 1.1.2 (2026-08-21) corrects the provenance description of platform evidence: on a `pull_request` event CI validates GitHub's synthetic merge commit built from an exact base SHA and pull-request head SHA, not the isolated branch head. NO platform is added or withdrawn, the MSRV is unchanged, required-check enforcement is unchanged, and the CI workflows are unchanged. 1.1.1 (2026-08-21) corrects the platform-evidence rule, which 1.1.0 stated in a form no commit could satisfy; NO platform is added or withdrawn, and the MSRV is unchanged. 1.1.0 (2026-08-21) added macOS and Windows as supported platforms, named the six platform/toolchain contexts, and stated which of them branch protection actually requires. Governed by ADR-0011, accepted 2026-08-21 under waiver W-002 — a review that is NOT independent. This version identifies the contract text, not a stability promise"
 ---
 
 # Contract: Support and Version Policy
@@ -18,6 +18,13 @@ status: "normative — a public promise and a release contract under principle V
 > [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md), **accepted 2026-08-21 under
 > waiver W-002 — a self-review that is NOT independent.** It supersedes ADR-0003, whose decision
 > body is preserved verbatim.
+>
+> The **rustup floor row** of 1.2.0 is carried by
+> [`ADR-0038`](../decisions/0038-generated-toolchain-declaration-verified-with-and-the-rustup-floor.md),
+> which is **`proposed` and accepted by nobody yet** — proposed in the Phase 012 B1 pull request,
+> to be accepted only by the maintainer under the single-maintainer waiver pattern. Under the
+> change-control rule at the end of this document the row binds on acceptance; it is stated now so
+> that the generator's behaviour and this text do not diverge in the meantime.
 
 This is a public promise. Under constitution principle V it is a release contract, and under principle X no value here may be claimed without a passing verification run behind it.
 
@@ -31,6 +38,7 @@ This is a public promise. Under constitution principle V it is a release contrac
 | Stable channel tested | **The current stable channel**, resolved and recorded by CI at run time. No version number is stated here: a number written into a document does not float, and would be silently false the day after it was typed | Must have a passing CI run |
 | Edition | 2024 (requires ≥ 1.85.0) | Satisfied by MSRV |
 | Cargo resolver | 3 (requires ≥ 1.84.0), **declared explicitly** in the virtual workspace | Satisfied by MSRV; explicit declaration verified separately |
+| rustup floor *(1.2.0, Phase 012, L-2 — carried by ADR-0038, `proposed`, not yet accepted)* | rustup **1.28.1 or later** is required to generate or verify a pinned project (the release that introduced `RUSTUP_AUTO_INSTALL`); older or unparseable versions are refused by name (`tool_missing`, exit 5, `details.tool = "rustup >= 1.28.1"`, [`command-surface.md`](command-surface.md) 1.5.0); this is a support floor for the generator's guarantee — that generation and verification never install a toolchain — not a statement about how older releases behave. A project generated without rustup at all is verified with the bare compiler on `PATH`, its pin inert, its `rust-version` still enforced by Cargo | The refusal is proven by the generator's own tests with stub `rustup` binaries; **no old rustup release is installed or measured** for this purpose, and the row claims nothing about one |
 
 **The MSRV is a fixed, explicitly versioned support floor.** It is not N-3, N-4, or any offset from current stable. A new Rust stable release does not invalidate it, does not shorten it, and does not trigger a review. The minimum-version CI job stays pinned at 1.94.0; only the stable job moves.
 
@@ -201,6 +209,8 @@ The authoritative policy is `governance/dependency-advisory-policy.md`; the abov
 
 This contract changes only through a superseding ADR with an impact analysis covering published packages, documentation, the compatibility matrix, and any downstream consumer relying on the current promise. **That rule is unchanged by this revision, and this revision was made through it**: the platform change above is carried by [`ADR-0011`](../decisions/0011-support-linux-macos-and-windows.md), which supersedes ADR-0003 on acceptance.
 
+**1.2.0's rustup floor row is carried by [`ADR-0038`](../decisions/0038-generated-toolchain-declaration-verified-with-and-the-rustup-floor.md), which is `proposed` and accepted by nobody yet.** It does not supersede ADR-0011 — it adds a floor for a tool ADR-0011 does not govern — and under this rule the row binds only when the record is accepted; until then it is a stated proposal, kept beside the behaviour the generator already implements so the two cannot diverge. No MSRV, platform, or required-check rule moves with it.
+
 Version history of this contract text:
 
 | Version | Date | Change | Governing record |
@@ -209,3 +219,4 @@ Version history of this contract text:
 | **1.1.0** | **2026-08-21** | Adds macOS and Windows as supported platforms, names the six contexts, states the required-versus-running distinction and the known evidence limitations, and replaces the fixed stable version number with the floating channel. **Additive; no MSRV change** | **ADR-0011** *(`accepted`)* |
 | **1.1.1** | **2026-08-21** | Corrects the platform-evidence rule. 1.1.0 required evidence "at the exact head being claimed — not at an earlier head, not on a branch", which no commit can satisfy: every head is on a branch, and no commit can cite its own hash. Replaced with commit-attached evidence that a branch head satisfies, plus the squash-merge tree-identity rule and the separation of acceptance evidence from ongoing evidence. **No platform added or withdrawn; no MSRV change** | **ADR-0011** *(`accepted`)* |
 | **1.1.2** | **2026-08-21** | Corrects the **provenance** of platform evidence. 1.1.1 said the claim was carried by CI attached to the pull-request branch head; on a `pull_request` event the workflows check out `refs/pull/<n>/merge`, so the six contexts validate GitHub's synthetic merge commit built from an exact base SHA and head SHA. Names that candidate integration tree as the evidence object, requires fresh CI when either SHA moves, and states that a push to `main` tests the actual `main` commit — which, after a squash merge, is what confirms `main`. **PATCH correction: no platform added or withdrawn, no MSRV change, no change to required-check enforcement, and no change to the CI workflows** | **ADR-0011** *(`accepted`)* |
+| **1.2.0** | **2026-09-07** | Adds the **rustup floor** row: rustup 1.28.1 or later is required to generate or verify a pinned project; older or unparseable versions are refused by name; a support floor for the generator's no-provisioning guarantee, not a statement about older releases. **Additive; no platform added or withdrawn, no MSRV change, no change to required-check enforcement, no change to the CI workflows.** Proposed in the Phase 012 B1 pull request | **ADR-0038** *(`proposed` — accepted by nobody yet)* |

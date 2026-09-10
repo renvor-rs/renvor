@@ -2,7 +2,8 @@
 name = "{{ name }}"
 version = "0.1.0"
 edition = "2024"
-publish = false
+{% if toolchain_declared %}rust-version = "{{ rust_version }}"
+{% endif %}publish = false
 
 [dependencies]
 {% if orm == "seaorm" %}# PERSISTENCE IS SELECTED, AND THIS SECTION IS STILL EMPTY. That is deliberate, and for

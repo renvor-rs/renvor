@@ -268,7 +268,14 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 struct Run {
     succeeded: bool,
     status: String,
+    /// Both streams, for a failure message that should show everything the command said.
     output: String,
+    /// `stdout` **alone**. C-1 reserves it for the result, so parsing one JSON envelope must read
+    /// this and not the combination: a diagnostic on `stderr` is not a second document. The
+    /// FR-012-8 resolution notice prints on every leg whose toolchain is not the generated pin —
+    /// which is every `stable` leg — and reading the two together turned the envelope into
+    /// "trailing characters". Found by `verify (stable)` on 2026-09-08.
+    stdout: String,
 }
 
 fn run(program: &str, args: &[&str], directory: &Path, envs: &[(&str, String)]) -> Run {
@@ -287,12 +294,13 @@ fn run(program: &str, args: &[&str], directory: &Path, envs: &[(&str, String)]) 
     let output = command
         .output()
         .unwrap_or_else(|error| panic!("`{program}` could not be run: {error}"));
-    let mut combined = String::from_utf8_lossy(&output.stdout).into_owned();
-    combined.push_str(&String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
     Run {
         succeeded: output.status.success(),
         status: format!("{}", output.status),
-        output: combined,
+        output: format!("{stdout}{stderr}"),
+        stdout,
     }
 }
 
@@ -317,7 +325,7 @@ fn attempt(base: &Path, row: &Row, extra: &[&str]) -> (Run, serde_json::Value) {
     let args = arguments(row, extra);
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     let outcome = run(env!("CARGO_BIN_EXE_renvor"), &borrowed, base, &[]);
-    let document: serde_json::Value = serde_json::from_str(&outcome.output).unwrap_or_else(|_| {
+    let document: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap_or_else(|_| {
         panic!(
             "not a JSON envelope for {} [{}]:\n{}",
             row.name, outcome.status, outcome.output
@@ -583,7 +591,14 @@ fn live(row: &Row, project: &Path) -> bool {
     true
 }
 
-/// Every file under `root`, sorted, with its bytes.
+/// Every file under `root`, sorted, with its bytes — except the provenance record's one measured
+/// table.
+///
+/// Phase 012 (FR-012-4): `[verified_with]` records the instant one run's checks passed and what
+/// that run observed Cargo launch. Two runs that produced byte-identical projects differ there,
+/// and a record that did **not** differ would be one filled in from something other than the run
+/// it describes. Only that table is stripped, by [`without_verified_with`]; `record_version`,
+/// `[toolchain]`, and every `[[file]]` digest are compared like any other file's bytes.
 fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
     let mut files = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -598,12 +613,39 @@ fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
                     .expect("relative")
                     .display()
                     .to_string();
-                files.push((relative, std::fs::read(&path).expect("read")));
+                let bytes = std::fs::read(&path).expect("read");
+                let bytes = if relative.replace('\\', "/") == ".renvor/generated.toml" {
+                    without_verified_with(&String::from_utf8_lossy(&bytes)).into_bytes()
+                } else {
+                    bytes
+                };
+                files.push((relative, bytes));
             }
         }
     }
     files.sort();
     files
+}
+
+/// The provenance record without its `[verified_with]` table and that table's sub-tables.
+///
+/// A top-level table ends the block; `[verified_with.checks.build]` and its siblings belong to it
+/// and go with it.
+fn without_verified_with(record: &str) -> String {
+    let mut kept = String::with_capacity(record.len());
+    let mut inside = false;
+    for line in record.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') {
+            inside =
+                trimmed.starts_with("[verified_with]") || trimmed.starts_with("[verified_with.");
+        }
+        if !inside {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    kept
 }
 
 macro_rules! row {
@@ -756,7 +798,7 @@ fn every_invalid_combination_is_refused_before_any_write() {
             "{flags:?} was accepted:\n{}",
             outcome.output
         );
-        let document: serde_json::Value = serde_json::from_str(&outcome.output)
+        let document: serde_json::Value = serde_json::from_str(&outcome.stdout)
             .unwrap_or_else(|_| panic!("not JSON for {flags:?}:\n{}", outcome.output));
         assert_eq!(document["error"]["code"], code, "{flags:?}: {document}");
         let details = document["error"]["details"].to_string();
@@ -796,8 +838,33 @@ fn a_dry_run_of_a_starter_matches_the_real_run_and_writes_nothing() {
         "a dry run wrote something"
     );
     let (_project, real_document) = generate(base.path(), row);
+    // THE RECORD IS COMPARED BY PATH AND KIND, NOT BY DIGEST (Phase 012, FR-012-4), for the same
+    // reason `tree` strips one of its tables: `[verified_with]` measures the run that wrote it,
+    // so the two runs' records differ by the instant they happened and their digests differ with
+    // them. Every other entry, digest included, is compared — which is what SC-006 asserts.
+    let entries = |document: &serde_json::Value| -> Vec<serde_json::Value> {
+        document["result"]["manifest"]
+            .as_array()
+            .expect("a manifest")
+            .iter()
+            .map(|entry| {
+                if entry["path"] == ".renvor/generated.toml" {
+                    serde_json::json!({ "path": entry["path"], "kind": entry["kind"] })
+                } else {
+                    entry.clone()
+                }
+            })
+            .collect()
+    };
+    let (dry_entries, real_entries) = (entries(&dry_document), entries(&real_document));
+    assert!(
+        dry_entries
+            .iter()
+            .any(|entry| entry["path"] == ".renvor/generated.toml"),
+        "neither run listed a provenance record, so its exclusion above is hiding a missing file"
+    );
     assert_eq!(
-        dry_document["result"]["manifest"], real_document["result"]["manifest"],
+        dry_entries, real_entries,
         "the dry run's manifest differs from the real run's"
     );
 }
@@ -882,7 +949,7 @@ fn generate_into(project: &Path, args: &[&str]) -> (Run, serde_json::Value) {
     full.extend_from_slice(args);
     full.extend_from_slice(&["--output", "json"]);
     let outcome = run(env!("CARGO_BIN_EXE_renvor"), &full, project, &[]);
-    let document: serde_json::Value = serde_json::from_str(&outcome.output).unwrap_or_else(|_| {
+    let document: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap_or_else(|_| {
         panic!(
             "not a JSON envelope for generate {args:?} [{}]:\n{}",
             outcome.status, outcome.output
@@ -1391,4 +1458,363 @@ fn the_auth_starter_is_refused_where_new_would_refuse_it() {
         !project.join("src/auth.rs").exists(),
         "a refusal wrote the starter"
     );
+}
+
+// ────────────────────────────────────────── the legacy-tree selection control
+
+/// The second toolchain this control selects with, or `None` after saying why there is none.
+///
+/// The same gate `toolchain_selection.rs` applies, for the same reason: a selection rule needs two
+/// toolchains to be about anything, `RENVOR_TEST_CONTROL_TOOLCHAIN` names the second, and
+/// `RENVOR_TEST_REQUIRE_TOOLCHAINS=1` — which the `verify` legs set at job level, and which
+/// therefore reaches the census this file runs in — turns a skip into a failure. Installed-ness is
+/// read from the filesystem: `rustup toolchain list` is what SR-012-4 forbids, and on a rustup
+/// that auto-installs, asking is not a read-only question.
+fn control_toolchain() -> Option<String> {
+    let required = std::env::var("RENVOR_TEST_REQUIRE_TOOLCHAINS").is_ok_and(|v| v.trim() == "1");
+    let named = match std::env::var("RENVOR_TEST_CONTROL_TOOLCHAIN") {
+        Ok(value) if !value.trim().is_empty() => value.trim().to_owned(),
+        _ => {
+            assert!(
+                !required,
+                "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but RENVOR_TEST_CONTROL_TOOLCHAIN is not set"
+            );
+            println!("SKIPPED: RENVOR_TEST_CONTROL_TOOLCHAIN is not set");
+            return None;
+        }
+    };
+    let home = std::env::var_os("RUSTUP_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(|home| PathBuf::from(home).join(".rustup"))
+        });
+    let installed = home.is_some_and(|home| {
+        std::fs::read_dir(home.join("toolchains")).is_ok_and(|entries| {
+            let prefix = format!("{named}-");
+            entries.filter_map(Result::ok).any(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|found| found == named || found.starts_with(prefix.as_str()))
+            })
+        })
+    });
+    if installed {
+        return Some(named);
+    }
+    assert!(
+        !required,
+        "RENVOR_TEST_REQUIRE_TOOLCHAINS=1, but RENVOR_TEST_CONTROL_TOOLCHAIN names a toolchain that is not installed"
+    );
+    println!("SKIPPED: RENVOR_TEST_CONTROL_TOOLCHAIN names a toolchain that is not installed");
+    None
+}
+
+/// What `rustc +<toolchain> -vV` calls its release. `RUSTUP_AUTO_INSTALL=0`: a probe that installs
+/// what it was looking for is not an observation (SR-012-1), and the name has already been read as
+/// installed from the filesystem.
+fn release_of(toolchain: &str) -> Option<String> {
+    let output = Command::new("rustc")
+        .arg(format!("+{toolchain}"))
+        .arg("-vV")
+        .env("RUSTUP_AUTO_INSTALL", "0")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("release:")
+                .map(|value| value.trim().to_owned())
+        })
+}
+
+/// A file's SHA-256 in the hex form the provenance record uses, from whichever hasher this
+/// machine has. See `toolchain_selection.rs` for why this is a child process and not a crate.
+fn sha256_of(path: &Path) -> Option<String> {
+    for (program, arguments) in [("sha256sum", &[][..]), ("shasum", &["-a", "256"][..])] {
+        let Ok(output) = Command::new(program).args(arguments).arg(path).output() else {
+            continue;
+        };
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8(output.stdout).ok()?;
+        let hex = text.split_whitespace().next()?.to_owned();
+        if hex.len() == 64 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Some(hex);
+        }
+    }
+    None
+}
+
+/// Turns a freshly generated starter into a **pin-less legacy tree**, as a generator older than
+/// record version 2 left one.
+///
+/// # Why a downgraded record and not the template-7 fixture
+///
+/// The generator's only signal for "legacy" is a provenance record with no `record_version`
+/// (`commands::generate::run_generate`), so a current starter whose record has that line removed
+/// is legacy by every predicate the code applies — and, unlike a Phase-011 fixture, it is a tree
+/// this framework can still build, which is what `generate auth` has to do here. What is being
+/// measured is the toolchain the tree selects and the files a legacy tree is given, neither of
+/// which depends on how old its sources are. The template-7 fixture keeps its own job in
+/// `legacy_compatibility.rs`, where nothing is built.
+///
+/// Three things change together, so the tree is consistent with what it claims: the record loses
+/// its version marker and its two evidence tables, `rust-toolchain.toml` is removed from the tree
+/// **and** from the record's file list, and `Cargo.toml` loses its `rust-version` line with its
+/// digest recorded again — otherwise the manifest would read as changed since generation and the
+/// conflict check would refuse before anything resolved.
+fn downgrade_to_a_legacy_tree(project: &Path) -> bool {
+    let pin = project.join("rust-toolchain.toml");
+    assert!(pin.is_file(), "the starter did not pin a toolchain");
+    std::fs::remove_file(&pin).expect("the pin is removed");
+
+    let manifest_path = project.join("Cargo.toml");
+    let manifest = std::fs::read_to_string(&manifest_path).expect("Cargo.toml");
+    let without: String = manifest
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("rust-version"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_ne!(manifest, without, "the starter declared no `rust-version`");
+    std::fs::write(&manifest_path, &without).expect("writable");
+    let Some(digest) = sha256_of(&manifest_path) else {
+        println!("SKIPPED: no sha256 hasher, so a legacy tree cannot be prepared");
+        return false;
+    };
+
+    // The record, block by block. A blank line separates blocks, and a block is dropped whole
+    // when its header is one of the two evidence tables — `[verified_with.checks.fmt]` and its
+    // siblings are `[verified_with…]` too, and a filter that matched only the exact header left
+    // them behind for a reader that then refused the file.
+    let record_path = project.join(".renvor").join("generated.toml");
+    let record = std::fs::read_to_string(&record_path).expect("the record");
+    let mut blocks: Vec<Vec<String>> = vec![Vec::new()];
+    for line in record.lines() {
+        if line.is_empty() {
+            blocks.push(Vec::new());
+        } else if !line.starts_with("record_version = ") {
+            blocks.last_mut().expect("a block").push(line.to_owned());
+        }
+    }
+    let kept: Vec<String> = blocks
+        .into_iter()
+        .filter(|block| {
+            let header = block.first().map(String::as_str).unwrap_or("");
+            !(header.starts_with("[toolchain]")
+                || header.starts_with("[verified_with")
+                || block
+                    .iter()
+                    .any(|line| line == "path = \"rust-toolchain.toml\""))
+        })
+        .map(|block| block.join("\n"))
+        .filter(|block| !block.is_empty())
+        .collect();
+    let rewritten = kept.join("\n\n").replace(
+        &format!(
+            "path = \"Cargo.toml\"\nsha256 = \"{}\"",
+            record
+                .lines()
+                .skip_while(|line| *line != "path = \"Cargo.toml\"")
+                .nth(1)
+                .and_then(|line| line.strip_prefix("sha256 = \""))
+                .and_then(|line| line.strip_suffix('"'))
+                .expect("the record digests Cargo.toml")
+        ),
+        &format!("path = \"Cargo.toml\"\nsha256 = \"{digest}\""),
+    );
+    std::fs::write(&record_path, format!("{rewritten}\n")).expect("writable");
+    assert!(
+        !rewritten.contains("record_version")
+            && !rewritten.contains("[toolchain]")
+            && !rewritten.contains("rust-toolchain.toml"),
+        "the record still describes a declared tree:\n{rewritten}"
+    );
+    true
+}
+
+/// `renvor generate …` in `project`, with the **inherited toolchain selection removed**.
+///
+/// `cargo` is launched through a rustup proxy, and the proxy exports `RUSTUP_TOOLCHAIN` (and
+/// `RUSTUP_TOOLCHAIN_SOURCE`) into this test binary — the highest-precedence selection rustup
+/// knows, inherited by every child. A control about what a *file* selects has to remove it, or it
+/// measures the environment and passes while proving nothing. `toolchain_selection.rs` says the
+/// same thing at greater length; this is the one place in this file that needs it.
+fn generate_into_with_the_tree_deciding(project: &Path, args: &[&str]) -> (Run, serde_json::Value) {
+    let mut full = vec!["generate"];
+    full.extend_from_slice(args);
+    full.extend_from_slice(&["--output", "json"]);
+    let output = Command::new(env!("CARGO_BIN_EXE_renvor"))
+        .args(&full)
+        .current_dir(project)
+        .env("CARGO_TARGET_DIR", target_dir())
+        .env("CARGO_INCREMENTAL", "0")
+        .env_remove("RUSTUP_TOOLCHAIN")
+        .env_remove("RUSTUP_TOOLCHAIN_SOURCE")
+        .output()
+        .expect("the generator runs");
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let outcome = Run {
+        succeeded: output.status.success(),
+        status: format!("{}", output.status),
+        output: format!("{stdout}{stderr}"),
+        stdout,
+    };
+    let document: serde_json::Value = serde_json::from_str(&outcome.stdout).unwrap_or_else(|_| {
+        panic!(
+            "not a JSON envelope for generate {args:?} [{}]:\n{}",
+            outcome.status, outcome.output
+        )
+    });
+    (outcome, document)
+}
+
+/// **C-sel-3.** A legacy, pin-less project under an ancestor that pins `Z`: `generate auth`
+/// resolves `Z` in the project directory **and** in the sibling scratch copy, agrees, verifies,
+/// and records what it observed — and inserts no pin on that run or on the next.
+///
+/// # The two halves, and why they are one test
+///
+/// *Selection.* FR-012-12 puts the scratch copy **beside** the project so that both share every
+/// ancestor and the resolution measured in one is the resolution of the other. A copy under the
+/// system temporary directory — the shape before that requirement — would have resolved whatever
+/// the default is, and FR-012-13's divergence check would have failed the run. That the two agree
+/// on `Z`, when `Z` is neither the default nor anything the project states, is the positive
+/// measurement; C-sel-2 is its negative twin, where an override on one directory alone makes the
+/// same check fire.
+///
+/// *No insertion, twice.* FR-012-10a/b. The run writes `[toolchain]` `none` twice — the honest
+/// record of a tree that declares nothing — and the **next** `auth` reads that record. A predicate
+/// reading "a `[toolchain]` table exists" as "declares a pin" flips exactly there, so the repeat
+/// is where a pin would appear if it were going to, and the applied migrations are checked again
+/// with it.
+///
+/// Gated on the control toolchain like every other selection control, and on the services the
+/// verification needs. `Z` is [`control_toolchain`]'s release, which the `verify` legs provision
+/// as the other leg's (U-10) — a release the ancestor names and nothing else does.
+#[test]
+fn c_sel_3_a_legacy_tree_resolves_its_ancestor_and_stays_pin_less_across_repeated_auth() {
+    let _serial = serial();
+    if !row_selected("legacyauth") {
+        return;
+    }
+    let Some(ancestor_toolchain) = control_toolchain() else {
+        return;
+    };
+    let row = Row {
+        name: "legacyauth",
+        database: Some("postgres"),
+        orm: "sqlx",
+        flags: &["--capabilities", "mail", "--example-domain"],
+        needs: &[Service::Postgres, Service::Smtp],
+    };
+    let base = tempfile::tempdir().expect("tempdir");
+    let (project, _) = generate(base.path(), &row);
+    if !downgrade_to_a_legacy_tree(&project) {
+        return;
+    }
+
+    // THE ANCESTOR'S PIN, written after the project is generated so that `renvor new` above ran
+    // under the ordinary selection and only `generate auth` sees this one.
+    std::fs::write(
+        base.path().join("rust-toolchain.toml"),
+        format!("[toolchain]\nchannel = \"{ancestor_toolchain}\"\n"),
+    )
+    .expect("the ancestor pin is written");
+    let resolved = release_of(&ancestor_toolchain).expect("the ancestor's rustc answers -vV");
+
+    let (outcome, document) =
+        generate_into_with_the_tree_deciding(&project, &["auth", "--overwrite-unchanged"]);
+    assert!(outcome.succeeded, "{document}\n{}", outcome.output);
+
+    // THE SELECTION. Both resolutions agreed — the run would have refused otherwise — and what
+    // they agreed on is the ancestor's release, attributed to the file that names it.
+    let record = std::fs::read_to_string(project.join(".renvor").join("generated.toml"))
+        .expect("the record");
+    let field = |table: &str, key: &str| -> String {
+        let parsed: toml::Value = toml::from_str(&record).expect("the record parses");
+        parsed
+            .get(table)
+            .and_then(|table| table.get(key))
+            .and_then(toml::Value::as_str)
+            .unwrap_or_else(|| panic!("the record has no `{table}.{key}`:\n{record}"))
+            .to_owned()
+    };
+    assert_eq!(
+        field("verified_with", "resolved_rustc_release"),
+        resolved,
+        "the ancestor's toolchain file did not select the compiler"
+    );
+    assert_eq!(
+        field("verified_with", "selected_by"),
+        "toolchain_file",
+        "the resolution was not attributed to a toolchain file"
+    );
+    assert_eq!(field("verified_with", "operation"), "auth");
+
+    // NO INSERTION, and the record says so rather than saying nothing.
+    assert!(
+        !project.join("rust-toolchain.toml").exists(),
+        "a pin was inserted into a project that declares none"
+    );
+    let cargo = std::fs::read_to_string(project.join("Cargo.toml")).expect("Cargo.toml");
+    assert!(
+        !cargo.contains("rust-version"),
+        "a `rust-version` line was inserted into a legacy manifest:\n{cargo}"
+    );
+    assert_eq!(field("toolchain", "pinned"), "none");
+    assert_eq!(field("toolchain", "rust_version"), "none");
+
+    // THE REPEAT. The record now carries `[toolchain]`, and the tree is still undeclared.
+    let item_up = project.join("migrations/0001_create_item.up.sql");
+    let item_up_before = std::fs::read_to_string(&item_up).expect("the item migration");
+    let (outcome, again) =
+        generate_into_with_the_tree_deciding(&project, &["auth", "--overwrite-unchanged"]);
+    assert!(outcome.succeeded, "{again}\n{}", outcome.output);
+    let planned: Vec<&str> = again["result"]["files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .filter_map(|entry| entry["path"].as_str())
+        .collect();
+    assert!(
+        !planned.contains(&"rust-toolchain.toml"),
+        "the second auth planned a pin file for a tree that declares none: {planned:?}"
+    );
+    assert!(
+        !project.join("rust-toolchain.toml").exists(),
+        "the second auth inserted a pin"
+    );
+    let cargo = std::fs::read_to_string(project.join("Cargo.toml")).expect("Cargo.toml");
+    assert!(
+        !cargo.contains("rust-version"),
+        "the second auth inserted a `rust-version` line:\n{cargo}"
+    );
+    assert!(
+        planned
+            .iter()
+            .all(|path| !path.starts_with("migrations/0001_")),
+        "an applied migration was planned again: {planned:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&item_up).expect("still there"),
+        item_up_before,
+        "the applied item migration was rewritten"
+    );
+    assert_eq!(again["result"]["toolchain"]["pinned"], "none", "{again}");
+    assert_eq!(
+        again["result"]["verified_with"]["operation"], "auth",
+        "{again}"
+    );
+
+    // And the tree the two runs left still proves itself.
+    checks_after_generation(&project, "starter", row.needs);
 }

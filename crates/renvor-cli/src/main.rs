@@ -20,6 +20,7 @@ mod inject;
 mod output;
 mod paths;
 mod templates;
+mod toolchain;
 
 use std::io::IsTerminal;
 

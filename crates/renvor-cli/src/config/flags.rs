@@ -98,6 +98,16 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// The refusal both record-reading commands name in their help (FR-012-5b).
+///
+/// One string, because C-1's table, C-2's error-code registry, the
+/// `tests/json/record_unsupported.json` fixture, and this sentence must agree on the reason and
+/// on the two `details` keys — and an integration test asserts that they do. Exit 3: an
+/// unsupported *input* record is a validation failure, not a missing environment tool.
+const RECORD_UNSUPPORTED_HELP: &str = "A provenance record written by a newer generator is refused by name as \
+     `record_unsupported` (exit 3), with `details.record_version` and `details.supported`, before \
+     anything is planned: rebuild the generator, not the project.";
+
 /// The commands this phase implements. Nothing is stubbed.
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -119,6 +129,11 @@ pub enum Command {
     /// Report environment readiness.
     Doctor,
     /// Validate a project without building it.
+    // `after_help`, not a second doc paragraph. A paragraph would become clap's `long_about`,
+    // which switches this subcommand's `--help` to the long layout and re-flows every option —
+    // a change to the published surface (FR-002) that says nothing about the record. `after_help`
+    // adds the sentence to both `-h` and `--help` and leaves the layout alone.
+    #[command(after_help = RECORD_UNSUPPORTED_HELP)]
     Check {
         /// The project directory. Defaults to the current directory.
         #[arg(default_value = ".")]
@@ -161,6 +176,7 @@ pub enum Command {
         action: TlsAction,
     },
     /// Add to an existing project, rerun-safe: a file you changed is never overwritten
+    #[command(after_help = RECORD_UNSUPPORTED_HELP)]
     Generate {
         #[command(subcommand)]
         action: GenerateAction,

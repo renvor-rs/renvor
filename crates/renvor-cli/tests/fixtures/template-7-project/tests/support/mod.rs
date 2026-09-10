@@ -1,0 +1,251 @@
+//! Shared by every test in this project: the binary, a loopback HTTP client, the application
+//! started the way a deployment starts it, the interrupt, and the database reset. One file,
+//! compiled into each test binary that declares `mod support;`.
+#![allow(
+    dead_code,
+    reason = "each integration test binary compiles this module on its own and uses a subset"
+)]
+
+use std::io::{BufRead as _, BufReader};
+use std::net::TcpStream;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
+
+pub use renvor_testkit::client::http;
+pub use renvor_testkit::{Factory as _, Sequence, UserFactory};
+
+/// How long readiness may take, cold build included: `cargo test` builds the binary first, so
+/// this covers migrations and the backend probes only.
+pub const READY_WITHIN: Duration = Duration::from_secs(60);
+/// How long a clean shutdown may take. The kernel's drain budget is 30 s; this is above it.
+pub const STOP_WITHIN: Duration = Duration::from_secs(40);
+
+/// The application's name, which is also its binary's.
+pub const NAME: &str = "legacy-api";
+
+/// The sequence every draft in this test binary draws from: the same seed, the same users and
+/// items, run after run.
+pub fn sequence() -> Sequence {
+    Sequence::new(0x9f3a)
+}
+
+/// Users under the local domain.
+pub fn users() -> UserFactory {
+    UserFactory::new("example.test")
+}
+
+/// The application binary cargo built beside this test: `target/<profile>/<name>`, two levels
+/// above the test executable in `target/<profile>/deps/`. `CARGO_BIN_EXE_<name>` names the same
+/// file, but only as a literal whose length follows the project name into rustfmt's wrapping
+/// decision, and this file is generated to format identically for every valid name.
+pub fn binary() -> std::path::PathBuf {
+    let test = std::env::current_exe().expect("the test executable has a path");
+    test.parent()
+        .and_then(std::path::Path::parent)
+        .expect("target/<profile>/deps/<test>")
+        .join(format!("{NAME}{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// The child, killed on drop so a failed assertion never leaves it running.
+pub struct Running(pub Child);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+    }
+}
+
+/// Sends the interrupt a terminal would and waits for the exit status, bounded.
+#[cfg(unix)]
+pub fn interrupt_and_wait(child: &mut Child) -> Option<std::process::ExitStatus> {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+    let pid = Pid::from_raw(i32::try_from(child.id()).expect("a pid fits"));
+    kill(pid, Signal::SIGINT).expect("the signal is sent");
+    let deadline = Instant::now() + STOP_WITHIN;
+    while Instant::now() < deadline {
+        if let Ok(Some(status)) = child.try_wait() {
+            return Some(status);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    None
+}
+
+/// Windows has no SIGINT to send a child from a test; the shutdown path is exercised on the
+/// platforms that can send one, and stated rather than faked here.
+#[cfg(not(unix))]
+pub fn interrupt_and_wait(child: &mut Child) -> Option<std::process::ExitStatus> {
+    let _ = child.kill();
+    child.wait().ok()
+}
+
+/// Drops `tables` if they exist, through the application's own dependency.
+pub async fn drop_tables(url: &str, tables: &[&str]) {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .expect("the database answers");
+    for table in tables {
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE IF EXISTS {table}")))
+            .execute(&pool)
+            .await
+            .expect("the table is dropped");
+    }
+    pool.close().await;
+}
+
+/// Resets this project's tables and the migration ledger, so the run is the run this test
+/// describes rather than the one before it.
+///
+/// Every table the framework's own migration sets create is dropped **whether or not this
+/// project selected the set**: a shared test database can hold another configuration's tables
+/// — the same project after `renvor generate auth`, or a neighbour in a matrix — and a set
+/// applied later must find the ground clear. `IF EXISTS` makes the absent ones free.
+pub async fn reset(url: &str) {
+    let tables = [
+        "item",
+        "rv_job",
+        "rv_job_queue",
+        "rv_auth_attempt",
+        "rv_auth_refresh",
+        "rv_auth_refresh_family",
+        "rv_auth_password_reset",
+        "rv_auth_verification",
+        "rv_auth_session",
+        "rv_auth_credential",
+        "rv_auth_user",
+        "_renvor_seeds",
+        "_sqlx_migrations",
+    ];
+    drop_tables(url, &tables).await;
+}
+
+/// The number of `*.up.sql` files under `migrations/`, read at run time from the project root
+/// (`cargo test` runs a test there), never baked in at compile time.
+pub fn shipped_migrations() -> usize {
+    std::fs::read_dir("migrations")
+        .expect("the migrations directory")
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name().to_string_lossy().ends_with(".up.sql"))
+        .count()
+}
+
+/// The versions the migration ledger holds, ascending — read through the application's own
+/// dependency, so what the test counts is what the application applied.
+pub async fn applied_migrations(url: &str) -> Vec<i64> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(url)
+        .await
+        .expect("the database answers");
+    let versions: Vec<i64> =
+        sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+    pool.close().await;
+    versions
+}
+
+/// A running application: the child, the address it listens on.
+pub struct Application {
+    /// The child; killed on drop so a failed assertion never leaves it running.
+    pub child: Running,
+    /// `host:port`.
+    pub address: String,
+}
+
+impl Application {
+    /// Sends the interrupt a terminal sends and waits for the exit status, bounded: `Some` on a
+    /// platform that can send one, and the test asserts on it.
+    #[cfg(unix)]
+    pub fn stop(&mut self) -> Option<std::process::ExitStatus> {
+        Some(
+            interrupt_and_wait(&mut self.child.0)
+                .expect("the application stopped within the bound"),
+        )
+    }
+
+    /// Ends the process: Windows has no SIGINT to send a child from a test, so there is no exit
+    /// status to assert on, and `None` says so rather than faking one.
+    #[cfg(not(unix))]
+    pub fn stop(&mut self) -> Option<std::process::ExitStatus> {
+        let _ = interrupt_and_wait(&mut self.child.0);
+        None
+    }
+}
+
+/// Starts the application on a free loopback port, with the environment a deployment would set
+/// on top of this process's own, and waits until it answers `/` — which it does
+/// only once every provider has booted.
+pub fn start() -> Application {
+    let mut command = Command::new(binary());
+    command
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        // Port 0: the kernel assigns a free port, and the application announces the one it
+        // bound — which is the only party that knows it. Choosing a port here and releasing it
+        // would leave a window in which something else could take it.
+        .env("RENVOR_HTTP_ADDRESS", "127.0.0.1:0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = Running(command.spawn().expect("the application starts"));
+
+    // THE BOUND ADDRESS, from the line the application prints once Boot has completed. The
+    // reader keeps draining stdout afterwards, so the pipe never fills.
+    let stdout = child.0.stdout.take().expect("stdout is piped");
+    let (announce, announced) = std::sync::mpsc::channel::<Option<String>>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            match reader.read_line(&mut line) {
+                Ok(0) | Err(_) => {
+                    let _ = announce.send(None);
+                    return;
+                }
+                Ok(_) => {
+                    if let Some(address) = line
+                        .trim()
+                        .strip_prefix(&format!("{NAME} is listening at http://"))
+                    {
+                        let _ = announce.send(Some(address.to_owned()));
+                    }
+                }
+            }
+        }
+    });
+    let deadline = Instant::now() + READY_WITHIN;
+    let address = match announced.recv_timeout(READY_WITHIN) {
+        Ok(Some(address)) => address,
+        Ok(None) => panic!("the application exited before it announced its address"),
+        Err(_) => panic!("the application did not announce its address within {READY_WITHIN:?}"),
+    };
+    assert!(
+        !address.ends_with(":0"),
+        "the application announced the configured port, not the bound one: {address}"
+    );
+
+    // READINESS, polled: the application answers `/` only once every provider has
+    // booted; an exit before that is reported as such rather than as a connection refused.
+    loop {
+        if let Ok(Some(status)) = child.0.try_wait() {
+            panic!("the application exited before it was ready: {status}");
+        }
+        if TcpStream::connect(&address).is_ok() {
+            let reply = http(&address, "GET", "/", &[], "");
+            if reply.status == 200 {
+                break;
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the application was not ready within {READY_WITHIN:?}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Application { child, address }
+}

@@ -25,6 +25,67 @@ points at, because no Renvor crate is published yet. When they are, each `path` 
 `version`. `Cargo.lock` was seeded from that checkout's lockfile, so this project resolves offline
 on a machine that has built the framework.
 
+## Toolchain
+
+{% if toolchain_declared %}
+This project pins a compiler and declares a floor, as two numbers — the framework checkout's own
+pin and its minimum supported release, read from that checkout at generation:
+
+| | |
+| --- | --- |
+| Pinned toolchain (`rust-toolchain.toml`) | `{{ toolchain_channel }}` |
+| Minimum supported Rust (`rust-version` in `Cargo.toml`) | `{{ rust_version }}` |
+
+**Why the pin exists.** A tree that passes `cargo clippy --all-targets -- -D warnings` on one
+compiler can fail it on another: every stable release adds lints, so a project verified on one
+compiler is proved for that compiler and not for the next (the framework's Phase 011 limitation
+L-2). The pin names the release this tree was generated to build with.
+
+**How to change it.** Edit `channel` in `rust-toolchain.toml` to another exact release, then run
+`cargo clippy --all-targets -- -D warnings` and `cargo test` — the two commands that verified the
+tree at generation are the two that prove the new compiler. Raise `rust-version` only when the
+project comes to need a newer language or library feature.
+
+**What honours it.** The pin is honoured only by rustup {{ rustup_floor }} or later, which selects
+that release for every command run in this directory and, with `RUSTUP_AUTO_INSTALL=0`, refuses by
+name rather than downloading it when it is absent. The pin is inert without rustup: a bare `cargo`
+ignores the file, and only `rust-version` still refuses a compiler older than `{{ rust_version }}`.
+
+**What verified this tree.** `.renvor/generated.toml` records, under `[verified_with]`, what the
+generator's five checks observed — the compiler they launched and the toolchain that resolved in
+the generated directory, as *launch observation plus queried identity*, never as proof of
+execution — or that the verification reused cached artifacts and observed no compiler launch.
+`renvor check` reports whether that evidence still describes the current tree.
+
+**Readers.** A project generated at template version 8 or later is not readable by a generator
+built before this revision: an older `renvor` fails to read `.renvor/generated.toml`, and the
+answer is to rebuild the generator, not the project.
+
+**A project generated before template version 8** pins nothing, and no `renvor generate toolchain`
+action exists to add a pin for it. Add the two files by hand — `rust-toolchain.toml` at the project
+root:
+
+```toml
+[toolchain]
+channel = "{{ toolchain_channel }}"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+```
+
+and `rust-version = "{{ rust_version }}"` under `[package]` in `Cargo.toml` — then run the two
+commands above.
+{% else %}
+This project was generated before template version 8 and **pins no toolchain**: there is no
+`rust-toolchain.toml`, `Cargo.toml` declares no `rust-version`, and `renvor generate` inserts
+neither silently — no `renvor generate toolchain` action exists. Whatever compiler resolves in this
+directory is the one that builds it; `.renvor/generated.toml` records, under `[verified_with]`,
+what the last verifying operation observed. To pin it, add the two files by hand:
+`rust-toolchain.toml` with `[toolchain]`, `channel = "<an exact release>"`,
+`components = ["rustfmt", "clippy"]`, `profile = "minimal"`, and
+`rust-version = "<the minimum release>"` under `[package]` in `Cargo.toml`; then run
+`cargo clippy --all-targets -- -D warnings` and `cargo test`.
+{% endif %}
+
 ## Configuration
 
 One typed section per concern, each read lowest-precedence-first from its built-in defaults, its

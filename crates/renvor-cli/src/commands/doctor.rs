@@ -11,8 +11,6 @@
 //! FR-043. Every probe below runs a local executable with `--version`. Nothing resolves a name or
 //! opens a socket, which is why the offline test needs no network stub.
 
-use std::process::Command;
-
 use serde::Serialize;
 
 use crate::exit::{CliError, Exit};
@@ -122,8 +120,29 @@ fn extract_version(line: &str) -> Option<semver::Version> {
 /// Running the executable rather than searching `PATH` is deliberate: a name on `PATH` that is not
 /// executable, or is a broken shim, is exactly the case a diagnostic exists to catch, and a `PATH`
 /// search reports it as present.
-fn probe(tool: &str, required: bool, minimum: Option<&str>, remedy: &str) -> Probe {
-    let output = Command::new(tool).arg("--version").output();
+///
+/// # Sealed (FR-012-6), in `directory` (FR-012-14)
+///
+/// `doctor` is named in the requirement's own list
+/// of every child the seal covers, and the reason is the same here as everywhere else: a probe
+/// that inherited the operator's shell would hand a rustup proxy an install server and whatever
+/// `RUSTUP_AUTO_INSTALL` the operator had set, so a *diagnostic* could provision a toolchain.
+///
+/// `sealed` and `directory` are parameters rather than read here so a test can hand this function
+/// an environment of its own — the crate forbids `unsafe`, and mutating this process's variables
+/// is the only other way to observe what a child received.
+fn probe(
+    tool: &str,
+    required: bool,
+    minimum: Option<&str>,
+    remedy: &str,
+    sealed: &crate::generate::verify::Sealed,
+    directory: &std::path::Path,
+) -> Probe {
+    let output =
+        crate::generate::verify::sealed_command(std::ffi::OsStr::new(tool), sealed, directory)
+            .arg("--version")
+            .output();
     match output {
         Ok(output) if output.status.success() => {
             let line = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -221,9 +240,15 @@ fn orphaned_staging() -> Vec<String> {
 /// tool being absent is reported and is not a failure — exiting non-zero for something the
 /// operator does not need is how a diagnostic gets wrapped in `|| true`.
 pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
+    // Sealed once for every probe, and reported for the current directory (FR-012-14) — the
+    // directory whose readiness the operator asked about.
+    let sealed = crate::generate::verify::seal(std::env::vars_os());
+    let here = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let probes: Vec<Probe> = TOOLS
         .iter()
-        .map(|(tool, required, minimum, remedy)| probe(tool, *required, *minimum, remedy))
+        .map(|(tool, required, minimum, remedy)| {
+            probe(tool, *required, *minimum, remedy, &sealed, &here)
+        })
         .collect();
 
     // MISSING **OR INCOMPATIBLE** (T065). An out-of-date required toolchain is not a warning: it
@@ -360,6 +385,108 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
 mod tests {
     use super::*;
 
+    /// The environment a unit test hands [`probe`]: whatever the caller lists, sealed.
+    fn sealed(variables: &[(&str, &str)]) -> crate::generate::verify::Sealed {
+        crate::generate::verify::seal(variables.iter().map(|(name, value)| {
+            (
+                std::ffi::OsString::from(*name),
+                std::ffi::OsString::from(*value),
+            )
+        }))
+    }
+
+    /// The environment a probe of a real tool needs: this process's own, sealed.
+    fn inherited() -> crate::generate::verify::Sealed {
+        crate::generate::verify::seal(std::env::vars_os())
+    }
+
+    /// The directory a unit test's probe runs in.
+    fn here() -> std::path::PathBuf {
+        std::env::current_dir().expect("a working directory")
+    }
+
+    /// FR-012-6 names `doctor`'s probes in its list of sealed children, and this is the assertion
+    /// that says so — by handing a probe an environment carrying the two install-server variables
+    /// and `RUSTUP_AUTO_INSTALL=1`, and reading back what the child actually received.
+    ///
+    /// The shim prints those three names to stdout, which is the line `Probe::version` keeps
+    /// verbatim. Sealed, they must read `0`, absent, and absent.
+    #[test]
+    #[cfg(unix)]
+    fn doctor_probes_run_under_the_seal() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let bin = base.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        let shim = bin.join("renvor-seal-probe");
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nprintf 'auto=%s dist=%s update=%s\\n' \
+             \"${RUSTUP_AUTO_INSTALL-unset}\" \"${RUSTUP_DIST_SERVER-unset}\" \
+             \"${RUSTUP_UPDATE_ROOT-unset}\"\n",
+        )
+        .expect("write");
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let path = bin.display().to_string();
+        let probed = probe(
+            "renvor-seal-probe",
+            false,
+            None,
+            "unreachable",
+            &sealed(&[
+                ("PATH", path.as_str()),
+                ("RUSTUP_AUTO_INSTALL", "1"),
+                ("RUSTUP_DIST_SERVER", "http://example.invalid"),
+                ("RUSTUP_UPDATE_ROOT", "http://example.invalid"),
+            ]),
+            &here(),
+        );
+
+        assert!(probed.found, "the shim did not run");
+        assert_eq!(
+            probed.version.as_deref(),
+            Some("auto=0 dist=unset update=unset"),
+            "a doctor probe did not run under the seal"
+        );
+    }
+
+    /// The negative control for the assertion above: the same shim, run with the three variables
+    /// simply passed through, reports them — so the sealed reading is the seal's doing and not
+    /// the shim's.
+    #[test]
+    #[cfg(unix)]
+    fn the_seal_is_what_changes_those_three_values() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let base = tempfile::tempdir().expect("tempdir");
+        let bin = base.path().join("bin");
+        std::fs::create_dir_all(&bin).expect("mkdir");
+        let shim = bin.join("renvor-seal-probe");
+        std::fs::write(
+            &shim,
+            "#!/bin/sh\nprintf 'auto=%s dist=%s update=%s\\n' \
+             \"${RUSTUP_AUTO_INSTALL-unset}\" \"${RUSTUP_DIST_SERVER-unset}\" \
+             \"${RUSTUP_UPDATE_ROOT-unset}\"\n",
+        )
+        .expect("write");
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let output = std::process::Command::new(&shim)
+            .env_clear()
+            .env("RUSTUP_AUTO_INSTALL", "1")
+            .env("RUSTUP_DIST_SERVER", "http://example.invalid")
+            .env("RUSTUP_UPDATE_ROOT", "http://example.invalid")
+            .output()
+            .expect("the shim runs");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "auto=1 dist=http://example.invalid update=http://example.invalid",
+            "the shim does not report the three variables it was given"
+        );
+    }
+
     #[test]
     fn a_probe_for_something_that_does_not_exist_reports_absent_with_a_remedy() {
         let probe = probe(
@@ -367,6 +494,8 @@ mod tests {
             false,
             None,
             "do the thing",
+            &inherited(),
+            &here(),
         );
         assert!(!probe.found);
         assert!(probe.version.is_none());
@@ -376,7 +505,7 @@ mod tests {
     #[test]
     fn a_probe_for_something_that_does_exist_reports_its_version() {
         // POSITIVE CONTROL. `cargo` is present wherever this test runs, by construction.
-        let probe = probe("cargo", true, None, "install Rust");
+        let probe = probe("cargo", true, None, "install Rust", &inherited(), &here());
         assert!(probe.found, "cargo must be runnable in a cargo test");
         assert!(probe.version.is_some_and(|v| v.contains("cargo")));
     }
@@ -464,7 +593,14 @@ mod tests {
         // The rule that keeps this diagnostic from breaking the environment it describes. A tool
         // that prints something this parser does not understand is unknown, not too old.
         assert!(extract_version("some-tool built from source").is_none());
-        let probe = probe("cargo", true, Some("1.94.0"), "update");
+        let probe = probe(
+            "cargo",
+            true,
+            Some("1.94.0"),
+            "update",
+            &inherited(),
+            &here(),
+        );
         assert!(
             probe.compatible || probe.found_version.is_some(),
             "{probe:?}"
@@ -481,6 +617,8 @@ mod tests {
             true,
             Some("999.0.0"),
             "install Rust from https://rustup.rs",
+            &inherited(),
+            &here(),
         );
         assert!(probe.found, "cargo must be runnable");
         assert!(
@@ -507,7 +645,14 @@ mod tests {
         // rejects precisely the toolchain the project declares as its minimum.
         let exact = semver::Version::parse(REQUIRED_RUST).expect("the declared MSRV is a version");
         assert!(exact >= semver::Version::parse(REQUIRED_RUST).expect("parses"));
-        let probe = probe("cargo", true, Some(REQUIRED_RUST), "update");
+        let probe = probe(
+            "cargo",
+            true,
+            Some(REQUIRED_RUST),
+            "update",
+            &inherited(),
+            &here(),
+        );
         assert!(
             probe.compatible,
             "the toolchain running these tests is below the declared MSRV: {probe:?}"

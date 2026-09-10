@@ -21,6 +21,24 @@ use crate::generate::render::{TemplateEntry, TemplateSet, VerbatimEntry};
 /// Bumped whenever any body below changes. It is **not** the crate version: a release that changes
 /// no template must not claim to have produced a different tree.
 ///
+/// **`7` → `8` (Phase 012, L-2).** Every tree — skeleton and starter — gains `rust-toolchain.toml`
+/// (the `TOOLCHAIN` group: an exact release, `components = ["rustfmt", "clippy"]`,
+/// `profile = "minimal"`) and a `rust-version` line in `Cargo.toml` (the MSRV, not the pin). A
+/// starter's pin is the framework checkout's `[toolchain].channel` and its MSRV the checkout's
+/// `[workspace.package].rust-version`, each read on its own at validation; a skeleton's are both
+/// the generator's `CARGO_PKG_RUST_VERSION` (D-L2-4). Both READMEs gain a toolchain section
+/// (FR-012-3); the Dockerfile's builder tag is derived from the pin and its builder stage sets
+/// `ENV RUSTUP_AUTO_INSTALL=0` (FR-012-9). The provenance record — written by `generate::record`,
+/// not by a template — moved to `record_version = 2` with `[toolchain]` and `[verified_with]` at
+/// this template version, and to `record_version = 3` on 2026-09-09 (finding 4) WITHOUT a template
+/// version of its own: version 3 adds `[verified_with.checks.doctest]` to a file the generator
+/// owns and changes no file a generation renders. The two are different axes (C-4), and this list
+/// tracks the tree's shape — so the record's version moving again does not appear here.
+/// The group is gated on the record at `generate auth` (FR-012-10b): a legacy tree is re-rendered
+/// through [`select_with_toolchain`] with the group off, so nothing is inserted silently. A
+/// project rendered at 8 is **not readable by a generator built before this revision**
+/// (FR-012-5c): rebuild the generator, not the project.
+///
 /// **`6` → `7` (Phase 011).** `renvor.toml` records the auth starter (`auth = …`) and a
 /// `[capabilities]` table on every project, a `[framework]` table and — with `session` — an
 /// `[auth]` table on a starter, and `cache_wired_into_application` follows the `cache` capability
@@ -60,7 +78,7 @@ use crate::generate::render::{TemplateEntry, TemplateSet, VerbatimEntry};
 /// **`1` → `2` (Phase 004).** `renvor.toml` gained `transport`, and `README.md` gained the section
 /// describing the dependency to add once the framework crates are published. `Cargo.toml` is
 /// deliberately **unchanged**: a generated project still declares no dependency, and still builds.
-pub const VERSION: &str = "7";
+pub const VERSION: &str = "8";
 
 /// Entries every project gets.
 const BASE: &[TemplateEntry] = &[
@@ -191,6 +209,18 @@ const CONTAINER: &[TemplateEntry] = &[
         body: include_str!("../templates/env_example.j2"),
     },
 ];
+
+/// The toolchain declaration (Phase 012, FR-012-1): rendered for **both** tree kinds — at
+/// `renvor new` always, at `generate auth` only when the record's `[toolchain]` declares a pin
+/// (FR-012-10b) — which is why it is a group of its own rather than a line of `BASE`.
+///
+/// The declaration's other half, the `rust-version` line, lives inside both `Cargo.toml.j2`
+/// under `{% if toolchain_declared %}`: a line cannot be an entry, so the same switch that adds
+/// this group to a selection also turns that line on in the context.
+const TOOLCHAIN: &[TemplateEntry] = &[TemplateEntry {
+    path: "rust-toolchain.toml",
+    body: include_str!("../templates/rust_toolchain.toml.j2"),
+}];
 
 /// The starter's files (Phase 011): a framework-backed application replacing the skeleton's
 /// `Cargo.toml`, `src/main.rs`, `README.md`, and `.gitignore`, and adding the modules the
@@ -424,6 +454,7 @@ fn catalogue() -> Vec<TemplateEntry> {
     all.extend_from_slice(PERSISTENCE_SQLX);
     all.extend_from_slice(PERSISTENCE_SEAORM);
     all.extend_from_slice(CONTAINER);
+    all.extend_from_slice(TOOLCHAIN);
     all
 }
 
@@ -449,6 +480,7 @@ fn starter_catalogue() -> Vec<TemplateEntry> {
     all.extend_from_slice(STARTER_STORAGE);
     all.extend_from_slice(STARTER_OBSERVABILITY);
     all.extend(container_for_starter());
+    all.extend_from_slice(TOOLCHAIN);
     all
 }
 
@@ -459,9 +491,34 @@ fn starter_catalogue() -> Vec<TemplateEntry> {
 /// only by adding entries here.
 #[must_use]
 pub fn select(configuration: &ProjectConfiguration) -> TemplateSet {
-    if configuration.is_starter() {
-        return select_starter(configuration);
+    select_with_toolchain(configuration, true)
+}
+
+/// [`select`] with the toolchain group's switch exposed (Phase 012, FR-012-10b).
+///
+/// `renvor new` always declares, which is what [`select`] says. `generate auth` re-renders a
+/// tree whose record may predate the declaration: with `toolchain_declared = false` the
+/// `TOOLCHAIN` group is left out, so no `rust-toolchain.toml` is planned — and the context
+/// built with the same flag renders `Cargo.toml` without its `rust-version` line. A pin is
+/// never inserted into a tree that did not declare one.
+#[must_use]
+pub fn select_with_toolchain(
+    configuration: &ProjectConfiguration,
+    toolchain_declared: bool,
+) -> TemplateSet {
+    let mut set = if configuration.is_starter() {
+        select_starter(configuration)
+    } else {
+        select_skeleton(configuration)
+    };
+    if toolchain_declared {
+        set.entries.extend_from_slice(TOOLCHAIN);
     }
+    set
+}
+
+/// The skeleton's selection: every group the configuration honours, and nothing else.
+fn select_skeleton(configuration: &ProjectConfiguration) -> TemplateSet {
     let mut entries = BASE.to_vec();
     if configuration.example_domain() {
         entries.extend_from_slice(EXAMPLE_DOMAIN);
@@ -611,15 +668,7 @@ mod tests {
         // The verbatim list follows the selection: no auth set without `session`, no jobs set
         // without `jobs`, and the engine's set, not the other engine's.
         let base = tempfile::tempdir().expect("tempdir");
-        let framework = base.path().join("framework");
-        std::fs::create_dir_all(framework.join("crates/renvor")).expect("mkdir");
-        std::fs::write(framework.join("Cargo.toml"), "[workspace]\nmembers = []\n").expect("write");
-        std::fs::write(
-            framework.join("crates/renvor/Cargo.toml"),
-            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\n",
-        )
-        .expect("write");
-        std::fs::write(framework.join("Cargo.lock"), "version = 4\n").expect("write");
+        let framework = fake_checkout(base.path(), "1.94.0", "1.94.0");
         let answers =
             |auth: &str, capabilities: &str, database: &str| crate::config::model::Answers {
                 name: Some("demo".to_owned()),
@@ -692,5 +741,416 @@ mod tests {
         // release, defeating SC-016's reproducibility comparison.
         assert!(!VERSION.is_empty());
         assert_ne!(VERSION, env!("CARGO_PKG_VERSION"));
+    }
+
+    // ── Phase 012, L-2: the toolchain group (T-012-03) ────────────────────────────────────
+    //
+    // Every test below was written BEFORE `select_with_toolchain`, the `TOOLCHAIN` group, and
+    // the four context keys existed (RED observed as a compile failure naming them), then made
+    // green by the implementation above and in `commands/new.rs`.
+
+    use std::path::{Path, PathBuf};
+
+    use crate::commands::new::Context;
+    use crate::config::model::Answers;
+
+    /// A skeleton's answers: nothing selected.
+    fn skeleton_answers(destination: PathBuf) -> Answers {
+        Answers {
+            name: Some("demo".to_owned()),
+            destination,
+            local_domain: None,
+            target: "api".to_owned(),
+            transport: None,
+            container: false,
+            local_https: false,
+            seed_data: false,
+            example_domain: false,
+            orm: None,
+            database: None,
+            database_version: None,
+            database_name: None,
+            database_user: None,
+            database_port: None,
+            container_cache: None,
+            cache_port: None,
+            auth: None,
+            capabilities: None,
+            framework_path: None,
+        }
+    }
+
+    /// The six skeleton variants the snapshot suite pins, as answers, so the in-module proof
+    /// covers every tree `select` can produce for the skeleton.
+    fn skeleton_variants(base: &Path) -> Vec<(&'static str, Answers)> {
+        let variant = |tag: &'static str, edit: fn(&mut Answers)| {
+            let mut answers = skeleton_answers(base.join(tag));
+            edit(&mut answers);
+            (tag, answers)
+        };
+        vec![
+            variant("bare", |_| {}),
+            variant("domain", |a| a.example_domain = true),
+            variant("seeded", |a| {
+                a.example_domain = true;
+                a.seed_data = true;
+            }),
+            variant("seeded-container", |a| {
+                a.example_domain = true;
+                a.seed_data = true;
+                a.container = true;
+            }),
+            variant("postgres", |a| {
+                a.example_domain = true;
+                a.database = Some("postgres".to_owned());
+            }),
+            variant("mysql-seaorm", |a| {
+                a.example_domain = true;
+                a.database = Some("mysql".to_owned());
+                a.orm = Some("seaorm".to_owned());
+            }),
+        ]
+    }
+
+    /// A framework checkout with exactly what `FrameworkSource::validate_path` reads — the
+    /// workspace manifest with its MSRV, the facade's manifest, a lockfile, and the pin.
+    fn fake_checkout(base: &Path, channel: &str, msrv: &str) -> PathBuf {
+        let root = base.join("framework");
+        std::fs::create_dir_all(root.join("crates/renvor")).expect("mkdir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                "[workspace]\nmembers = [\"crates/renvor\"]\n[workspace.package]\nrust-version = \
+                 \"{msrv}\"\n"
+            ),
+        )
+        .expect("write");
+        std::fs::write(
+            root.join("crates/renvor/Cargo.toml"),
+            "[package]\nname = \"renvor\"\nversion = \"0.0.0\"\n",
+        )
+        .expect("write");
+        std::fs::write(root.join("Cargo.lock"), "version = 4\n").expect("write");
+        std::fs::write(
+            root.join("rust-toolchain.toml"),
+            format!("[toolchain]\nchannel = \"{channel}\"\n"),
+        )
+        .expect("write");
+        root
+    }
+
+    /// A starter's answers against `framework`: a database, the example domain, and — when
+    /// asked — the container profile, so the Dockerfile renders.
+    fn starter_answers(destination: PathBuf, framework: PathBuf, container: bool) -> Answers {
+        let mut answers = skeleton_answers(destination);
+        answers.database = Some("postgres".to_owned());
+        answers.example_domain = true;
+        answers.container = container;
+        answers.framework_path = Some(framework);
+        answers
+    }
+
+    /// Renders `configuration` through the real renderer into a fresh directory under `base`
+    /// and returns that directory. `declared` is the toolchain-group switch of FR-012-10b.
+    fn render(
+        base: &Path,
+        tag: &str,
+        configuration: &ProjectConfiguration,
+        declared: bool,
+    ) -> PathBuf {
+        let root = base.join(format!("render-{tag}"));
+        std::fs::create_dir_all(&root).expect("mkdir");
+        let dir =
+            cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).expect("opens");
+        let context = Context::build_with_toolchain(configuration, declared);
+        let renderer = Renderer::new(select_with_toolchain(configuration, declared))
+            .expect("the selection compiles");
+        renderer.render_into(&dir, &context).expect("renders");
+        root
+    }
+
+    fn read(root: &Path, path: &str) -> Option<String> {
+        std::fs::read_to_string(root.join(path)).ok()
+    }
+
+    /// The rendered pin, read the way the generator reads a checkout's: by the same parser.
+    fn rendered_channel(root: &Path) -> String {
+        crate::toolchain::pin::read_channel(&root.join("rust-toolchain.toml"))
+            .expect("the rendered pin file is an exact release the generator itself accepts")
+            .to_string()
+    }
+
+    /// `[package].rust-version` of a rendered manifest, if the line is there.
+    fn rendered_rust_version(root: &Path) -> Option<String> {
+        let manifest = read(root, "Cargo.toml").expect("Cargo.toml is rendered");
+        let document: toml::Value = toml::from_str(&manifest).expect("the manifest is TOML");
+        document
+            .get("package")?
+            .get("rust-version")?
+            .as_str()
+            .map(str::to_owned)
+    }
+
+    #[test]
+    fn every_generated_tree_declares_a_pin_and_a_rust_version() {
+        // FR-012-1 and FR-012-2: every skeleton variant the snapshot suite pins, and a starter,
+        // render `rust-toolchain.toml` with an exact release and `Cargo.toml` with the MSRV.
+        let base = tempfile::tempdir().expect("tempdir");
+        for (tag, answers) in skeleton_variants(base.path()) {
+            let (configuration, _) = ProjectConfiguration::resolve(answers).expect("resolves");
+            let root = render(base.path(), tag, &configuration, true);
+            let pin = read(&root, "rust-toolchain.toml").expect("the pin file is rendered");
+            assert!(
+                pin.contains("components = [\"rustfmt\", \"clippy\"]")
+                    && pin.contains("profile = \"minimal\""),
+                "the pin file declares the two components and the minimal profile"
+            );
+            assert_eq!(
+                rendered_channel(&root),
+                env!("CARGO_PKG_RUST_VERSION"),
+                "a skeleton pins the generator's MSRV"
+            );
+            assert_eq!(
+                rendered_rust_version(&root).as_deref(),
+                Some(env!("CARGO_PKG_RUST_VERSION")),
+                "a skeleton's rust-version is the generator's MSRV"
+            );
+        }
+        let framework = fake_checkout(base.path(), "1.95.0", "1.94.0");
+        let (configuration, _) = ProjectConfiguration::resolve(starter_answers(
+            base.path().join("starter"),
+            framework,
+            false,
+        ))
+        .expect("resolves");
+        let root = render(base.path(), "starter", &configuration, true);
+        assert_eq!(rendered_channel(&root), "1.95.0");
+        assert_eq!(rendered_rust_version(&root).as_deref(), Some("1.94.0"));
+    }
+
+    #[test]
+    fn a_starter_pin_is_the_checkouts_channel_and_its_msrv_is_the_manifests() {
+        // FR-012-1's starter rule at the render: the two values come from two files, each read
+        // on its own, and neither is the other.
+        let base = tempfile::tempdir().expect("tempdir");
+        let framework = fake_checkout(base.path(), "1.95.0", "1.94.0");
+        let (configuration, _) = ProjectConfiguration::resolve(starter_answers(
+            base.path().join("starter"),
+            framework,
+            false,
+        ))
+        .expect("resolves");
+        let recorded = configuration
+            .framework()
+            .expect("a starter records its source");
+        assert_eq!(recorded.toolchain_channel(), "1.95.0");
+        assert_eq!(recorded.rust_version(), "1.94.0");
+        let root = render(base.path(), "starter", &configuration, true);
+        assert_eq!(rendered_channel(&root), "1.95.0");
+        assert_eq!(rendered_rust_version(&root).as_deref(), Some("1.94.0"));
+        let readme = read(&root, "README.md").expect("README.md is rendered");
+        assert!(
+            readme.contains("1.95.0") && readme.contains("1.94.0"),
+            "the starter README states the pin and the MSRV as two numbers"
+        );
+    }
+
+    #[test]
+    fn a_skeletons_pin_and_rust_version_are_the_generators_msrv() {
+        // D-L2-4: the generator's MSRV is the skeleton's default exact pin AND its
+        // `rust-version` — the chosen default. `doctor::REQUIRED_RUST` is the same constant,
+        // asserted equal to `CARGO_PKG_RUST_VERSION` in its own test.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (configuration, _) =
+            ProjectConfiguration::resolve(skeleton_answers(base.path().join("demo")))
+                .expect("resolves");
+        let root = render(base.path(), "skeleton", &configuration, true);
+        let msrv = env!("CARGO_PKG_RUST_VERSION");
+        assert_eq!(rendered_channel(&root), msrv);
+        assert_eq!(rendered_rust_version(&root).as_deref(), Some(msrv));
+        let readme = read(&root, "README.md").expect("README.md is rendered");
+        assert!(
+            readme.contains(msrv),
+            "the skeleton README states the generator's MSRV"
+        );
+    }
+
+    #[test]
+    fn a_legacy_render_declares_no_pin_and_no_rust_version() {
+        // FR-012-10b: with the group off — `generate auth` on a record without `[toolchain]` —
+        // no `rust-toolchain.toml` is planned and `Cargo.toml` carries no `rust-version`, for
+        // BOTH tree kinds. Nothing is inserted silently.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (skeleton, _) =
+            ProjectConfiguration::resolve(skeleton_answers(base.path().join("demo")))
+                .expect("resolves");
+        let framework = fake_checkout(base.path(), "1.95.0", "1.94.0");
+        let (starter, _) = ProjectConfiguration::resolve(starter_answers(
+            base.path().join("starter"),
+            framework,
+            true,
+        ))
+        .expect("resolves");
+        for (tag, configuration) in [("skeleton", &skeleton), ("starter", &starter)] {
+            assert!(
+                select_with_toolchain(configuration, false)
+                    .entries
+                    .iter()
+                    .all(|entry| entry.path != "rust-toolchain.toml"),
+                "a legacy selection plans no pin file"
+            );
+            assert!(
+                select_with_toolchain(configuration, true)
+                    .entries
+                    .iter()
+                    .any(|entry| entry.path == "rust-toolchain.toml"),
+                "a declaring selection plans the pin file"
+            );
+            let root = render(base.path(), tag, configuration, false);
+            assert!(
+                read(&root, "rust-toolchain.toml").is_none(),
+                "a legacy render writes no pin file"
+            );
+            assert_eq!(
+                rendered_rust_version(&root),
+                None,
+                "a legacy render's manifest carries no rust-version"
+            );
+            let manifest = read(&root, "Cargo.toml").expect("Cargo.toml is rendered");
+            assert!(
+                !manifest.contains("\n\n\n"),
+                "the absent line leaves no blank-line artefact"
+            );
+            let readme = read(&root, "README.md").expect("README.md is rendered");
+            assert!(
+                readme.contains("pins no toolchain"),
+                "a legacy README says the project pins nothing"
+            );
+        }
+        // The starter's Dockerfile still names a concrete builder: the generator's MSRV, which
+        // is the figure template version 7 hard-coded, now derived rather than restated.
+        let root = render(base.path(), "starter-docker", &starter, false);
+        let dockerfile = read(&root, "Dockerfile").expect("Dockerfile is rendered");
+        assert!(
+            dockerfile.contains(&format!(
+                "FROM docker.io/library/rust:{}-slim AS build",
+                env!("CARGO_PKG_RUST_VERSION")
+            )),
+            "a legacy Dockerfile's builder is the generator's MSRV"
+        );
+    }
+
+    #[test]
+    fn the_readme_names_the_pin_the_msrv_the_rustup_floor_and_the_bare_toolchain_rule() {
+        // FR-012-3, on both rendered READMEs: the two numbers, the rustup floor, the inert-
+        // without-rustup rule with `rust-version` still refusing, and FR-012-5c's incompatibility
+        // sentence.
+        let base = tempfile::tempdir().expect("tempdir");
+        let (skeleton, _) =
+            ProjectConfiguration::resolve(skeleton_answers(base.path().join("demo")))
+                .expect("resolves");
+        let framework = fake_checkout(base.path(), "1.95.0", "1.94.0");
+        let (starter, _) = ProjectConfiguration::resolve(starter_answers(
+            base.path().join("starter"),
+            framework,
+            false,
+        ))
+        .expect("resolves");
+        let msrv = env!("CARGO_PKG_RUST_VERSION");
+        for (tag, configuration, pin, rust_version) in [
+            ("skeleton", &skeleton, msrv, msrv),
+            ("starter", &starter, "1.95.0", "1.94.0"),
+        ] {
+            let root = render(base.path(), tag, configuration, true);
+            let readme = read(&root, "README.md").expect("README.md is rendered");
+            assert!(
+                readme.contains("## Toolchain"),
+                "the README has a toolchain section"
+            );
+            assert!(
+                readme.contains(&format!("`{pin}`"))
+                    && readme.contains(&format!("`{rust_version}`")),
+                "the README states the pin and the MSRV as two numbers"
+            );
+            for needle in [
+                crate::toolchain::RUSTUP_FLOOR,
+                "inert without rustup",
+                "`rust-version`",
+                "rebuild the generator, not the project",
+                "`rust-toolchain.toml`",
+                "cargo clippy --all-targets -- -D warnings",
+                "cargo test",
+                "-D warnings",
+                "launch observation plus queried identity",
+                "`.renvor/generated.toml`",
+                "renvor generate toolchain",
+                "template version 8",
+            ] {
+                assert!(
+                    readme.contains(needle),
+                    "the README carries every required sentence"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_dockerfile_builder_tag_equals_the_rendered_channel() {
+        // FR-012-9: the builder tag is derived from the pin, on both tree kinds, and the
+        // comment names the file the tag now comes from.
+        let base = tempfile::tempdir().expect("tempdir");
+        let mut skeleton_answers = skeleton_answers(base.path().join("demo"));
+        skeleton_answers.container = true;
+        let (skeleton, _) = ProjectConfiguration::resolve(skeleton_answers).expect("resolves");
+        let framework = fake_checkout(base.path(), "1.95.0", "1.94.0");
+        let (starter, _) = ProjectConfiguration::resolve(starter_answers(
+            base.path().join("starter"),
+            framework,
+            true,
+        ))
+        .expect("resolves");
+        for (tag, configuration) in [("skeleton", &skeleton), ("starter", &starter)] {
+            let root = render(base.path(), tag, configuration, true);
+            let channel = rendered_channel(&root);
+            let dockerfile = read(&root, "Dockerfile").expect("Dockerfile is rendered");
+            assert!(
+                dockerfile.contains(&format!(
+                    "FROM docker.io/library/rust:{channel}-slim AS build"
+                )),
+                "the builder tag is the rendered channel"
+            );
+            assert!(
+                dockerfile.contains("`rust-toolchain.toml`"),
+                "the comment names the pin file"
+            );
+        }
+        assert_ne!(
+            rendered_channel(&render(base.path(), "starter-again", &starter, true)),
+            env!("CARGO_PKG_RUST_VERSION"),
+            "the starter control pins a channel that is not the generator's MSRV"
+        );
+    }
+
+    #[test]
+    fn the_builder_sets_rustup_auto_install_0() {
+        // FR-012-9: the builder stage forbids rustup from installing, so a pin the image lacks
+        // fails by name and nothing downloads another compiler inside the build.
+        let base = tempfile::tempdir().expect("tempdir");
+        let mut answers = skeleton_answers(base.path().join("demo"));
+        answers.container = true;
+        let (configuration, _) = ProjectConfiguration::resolve(answers).expect("resolves");
+        let root = render(base.path(), "skeleton", &configuration, true);
+        let dockerfile = read(&root, "Dockerfile").expect("Dockerfile is rendered");
+        let builder = dockerfile.find(" AS build\n").expect("a builder stage");
+        let env = dockerfile
+            .find("\nENV RUSTUP_AUTO_INSTALL=0\n")
+            .expect("the builder sets RUSTUP_AUTO_INSTALL=0");
+        let runtime = dockerfile
+            .find("\nFROM gcr.io/distroless/")
+            .expect("a runtime stage");
+        assert!(
+            builder < env && env < runtime,
+            "the variable is set in the builder stage, before the runtime stage"
+        );
     }
 }
