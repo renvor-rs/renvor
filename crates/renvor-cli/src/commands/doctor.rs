@@ -249,6 +249,103 @@ pub struct ToolchainSection {
     pub selected_by: Option<String>,
     /// Whether the resolved compiler is a rustup proxy (FR-012-7c).
     pub proxy: bool,
+    /// Whether the PIN is installed with the components verification needs.
+    pub components: ComponentReport,
+}
+
+/// Whether the PINNED toolchain is installed with the components verification needs.
+///
+/// Three states, and the difference between them is the whole point (FR-012-11, D-L2-7):
+/// `probed` means the three commands ran and this is what they said; `not probed` means renvor
+/// declined to run them and says why; `not applicable` means `+channel` selects nothing here at
+/// all. A blank row would collapse all three into "we don't know", which is the reading the
+/// operator would then have to guess at.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentReport {
+    /// `probed`, `not probed`, or `not applicable`.
+    pub state: &'static str,
+    /// Why, in the operator's own words, when the probes did not run.
+    pub reason: Option<String>,
+    /// Whether each of the three answered, when they were probed.
+    pub rustc: Option<bool>,
+    /// Whether `rustfmt +<pin> --version` answered.
+    pub rustfmt: Option<bool>,
+    /// Whether `cargo +<pin> clippy --version` answered.
+    pub clippy: Option<bool>,
+}
+
+impl ComponentReport {
+    fn not_applicable(reason: &str) -> Self {
+        Self {
+            state: "not applicable",
+            reason: Some(reason.to_owned()),
+            rustc: None,
+            rustfmt: None,
+            clippy: None,
+        }
+    }
+
+    fn not_probed(reason: String) -> Self {
+        Self {
+            state: "not probed",
+            reason: Some(reason),
+            rustc: None,
+            rustfmt: None,
+            clippy: None,
+        }
+    }
+}
+
+/// One `+channel` probe under the seal. Reports only whether it answered.
+///
+/// The seal already carries `RUSTUP_AUTO_INSTALL=0`, so rustup answers "is not installed" BY
+/// NAME and downloads nothing. That is what makes these probes permissible at all: they answer
+/// the operator's question without being able to change the machine, which is the reconciliation
+/// D-L2-7 asked for and the reason no listing command is needed.
+fn component_answers(program: &str, arguments: &[&str], dir: &Path, sealed: &Sealed) -> bool {
+    let mut command =
+        crate::generate::verify::sealed_command(std::ffi::OsStr::new(program), sealed, dir);
+    command.args(arguments);
+    crate::toolchain::isolate::run_bounded(command, crate::toolchain::isolate::PROBE_TIMEOUT)
+        .is_ok_and(|answer| answer.status.success())
+}
+
+/// The component report for this directory.
+fn components_here(dir: &Path, sealed: &Sealed, pinned: Option<&str>) -> ComponentReport {
+    let Some(pin) = pinned else {
+        return ComponentReport::not_applicable("this directory pins no channel");
+    };
+
+    // `identify` is the ONE place the floor and the proxy classification are decided (FR-012-7a).
+    // Its refusal already says why in the operator's words — below the floor, an unidentifiable
+    // proxy — so the reason is carried through rather than re-derived here, where it would drift.
+    match crate::toolchain::identify(sealed) {
+        Err(error) => ComponentReport::not_probed(error.message.clone()),
+        Ok(crate::toolchain::Classification::Bare) => ComponentReport::not_applicable(
+            "no rustup: `+channel` selects nothing, so the pin cannot be probed",
+        ),
+        Ok(crate::toolchain::Classification::Proxy { .. }) => {
+            let channel = format!("+{pin}");
+            ComponentReport {
+                state: "probed",
+                reason: None,
+                rustc: Some(component_answers("rustc", &[&channel, "-vV"], dir, sealed)),
+                rustfmt: Some(component_answers(
+                    "rustfmt",
+                    &[&channel, "--version"],
+                    dir,
+                    sealed,
+                )),
+                clippy: Some(component_answers(
+                    "cargo",
+                    &[&channel, "clippy", "--version"],
+                    dir,
+                    sealed,
+                )),
+            }
+        }
+    }
 }
 
 /// Is there a project in this directory?
@@ -299,6 +396,7 @@ pub fn toolchain_section(dir: &Path, sealed: &Sealed) -> Option<ToolchainSection
     //
     // A classification failure is not a doctor failure: the section reports what it could not
     // learn. `doctor` reports and changes nothing, including its own exit code (FR-012-11).
+    let pinned_for_probe = pinned.clone();
     let classification = crate::toolchain::identify(sealed).ok();
     let expectations = crate::toolchain::Expectations {
         pinned: pinned.clone(),
@@ -329,6 +427,7 @@ pub fn toolchain_section(dir: &Path, sealed: &Sealed) -> Option<ToolchainSection
         proxy: resolution
             .as_ref()
             .is_some_and(|resolution| resolution.proxy),
+        components: components_here(dir, sealed, pinned_for_probe.as_deref()),
     })
 }
 
@@ -508,6 +607,36 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
                     |version| format!("{version} (floor {})", section.floor),
                 ),
             );
+        // The components row NEVER goes blank. `probed` lists what answered; the other two
+        // states give the operator the reason, because "we did not look" and "we looked and it
+        // is missing" call for completely different next actions.
+        let components = &section.components;
+        human = human.row(
+            "pin installed".to_owned(),
+            match (components.rustc, components.rustfmt, components.clippy) {
+                (Some(rustc), Some(rustfmt), Some(clippy)) => {
+                    let mark = |present: bool, name: &str| {
+                        if present {
+                            name.to_owned()
+                        } else {
+                            format!("{name} ABSENT")
+                        }
+                    };
+                    format!(
+                        "{}, {}, {}",
+                        mark(rustc, "rustc"),
+                        mark(rustfmt, "rustfmt"),
+                        mark(clippy, "clippy")
+                    )
+                }
+                _ => format!(
+                    "{}: {}",
+                    components.state,
+                    components.reason.as_deref().unwrap_or("no reason recorded")
+                ),
+            },
+        );
+
         if section.proxy {
             human = human.item(
                 "the resolved compiler is a rustup proxy, so what it runs depends on the \
@@ -572,6 +701,41 @@ mod tests {
     /// The directory a unit test's probe runs in.
     fn here() -> std::path::PathBuf {
         std::env::current_dir().expect("a working directory")
+    }
+
+    /// The components row states WHY it did not probe rather than going blank.
+    ///
+    /// Three states that must stay distinguishable. `not applicable` means `+channel` selects
+    /// nothing here — there is no question to answer. `not probed` means renvor declined to run
+    /// the probes and says so. `probed` is the only one carrying a measurement. Collapsing them
+    /// into a blank row would leave the operator guessing which of three very different
+    /// situations they are in, and only one of them calls for `rustup component add`.
+    #[test]
+    fn the_components_row_says_why_it_did_not_probe_rather_than_going_blank() {
+        // A project with no pin: nothing to probe, and that is not a failure.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("renvor.toml"), "").expect("write");
+
+        let section = super::toolchain_section(dir.path(), &inherited()).expect("a project");
+        assert_eq!(section.components.state, "not applicable");
+        assert!(
+            section
+                .components
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("pins no channel")),
+            "an unpinned project is told why, not shown a blank: {:?}",
+            section.components.reason
+        );
+
+        // Whatever the state, a report that names no measurement must carry a reason, and one
+        // that names a measurement must not pretend to a reason it does not have.
+        let measured = section.components.rustc.is_some();
+        assert_ne!(
+            measured,
+            section.components.reason.is_some(),
+            "exactly one of `a measurement` and `a reason` is present, never both or neither"
+        );
     }
 
     /// Outside a project the section is omitted entirely, and the JSON carries `null`.
