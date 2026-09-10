@@ -4533,6 +4533,51 @@ mod tests {
              declares one and the parser must be able to see it"
         );
     }
+    /// `SUPPORT.md` and `rust-toolchain.toml` carry the dated note about current stable.
+    ///
+    /// # The claim that was false for four weeks
+    ///
+    /// Both files tell the reader that CI also runs current stable. Between 2026-08-11 and
+    /// `7281e4f` (2026-09-06) it did not: the `stable` contexts compiled the pinned 1.94.0,
+    /// because `rust-toolchain.toml` beats `rustup default` and nothing overrode it. The
+    /// sentences were true when written, false for four weeks, and are true again now.
+    ///
+    /// A reader cannot tell those periods apart, and a green badge from that window means
+    /// something different from a green badge today. `phase-011-evidence.md` §14 is the
+    /// erratum; AC-012-7 requires both sentences to point at it with a date, so the claim reads
+    /// as "true since a named commit" rather than as timeless.
+    ///
+    /// This asserts the note exists, not its wording. What it pins is the three things a reader
+    /// needs to date the claim: when it became true again, which commit made it so, and where
+    /// the period it was false is recorded.
+    #[test]
+    fn the_stable_channel_sentences_carry_their_dated_note() {
+        let root = super::workspace_root();
+
+        for (path, anchor) in [
+            ("rust-toolchain.toml", "CI additionally runs current stable"),
+            ("SUPPORT.md", "The current stable channel"),
+        ] {
+            let text = std::fs::read_to_string(root.join(path))
+                .unwrap_or_else(|error| panic!("{path} is readable: {error}"));
+
+            assert!(
+                text.contains(anchor),
+                "{path} no longer contains the sentence this note dates (`{anchor}`). If the \
+                 wording changed, move the note with it rather than deleting this check"
+            );
+
+            for marker in ["2026-09-06", "7281e4f", "phase-011-evidence.md"] {
+                assert!(
+                    text.contains(marker),
+                    "{path} states that CI runs current stable but carries no `{marker}`. \
+                     AC-012-7 requires the dated note: the sentence was FALSE from 2026-08-11 \
+                     until 7281e4f (2026-09-06), and an undated claim cannot be told apart from \
+                     one that was always true"
+                );
+            }
+        }
+    }
 
     /// `RELEASING.md`'s publishable-package headline agrees with the manifests.
     ///

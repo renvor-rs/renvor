@@ -8,6 +8,13 @@
 #
 # The channel is the declared MSRV, so a contributor's default run exercises the
 # support floor. CI additionally runs current stable — see .github/workflows/ci.yml.
+#
+# DATED NOTE (AC-012-7). That last sentence is true again as of 7281e4f, 2026-09-06.
+# It was FALSE from 2026-08-11 until then: this file beats `rustup default`, so the CI
+# contexts named `stable` compiled the pinned 1.94.0 instead of stable, and nothing said
+# so. The fix sets `RUSTUP_TOOLCHAIN` at job level and asserts the identity in a step.
+# The erratum is `governance/phase-011-evidence.md` §14. A green `stable` badge from
+# that window does not mean what a green one means today.
 
 [toolchain]
 channel = "1.94.0"
