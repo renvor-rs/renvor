@@ -4355,6 +4355,23 @@ mod tests {
         );
     }
 
+    /// The bare key of a `key = value` line, with TOML's optional quoting removed.
+    ///
+    /// `commits = [...]`, `"commits" = [...]` and `'commits' = [...]` are the same key to
+    /// gitleaks. Measured on 8.30.1 against a copy of the real configuration: both quoted
+    /// spellings are honoured and blanket-exempt the named commit, taking an unrelated
+    /// credential-shaped value down with them. A guard that tests the raw prefix sees only the
+    /// first spelling, so the other two smuggle an exemption straight past it — and the
+    /// positive control does not save it, because a legitimate entry elsewhere in the file
+    /// already satisfies the count. Judge the key, never its spelling.
+    fn allowlist_key(line: &str) -> &str {
+        line.split('=')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_matches(['"', '\''])
+    }
+
     /// No allowlist in `.gitleaks.toml` excludes shipped source by **path**.
     ///
     /// # The fix this refuses
@@ -4381,7 +4398,7 @@ mod tests {
         let mut path_entries = 0_usize;
         for (index, line) in config.lines().enumerate() {
             let trimmed = line.trim();
-            if !trimmed.starts_with("paths") {
+            if allowlist_key(trimmed) != "paths" {
                 continue;
             }
             path_entries += 1;
@@ -4400,6 +4417,99 @@ mod tests {
         assert!(
             path_entries >= 1,
             "no `paths` allowlist was found at all, so this check proved nothing — FP-002 \
+             declares one and the parser must be able to see it"
+        );
+    }
+    /// Every `commits` allowlist in `.gitleaks.toml` is conjunctive.
+    ///
+    /// # The fix this refuses
+    ///
+    /// Step 8 failed on `main` on 2026-09-09 with one `generic-api-key` match on a synthetic
+    /// launch-command canary that lives in a single historical commit. FP-006 is the narrow fix:
+    /// `commits` and `regexes` together, joined by `condition = "AND"`.
+    ///
+    /// The TEMPTING fix is `commits` alone, and it is the one this test exists to refuse.
+    /// Measured on gitleaks 8.30.1 while writing FP-006, in a throwaway repository: an allowlist
+    /// naming only the commit dropped **every** finding in it — a second, unrelated
+    /// credential-shaped value added by the same commit went unreported. Adding
+    /// `condition = "AND"` beside the same `regexes` kept that second finding.
+    ///
+    /// Worse, `commits` and `regexes` in one block **without** the `condition` behaved
+    /// identically to `commits` alone: the criteria are OR-ed by default, so the commit clause
+    /// matches on its own and the regex never narrows anything.
+    ///
+    /// And the `condition` is not itself the safeguard. Measured separately: a block carrying
+    /// `condition = "AND"` with `commits` as its ONLY criterion suppressed the whole commit
+    /// exactly as a bare `commits` entry did — `AND` constrains only across the criteria that
+    /// are present, so it protects nothing once the `regexes` line is gone. Both keys are
+    /// therefore required here, not just the condition. Neither line is decoration: deleting
+    /// either one silently converts a one-line exception into a whole-commit exemption, and no
+    /// scan output says so.
+    ///
+    /// The `paths` sibling above records the same class of defect for a different key. Both are
+    /// comments made enforceable.
+    #[test]
+    fn every_gitleaks_commits_allowlist_is_conjunctive() {
+        let root = super::workspace_root();
+        let config = std::fs::read_to_string(root.join(".gitleaks.toml"))
+            .expect(".gitleaks.toml is readable");
+
+        let mut commit_entries = 0_usize;
+        let mut block: Option<(usize, Vec<&str>)> = None;
+        let mut blocks: Vec<(usize, Vec<&str>)> = Vec::new();
+
+        for (index, line) in config.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                if let Some(finished) = block.take() {
+                    blocks.push(finished);
+                }
+                if trimmed.starts_with("[[allowlists]]") {
+                    block = Some((index + 1, Vec::new()));
+                }
+                continue;
+            }
+            if let Some((_, body)) = block.as_mut() {
+                body.push(trimmed);
+            }
+        }
+        if let Some(finished) = block.take() {
+            blocks.push(finished);
+        }
+
+        for (line_number, body) in &blocks {
+            if !body.iter().any(|line| allowlist_key(line) == "commits") {
+                continue;
+            }
+            commit_entries += 1;
+            assert!(
+                body.iter().any(|line| {
+                    allowlist_key(line) == "condition"
+                        && line
+                            .split_once('=')
+                            .map(|(_, value)| value.trim().trim_matches(['"', '\'']))
+                            == Some("AND")
+                }),
+                ".gitleaks.toml allowlist at line {line_number} names `commits` without \
+                 `condition = \"AND\"`. Gitleaks OR-s an allowlist's criteria, so that entry \
+                 exempts the WHOLE commit and any unrelated credential inside it, silently. \
+                 Add the condition, or suppress the match with `regexes` alone"
+            );
+            assert!(
+                body.iter().any(|line| allowlist_key(line) == "regexes"),
+                ".gitleaks.toml allowlist at line {line_number} names `commits` with no \
+                 `regexes` to narrow it. `condition = \"AND\"` constrains only across the \
+                 criteria that are PRESENT, so a commit clause standing alone exempts the \
+                 WHOLE commit whether or not the condition is there. Name the match too"
+            );
+        }
+
+        // Positive control: a parser that found no block at all would pass the loop above
+        // without examining anything. FP-006 declares the only `commits` entry, so at least one
+        // must be seen — otherwise this test is reporting success for having read nothing.
+        assert!(
+            commit_entries >= 1,
+            "no `commits` allowlist was found at all, so this check proved nothing — FP-006 \
              declares one and the parser must be able to see it"
         );
     }
