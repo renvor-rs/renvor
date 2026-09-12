@@ -703,6 +703,137 @@ mod tests {
         std::env::current_dir().expect("a working directory")
     }
 
+    /// Below the rustup floor the pin probes do not run, and the row says so (FR-012-11).
+    ///
+    /// The floor exists because `RUSTUP_AUTO_INSTALL=0` — the thing that makes a `+channel`
+    /// probe safe — is only honoured from 1.28.1. Below it, a probe that looks like a question
+    /// is a download. So renvor does not ask, and tells the operator why it did not, rather than
+    /// showing an empty row they would read as "nothing installed".
+    #[test]
+    #[cfg(unix)]
+    fn doctor_below_the_rustup_floor_reports_not_probed() {
+        use crate::toolchain::testing::Stubs;
+
+        let stubs = Stubs::new();
+        stubs.script(
+            "rustup",
+            "printf 'rustup 1.27.1 (54dd3d00f 2024-04-24)\\n'\nexit 0\n",
+        );
+        stubs.script("rustc", "printf 'rustc 1.94.0\\n'\nexit 0\n");
+        stubs.script("cargo", "printf 'cargo 1.94.0\\n'\nexit 0\n");
+        let project = stubs.pinned_dir("1.94.0");
+
+        let section = super::toolchain_section(&project, &stubs.sealed(&[])).expect("a project");
+
+        assert_eq!(
+            section.pinned.as_deref(),
+            Some("1.94.0"),
+            "the pin was READ"
+        );
+        assert_eq!(
+            section.components.state, "not probed",
+            "below the floor, renvor does not ask"
+        );
+        assert!(
+            section
+                .components
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("1.28.1") || reason.contains("1.27.1")),
+            "the reason names the floor or what was found: {:?}",
+            section.components.reason
+        );
+        assert!(
+            section.components.rustfmt.is_none(),
+            "no component was probed, so none may be reported present OR absent"
+        );
+
+        // And nothing beyond the floor check ran. `--version` is the only rustup subcommand a
+        // refused floor may produce; a `toolchain list` here would be the defect SR-012-4 bans.
+        for record in stubs.records() {
+            assert!(
+                record.name != "rustup" || record.args == "--version",
+                "rustup was invoked as `{}` below the floor",
+                record.args
+            );
+        }
+    }
+
+    /// `doctor` invokes NO rustup subcommand but `--version` and `show` (SR-012-4).
+    ///
+    /// # The command that must never appear
+    ///
+    /// `rustup toolchain list` is the obvious way to answer "is the pin installed", and it is
+    /// banned: the 2026-09-06 draft's "installed toolchains" table was withdrawn for it. Listing
+    /// is one keystroke from installing, and a tool that reports on an operator's machine must
+    /// not be able to change it. D-L2-7 asked for the reconciliation and this is it — the
+    /// question is answered with `+channel` proxy probes that cannot install.
+    ///
+    /// The shim EXITS NON-ZERO on any other subcommand, so a banned call is a hard failure
+    /// rather than a line somebody has to notice in a log.
+    #[test]
+    #[cfg(unix)]
+    fn the_generator_and_doctor_invoke_no_rustup_subcommand_but_version_and_show() {
+        use crate::toolchain::testing::Stubs;
+
+        let stubs = Stubs::new();
+
+        // A SAME-FILE PROXY, which is what `identify` requires before the pin probes run at all.
+        // Four names, one script: that file identity is exactly how `is_proxy_of` classifies a
+        // rustup proxy. Four separate scripts classify as `Bare`, the probes never run, and the
+        // ban below then passes for having examined nothing — which is how the first draft of
+        // this test proved nothing while reporting `ok`.
+        let rustup = stubs.script(
+            "rustup",
+            "case \"$NAME\" in\n  rustup)\n    case \"$1\" in\n      \
+             --version) printf 'rustup 1.29.0 (28d1352db 2026-03-05)\\n'; exit 0 ;;\n      \
+             show) printf '1.94.0-host (overridden by rust-toolchain.toml)\\n'; exit 0 ;;\n    \
+             esac\n    printf 'BANNED SUBCOMMAND: %s\\n' \"$1\" >&2; exit 97 ;;\n  \
+             rustc)\n    if [ \"${RUSTUP_TOOLCHAIN-}\" = renvor-uninstallable-toolchain-name ]; then\n      printf \"error: toolchain '%s' is not installed\\\\n\" \"$RUSTUP_TOOLCHAIN\" >&2; exit 1\n    fi\n    printf 'rustc 1.94.0 (4a4ef493e 2026-03-02)\\nrelease: 1.94.0\\n\
+             commit-hash: 4a4ef493e\\nhost: x\\n'; exit 0 ;;\n  \
+             cargo) printf 'cargo 1.94.0\\n'; exit 0 ;;\n  \
+             rustfmt) printf 'rustfmt 1.8.0\\n'; exit 0 ;;\nesac\nexit 1\n",
+        );
+        for tool in ["rustc", "cargo", "rustfmt"] {
+            std::os::unix::fs::symlink(&rustup, stubs.bin.join(tool)).expect("symlink");
+        }
+        let project = stubs.pinned_dir("1.94.0");
+
+        let _ = super::toolchain_section(&project, &stubs.sealed(&[]));
+
+        let records = stubs.records();
+        // POSITIVE CONTROL. The loop below is vacuous if rustup was never invoked, and a
+        // vacuous ban passes for the wrong reason — it would keep passing if `doctor` stopped
+        // probing entirely. At least one rustup call must have happened for the ban to mean
+        // anything.
+        let pin_probes = records
+            .iter()
+            .filter(|record| record.args.contains("+1.94.0"))
+            .count();
+        assert!(
+            pin_probes > 0,
+            "no `+1.94.0` probe ran, so the ban examined nothing. Recorded: {:?}",
+            records
+                .iter()
+                .map(|record| format!("{} {}", record.name, record.args))
+                .collect::<Vec<_>>()
+        );
+
+        for record in &records {
+            if record.name != "rustup" {
+                continue;
+            }
+            let subcommand = record.args.split_whitespace().next().unwrap_or_default();
+            assert!(
+                matches!(subcommand, "--version" | "show"),
+                "`rustup {}` was invoked. SR-012-4 permits only `--version` and `show`: \
+                 listing, installing, updating, and default-setting are all banned, and \
+                 `toolchain list` is the one this rule exists to refuse",
+                record.args
+            );
+        }
+    }
+
     /// The components row states WHY it did not probe rather than going blank.
     ///
     /// Three states that must stay distinguishable. `not applicable` means `+channel` selects
