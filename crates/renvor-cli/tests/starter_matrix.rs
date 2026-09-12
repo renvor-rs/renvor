@@ -405,6 +405,149 @@ fn lock_closure(project: &Path) -> std::collections::BTreeSet<String> {
 }
 
 /// Every selected choice is recorded and wired; every unselected one appears nowhere.
+/// This leg's compiler, asked once and cached.
+///
+/// ASKED, not inferred from `RUSTUP_TOOLCHAIN` or the job name. The gate ran for four weeks
+/// with contexts named `stable` compiling the pinned 1.94.0, and every inference from a name
+/// would have agreed with the name rather than with the compiler.
+fn legs_compiler() -> &'static (String, String) {
+    static COMPILER: OnceLock<(String, String)> = OnceLock::new();
+    COMPILER.get_or_init(|| {
+        let output = Command::new("rustc")
+            .arg("-vV")
+            .output()
+            .expect("this leg's `rustc -vV` runs");
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        let field = |name: &str| {
+            text.lines()
+                .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+                .map(|value| value.trim().to_owned())
+                .unwrap_or_default()
+        };
+        let identity = (field("release"), field("commit-hash"));
+        assert!(
+            !identity.0.is_empty() && !identity.1.is_empty(),
+            "`rustc -vV` named neither a release nor a commit, so this check has nothing to \
+             compare against and would pass vacuously"
+        );
+        identity
+    })
+}
+
+/// AC-012-5 — the reason a placed record does NOT describe a launch by THIS leg's compiler.
+///
+/// # Why a cached row is a defect rather than an excuse
+///
+/// `observation = "cached"` is a truthful record of a real situation: Cargo reused artifacts and
+/// renvor watched no compiler start. It is still a census FAILURE, because the census exists to
+/// prove that every row was built and verified on the leg's compiler. A cached row proves the
+/// artifacts were already there — which is a statement about the test infrastructure, not about
+/// the generated project. Accepting it would let a green census mean "nothing was rebuilt".
+fn record_describes_a_launch_by(record: &str, release: &str, commit: &str) -> Result<(), String> {
+    let document: toml::Value =
+        toml::from_str(record).map_err(|error| format!("the record does not parse: {error}"))?;
+    let verified = document
+        .get("verified_with")
+        .ok_or_else(|| "the record carries no `[verified_with]` table".to_owned())?;
+    let string = |key: &str| verified.get(key).and_then(toml::Value::as_str);
+
+    match string("observation") {
+        Some("launched") => {}
+        Some(other) => {
+            return Err(format!(
+                "`observation = \"{other}\"`. The census requires `launched`: a row whose \
+                 artifacts were reused proves nothing about this leg's compiler, and is a \
+                 test-infrastructure defect rather than a result to excuse"
+            ));
+        }
+        None => return Err("`[verified_with]` names no `observation`".to_owned()),
+    }
+
+    for (key, expected) in [("rustc_release", release), ("rustc_commit", commit)] {
+        match string(key) {
+            Some(found) if found == expected => {}
+            Some(found) => {
+                return Err(format!(
+                    "`{key} = \"{found}\"` but this leg's compiler reports `{expected}`. The \
+                     record names a compiler that did not verify this tree"
+                ));
+            }
+            None => {
+                return Err(format!(
+                    "`{key}` is absent although `observation = \"launched\"` claims a launch \
+                     WAS observed — the two cannot both be true"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// AC-012-5 — a placed record must name THIS leg's compiler and say a launch was observed.
+///
+/// Every census row runs this through [`assert_recorded`]; what is asserted HERE is that the
+/// check can fail, and fails for each of the three reasons separately. A census-wide assertion
+/// whose checker always returns `Ok` would turn twenty green rows into twenty pieces of
+/// evidence for nothing, and that is not a hypothetical failure mode in this repository.
+#[test]
+fn every_placed_record_names_the_legs_compiler_and_observed_a_launch() {
+    let record = |observation: &str, release: &str, commit: &str| {
+        format!(
+            "record_version = 3\n\n[verified_with]\nobservation = \"{observation}\"\n\
+             rustc_release = \"{release}\"\nrustc_commit = \"{commit}\"\n"
+        )
+    };
+    let (release, commit) = legs_compiler();
+
+    // POSITIVE: this leg's own identity, with a launch observed.
+    record_describes_a_launch_by(&record("launched", release, commit), release, commit)
+        .expect("a record naming this leg's compiler after an observed launch is accepted");
+
+    // NEGATIVE 1 — another compiler. The row was verified by something that is not this leg,
+    // so the leg proved nothing about it.
+    let other = record("launched", "1.0.0", commit);
+    let why = record_describes_a_launch_by(&other, release, commit)
+        .expect_err("a record naming another release is refused");
+    assert!(
+        why.contains("1.0.0"),
+        "the refusal names what it found: {why}"
+    );
+
+    // NEGATIVE 2 — a cached run. Truthful, and still a defect: it evidences the artifacts, not
+    // the compiler.
+    let cached = record("cached", release, commit);
+    let why = record_describes_a_launch_by(&cached, release, commit)
+        .expect_err("a cached row is refused rather than excused");
+    assert!(
+        why.contains("cached"),
+        "the refusal names the observation: {why}"
+    );
+
+    // A REAL record, not a synthetic minimal one. The checker must cope with the full shape —
+    // every `[verified_with.checks.*]` table, the `resolved_rustc_*` pair that is a RESOLUTION
+    // rather than an observation, and the comment lines — and must read the observed identity
+    // rather than the resolved one sitting three lines below it.
+    let real = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/record_v2/generated.toml"),
+    )
+    .expect("the checked-in record fixture");
+    let fixture_release = "1.94.0";
+    let fixture_commit = "4a4ef493e3d7d47ac7b5a2ac0ed5f1aa4ac7bf75";
+    record_describes_a_launch_by(&real, fixture_release, fixture_commit)
+        .expect("the real record shape is accepted when the identity matches");
+    record_describes_a_launch_by(&real, "9.9.9", fixture_commit)
+        .expect_err("and refused when it does not — so the match above was not vacuous");
+
+    // NEGATIVE 3 — a launch claimed with no identity behind it. The two cannot both be true.
+    let hollow = "record_version = 3\n\n[verified_with]\nobservation = \"launched\"\n";
+    let why = record_describes_a_launch_by(hollow, release, commit)
+        .expect_err("a claimed launch with no compiler named is refused");
+    assert!(
+        why.contains("rustc_release"),
+        "the refusal names the absent field: {why}"
+    );
+}
+
 fn assert_recorded(project: &Path, row: &Row) {
     let manifest = std::fs::read_to_string(project.join("renvor.toml")).expect("renvor.toml");
     let cargo = std::fs::read_to_string(project.join("Cargo.toml")).expect("Cargo.toml");
@@ -474,6 +617,14 @@ fn assert_recorded(project: &Path, row: &Row) {
     // chosen; the crate that follows the choice is `renvor-auth-http`, the routes
     // (phase-011-limitations.md).
     assert_eq!(closure.contains("renvor-auth-http"), auth, "{closure:?}");
+
+    // AC-012-5 — every placed record, every row, both legs.
+    let record = std::fs::read_to_string(project.join(".renvor/generated.toml"))
+        .expect(".renvor/generated.toml");
+    let (release, commit) = legs_compiler();
+    if let Err(why) = record_describes_a_launch_by(&record, release, commit) {
+        panic!("row `{}`: {why}", row.name);
+    }
     assert_eq!(
         closure.contains("renvor-auth"),
         auth || row.database.is_some(),

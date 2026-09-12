@@ -34,7 +34,7 @@ whatever happened to be convenient.
 |---|---|
 | **Minimum supported Rust version (MSRV)** | **1.94.0** (released 2026-03-05) |
 | Kind | **Fixed floor** — not N-3, N-4, or any offset from current stable |
-| Also tested | **The current stable channel** — resolved and recorded by CI at run time, not pinned here |
+| Also tested | **The current stable channel** — resolved and recorded by CI at run time, not pinned here *(true again since [`7281e4f`](https://github.com/renvor-rs/renvor/commit/7281e4f91aeb56695d6eceb322065e5f5fca04ef), 2026-09-06; **false from 2026-08-11 until then**, when the CI contexts named `stable` compiled the pinned 1.94.0 because `rust-toolchain.toml` beats `rustup default` — erratum: [`governance/phase-011-evidence.md`](governance/phase-011-evidence.md) §14)* |
 | Edition | 2024 |
 | Cargo resolver | 3, declared explicitly in the virtual workspace |
 

@@ -11,9 +11,14 @@
 //! FR-043. Every probe below runs a local executable with `--version`. Nothing resolves a name or
 //! opens a socket, which is why the offline test needs no network stub.
 
+use std::path::Path;
+
+use cap_std::fs::Dir;
+
 use serde::Serialize;
 
 use crate::exit::{CliError, Exit};
+use crate::generate::verify::Sealed;
 use crate::output::Reporter;
 use crate::output::layout::{Mark, Report, Status};
 
@@ -218,6 +223,218 @@ fn compatible(minimum: Option<&semver::Version>, found: Option<&semver::Version>
 /// staging directory from one belonging to a `renvor new` running in another terminal **right
 /// now**. The remedy is printed for the operator to run, with the process id visible so they can
 /// check before removing anything.
+/// What `doctor` reports about the toolchain here (FR-012-11), or `None` outside a project.
+///
+/// Every field is REPORTED, never acted on: `doctor` installs nothing, sets no default, and runs
+/// no listing command (SR-012-4). A value it could not obtain is `None` and renders as *unknown*
+/// — it is never filled in from a neighbouring field, because the whole point of the section is
+/// to tell the operator what is actually true here rather than what ought to be.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolchainSection {
+    /// The channel `rust-toolchain.toml` pins in this directory.
+    pub pinned: Option<String>,
+    /// `rust-version` as the project's manifest declares it.
+    pub rust_version: Option<String>,
+    /// What the provenance record says verified the tree, or `None` for a record that predates
+    /// the field or a tree with no record at all.
+    pub verified_with: Option<String>,
+    /// rustup's own version, when a rustup could be located and asked.
+    pub rustup: Option<String>,
+    /// The floor below which the pin probes are not run at all.
+    pub floor: &'static str,
+    /// The compiler that resolves HERE, asked rather than inferred.
+    pub resolved: Option<String>,
+    /// Why that compiler and not another.
+    pub selected_by: Option<String>,
+    /// Whether the resolved compiler is a rustup proxy (FR-012-7c).
+    pub proxy: bool,
+    /// Whether the PIN is installed with the components verification needs.
+    pub components: ComponentReport,
+}
+
+/// Whether the PINNED toolchain is installed with the components verification needs.
+///
+/// Three states, and the difference between them is the whole point (FR-012-11, D-L2-7):
+/// `probed` means the three commands ran and this is what they said; `not probed` means renvor
+/// declined to run them and says why; `not applicable` means `+channel` selects nothing here at
+/// all. A blank row would collapse all three into "we don't know", which is the reading the
+/// operator would then have to guess at.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentReport {
+    /// `probed`, `not probed`, or `not applicable`.
+    pub state: &'static str,
+    /// Why, in the operator's own words, when the probes did not run.
+    pub reason: Option<String>,
+    /// Whether each of the three answered, when they were probed.
+    pub rustc: Option<bool>,
+    /// Whether `rustfmt +<pin> --version` answered.
+    pub rustfmt: Option<bool>,
+    /// Whether `cargo +<pin> clippy --version` answered.
+    pub clippy: Option<bool>,
+}
+
+impl ComponentReport {
+    fn not_applicable(reason: &str) -> Self {
+        Self {
+            state: "not applicable",
+            reason: Some(reason.to_owned()),
+            rustc: None,
+            rustfmt: None,
+            clippy: None,
+        }
+    }
+
+    fn not_probed(reason: String) -> Self {
+        Self {
+            state: "not probed",
+            reason: Some(reason),
+            rustc: None,
+            rustfmt: None,
+            clippy: None,
+        }
+    }
+}
+
+/// One `+channel` probe under the seal. Reports only whether it answered.
+///
+/// The seal already carries `RUSTUP_AUTO_INSTALL=0`, so rustup answers "is not installed" BY
+/// NAME and downloads nothing. That is what makes these probes permissible at all: they answer
+/// the operator's question without being able to change the machine, which is the reconciliation
+/// D-L2-7 asked for and the reason no listing command is needed.
+fn component_answers(program: &str, arguments: &[&str], dir: &Path, sealed: &Sealed) -> bool {
+    let mut command =
+        crate::generate::verify::sealed_command(std::ffi::OsStr::new(program), sealed, dir);
+    command.args(arguments);
+    crate::toolchain::isolate::run_bounded(command, crate::toolchain::isolate::PROBE_TIMEOUT)
+        .is_ok_and(|answer| answer.status.success())
+}
+
+/// The component report for this directory.
+fn components_here(dir: &Path, sealed: &Sealed, pinned: Option<&str>) -> ComponentReport {
+    let Some(pin) = pinned else {
+        return ComponentReport::not_applicable("this directory pins no channel");
+    };
+
+    // `identify` is the ONE place the floor and the proxy classification are decided (FR-012-7a).
+    // Its refusal already says why in the operator's words — below the floor, an unidentifiable
+    // proxy — so the reason is carried through rather than re-derived here, where it would drift.
+    match crate::toolchain::identify(sealed) {
+        Err(error) => ComponentReport::not_probed(error.message.clone()),
+        Ok(crate::toolchain::Classification::Bare) => ComponentReport::not_applicable(
+            "no rustup: `+channel` selects nothing, so the pin cannot be probed",
+        ),
+        Ok(crate::toolchain::Classification::Proxy { .. }) => {
+            let channel = format!("+{pin}");
+            ComponentReport {
+                state: "probed",
+                reason: None,
+                rustc: Some(component_answers("rustc", &[&channel, "-vV"], dir, sealed)),
+                rustfmt: Some(component_answers(
+                    "rustfmt",
+                    &[&channel, "--version"],
+                    dir,
+                    sealed,
+                )),
+                clippy: Some(component_answers(
+                    "cargo",
+                    &[&channel, "clippy", "--version"],
+                    dir,
+                    sealed,
+                )),
+            }
+        }
+    }
+}
+
+/// Is there a project in this directory?
+///
+/// `renvor.toml` OR `rust-toolchain.toml`: a tree generated before template version 8 has the
+/// first and not the second, and a hand-written crate may have the second and not the first.
+/// Requiring both would omit the section exactly where an operator is most likely to be asking.
+/// Builds the toolchain section for `dir`, or `None` when there is no project here.
+///
+/// The order is deliberate and is the reconciliation D-L2-7 asked for. Everything READ from
+/// files comes first and always happens. The probes come second and are **conditional**: below
+/// the rustup floor, or on a proxy whose rustup cannot be located, they are not run at all and
+/// the operator is told why rather than shown a blank.
+///
+/// `doctor` never runs `rustup toolchain list`, or any installing, updating, or default-setting
+/// command (SR-012-4). The operator's real question — "is the pin usable here, and what will
+/// actually run?" — is answered with proxy probes that cannot install anything.
+pub fn toolchain_section(dir: &Path, sealed: &Sealed) -> Option<ToolchainSection> {
+    if !is_project(dir) {
+        return None;
+    }
+
+    // ── READ ────────────────────────────────────────────────────────────────────────
+    let pinned = crate::toolchain::pin::read_channel(&dir.join("rust-toolchain.toml"))
+        .ok()
+        .map(|channel| channel.to_string());
+    let rust_version = crate::toolchain::pin::read_msrv(&dir.join("Cargo.toml"))
+        .ok()
+        .map(|version| version.to_string());
+    // The record is read through the SAME reader rule every other command uses (FR-012-5b), so a
+    // version this generator does not know is refused there rather than reported here as absent.
+    // A tree with no record at all is `None` — indistinguishable, deliberately, from a record
+    // that predates the field: both mean "this tree cannot tell you", and inventing a
+    // distinction the file cannot support is how a report starts lying.
+    let verified_with = Dir::open_ambient_dir(dir, cap_std::ambient_authority())
+        .ok()
+        .and_then(|opened| crate::generate::record::read(&opened).ok().flatten())
+        .and_then(|record| record.verified_with)
+        .and_then(|verified| {
+            let release = verified.rustc_release?;
+            Some(match verified.rustc_commit {
+                Some(commit) => format!("rustc {release} ({commit})"),
+                None => format!("rustc {release}"),
+            })
+        });
+
+    // ── PROBE ───────────────────────────────────────────────────────────────────────
+    //
+    // A classification failure is not a doctor failure: the section reports what it could not
+    // learn. `doctor` reports and changes nothing, including its own exit code (FR-012-11).
+    let pinned_for_probe = pinned.clone();
+    let classification = crate::toolchain::identify(sealed).ok();
+    let expectations = crate::toolchain::Expectations {
+        pinned: pinned.clone(),
+        rust_version: None,
+    };
+    let resolution = classification.as_ref().and_then(|classification| {
+        crate::toolchain::resolve(dir, sealed, classification, &expectations).ok()
+    });
+
+    Some(ToolchainSection {
+        pinned,
+        rust_version,
+        verified_with,
+        rustup: resolution
+            .as_ref()
+            .and_then(|resolution| resolution.rustup.as_ref())
+            .map(std::string::ToString::to_string),
+        floor: crate::toolchain::RUSTUP_FLOOR,
+        resolved: resolution.as_ref().map(|resolution| {
+            format!(
+                "rustc {} ({})",
+                resolution.rustc.release, resolution.rustc.commit
+            )
+        }),
+        selected_by: resolution
+            .as_ref()
+            .map(|resolution| resolution.selected_by.as_str().to_owned()),
+        proxy: resolution
+            .as_ref()
+            .is_some_and(|resolution| resolution.proxy),
+        components: components_here(dir, sealed, pinned_for_probe.as_deref()),
+    })
+}
+
+fn is_project(dir: &Path) -> bool {
+    dir.join("renvor.toml").is_file() || dir.join("rust-toolchain.toml").is_file()
+}
+
 fn orphaned_staging() -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(".") else {
         return Vec::new();
@@ -289,6 +506,7 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
     }
 
     let orphans = orphaned_staging();
+    let toolchain = toolchain_section(&here, &sealed);
 
     // ── THE READINESS TABLE ─────────────────────────────────────────────────────────
     //
@@ -352,6 +570,82 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
         }
     }
 
+    // ── THE TOOLCHAIN SECTION (FR-012-11) ───────────────────────────────────────────
+    //
+    // Omitted entirely outside a project. An operator running `doctor` in their home directory
+    // asked about their tooling, not about a pin that does not exist there, and a section of
+    // *unknown* rows would be noise dressed as information.
+    if let Some(section) = &toolchain {
+        let unknown = || "unknown".to_owned();
+        human = human
+            .blank()
+            .status(Status::Info, "Toolchain")
+            .row(
+                "pinned".to_owned(),
+                section.pinned.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "rust-version".to_owned(),
+                section.rust_version.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "verified with".to_owned(),
+                section.verified_with.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "resolves here".to_owned(),
+                section.resolved.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "selected by".to_owned(),
+                section.selected_by.clone().unwrap_or_else(unknown),
+            )
+            .row(
+                "rustup".to_owned(),
+                section.rustup.clone().map_or_else(
+                    || "not found".to_owned(),
+                    |version| format!("{version} (floor {})", section.floor),
+                ),
+            );
+        // The components row NEVER goes blank. `probed` lists what answered; the other two
+        // states give the operator the reason, because "we did not look" and "we looked and it
+        // is missing" call for completely different next actions.
+        let components = &section.components;
+        human = human.row(
+            "pin installed".to_owned(),
+            match (components.rustc, components.rustfmt, components.clippy) {
+                (Some(rustc), Some(rustfmt), Some(clippy)) => {
+                    let mark = |present: bool, name: &str| {
+                        if present {
+                            name.to_owned()
+                        } else {
+                            format!("{name} ABSENT")
+                        }
+                    };
+                    format!(
+                        "{}, {}, {}",
+                        mark(rustc, "rustc"),
+                        mark(rustfmt, "rustfmt"),
+                        mark(clippy, "clippy")
+                    )
+                }
+                _ => format!(
+                    "{}: {}",
+                    components.state,
+                    components.reason.as_deref().unwrap_or("no reason recorded")
+                ),
+            },
+        );
+
+        if section.proxy {
+            human = human.item(
+                "the resolved compiler is a rustup proxy, so what it runs depends on the \
+                 selection above"
+                    .to_owned(),
+            );
+        }
+    }
+
     if !orphans.is_empty() {
         human = human.blank().status(
             Status::Warn,
@@ -377,7 +671,11 @@ pub fn run(reporter: &Reporter) -> Result<Exit, CliError> {
     Ok(reporter.finish(
         "doctor",
         &human,
-        serde_json::json!({ "probes": probes, "orphanedStaging": orphans }),
+        serde_json::json!({
+            "probes": probes,
+            "orphanedStaging": orphans,
+            "toolchain": toolchain,
+        }),
     ))
 }
 
@@ -403,6 +701,224 @@ mod tests {
     /// The directory a unit test's probe runs in.
     fn here() -> std::path::PathBuf {
         std::env::current_dir().expect("a working directory")
+    }
+
+    /// Below the rustup floor the pin probes do not run, and the row says so (FR-012-11).
+    ///
+    /// The floor exists because `RUSTUP_AUTO_INSTALL=0` — the thing that makes a `+channel`
+    /// probe safe — is only honoured from 1.28.1. Below it, a probe that looks like a question
+    /// is a download. So renvor does not ask, and tells the operator why it did not, rather than
+    /// showing an empty row they would read as "nothing installed".
+    #[test]
+    #[cfg(unix)]
+    fn doctor_below_the_rustup_floor_reports_not_probed() {
+        use crate::toolchain::testing::Stubs;
+
+        let stubs = Stubs::new();
+        stubs.script(
+            "rustup",
+            "printf 'rustup 1.27.1 (54dd3d00f 2024-04-24)\\n'\nexit 0\n",
+        );
+        stubs.script("rustc", "printf 'rustc 1.94.0\\n'\nexit 0\n");
+        stubs.script("cargo", "printf 'cargo 1.94.0\\n'\nexit 0\n");
+        let project = stubs.pinned_dir("1.94.0");
+
+        let section = super::toolchain_section(&project, &stubs.sealed(&[])).expect("a project");
+
+        assert_eq!(
+            section.pinned.as_deref(),
+            Some("1.94.0"),
+            "the pin was READ"
+        );
+        assert_eq!(
+            section.components.state, "not probed",
+            "below the floor, renvor does not ask"
+        );
+        assert!(
+            section
+                .components
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("1.28.1") || reason.contains("1.27.1")),
+            "the reason names the floor or what was found: {:?}",
+            section.components.reason
+        );
+        assert!(
+            section.components.rustfmt.is_none(),
+            "no component was probed, so none may be reported present OR absent"
+        );
+
+        // And nothing beyond the floor check ran. `--version` is the only rustup subcommand a
+        // refused floor may produce; a `toolchain list` here would be the defect SR-012-4 bans.
+        for record in stubs.records() {
+            assert!(
+                record.name != "rustup" || record.args == "--version",
+                "rustup was invoked as `{}` below the floor",
+                record.args
+            );
+        }
+    }
+
+    /// `doctor` invokes NO rustup subcommand but `--version` and `show` (SR-012-4).
+    ///
+    /// # The command that must never appear
+    ///
+    /// `rustup toolchain list` is the obvious way to answer "is the pin installed", and it is
+    /// banned: the 2026-09-06 draft's "installed toolchains" table was withdrawn for it. Listing
+    /// is one keystroke from installing, and a tool that reports on an operator's machine must
+    /// not be able to change it. D-L2-7 asked for the reconciliation and this is it — the
+    /// question is answered with `+channel` proxy probes that cannot install.
+    ///
+    /// The shim EXITS NON-ZERO on any other subcommand, so a banned call is a hard failure
+    /// rather than a line somebody has to notice in a log.
+    #[test]
+    #[cfg(unix)]
+    fn the_generator_and_doctor_invoke_no_rustup_subcommand_but_version_and_show() {
+        use crate::toolchain::testing::Stubs;
+
+        let stubs = Stubs::new();
+
+        // A SAME-FILE PROXY, which is what `identify` requires before the pin probes run at all.
+        // Four names, one script: that file identity is exactly how `is_proxy_of` classifies a
+        // rustup proxy. Four separate scripts classify as `Bare`, the probes never run, and the
+        // ban below then passes for having examined nothing — which is how the first draft of
+        // this test proved nothing while reporting `ok`.
+        let rustup = stubs.script(
+            "rustup",
+            "case \"$NAME\" in\n  rustup)\n    case \"$1\" in\n      \
+             --version) printf 'rustup 1.29.0 (28d1352db 2026-03-05)\\n'; exit 0 ;;\n      \
+             show) printf '1.94.0-host (overridden by rust-toolchain.toml)\\n'; exit 0 ;;\n    \
+             esac\n    printf 'BANNED SUBCOMMAND: %s\\n' \"$1\" >&2; exit 97 ;;\n  \
+             rustc)\n    if [ \"${RUSTUP_TOOLCHAIN-}\" = renvor-uninstallable-toolchain-name ]; then\n      printf \"error: toolchain '%s' is not installed\\\\n\" \"$RUSTUP_TOOLCHAIN\" >&2; exit 1\n    fi\n    printf 'rustc 1.94.0 (4a4ef493e 2026-03-02)\\nrelease: 1.94.0\\n\
+             commit-hash: 4a4ef493e\\nhost: x\\n'; exit 0 ;;\n  \
+             cargo) printf 'cargo 1.94.0\\n'; exit 0 ;;\n  \
+             rustfmt) printf 'rustfmt 1.8.0\\n'; exit 0 ;;\nesac\nexit 1\n",
+        );
+        for tool in ["rustc", "cargo", "rustfmt"] {
+            std::os::unix::fs::symlink(&rustup, stubs.bin.join(tool)).expect("symlink");
+        }
+        let project = stubs.pinned_dir("1.94.0");
+
+        let _ = super::toolchain_section(&project, &stubs.sealed(&[]));
+
+        let records = stubs.records();
+        // POSITIVE CONTROL. The loop below is vacuous if rustup was never invoked, and a
+        // vacuous ban passes for the wrong reason — it would keep passing if `doctor` stopped
+        // probing entirely. At least one rustup call must have happened for the ban to mean
+        // anything.
+        let pin_probes = records
+            .iter()
+            .filter(|record| record.args.contains("+1.94.0"))
+            .count();
+        assert!(
+            pin_probes > 0,
+            "no `+1.94.0` probe ran, so the ban examined nothing. Recorded: {:?}",
+            records
+                .iter()
+                .map(|record| format!("{} {}", record.name, record.args))
+                .collect::<Vec<_>>()
+        );
+
+        for record in &records {
+            if record.name != "rustup" {
+                continue;
+            }
+            let subcommand = record.args.split_whitespace().next().unwrap_or_default();
+            assert!(
+                matches!(subcommand, "--version" | "show"),
+                "`rustup {}` was invoked. SR-012-4 permits only `--version` and `show`: \
+                 listing, installing, updating, and default-setting are all banned, and \
+                 `toolchain list` is the one this rule exists to refuse",
+                record.args
+            );
+        }
+    }
+
+    /// The components row states WHY it did not probe rather than going blank.
+    ///
+    /// Three states that must stay distinguishable. `not applicable` means `+channel` selects
+    /// nothing here — there is no question to answer. `not probed` means renvor declined to run
+    /// the probes and says so. `probed` is the only one carrying a measurement. Collapsing them
+    /// into a blank row would leave the operator guessing which of three very different
+    /// situations they are in, and only one of them calls for `rustup component add`.
+    #[test]
+    fn the_components_row_says_why_it_did_not_probe_rather_than_going_blank() {
+        // A project with no pin: nothing to probe, and that is not a failure.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("renvor.toml"), "").expect("write");
+
+        let section = super::toolchain_section(dir.path(), &inherited()).expect("a project");
+        assert_eq!(section.components.state, "not applicable");
+        assert!(
+            section
+                .components
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("pins no channel")),
+            "an unpinned project is told why, not shown a blank: {:?}",
+            section.components.reason
+        );
+
+        // Whatever the state, a report that names no measurement must carry a reason, and one
+        // that names a measurement must not pretend to a reason it does not have.
+        let measured = section.components.rustc.is_some();
+        assert_ne!(
+            measured,
+            section.components.reason.is_some(),
+            "exactly one of `a measurement` and `a reason` is present, never both or neither"
+        );
+    }
+
+    /// Outside a project the section is omitted entirely, and the JSON carries `null`.
+    ///
+    /// An operator running `doctor` in their home directory asked about their tooling. A
+    /// toolchain section there would be six rows of *unknown* — noise that reads like a finding.
+    /// FR-012-11 omits it, and `data.doctor.toolchain` is `null` rather than an empty object,
+    /// so a consumer can tell "no project here" from "a project that told us nothing".
+    #[test]
+    fn doctor_outside_a_project_omits_the_section() {
+        let empty = tempfile::tempdir().expect("tempdir");
+        assert!(
+            super::toolchain_section(empty.path(), &inherited()).is_none(),
+            "a directory with neither `renvor.toml` nor `rust-toolchain.toml` is not a project"
+        );
+
+        // Either file alone IS a project: a tree generated before template version 8 has the
+        // first and not the second, and a hand-written crate may have the second and not the
+        // first. Requiring both would omit the section exactly where it is most wanted.
+        for marker in ["renvor.toml", "rust-toolchain.toml"] {
+            let dir = tempfile::tempdir().expect("tempdir");
+            std::fs::write(dir.path().join(marker), "").expect("write");
+            assert!(
+                super::toolchain_section(dir.path(), &inherited()).is_some(),
+                "`{marker}` alone marks a project"
+            );
+        }
+    }
+
+    /// The section reports the pin it READ, and reports nothing it could not read.
+    ///
+    /// The pin is read from the file rather than inferred from what resolved: those two differ
+    /// exactly when the operator most needs to see both — an override, a stale environment
+    /// variable, a pin that is not installed.
+    #[test]
+    fn the_section_reports_the_pin_it_read_and_leaves_the_rest_unknown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.94.0\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+        )
+        .expect("write");
+
+        let section = super::toolchain_section(dir.path(), &inherited()).expect("a project");
+        assert_eq!(section.pinned.as_deref(), Some("1.94.0"));
+
+        // No manifest and no record in this tree, so both stay `None` — never filled in from the
+        // pin beside them. A record that says a compiler verified this tree is a measurement;
+        // copying the pin into that field would manufacture one.
+        assert_eq!(section.rust_version, None, "no manifest was read");
+        assert_eq!(section.verified_with, None, "no record was read");
+        assert_eq!(section.floor, crate::toolchain::RUSTUP_FLOOR);
     }
 
     /// FR-012-6 names `doctor`'s probes in its list of sealed children, and this is the assertion
